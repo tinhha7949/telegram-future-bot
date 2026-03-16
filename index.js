@@ -1,20 +1,35 @@
 const TelegramBot = require("node-telegram-bot-api")
 
 const token = process.env.BOT_TOKEN
+const bot = new TelegramBot(token,{polling:true})
 
-const bot = new TelegramBot(token, { polling: true })
+let chatIdGlobal=null
 
-bot.onText(/\/start/, async (msg) => {
+bot.onText(/\/start/,async(msg)=>{
 
-const chatId = msg.chat.id
+chatIdGlobal=msg.chat.id
 
-bot.sendMessage(chatId,"🚀 Đang scan future top 50 coin...")
+bot.sendMessage(chatIdGlobal,"🚀 Bot bắt đầu auto scan future...")
 
-let result = await futureScanner50()
-
-bot.sendMessage(chatId,result)
+startAutoScan()
 
 })
+
+async function startAutoScan(){
+
+while(true){
+
+let result=await futureScanner50()
+
+if(result && chatIdGlobal){
+bot.sendMessage(chatIdGlobal,result)
+}
+
+await new Promise(r=>setTimeout(r,300000)) // 5 phút
+
+}
+
+}
 
 async function futureScanner50(){
 
@@ -150,13 +165,11 @@ score
 
 signals.sort((a,b)=>b.score-a.score)
 
-if(signals.length===0){
-return "❌ Không có kèo đẹp"
-}
+if(signals.length===0) return null
 
-let text="🔥 BEST FUTURE TRADE\n\n"
+let text="🔥 FUTURE SIGNAL\n\n"
 
-signals.slice(0,3).forEach(c=>{
+signals.slice(0,2).forEach(c=>{
 
 text+=`${c.symbol}
 ${c.side}
