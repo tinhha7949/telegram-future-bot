@@ -1,8 +1,11 @@
 {
-  "name": "future-bot",
-  "version": "1.0.0",
-  "main": "index.js",
-  "dependencies": {
-    "node-telegram-bot-api": "^0.61.0"
-  }
+ "name": "future-bot",
+ "version": "1.0.0",
+ "main": "index.js",
+ "scripts": {
+  "start": "node index.js"
+ },
+ "dependencies": {
+  "node-telegram-bot-api": "^0.61.0"
+ }
 }
