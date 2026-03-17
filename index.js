@@ -3,15 +3,13 @@ const TelegramBot=require("node-telegram-bot-api")
 
 const TOKEN=process.env.BOT_TOKEN
 
-const bot=new TelegramBot(TOKEN,{
-polling:{
-interval:300,
-autoStart:true,
-params:{timeout:10}
-}
-})
+const bot=new TelegramBot(TOKEN,{polling:true})
 
 console.log("BOT STARTED")
+
+function sleep(ms){
+return new Promise(r=>setTimeout(r,ms))
+}
 
 function ema(arr,p){
 let k=2/(p+1)
@@ -48,29 +46,33 @@ return trs.slice(-p).reduce((a,b)=>a+b)/p
 
 async function getData(symbol){
 
-try{
+let urls=[
+`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`,
+`https://fapi1.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`,
+`https://fapi2.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`
+]
 
-let url=`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=200`
+for(let url of urls){
+
+try{
 
 let res=await fetch(url)
 
-if(!res.ok){
-console.log(symbol,"API FAIL")
-return null
-}
+if(res.ok){
 
 let data=await res.json()
 
-return data
-
-}catch(e){
-
-console.log(symbol,"FETCH ERROR")
-
-return null
+if(Array.isArray(data)) return data
 
 }
 
+}catch(e){}
+
+}
+
+console.log(symbol,"API FAIL")
+
+return null
 }
 
 async function ultimateFutureScanner(){
@@ -93,6 +95,8 @@ let coins=[
 let signals=[]
 
 for(let symbol of coins){
+
+await sleep(200)
 
 let data=await getData(symbol)
 
@@ -179,7 +183,7 @@ signals.sort((a,b)=>b.score-a.score)
 
 if(signals.length===0){
 
-return "❌ Scan xong 50 coins nhưng chưa có kèo mạnh"
+return "❌ Scan xong 50 coin nhưng chưa có kèo"
 
 }
 
@@ -201,14 +205,13 @@ Score ${c.score}
 })
 
 return msg
-
 }
 
 bot.onText(/\/start/,async msg=>{
 
 let chatId=msg.chat.id
 
-bot.sendMessage(chatId,"🚀 Đang scan 50 coins...")
+bot.sendMessage(chatId,"🚀 Đang scan market...")
 
 let result=await ultimateFutureScanner()
 
