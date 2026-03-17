@@ -7,6 +7,6 @@
 },
 "dependencies":{
 "node-telegram-bot-api":"^0.61.0",
-"puppeteer":"^22.0.0"
+"node-fetch":"^3.3.2"
 }
 }
