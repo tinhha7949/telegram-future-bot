@@ -74,11 +74,26 @@ function rsi(arr,p=14){
 // ================= DATA =================
 async function getData(symbol){
     try{
-        let url=`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=150`
+        // FIX: dùng API này ổn định hơn trên Railway
+        let url=`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=150`
+
         let res=await fetch(url)
-        if(!res.ok) return null
-        return await res.json()
-    }catch{
+        if(!res.ok){
+            console.log("API lỗi:", symbol)
+            return null
+        }
+
+        let json = await res.json()
+
+        if(!Array.isArray(json) || json.length === 0){
+            console.log("Không có data:", symbol)
+            return null
+        }
+
+        return json
+
+    }catch(e){
+        console.log("Fetch lỗi:", symbol)
         return null
     }
 }
@@ -90,9 +105,7 @@ console.log("🚀 SCAN...")
 
 let coins=[
 "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
-"ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
-"MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
-"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT"
+"ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT"
 ]
 
 let signals=[]
@@ -102,6 +115,8 @@ for(let symbol of coins){
 try{
 
 let data=await getData(symbol)
+
+// nếu không có data → bỏ qua nhưng vẫn test tiếp coin khác
 if(!data) continue
 
 let closes=data.map(x=>parseFloat(x[4]))
@@ -110,7 +125,7 @@ let price=closes.at(-1)
 let ema20=ema(closes.slice(-40),20)
 let r=rsi(closes)
 
-// ====== LOGIC SIÊU DỄ (LUÔN CÓ KÈO) ======
+// ====== LOGIC SIÊU DỄ ======
 let side=null
 
 if(r >= 50){
@@ -119,7 +134,6 @@ if(r >= 50){
     side="SHORT"
 }
 
-// EMA chỉ để "tinh chỉnh nhẹ"
 if(price > ema20) side="LONG"
 if(price < ema20) side="SHORT"
 
@@ -145,12 +159,22 @@ console.log("Lỗi coin:",symbol)
 
 // ================= SEND =================
 
+// nếu Binance vẫn lỗi hết → gửi test cứng
 if(signals.length===0){
-await sendTelegram("⚠️ Bot chạy nhưng chưa có dữ liệu")
+
+let msg=`⚠️ Binance lỗi → TEST TELE OK
+
+BTCUSDT | LONG
+Entry: 100
+TP: 110
+SL: 95
+`
+
+await sendTelegram(msg)
 return
 }
 
-let msg="🔥 TEST TELE (LUÔN CÓ KÈO)\n"
+let msg="🔥 TEST TELE (CÓ KÈO)\n"
 
 signals.slice(0,5).forEach(c=>{
 msg+=`
@@ -168,7 +192,7 @@ await sendTelegram(msg)
 
 // ================= LOOP =================
 
-// chạy nhanh để test
+// test nhanh
 setInterval(scanner, 15000)
 
 // check telegram
