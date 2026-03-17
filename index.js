@@ -19,7 +19,7 @@ async function sendTelegram(msg){
     })
 }
 
-// ================= TELE COMMAND =================
+// ================= COMMAND =================
 async function checkCommand(){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`
@@ -124,31 +124,36 @@ let low20=Math.min(...lows.slice(-20))
 
 let side=null
 
-// LONG
+// ===== WINRATE CAO =====
+let trendStrong = Math.abs(ema20 - ema50) / price > 0.002
+
+// LONG chuẩn
 if(
+trendStrong &&
 price > ema20 &&
 ema20 > ema50 &&
-r > 55 &&
+r > 55 && r < 70 &&
 volNow > volAvg * 1.5 &&
-price > high20
+price > high20 * 1.002
 ){
 side="LONG"
 }
 
-// SHORT
+// SHORT chuẩn
 if(
+trendStrong &&
 price < ema20 &&
 ema20 < ema50 &&
-r < 45 &&
+r < 45 && r > 30 &&
 volNow > volAvg * 1.5 &&
-price < low20
+price < low20 * 0.998
 ){
 side="SHORT"
 }
 
 console.log(symbol, "|", side)
 
-// PUSH
+// ===== PUSH + STRENGTH =====
 if(side){
 
 let tp,sl
@@ -161,30 +166,57 @@ tp=price*0.97
 sl=price*1.01
 }
 
-signals.push({symbol,side,price,tp,sl})
+// 🔥 strength xịn
+let strength = 0
+
+strength += (Math.abs(ema20 - ema50) / price) * 1000
+
+if(side==="LONG"){
+    strength += (70 - r)
+}else{
+    strength += (r - 30)
+}
+
+strength += (volNow / volAvg) * 15
+
+if(side==="LONG"){
+    strength += (price / high20) * 80
+}else{
+    strength += (low20 / price) * 80
+}
+
+signals.push({symbol,side,price,tp,sl,strength})
 }
 
 }
 
-// ================= SEND TELE =================
-
-// ❗ CHỈ gửi khi có kèo
+// ===== FILTER =====
 if(signals.length===0){
 console.log("❌ Không có kèo")
 return
 }
 
-let msg="🔥 KÈO MỚI\n"
+signals = signals.filter(c => c.strength > 120)
 
-signals.slice(0,3).forEach(c=>{
-msg+=`
-${c.symbol}
-${c.side}
-Entry: ${c.price.toFixed(4)}
-TP: ${c.tp.toFixed(4)}
-SL: ${c.sl.toFixed(4)}
-\n`
-})
+if(signals.length===0){
+console.log("❌ Không có kèo mạnh")
+return
+}
+
+signals.sort((a,b)=>b.strength-a.strength)
+
+// ===== TELE =====
+let best = signals[0]
+
+let msg=`
+🔥 BEST KÈO
+
+${best.symbol} | ${best.side}
+Entry: ${best.price.toFixed(4)}
+TP: ${best.tp.toFixed(4)}
+SL: ${best.sl.toFixed(4)}
+Power: ${best.strength.toFixed(1)}
+`
 
 console.log(msg)
 
@@ -193,7 +225,7 @@ await sendTelegram(msg)
 }
 
 // ================= LOOP =================
-setInterval(scanner, 60000)   // scan 1 phút
-setInterval(checkCommand, 3000) // check lệnh 3s
+setInterval(scanner, 60000)
+setInterval(checkCommand, 3000)
 
 scanner()
