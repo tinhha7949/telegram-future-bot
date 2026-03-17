@@ -1,29 +1,14 @@
 const TelegramBot = require("node-telegram-bot-api")
-const puppeteer = require("puppeteer")
 
-const TOKEN = process.env.BOT_TOKEN
+const bot = new TelegramBot(process.env.BOT_TOKEN,{polling:true})
 
-const bot = new TelegramBot(TOKEN,{polling:true})
+console.log("BOT STARTED")
 
-console.log("BOT RUNNING")
-
-bot.onText(/\/scan/, async msg=>{
+bot.onText(/\/scan/, async (msg)=>{
 
 const chatId = msg.chat.id
 
-bot.sendMessage(chatId,"🚀 Đang scan futures market...")
-
-const browser = await puppeteer.launch({
-args:["--no-sandbox","--disable-setuid-sandbox"]
-})
-
-const page = await browser.newPage()
-
-await page.goto("https://binance.com")
-
-const result = await page.evaluate(async()=>{
-
-async function ultimateFutureScanner(){
+bot.sendMessage(chatId,"🚀 Scanning futures market...")
 
 let coins=[
 "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
@@ -35,12 +20,8 @@ let coins=[
 "STXUSDT","IMXUSDT","FLOWUSDT","EGLDUSDT","XTZUSDT",
 "KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT","APEUSDT",
 "LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT","CHZUSDT",
-"ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
+"ZILUSDT","1INCHUSDT","BATUSUSDT","ENSUSDT"
 ]
-
-function sleep(ms){
-return new Promise(r=>setTimeout(r,ms))
-}
 
 function ema(arr,p){
 let k=2/(p+1)
@@ -62,32 +43,18 @@ let rs=g/(l||1)
 return 100-(100/(1+rs))
 }
 
-function atr(high,low,close,p=14){
-let trs=[]
-for(let i=1;i<high.length;i++){
-let tr=Math.max(
-high[i]-low[i],
-Math.abs(high[i]-close[i-1]),
-Math.abs(low[i]-close[i-1])
-)
-trs.push(tr)
-}
-return trs.slice(-p).reduce((a,b)=>a+b)/p
-}
-
 async function getData(symbol){
-
-try{
 
 let url=`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`
 
+try{
+
 let res=await fetch(url)
+let data=await res.json()
 
-if(!res.ok) return null
+return data
 
-return await res.json()
-
-}catch(e){
+}catch{
 return null
 }
 
@@ -96,8 +63,6 @@ return null
 let signals=[]
 
 for(let symbol of coins){
-
-await sleep(200)
 
 let data=await getData(symbol)
 
@@ -115,16 +80,9 @@ let ema50=ema(closes.slice(-80),50)
 let ema200=ema(closes.slice(-150),200)
 
 let r=rsi(closes)
-let atrVal=atr(highs,lows,closes)
-
-let volNow=volumes[volumes.length-1]
-let volAvg=volumes.slice(-50).reduce((a,b)=>a+b)/50
 
 let high50=Math.max(...highs.slice(-50))
 let low50=Math.min(...lows.slice(-50))
-
-let last4=closes.slice(-4)
-let lastVol=volumes.slice(-4)
 
 let side=null
 let score=0
@@ -142,19 +100,10 @@ score+=60
 if(side==="LONG" && r>50 && r<65) score+=20
 if(side==="SHORT" && r>35 && r<50) score+=20
 
-if(lastVol[3]>lastVol[2] && lastVol[2]>lastVol[1]) score+=30
-
-if(volNow>volAvg*2) score+=40
-
-if(side==="LONG" && last4[3]>last4[2] && last4[2]>last4[1]) score+=30
-if(side==="SHORT" && last4[3]<last4[2] && last4[2]<last4[1]) score+=30
-
 if(side==="LONG" && price>high50*0.998) score+=40
 if(side==="SHORT" && price<low50*1.002) score+=40
 
-if(atrVal/price>0.004) score+=20
-
-if(side && score>=130){
+if(side && score>=100){
 
 let tp,sl
 
@@ -175,14 +124,18 @@ signals.push({symbol,side,price,tp,sl,score})
 signals.sort((a,b)=>b.score-a.score)
 
 if(signals.length===0){
-return "❌ Không có kèo mạnh"
+
+bot.sendMessage(chatId,"❌ Không có kèo mạnh")
+
+return
+
 }
 
-let result="🔥 BEST FUTURE SETUPS\n"
+let text="🔥 BEST FUTURE SETUPS\n"
 
 signals.slice(0,3).forEach(c=>{
 
-result+=`
+text+=`
 
 ${c.symbol}
 ${c.side}
@@ -195,16 +148,6 @@ Score ${c.score}
 
 })
 
-return result
-
-}
-
-return await ultimateFutureScanner()
-
-})
-
-await browser.close()
-
-bot.sendMessage(chatId,result)
+bot.sendMessage(chatId,text)
 
 })
