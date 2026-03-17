@@ -2,7 +2,16 @@ const fetch=require("node-fetch")
 const TelegramBot=require("node-telegram-bot-api")
 
 const TOKEN=process.env.BOT_TOKEN
-const bot=new TelegramBot(TOKEN,{polling:true})
+
+const bot=new TelegramBot(TOKEN,{
+polling:{
+interval:300,
+autoStart:true,
+params:{timeout:10}
+}
+})
+
+console.log("BOT STARTED")
 
 function ema(arr,p){
 let k=2/(p+1)
@@ -39,15 +48,34 @@ return trs.slice(-p).reduce((a,b)=>a+b)/p
 
 async function getData(symbol){
 
-let url=`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`
+try{
+
+let url=`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=200`
 
 let res=await fetch(url)
-if(!res.ok) return null
 
-return await res.json()
+if(!res.ok){
+console.log(symbol,"API FAIL")
+return null
+}
+
+let data=await res.json()
+
+return data
+
+}catch(e){
+
+console.log(symbol,"FETCH ERROR")
+
+return null
+
+}
+
 }
 
 async function ultimateFutureScanner(){
+
+console.log("SCANNING MARKET...")
 
 let coins=[
 "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
@@ -67,6 +95,7 @@ let signals=[]
 for(let symbol of coins){
 
 let data=await getData(symbol)
+
 if(!data) continue
 
 let closes=data.map(x=>parseFloat(x[4]))
@@ -106,34 +135,42 @@ side="SHORT"
 score+=60
 }
 
-if(side==="LONG" && r>50 && r<65) score+=20
-if(side==="SHORT" && r>35 && r<50) score+=20
+if(side==="LONG" && r>50 && r<70) score+=20
+if(side==="SHORT" && r>30 && r<50) score+=20
 
 if(lastVol[3]>lastVol[2] && lastVol[2]>lastVol[1]) score+=30
 
-if(volNow>volAvg*2) score+=40
+if(volNow>volAvg*1.8) score+=40
 
 if(side==="LONG" && last4[3]>last4[2] && last4[2]>last4[1]) score+=30
 if(side==="SHORT" && last4[3]<last4[2] && last4[2]<last4[1]) score+=30
 
-if(side==="LONG" && price>high50*0.998) score+=40
-if(side==="SHORT" && price<low50*1.002) score+=40
+if(side==="LONG" && price>high50*0.997) score+=40
+if(side==="SHORT" && price<low50*1.003) score+=40
 
-if(atrVal/price>0.004) score+=20
+if(atrVal/price>0.003) score+=20
 
-if(side && score>=130){
+if(side && score>=110){
 
 let tp,sl
 
 if(side==="LONG"){
-tp=price*1.05
+tp=price*1.04
 sl=price*0.985
 }else{
-tp=price*0.95
+tp=price*0.96
 sl=price*1.015
 }
 
-signals.push({symbol,side,price,tp,sl,score})
+signals.push({
+symbol,
+side,
+price,
+tp,
+sl,
+score
+})
+
 }
 
 }
@@ -141,12 +178,15 @@ signals.push({symbol,side,price,tp,sl,score})
 signals.sort((a,b)=>b.score-a.score)
 
 if(signals.length===0){
-return "❌ Không có kèo mạnh"
+
+return "❌ Scan xong 50 coins nhưng chưa có kèo mạnh"
+
 }
 
-let msg="🔥 BEST FUTURE SETUPS\n"
+let msg="🔥 FUTURE SIGNALS\n"
 
-signals.slice(0,3).forEach(c=>{
+signals.slice(0,5).forEach(c=>{
+
 msg+=`
 
 ${c.symbol}
@@ -157,16 +197,18 @@ SL ${c.sl.toFixed(4)}
 Score ${c.score}
 
 `
+
 })
 
 return msg
+
 }
 
 bot.onText(/\/start/,async msg=>{
 
 let chatId=msg.chat.id
 
-bot.sendMessage(chatId,"🚀 Đang scan market...")
+bot.sendMessage(chatId,"🚀 Đang scan 50 coins...")
 
 let result=await ultimateFutureScanner()
 
