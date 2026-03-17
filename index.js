@@ -3,6 +3,8 @@ import fetch from "node-fetch"
 const BOT_TOKEN = process.env.BOT_TOKEN
 const CHAT_ID = process.env.CHAT_ID
 
+let lastUpdateId = 0
+
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
     let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
@@ -15,6 +17,33 @@ async function sendTelegram(msg){
             text: msg
         })
     })
+}
+
+// ================= TELE COMMAND =================
+async function checkCommand(){
+    try{
+        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`
+        let res = await fetch(url)
+        let data = await res.json()
+
+        if(!data.result.length) return
+
+        for(let update of data.result){
+
+            lastUpdateId = update.update_id
+
+            if(!update.message) continue
+
+            let text = update.message.text
+
+            if(text === "/status"){
+                await sendTelegram("🤖 Bot vẫn đang chạy OK!")
+            }
+        }
+
+    }catch(e){
+        console.log("Command error")
+    }
 }
 
 // ================= INDICATORS =================
@@ -95,9 +124,7 @@ let low20=Math.min(...lows.slice(-20))
 
 let side=null
 
-// ================= LOGIC KHÔNG LỎ =================
-
-// LONG thật
+// LONG
 if(
 price > ema20 &&
 ema20 > ema50 &&
@@ -108,7 +135,7 @@ price > high20
 side="LONG"
 }
 
-// SHORT thật
+// SHORT
 if(
 price < ema20 &&
 ema20 < ema50 &&
@@ -119,10 +146,9 @@ price < low20
 side="SHORT"
 }
 
-// log debug
 console.log(symbol, "|", side)
 
-// ================= PUSH =================
+// PUSH
 if(side){
 
 let tp,sl
@@ -142,13 +168,12 @@ signals.push({symbol,side,price,tp,sl})
 
 // ================= SEND TELE =================
 
+// ❗ CHỈ gửi khi có kèo
 if(signals.length===0){
 console.log("❌ Không có kèo")
-await sendTelegram("❌ Không có kèo")
 return
 }
 
-// chỉ lấy top 3
 let msg="🔥 KÈO MỚI\n"
 
 signals.slice(0,3).forEach(c=>{
@@ -168,5 +193,7 @@ await sendTelegram(msg)
 }
 
 // ================= LOOP =================
-setInterval(scanner, 60000) // 1 phút
+setInterval(scanner, 60000)   // scan 1 phút
+setInterval(checkCommand, 3000) // check lệnh 3s
+
 scanner()
