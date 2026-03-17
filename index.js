@@ -24,15 +24,21 @@ async function checkCommand(){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`
         let res = await fetch(url)
+
+        if(!res.ok){
+            console.log("❌ Telegram API lỗi")
+            return
+        }
+
         let data = await res.json()
 
-        if(!data.result.length) return
+        if(!data.result || data.result.length === 0) return
 
         for(let update of data.result){
 
             lastUpdateId = update.update_id
 
-            if(!update.message) continue
+            if(!update.message || !update.message.text) continue
 
             let text = update.message.text
 
@@ -40,6 +46,11 @@ async function checkCommand(){
                 await sendTelegram("🤖 Bot vẫn đang chạy OK!")
             }
         }
+
+    }catch(e){
+        console.log("⚠️ Lỗi nhẹ khi check command")
+    }
+}
 
     }catch(e){
         console.log("Command error")
