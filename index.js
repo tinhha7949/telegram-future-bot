@@ -71,17 +71,38 @@ function rsi(arr,p=14){
     return 100-(100/(1+rs))
 }
 
-// ================= DATA =================
+// ================= DATA (MULTI SOURCE) =================
 async function getData(symbol, interval="15m"){
 
-    try{
-        let url=`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=200`
-        let res=await fetch(url)
-        if(!res.ok) return null
-        return await res.json()
-    }catch{
-        return null
+    const urls = [
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=200`,
+        `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=200`,
+        `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=200`
+    ]
+
+    for(let url of urls){
+        try{
+            let res = await fetch(url,{
+                headers:{
+                    "User-Agent":"Mozilla/5.0"
+                }
+            })
+
+            if(!res.ok) continue
+
+            let data = await res.json()
+
+            if(Array.isArray(data) && data.length > 0){
+                return data
+            }
+
+        }catch(e){
+            continue
+        }
     }
+
+    console.log("❌ Binance lỗi:", symbol)
+    return null
 }
 
 // ================= MAIN =================
@@ -157,12 +178,11 @@ let lastCandleUp=closes.at(-1)>closes.at(-2)
 let side=null
 let score=0
 
-// TREND 2 KHUNG
+// TREND
 if(ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h){
     side="LONG"
     score+=60
 }
-
 if(ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h){
     side="SHORT"
     score+=60
@@ -187,20 +207,14 @@ if(side==="SHORT" && price<low50*1.002) score+=40
 // VOLATILITY
 if(atrVal/price>0.004) score+=20
 
-// ===== FILTER THÔNG MINH =====
-
-// tránh đu đỉnh
+// FILTER
 if(distance>0.02) side=null
-
-// tránh sideway
 if(trendStrength<0.002) side=null
-
-// confirm nến
 if(side==="LONG" && !lastCandleUp) side=null
 if(side==="SHORT" && lastCandleUp) side=null
 
 // ===== FINAL =====
-if(side && score>=110){
+if(side && score>=130){
 
 let tp,sl
 
@@ -212,12 +226,19 @@ sl=price*1.015
 tp=price-(sl-price)*2
 }
 
-// rank
-let rank="B"
-if(score>=160) rank="A+"
-else if(score>=130) rank="A"
+// RANK + STAR
+let rank=""
+let star=""
 
-signals.push({symbol,side,price,tp,sl,score,rank})
+if(score>=160){
+    rank="S"
+    star="⭐⭐⭐"
+}else{
+    rank="A"
+    star="⭐⭐"
+}
+
+signals.push({symbol,side,price,tp,sl,score,rank,star})
 
 }
 
@@ -240,7 +261,7 @@ let msg="🔥 PRO SIGNAL\n"
 
 signals.slice(0,3).forEach(c=>{
 msg+=`
-${c.symbol} (${c.rank})
+${c.symbol} (${c.rank} ${c.star})
 ${c.side}
 Entry: ${c.price.toFixed(4)}
 TP: ${c.tp.toFixed(4)}
