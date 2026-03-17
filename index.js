@@ -71,7 +71,7 @@ function rsi(arr,p=14){
     return 100-(100/(1+rs))
 }
 
-// ================= DATA (ĐÃ FIX) =================
+// ================= DATA =================
 async function getData(symbol){
 
     const urls = [
@@ -141,40 +141,27 @@ let price=closes.at(-1)
 
 let ema20=ema(closes.slice(-40),20)
 let ema50=ema(closes.slice(-80),50)
+let ema200=ema(closes.slice(-120),200)
 
 let r=rsi(closes)
 
 let volNow=volumes.at(-1)
 let volAvg=volumes.slice(-30).reduce((a,b)=>a+b)/30
 
-let high20=Math.max(...highs.slice(-20))
-let low20=Math.min(...lows.slice(-20))
+let high50=Math.max(...highs.slice(-50))
+let low50=Math.min(...lows.slice(-50))
+
+let last4=closes.slice(-4)
+let lastVol=volumes.slice(-4)
+
+let atrVal=(high50-low50)/50
 
 let side=null
+let score=0
 
-// ====== LOGIC GỐC ======
+// ===== BOT 1 LOGIC =====
 
-// ====== LOGIC TEST (NỚI NHẸ) ======
-
-// LONG dễ hơn
-// ====== FIX BIẾN (BẮT BUỘC PHẢI CÓ) ======
-
-let ema200 = ema(closes.slice(-120),200)
-
-let score = 0
-
-let lastVol = volumes.slice(-4)
-let last4 = closes.slice(-4)
-
-let high50 = Math.max(...highs.slice(-50))
-let low50 = Math.min(...lows.slice(-50))
-
-// ATR đơn giản (giữ logic của bạn)
-let atrVal = (high50 - low50) / 50
-
-let side=null
-
-// ===== TREND =====
+// TREND
 if(ema20>ema50 && ema50>ema200){
     side="LONG"
     score+=60
@@ -185,38 +172,30 @@ if(ema20<ema50 && ema50<ema200){
     score+=60
 }
 
-// ===== RSI MOMENTUM =====
+// RSI
 if(side==="LONG" && r>50 && r<65) score+=20
 if(side==="SHORT" && r>35 && r<50) score+=20
 
-// ===== VOLUME BUILDUP =====
-if(
-lastVol[3]>lastVol[2] &&
-lastVol[2]>lastVol[1]
-){
-score+=30
+// VOLUME BUILDUP
+if(lastVol[3]>lastVol[2] && lastVol[2]>lastVol[1]){
+    score+=30
 }
 
-// ===== VOLUME SPIKE =====
+// VOLUME SPIKE
 if(volNow>volAvg*2) score+=40
 
-// ===== MOMENTUM =====
-if(side==="LONG" &&
-last4[3]>last4[2] &&
-last4[2]>last4[1]) score+=30
+// MOMENTUM
+if(side==="LONG" && last4[3]>last4[2] && last4[2]>last4[1]) score+=30
+if(side==="SHORT" && last4[3]<last4[2] && last4[2]<last4[1]) score+=30
 
-if(side==="SHORT" &&
-last4[3]<last4[2] &&
-last4[2]<last4[1]) score+=30
-
-// ===== BREAKOUT =====
+// BREAKOUT
 if(side==="LONG" && price>high50*0.998) score+=40
 if(side==="SHORT" && price<low50*1.002) score+=40
 
-// ===== VOLATILITY =====
+// VOLATILITY
 if(atrVal/price>0.004) score+=20
 
-// ===== FINAL =====
+// FINAL
 if(side && score>=130){
 
 let tp,sl
@@ -229,15 +208,13 @@ tp=price*0.95
 sl=price*1.015
 }
 
-signals.push({
-symbol,
-side,
-price,
-tp,
-sl,
-score
-})
+signals.push({symbol,side,price,tp,sl,score})
 }
+
+}catch(e){
+console.log("Lỗi coin:",symbol)
+}
+
 }
 
 // ================= SEND =================
@@ -246,6 +223,8 @@ if(signals.length===0){
 console.log("❌ Không có kèo")
 return
 }
+
+signals.sort((a,b)=>b.score-a.score)
 
 let msg="🔥 KÈO XỊN\n"
 
@@ -256,6 +235,7 @@ ${c.side}
 Entry: ${c.price.toFixed(4)}
 TP: ${c.tp.toFixed(4)}
 SL: ${c.sl.toFixed(4)}
+Score: ${c.score}
 `
 })
 
