@@ -92,14 +92,7 @@ let coins=[
 "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
 "ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
 "MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
-"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT",
-"SEIUSDT","TIAUSDT","FILUSDT","AAVEUSDT","RNDRUSDT",
-"GALAUSDT","DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT",
-"STXUSDT","IMXUSDT","FLOWUSDT","EGLDUSDT",
-"XTZUSDT","KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT",
-"APEUSDT","LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT",
-"CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
-
+"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT"
 ]
 
 let signals=[]
@@ -112,63 +105,37 @@ let data=await getData(symbol)
 if(!data) continue
 
 let closes=data.map(x=>parseFloat(x[4]))
-let highs=data.map(x=>parseFloat(x[2]))
-let lows=data.map(x=>parseFloat(x[3]))
-let volumes=data.map(x=>parseFloat(x[5]))
-
 let price=closes.at(-1)
 
 let ema20=ema(closes.slice(-40),20)
-let ema50=ema(closes.slice(-80),50)
-
 let r=rsi(closes)
 
-let volNow=volumes.at(-1)
-let volAvg=volumes.slice(-30).reduce((a,b)=>a+b)/30
-
-let high20=Math.max(...highs.slice(-20))
-let low20=Math.min(...lows.slice(-20))
-
+// ====== LOGIC SIÊU DỄ (LUÔN CÓ KÈO) ======
 let side=null
 
-// ====== LOGIC NÂNG CẤP (WINRATE CAO) ======
-
-// LONG mạnh
-if(
-price > ema20 &&
-ema20 > ema50 &&
-r > 50 &&
-volNow > volAvg * 1.2 &&
-price > high20
-){
-side="LONG"
+if(r >= 50){
+    side="LONG"
+}else{
+    side="SHORT"
 }
 
-// SHORT mạnh
-if(
-price < ema20 &&
-ema20 < ema50 &&
-r < 50 &&
-volNow > volAvg * 1.0 &&
-price < low20
-){
-side="SHORT"
-}
+// EMA chỉ để "tinh chỉnh nhẹ"
+if(price > ema20) side="LONG"
+if(price < ema20) side="SHORT"
 
-if(side){
+// =================
 
 let tp,sl
 
 if(side==="LONG"){
-tp=price*1.025
-sl=price*0.992
+tp=price*1.01
+sl=price*0.995
 }else{
-tp=price*0.975
-sl=price*1.008
+tp=price*0.99
+sl=price*1.005
 }
 
 signals.push({symbol,side,price,tp,sl})
-}
 
 }catch(e){
 console.log("Lỗi coin:",symbol)
@@ -179,16 +146,15 @@ console.log("Lỗi coin:",symbol)
 // ================= SEND =================
 
 if(signals.length===0){
-console.log("❌ Không có kèo")
+await sendTelegram("⚠️ Bot chạy nhưng chưa có dữ liệu")
 return
 }
 
-let msg="🔥 KÈO XỊN\n"
+let msg="🔥 TEST TELE (LUÔN CÓ KÈO)\n"
 
-signals.slice(0,3).forEach(c=>{
+signals.slice(0,5).forEach(c=>{
 msg+=`
-${c.symbol}
-${c.side}
+${c.symbol} | ${c.side}
 Entry: ${c.price.toFixed(4)}
 TP: ${c.tp.toFixed(4)}
 SL: ${c.sl.toFixed(4)}
@@ -202,11 +168,11 @@ await sendTelegram(msg)
 
 // ================= LOOP =================
 
-// scan mỗi 2 phút (ổn định + không spam)
-setInterval(scanner, 120000)
+// chạy nhanh để test
+setInterval(scanner, 15000)
 
-// check lệnh telegram
+// check telegram
 setInterval(checkCommand, 5000)
 
-// chạy ngay lần đầu
+// chạy ngay
 scanner()
