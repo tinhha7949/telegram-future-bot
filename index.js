@@ -7,16 +7,20 @@ let lastUpdateId = 0
 
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
-    let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
+    try{
+        let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
 
-    await fetch(url,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-            chat_id: CHAT_ID,
-            text: msg
+        await fetch(url,{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({
+                chat_id: CHAT_ID,
+                text: msg
+            })
         })
-    })
+    }catch(e){
+        console.log("❌ Lỗi gửi Telegram")
+    }
 }
 
 // ================= COMMAND =================
@@ -24,15 +28,9 @@ async function checkCommand(){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`
         let res = await fetch(url)
-
-        if(!res.ok){
-            console.log("❌ Telegram API lỗi")
-            return
-        }
-
         let data = await res.json()
 
-        if(!data.result || data.result.length === 0) return
+        if(!data.result) return
 
         for(let update of data.result){
 
@@ -48,12 +46,7 @@ async function checkCommand(){
         }
 
     }catch(e){
-        console.log("⚠️ Lỗi nhẹ khi check command")
-    }
-}
-
-    }catch(e){
-        console.log("Command error")
+        console.log("⚠️ checkCommand lỗi nhẹ")
     }
 }
 
@@ -93,7 +86,7 @@ async function getData(symbol){
 // ================= MAIN =================
 async function scanner(){
 
-console.log("🚀 RUNNING SCANNER...\n")
+console.log("🚀 SCAN...")
 
 let coins=[
 "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
@@ -101,16 +94,14 @@ let coins=[
 "MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
 "INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT",
 "SEIUSDT","TIAUSDT","FILUSDT","AAVEUSDT","RNDRUSDT",
-"GALAUSDT","DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT",
-"KASUSDT","STXUSDT","IMXUSDT","FLOWUSDT","EGLDUSDT",
-"XTZUSDT","KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT",
-"APEUSDT","LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT",
-"CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
+"GALAUSDT","DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT"
 ]
 
 let signals=[]
 
 for(let symbol of coins){
+
+try{
 
 let data=await getData(symbol)
 if(!data) continue
@@ -135,108 +126,82 @@ let low20=Math.min(...lows.slice(-20))
 
 let side=null
 
-// ===== WINRATE CAO =====
-let trendStrong = Math.abs(ema20 - ema50) / price > 0.002
+// ====== LOGIC NÂNG CẤP (WINRATE CAO) ======
 
-// LONG chuẩn
+// LONG mạnh
 if(
-trendStrong &&
 price > ema20 &&
 ema20 > ema50 &&
-r > 55 && r < 70 &&
-volNow > volAvg * 1.5 &&
-price > high20 * 1.002
+r > 60 &&
+volNow > volAvg * 1.8 &&
+price > high20
 ){
 side="LONG"
 }
 
-// SHORT chuẩn
+// SHORT mạnh
 if(
-trendStrong &&
 price < ema20 &&
 ema20 < ema50 &&
-r < 45 && r > 30 &&
-volNow > volAvg * 1.5 &&
-price < low20 * 0.998
+r < 40 &&
+volNow > volAvg * 1.8 &&
+price < low20
 ){
 side="SHORT"
 }
 
-console.log(symbol, "|", side)
-
-// ===== PUSH + STRENGTH =====
 if(side){
 
 let tp,sl
 
 if(side==="LONG"){
-tp=price*1.03
-sl=price*0.99
+tp=price*1.025
+sl=price*0.992
 }else{
-tp=price*0.97
-sl=price*1.01
+tp=price*0.975
+sl=price*1.008
 }
 
-// 🔥 strength xịn
-let strength = 0
-
-strength += (Math.abs(ema20 - ema50) / price) * 1000
-
-if(side==="LONG"){
-    strength += (70 - r)
-}else{
-    strength += (r - 30)
+signals.push({symbol,side,price,tp,sl})
 }
 
-strength += (volNow / volAvg) * 15
-
-if(side==="LONG"){
-    strength += (price / high20) * 80
-}else{
-    strength += (low20 / price) * 80
-}
-
-signals.push({symbol,side,price,tp,sl,strength})
+}catch(e){
+console.log("Lỗi coin:",symbol)
 }
 
 }
 
-// ===== FILTER =====
+// ================= SEND =================
+
 if(signals.length===0){
 console.log("❌ Không có kèo")
 return
 }
 
-signals = signals.filter(c => c.strength > 120)
+let msg="🔥 KÈO XỊN\n"
 
-if(signals.length===0){
-console.log("❌ Không có kèo mạnh")
-return
-}
-
-signals.sort((a,b)=>b.strength-a.strength)
-
-// ===== TELE =====
-let best = signals[0]
-
-let msg=`
-🔥 BEST KÈO
-
-${best.symbol} | ${best.side}
-Entry: ${best.price.toFixed(4)}
-TP: ${best.tp.toFixed(4)}
-SL: ${best.sl.toFixed(4)}
-Power: ${best.strength.toFixed(1)}
+signals.slice(0,3).forEach(c=>{
+msg+=`
+${c.symbol}
+${c.side}
+Entry: ${c.price.toFixed(4)}
+TP: ${c.tp.toFixed(4)}
+SL: ${c.sl.toFixed(4)}
 `
+})
 
 console.log(msg)
-
 await sendTelegram(msg)
 
 }
 
 // ================= LOOP =================
-setInterval(scanner, 60000)
-setInterval(checkCommand, 3000)
 
+// scan mỗi 2 phút (ổn định + không spam)
+setInterval(scanner, 120000)
+
+// check lệnh telegram
+setInterval(checkCommand, 5000)
+
+// chạy ngay lần đầu
 scanner()
