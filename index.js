@@ -3,7 +3,12 @@ const TelegramBot=require("node-telegram-bot-api")
 
 const TOKEN=process.env.BOT_TOKEN
 
-const bot=new TelegramBot(TOKEN,{polling:true})
+const bot=new TelegramBot(TOKEN,{
+polling:{
+autoStart:true,
+interval:300
+}
+})
 
 console.log("BOT STARTED")
 
@@ -47,16 +52,22 @@ return trs.slice(-p).reduce((a,b)=>a+b)/p
 async function getData(symbol){
 
 let urls=[
+
 `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`,
 `https://fapi1.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`,
 `https://fapi2.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`
+
 ]
 
 for(let url of urls){
 
 try{
 
-let res=await fetch(url)
+let res=await fetch(url,{
+headers:{
+"User-Agent":"Mozilla/5.0"
+}
+})
 
 if(res.ok){
 
@@ -80,6 +91,7 @@ async function ultimateFutureScanner(){
 console.log("SCANNING MARKET...")
 
 let coins=[
+
 "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
 "ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
 "MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
@@ -90,13 +102,14 @@ let coins=[
 "XTZUSDT","KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT",
 "APEUSDT","LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT",
 "CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
+
 ]
 
 let signals=[]
 
 for(let symbol of coins){
 
-await sleep(200)
+await sleep(400)
 
 let data=await getData(symbol)
 
@@ -182,9 +195,7 @@ score
 signals.sort((a,b)=>b.score-a.score)
 
 if(signals.length===0){
-
 return "❌ Scan xong 50 coin nhưng chưa có kèo"
-
 }
 
 let msg="🔥 FUTURE SIGNALS\n"
