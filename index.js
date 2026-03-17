@@ -157,31 +157,39 @@ let side=null
 // ====== LOGIC TEST (NỚI NHẸ) ======
 
 // LONG dễ hơn
-if(
-price > ema20 &&
-r > 52
-){
-side="LONG"
-}
+// ====== FIX BIẾN (BẮT BUỘC PHẢI CÓ) ======
 
-// SHORT dễ hơn
+let ema200 = ema(closes.slice(-120),200)
+
+let score = 0
+
+let lastVol = volumes.slice(-4)
+let last4 = closes.slice(-4)
+
+let high50 = Math.max(...highs.slice(-50))
+let low50 = Math.min(...lows.slice(-50))
+
+// ATR đơn giản (giữ logic của bạn)
+let atrVal = (high50 - low50) / 50
+
+let side=null
+
+// ===== TREND =====
 if(ema20>ema50 && ema50>ema200){
-side="LONG"
-score+=60
+    side="LONG"
+    score+=60
 }
 
 if(ema20<ema50 && ema50<ema200){
-side="SHORT"
-score+=60
+    side="SHORT"
+    score+=60
 }
 
-// RSI MOMENTUM
-
+// ===== RSI MOMENTUM =====
 if(side==="LONG" && r>50 && r<65) score+=20
 if(side==="SHORT" && r>35 && r<50) score+=20
 
-// VOLUME BUILDUP (trước khi nổ)
-
+// ===== VOLUME BUILDUP =====
 if(
 lastVol[3]>lastVol[2] &&
 lastVol[2]>lastVol[1]
@@ -189,12 +197,10 @@ lastVol[2]>lastVol[1]
 score+=30
 }
 
-// VOLUME SPIKE
-
+// ===== VOLUME SPIKE =====
 if(volNow>volAvg*2) score+=40
 
-// MOMENTUM
-
+// ===== MOMENTUM =====
 if(side==="LONG" &&
 last4[3]>last4[2] &&
 last4[2]>last4[1]) score+=30
@@ -203,15 +209,14 @@ if(side==="SHORT" &&
 last4[3]<last4[2] &&
 last4[2]<last4[1]) score+=30
 
-// BREAKOUT
-
+// ===== BREAKOUT =====
 if(side==="LONG" && price>high50*0.998) score+=40
 if(side==="SHORT" && price<low50*1.002) score+=40
 
-// VOLATILITY FILTER
-
+// ===== VOLATILITY =====
 if(atrVal/price>0.004) score+=20
 
+// ===== FINAL =====
 if(side && score>=130){
 
 let tp,sl
@@ -232,7 +237,6 @@ tp,
 sl,
 score
 })
-
 }
 }
 
