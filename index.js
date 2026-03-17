@@ -1,85 +1,6 @@
-import fetch from "node-fetch"
-
-const BOT_TOKEN = "8723048606:AAFvk8mQTSOZs_8GcJxiC9-E_-Kw5sEPals"
-const CHAT_ID = "6124977846"
-
-// ================= TELEGRAM =================
-async function sendTelegram(msg){
-    let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
-
-    await fetch(url,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-            chat_id: CHAT_ID,
-            text: msg
-        })
-    })
-}
-
-// ================= INDICATORS =================
-function ema(arr,p){
-    let k=2/(p+1)
-    let e=arr[0]
-    for(let i=1;i<arr.length;i++){
-        e=arr[i]*k+e*(1-k)
-    }
-    return e
-}
-
-function rsi(arr,p=14){
-    let g=0,l=0
-    for(let i=arr.length-p;i<arr.length;i++){
-        let d=arr[i]-arr[i-1]
-        if(d>=0) g+=d
-        else l-=d
-    }
-    let rs=g/(l||1)
-    return 100-(100/(1+rs))
-}
-
-function atr(high,low,close,p=14){
-    let trs=[]
-    for(let i=1;i<high.length;i++){
-        let tr=Math.max(
-            high[i]-low[i],
-            Math.abs(high[i]-close[i-1]),
-            Math.abs(low[i]-close[i-1])
-        )
-        trs.push(tr)
-    }
-    return trs.slice(-p).reduce((a,b)=>a+b)/p
-}
-
-// ================= SCANNER =================
-async function getData(symbol){
-    try{
-        let url=`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`
-        let res=await fetch(url)
-        if(!res.ok) return null
-        return await res.json()
-    }catch{
-        return null
-    }
-}
-
 async function scanner(){
 
-console.clear()
-console.log("🚀 RUNNING SCANNER...")
-
-let coins=[
-"BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
-"ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
-"MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
-"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT",
-"SEIUSDT","TIAUSDT","FILUSDT","AAVEUSDT","RNDRUSDT",
-"GALAUSDT","DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT",
-"KASUSDT","STXUSDT","IMXUSDT","FLOWUSDT","EGLDUSDT",
-"XTZUSDT","KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT",
-"APEUSDT","LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT",
-"CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
-]
+console.log("🚀 ULTIMATE FUTURE SCANNER\n")
 
 let signals=[]
 
@@ -123,69 +44,91 @@ side="SHORT"; score+=60
 }
 
 // RSI
-if(side==="LONG" && r>50 && r<65) score+=20
-if(side==="SHORT" && r>35 && r<50) score+=20
+if(side==="LONG" && r>50 && r<70) score+=20
+if(side==="SHORT" && r>30 && r<50) score+=20
 
 // VOLUME BUILDUP
-if(lastVol[3]>lastVol[2] && lastVol[2]>lastVol[1]) score+=30
+if(lastVol[3]>lastVol[2] && lastVol[2]>lastVol[1]){
+score+=25
+}
 
 // VOLUME SPIKE
-if(volNow>volAvg*2) score+=40
+if(volNow>volAvg*1.8) score+=35
 
 // MOMENTUM
-if(side==="LONG" && last4[3]>last4[2] && last4[2]>last4[1]) score+=30
-if(side==="SHORT" && last4[3]<last4[2] && last4[2]<last4[1]) score+=30
+if(side==="LONG" && last4[3]>last4[2] && last4[2]>last4[1]){
+score+=25
+}
+if(side==="SHORT" && last4[3]<last4[2] && last4[2]<last4[1]){
+score+=25
+}
 
 // BREAKOUT
-if(side==="LONG" && price>high50*0.998) score+=40
-if(side==="SHORT" && price<low50*1.002) score+=40
+if(side==="LONG" && price>high50*0.999){
+score+=30
+}
+if(side==="SHORT" && price<low50*1.001){
+score+=30
+}
 
 // VOLATILITY
-if(atrVal/price>0.004) score+=20
+if(atrVal/price>0.003){
+score+=15
+}
 
-if(side && score>=130){
+// 👉 LOG GIỐNG CONSOLE
+console.log(symbol, "|", side, "| score:", score)
+
+// 👉 LẤY NHIỀU KÈO HƠN
+if(side && score>=100){
 
 let tp,sl
 
 if(side==="LONG"){
-tp=price*1.05
-sl=price*0.985
+tp=price*1.04
+sl=price*0.99
 }else{
-tp=price*0.95
-sl=price*1.015
+tp=price*0.96
+sl=price*1.01
 }
 
 signals.push({symbol,side,price,tp,sl,score})
 }
+
 }
 
 // SORT
 signals.sort((a,b)=>b.score-a.score)
 
-// ================= SEND TELEGRAM =================
+// 👉 FORMAT GIỐNG CONSOLE
 if(signals.length===0){
+
+console.log("❌ Không có kèo mạnh")
+
 await sendTelegram("❌ Không có kèo mạnh")
 return
 }
 
-let msg="🔥 BEST FUTURE SETUPS\n"
+console.log("\n🔥 BEST SETUPS\n")
 
-signals.slice(0,3).forEach(c=>{
-msg+=`
+let msg="🔥 BEST SETUPS\n"
+
+signals.slice(0,5).forEach(c=>{
+
+let line=`
 ${c.symbol}
 ${c.side}
 Entry ${c.price.toFixed(4)}
 TP ${c.tp.toFixed(4)}
 SL ${c.sl.toFixed(4)}
 Score ${c.score}
-\n`
+`
+
+console.log(line)
+
+msg+=line+"\n"
 })
 
 await sendTelegram(msg)
 
 }
-
-// ================= LOOP =================
-setInterval(scanner, 60 * 1000) // chạy mỗi 60s
-
-scanner()
