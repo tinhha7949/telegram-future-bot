@@ -5,12 +5,27 @@ const CHAT_ID = process.env.CHAT_ID
 
 let lastUpdateId = 0
 
+// ================= TIMEOUT FETCH =================
+async function fetchWithTimeout(url, ms=5000){
+    const controller = new AbortController()
+    const timeout = setTimeout(()=>controller.abort(), ms)
+
+    try{
+        const res = await fetch(url,{
+            signal: controller.signal,
+            headers:{ "User-Agent":"Mozilla/5.0" }
+        })
+        clearTimeout(timeout)
+        return res
+    }catch{
+        return null
+    }
+}
+
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
     try{
-        let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
-
-        await fetch(url,{
+        await fetchWithTimeout(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,5000,{
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body: JSON.stringify({
@@ -18,7 +33,7 @@ async function sendTelegram(msg){
                 text: msg
             })
         })
-    }catch(e){
+    }catch{
         console.log("❌ Lỗi gửi Telegram")
     }
 }
@@ -26,28 +41,21 @@ async function sendTelegram(msg){
 // ================= COMMAND =================
 async function checkCommand(){
     try{
-        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`
-        let res = await fetch(url)
-        let data = await res.json()
+        let res = await fetchWithTimeout(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`,5000)
+        if(!res) return
 
+        let data = await res.json()
         if(!data.result) return
 
         for(let update of data.result){
 
             lastUpdateId = update.update_id
 
-            if(!update.message || !update.message.text) continue
-
-            let text = update.message.text
-
-            if(text === "/status"){
+            if(update.message?.text === "/status"){
                 await sendTelegram("🤖 Bot vẫn đang chạy OK!")
             }
         }
-
-    }catch(e){
-        console.log("⚠️ checkCommand lỗi nhẹ")
-    }
+    }catch{}
 }
 
 // ================= INDICATORS =================
@@ -71,7 +79,7 @@ function rsi(arr,p=14){
     return 100-(100/(1+rs))
 }
 
-// ================= DATA (MULTI SOURCE) =================
+// ================= DATA =================
 async function getData(symbol, interval="15m"){
 
     const urls = [
@@ -81,27 +89,15 @@ async function getData(symbol, interval="15m"){
     ]
 
     for(let url of urls){
+        let res = await fetchWithTimeout(url,5000)
+        if(!res || !res.ok) continue
+
         try{
-            let res = await fetch(url,{
-                headers:{
-                    "User-Agent":"Mozilla/5.0"
-                }
-            })
-
-            if(!res.ok) continue
-
             let data = await res.json()
-
-            if(Array.isArray(data) && data.length > 0){
-                return data
-            }
-
-        }catch(e){
-            continue
-        }
+            if(Array.isArray(data) && data.length>0) return data
+        }catch{}
     }
 
-    console.log("❌ Binance lỗi:", symbol)
     return null
 }
 
@@ -123,28 +119,23 @@ let coins=[
 "CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
 ]
 
-let signals=[]
-
-for(let symbol of coins){
+// ⚡ chạy song song
+let results = await Promise.all(coins.map(async symbol=>{
 
 try{
 
-// ===== DATA 2 KHUNG =====
 let data15=await getData(symbol,"15m")
 let data1h=await getData(symbol,"1h")
+if(!data15 || !data1h) return null
 
-if(!data15 || !data1h) continue
-
-let closes=data15.map(x=>parseFloat(x[4]))
-let highs=data15.map(x=>parseFloat(x[2]))
-let lows=data15.map(x=>parseFloat(x[3]))
-let volumes=data15.map(x=>parseFloat(x[5]))
-
-let closes1h=data1h.map(x=>parseFloat(x[4]))
+let closes=data15.map(x=>+x[4])
+let highs=data15.map(x=>+x[2])
+let lows=data15.map(x=>+x[3])
+let volumes=data15.map(x=>+x[5])
+let closes1h=data1h.map(x=>+x[4])
 
 let price=closes.at(-1)
 
-// ===== EMA =====
 let ema20=ema(closes.slice(-40),20)
 let ema50=ema(closes.slice(-80),50)
 let ema200=ema(closes.slice(-120),200)
@@ -152,40 +143,32 @@ let ema200=ema(closes.slice(-120),200)
 let ema20_1h=ema(closes1h.slice(-40),20)
 let ema50_1h=ema(closes1h.slice(-80),50)
 
-// ===== RSI =====
 let r=rsi(closes)
 
-// ===== VOLUME =====
 let volNow=volumes.at(-1)
 let volAvg=volumes.slice(-30).reduce((a,b)=>a+b)/30
 
-// ===== STRUCTURE =====
 let high50=Math.max(...highs.slice(-50))
 let low50=Math.min(...lows.slice(-50))
 
 let last4=closes.slice(-4)
 let lastVol=volumes.slice(-4)
 
-// ===== VOLATILITY =====
 let atrVal=(high50-low50)/50
 
-// ===== FILTER PRO =====
 let distance=Math.abs(price-ema20)/price
 let trendStrength=Math.abs(ema20-ema50)/price
 let lastCandleUp=closes.at(-1)>closes.at(-2)
 
-// ===== LOGIC =====
 let side=null
 let score=0
 
 // TREND
 if(ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h){
-    side="LONG"
-    score+=60
+    side="LONG"; score+=60
 }
 if(ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h){
-    side="SHORT"
-    score+=60
+    side="SHORT"; score+=60
 }
 
 // RSI
@@ -208,51 +191,41 @@ if(side==="SHORT" && price<low50*1.002) score+=40
 if(atrVal/price>0.004) score+=20
 
 // FILTER
-if(distance>0.02) side=null
-if(trendStrength<0.002) side=null
-if(side==="LONG" && !lastCandleUp) side=null
-if(side==="SHORT" && lastCandleUp) side=null
+if(distance>0.02) return null
+if(trendStrength<0.002) return null
+if(side==="LONG" && !lastCandleUp) return null
+if(side==="SHORT" && lastCandleUp) return null
 
-// ===== FINAL =====
-if(side && score>=130){
+if(!side || score<130) return null
 
+// TP SL
 let tp,sl
-
 if(side==="LONG"){
-sl=price*0.985
-tp=price+(price-sl)*2
+    sl=price*0.985
+    tp=price+(price-sl)*2
 }else{
-sl=price*1.015
-tp=price-(sl-price)*2
+    sl=price*1.015
+    tp=price-(sl-price)*2
 }
 
-// RANK + STAR
-let rank=""
-let star=""
+// RANK
+let rank = score>=160 ? "S" : "A"
+let star = score>=160 ? "⭐⭐⭐" : "⭐⭐"
 
-if(score>=160){
-    rank="S"
-    star="⭐⭐⭐"
-}else{
-    rank="A"
-    star="⭐⭐"
+return {symbol,side,price,tp,sl,score,rank,star}
+
+}catch{
+    return null
 }
 
-signals.push({symbol,side,price,tp,sl,score,rank,star})
+}))
 
-}
-
-}catch(e){
-console.log("Lỗi coin:",symbol)
-}
-
-}
-
-// ================= SEND =================
+// lọc null
+let signals = results.filter(x=>x)
 
 if(signals.length===0){
-console.log("❌ Không có kèo")
-return
+    console.log("❌ Không có kèo")
+    return
 }
 
 signals.sort((a,b)=>b.score-a.score)
@@ -272,12 +245,10 @@ Score: ${c.score}
 
 console.log(msg)
 await sendTelegram(msg)
-
 }
 
 // ================= LOOP =================
-
-setInterval(scanner, 120000)
-setInterval(checkCommand, 5000)
+setInterval(scanner,120000)
+setInterval(checkCommand,5000)
 
 scanner()
