@@ -137,8 +137,8 @@ let side=null
 if(
 price > ema20 &&
 ema20 > ema50 &&
-r > 60 &&
-volNow > volAvg * 1.8 &&
+r > 50 &&
+volNow > volAvg * 1.2 &&
 price > high20
 ){
 side="LONG"
@@ -148,8 +148,8 @@ side="LONG"
 if(
 price < ema20 &&
 ema20 < ema50 &&
-r < 40 &&
-volNow > volAvg * 1.8 &&
+r < 50 &&
+volNow > volAvg * 1.0 &&
 price < low20
 ){
 side="SHORT"
