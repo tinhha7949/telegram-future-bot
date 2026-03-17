@@ -71,16 +71,12 @@ function rsi(arr,p=14){
     return 100-(100/(1+rs))
 }
 
-// ================= DATA =================
+// ================= DATA (ĐÃ FIX) =================
 async function getData(symbol){
+
     const urls = [
-        // backup mạnh nhất (ít bị chặn)
         `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=15m&limit=150`,
-        
-        // spot
         `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=150`,
-        
-        // futures (gốc của bạn)
         `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=150`
     ]
 
@@ -88,7 +84,7 @@ async function getData(symbol){
         try{
             let res = await fetch(url,{
                 headers:{
-                    "User-Agent": "Mozilla/5.0"
+                    "User-Agent":"Mozilla/5.0"
                 }
             })
 
@@ -108,7 +104,6 @@ async function getData(symbol){
     console.log("❌ Binance lỗi:", symbol)
     return null
 }
-}
 
 // ================= MAIN =================
 async function scanner(){
@@ -126,7 +121,6 @@ let coins=[
 "XTZUSDT","KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT",
 "APEUSDT","LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT",
 "CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
-
 ]
 
 let signals=[]
@@ -158,9 +152,8 @@ let low20=Math.min(...lows.slice(-20))
 
 let side=null
 
-// ====== LOGIC NÂNG CẤP (WINRATE CAO) ======
+// ====== LOGIC GỐC ======
 
-// LONG mạnh
 if(
 price > ema20 &&
 ema20 > ema50 &&
@@ -171,7 +164,6 @@ price > high20
 side="LONG"
 }
 
-// SHORT mạnh
 if(
 price < ema20 &&
 ema20 < ema50 &&
@@ -229,11 +221,7 @@ await sendTelegram(msg)
 
 // ================= LOOP =================
 
-// scan mỗi 2 phút (ổn định + không spam)
 setInterval(scanner, 120000)
-
-// check lệnh telegram
 setInterval(checkCommand, 5000)
 
-// chạy ngay lần đầu
 scanner()
