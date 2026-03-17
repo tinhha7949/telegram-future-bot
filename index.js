@@ -1,50 +1,8 @@
-const TelegramBot = require("node-telegram-bot-api")
+const fetch=require("node-fetch")
+const TelegramBot=require("node-telegram-bot-api")
 
-const token = process.env.BOT_TOKEN
-const bot = new TelegramBot(token,{polling:true})
-
-let chatIdGlobal=null
-
-bot.onText(/\/start/,async(msg)=>{
-
-chatIdGlobal=msg.chat.id
-
-bot.sendMessage(chatIdGlobal,"🚀 Bot bắt đầu auto scan future...")
-
-startAutoScan()
-
-})
-
-async function startAutoScan(){
-
-while(true){
-
-let result=await futureScanner50()
-
-if(result && chatIdGlobal){
-bot.sendMessage(chatIdGlobal,result)
-}
-
-await new Promise(r=>setTimeout(r,300000)) // 5 phút
-
-}
-
-}
-
-async function futureScanner50(){
-
-let coins=[
-"BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
-"ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
-"MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
-"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT",
-"SEIUSDT","TIAUSDT","FILUSDT","AAVEUSDT","RNDRUSDT",
-"GALAUSDT","DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT",
-"KASUSDT","STXUSDT","IMXUSDT","FLOWUSDT","EGLDUSDT",
-"XTZUSDT","KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT",
-"APEUSDT","LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT",
-"CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
-]
+const TOKEN=process.env.BOT_TOKEN
+const bot=new TelegramBot(TOKEN,{polling:true})
 
 function ema(arr,p){
 let k=2/(p+1)
@@ -66,123 +24,152 @@ let rs=g/(l||1)
 return 100-(100/(1+rs))
 }
 
-async function getKlines(symbol,interval,limit){
+function atr(high,low,close,p=14){
+let trs=[]
+for(let i=1;i<high.length;i++){
+let tr=Math.max(
+high[i]-low[i],
+Math.abs(high[i]-close[i-1]),
+Math.abs(low[i]-close[i-1])
+)
+trs.push(tr)
+}
+return trs.slice(-p).reduce((a,b)=>a+b)/p
+}
 
-try{
+async function getData(symbol){
 
-let url=`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+let url=`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`
 
 let res=await fetch(url)
-
 if(!res.ok) return null
 
 return await res.json()
-
-}catch(e){
-return null
 }
 
-}
+async function ultimateFutureScanner(){
 
-let btc=await getKlines("BTCUSDT","30m",200)
-
-let btcTrend="SIDE"
-
-if(btc){
-
-let btcClose=btc.map(x=>parseFloat(x[4]))
-
-let btcEma50=ema(btcClose.slice(-100),50)
-let btcEma200=ema(btcClose.slice(-200),200)
-
-if(btcEma50>btcEma200) btcTrend="LONG"
-if(btcEma50<btcEma200) btcTrend="SHORT"
-
-}
+let coins=[
+"BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
+"ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
+"MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
+"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT",
+"SEIUSDT","TIAUSDT","FILUSDT","AAVEUSDT","RNDRUSDT",
+"GALAUSDT","DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT",
+"KASUSDT","STXUSDT","IMXUSDT","FLOWUSDT","EGLDUSDT",
+"XTZUSDT","KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT",
+"APEUSDT","LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT",
+"CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
+]
 
 let signals=[]
 
 for(let symbol of coins){
 
-let data=await getKlines(symbol,"30m",120)
-
+let data=await getData(symbol)
 if(!data) continue
 
 let closes=data.map(x=>parseFloat(x[4]))
+let highs=data.map(x=>parseFloat(x[2]))
+let lows=data.map(x=>parseFloat(x[3]))
 let volumes=data.map(x=>parseFloat(x[5]))
 
 let price=closes[closes.length-1]
 
 let ema20=ema(closes.slice(-40),20)
 let ema50=ema(closes.slice(-80),50)
+let ema200=ema(closes.slice(-150),200)
 
 let r=rsi(closes)
 
+let atrVal=atr(highs,lows,closes)
+
 let volNow=volumes[volumes.length-1]
-let volAvg=volumes.slice(-40).reduce((a,b)=>a+b)/40
+let volAvg=volumes.slice(-50).reduce((a,b)=>a+b)/50
+
+let high50=Math.max(...highs.slice(-50))
+let low50=Math.min(...lows.slice(-50))
+
+let last4=closes.slice(-4)
+let lastVol=volumes.slice(-4)
 
 let side=null
 let score=0
 
-if(ema20>ema50 && btcTrend==="LONG"){
+if(ema20>ema50 && ema50>ema200){
 side="LONG"
-score+=50
+score+=60
 }
 
-if(ema20<ema50 && btcTrend==="SHORT"){
+if(ema20<ema50 && ema50<ema200){
 side="SHORT"
-score+=50
+score+=60
 }
 
-if(r>45 && r<60) score+=20
+if(side==="LONG" && r>50 && r<65) score+=20
+if(side==="SHORT" && r>35 && r<50) score+=20
+
+if(lastVol[3]>lastVol[2] && lastVol[2]>lastVol[1]) score+=30
 
 if(volNow>volAvg*2) score+=40
 
-if(side && score>=90){
+if(side==="LONG" && last4[3]>last4[2] && last4[2]>last4[1]) score+=30
+if(side==="SHORT" && last4[3]<last4[2] && last4[2]<last4[1]) score+=30
+
+if(side==="LONG" && price>high50*0.998) score+=40
+if(side==="SHORT" && price<low50*1.002) score+=40
+
+if(atrVal/price>0.004) score+=20
+
+if(side && score>=130){
 
 let tp,sl
 
 if(side==="LONG"){
-tp=price*1.04
-sl=price*0.99
+tp=price*1.05
+sl=price*0.985
 }else{
-tp=price*0.96
-sl=price*1.01
+tp=price*0.95
+sl=price*1.015
 }
 
-signals.push({
-symbol,
-side,
-price,
-tp,
-sl,
-score
-})
-
+signals.push({symbol,side,price,tp,sl,score})
 }
 
 }
 
 signals.sort((a,b)=>b.score-a.score)
 
-if(signals.length===0) return null
+if(signals.length===0){
+return "❌ Không có kèo mạnh"
+}
 
-let text="🔥 FUTURE SIGNAL\n\n"
+let msg="🔥 BEST FUTURE SETUPS\n"
 
-signals.slice(0,2).forEach(c=>{
+signals.slice(0,3).forEach(c=>{
+msg+=`
 
-text+=`${c.symbol}
+${c.symbol}
 ${c.side}
 Entry ${c.price.toFixed(4)}
 TP ${c.tp.toFixed(4)}
 SL ${c.sl.toFixed(4)}
+Score ${c.score}
 
 `
-
 })
 
-return text
-
+return msg
 }
 
-console.log("🤖 Bot đang chạy...")
+bot.onText(/\/start/,async msg=>{
+
+let chatId=msg.chat.id
+
+bot.sendMessage(chatId,"🚀 Đang scan market...")
+
+let result=await ultimateFutureScanner()
+
+bot.sendMessage(chatId,result)
+
+})
