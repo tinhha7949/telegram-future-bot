@@ -1,13 +1,9 @@
-const fetch=require("node-fetch")
 const TelegramBot=require("node-telegram-bot-api")
 
 const TOKEN=process.env.BOT_TOKEN
 
 const bot=new TelegramBot(TOKEN,{
-polling:{
-autoStart:true,
-interval:300
-}
+polling:true
 })
 
 console.log("BOT STARTED")
@@ -16,77 +12,61 @@ function sleep(ms){
 return new Promise(r=>setTimeout(r,ms))
 }
 
-function ema(arr,p){
-let k=2/(p+1)
-let e=arr[0]
-for(let i=1;i<arr.length;i++){
-e=arr[i]*k+e*(1-k)
-}
-return e
-}
-
-function rsi(arr,p=14){
-let g=0,l=0
-for(let i=arr.length-p;i<arr.length;i++){
-let d=arr[i]-arr[i-1]
-if(d>=0) g+=d
-else l-=d
-}
-let rs=g/(l||1)
-return 100-(100/(1+rs))
-}
-
-function atr(high,low,close,p=14){
-let trs=[]
-for(let i=1;i<high.length;i++){
-let tr=Math.max(
-high[i]-low[i],
-Math.abs(high[i]-close[i-1]),
-Math.abs(low[i]-close[i-1])
-)
-trs.push(tr)
-}
-return trs.slice(-p).reduce((a,b)=>a+b)/p
-}
-
-async function getData(symbol){
-
-let urls=[
-
-`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`,
-`https://fapi1.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`,
-`https://fapi2.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`
-
-]
-
-for(let url of urls){
+async function getKline(symbol){
 
 try{
 
-let res=await fetch(url,{
-headers:{
-"User-Agent":"Mozilla/5.0"
-}
-})
-
-if(res.ok){
+let res=await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=120`)
 
 let data=await res.json()
 
-if(Array.isArray(data)) return data
+return data
 
-}
-
-}catch(e){}
-
-}
-
-console.log(symbol,"API FAIL")
+}catch{
 
 return null
+
 }
 
-async function ultimateFutureScanner(){
+}
+
+function ema(data,period){
+
+let k=2/(period+1)
+
+let ema=data[0]
+
+for(let i=1;i<data.length;i++){
+
+ema=data[i]*k+ema*(1-k)
+
+}
+
+return ema
+
+}
+
+function rsi(data){
+
+let gain=0
+let loss=0
+
+for(let i=data.length-15;i<data.length;i++){
+
+let diff=data[i]-data[i-1]
+
+if(diff>0) gain+=diff
+else loss-=diff
+
+}
+
+let rs=gain/(loss||1)
+
+return 100-(100/(1+rs))
+
+}
+
+async function scan(){
 
 console.log("SCANNING MARKET...")
 
@@ -107,85 +87,52 @@ let coins=[
 
 let signals=[]
 
-for(let symbol of coins){
+for(let coin of coins){
 
-await sleep(400)
+await sleep(500)
 
-let data=await getData(symbol)
+let data=await getKline(coin)
 
 if(!data) continue
 
-let closes=data.map(x=>parseFloat(x[4]))
-let highs=data.map(x=>parseFloat(x[2]))
-let lows=data.map(x=>parseFloat(x[3]))
-let volumes=data.map(x=>parseFloat(x[5]))
+let close=data.map(x=>parseFloat(x[4]))
 
-let price=closes[closes.length-1]
+let price=close[close.length-1]
 
-let ema20=ema(closes.slice(-40),20)
-let ema50=ema(closes.slice(-80),50)
-let ema200=ema(closes.slice(-150),200)
+let ema20=ema(close.slice(-40),20)
+let ema50=ema(close.slice(-80),50)
 
-let r=rsi(closes)
+let r=rsi(close)
 
-let atrVal=atr(highs,lows,closes)
-
-let volNow=volumes[volumes.length-1]
-let volAvg=volumes.slice(-50).reduce((a,b)=>a+b)/50
-
-let high50=Math.max(...highs.slice(-50))
-let low50=Math.min(...lows.slice(-50))
-
-let last4=closes.slice(-4)
-let lastVol=volumes.slice(-4)
-
-let side=null
 let score=0
+let side=null
 
-if(ema20>ema50 && ema50>ema200){
+if(ema20>ema50){
+
 side="LONG"
-score+=60
+score+=50
+
 }
 
-if(ema20<ema50 && ema50<ema200){
+if(ema20<ema50){
+
 side="SHORT"
-score+=60
+score+=50
+
 }
 
-if(side==="LONG" && r>50 && r<70) score+=20
-if(side==="SHORT" && r>30 && r<50) score+=20
+if(side==="LONG" && r>55) score+=30
+if(side==="SHORT" && r<45) score+=30
 
-if(lastVol[3]>lastVol[2] && lastVol[2]>lastVol[1]) score+=30
-
-if(volNow>volAvg*1.8) score+=40
-
-if(side==="LONG" && last4[3]>last4[2] && last4[2]>last4[1]) score+=30
-if(side==="SHORT" && last4[3]<last4[2] && last4[2]<last4[1]) score+=30
-
-if(side==="LONG" && price>high50*0.997) score+=40
-if(side==="SHORT" && price<low50*1.003) score+=40
-
-if(atrVal/price>0.003) score+=20
-
-if(side && score>=110){
-
-let tp,sl
-
-if(side==="LONG"){
-tp=price*1.04
-sl=price*0.985
-}else{
-tp=price*0.96
-sl=price*1.015
-}
+if(score>=80){
 
 signals.push({
-symbol,
+
+coin,
 side,
 price,
-tp,
-sl,
 score
+
 })
 
 }
@@ -194,38 +141,83 @@ score
 
 signals.sort((a,b)=>b.score-a.score)
 
-if(signals.length===0){
-return "❌ Scan xong 50 coin nhưng chưa có kèo"
-}
+return signals[0]
 
-let msg="🔥 FUTURE SIGNALS\n"
-
-signals.slice(0,5).forEach(c=>{
-
-msg+=`
-
-${c.symbol}
-${c.side}
-Entry ${c.price.toFixed(4)}
-TP ${c.tp.toFixed(4)}
-SL ${c.sl.toFixed(4)}
-Score ${c.score}
-
-`
-
-})
-
-return msg
 }
 
 bot.onText(/\/start/,async msg=>{
 
-let chatId=msg.chat.id
+let id=msg.chat.id
 
-bot.sendMessage(chatId,"🚀 Đang scan market...")
+bot.sendMessage(id,"🚀 Bot đang scan market...")
 
-let result=await ultimateFutureScanner()
+let signal=await scan()
 
-bot.sendMessage(chatId,result)
+if(!signal){
+
+bot.sendMessage(id,"❌ Chưa có kèo mạnh")
+
+return
+
+}
+
+let tp,sl
+
+if(signal.side==="LONG"){
+
+tp=signal.price*1.03
+sl=signal.price*0.985
+
+}else{
+
+tp=signal.price*0.97
+sl=signal.price*1.015
+
+}
+
+let text=`
+
+🔥 FUTURE SIGNAL
+
+Coin: ${signal.coin}
+
+Side: ${signal.side}
+
+Entry: ${signal.price}
+
+TP: ${tp.toFixed(4)}
+
+SL: ${sl.toFixed(4)}
+
+Score: ${signal.score}
+
+`
+
+bot.sendMessage(id,text)
 
 })
+
+setInterval(async()=>{
+
+let chats=Object.keys(bot._polling._lastUpdate)
+
+if(!chats.length) return
+
+let signal=await scan()
+
+if(!signal) return
+
+for(let id of chats){
+
+bot.sendMessage(id,`🚨 AUTO SIGNAL
+
+${signal.coin}
+${signal.side}
+
+Entry ${signal.price}
+
+`)
+
+}
+
+},300000)
