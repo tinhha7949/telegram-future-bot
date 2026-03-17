@@ -276,7 +276,7 @@ await sendTelegram(msg)
 
 // ================= LOOP =================
 
-setInterval(scanner, 120000)
+setInterval(scanner, 300000)
 setInterval(checkCommand, 5000)
 
 scanner()
