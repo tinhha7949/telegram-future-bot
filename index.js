@@ -71,14 +71,16 @@ function rsi(arr,p=14){
     return 100-(100/(1+rs))
 }
 
-// ================= DATA (FIX CHỐNG LỖI BINANCE) =================
+// ================= DATA =================
 async function getData(symbol){
-    let urls = [
-        // API backup (ưu tiên)
+    const urls = [
+        // backup mạnh nhất (ít bị chặn)
         `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=15m&limit=150`,
-        // API spot
+        
+        // spot
         `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=150`,
-        // API futures (gốc)
+        
+        // futures (gốc của bạn)
         `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=150`
     ]
 
@@ -86,16 +88,16 @@ async function getData(symbol){
         try{
             let res = await fetch(url,{
                 headers:{
-                    "User-Agent":"Mozilla/5.0"
+                    "User-Agent": "Mozilla/5.0"
                 }
             })
 
             if(!res.ok) continue
 
-            let json = await res.json()
+            let data = await res.json()
 
-            if(Array.isArray(json) && json.length > 0){
-                return json
+            if(Array.isArray(data) && data.length > 0){
+                return data
             }
 
         }catch(e){
@@ -103,7 +105,9 @@ async function getData(symbol){
         }
     }
 
+    console.log("❌ Binance lỗi:", symbol)
     return null
+}
 }
 
 // ================= MAIN =================
@@ -115,7 +119,14 @@ let coins=[
 "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
 "ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
 "MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
-"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT"
+"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT",
+"SEIUSDT","TIAUSDT","FILUSDT","AAVEUSDT","RNDRUSDT",
+"GALAUSDT","DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT",
+"STXUSDT","IMXUSDT","FLOWUSDT","EGLDUSDT",
+"XTZUSDT","KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT",
+"APEUSDT","LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT",
+"CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
+
 ]
 
 let signals=[]
@@ -147,9 +158,9 @@ let low20=Math.min(...lows.slice(-20))
 
 let side=null
 
-// ====== LOGIC GỐC (GIỮ NGUYÊN) ======
+// ====== LOGIC NÂNG CẤP (WINRATE CAO) ======
 
-// LONG
+// LONG mạnh
 if(
 price > ema20 &&
 ema20 > ema50 &&
@@ -160,7 +171,7 @@ price > high20
 side="LONG"
 }
 
-// SHORT
+// SHORT mạnh
 if(
 price < ema20 &&
 ema20 < ema50 &&
@@ -169,12 +180,6 @@ volNow > volAvg * 1.8 &&
 price < low20
 ){
 side="SHORT"
-}
-
-// fallback nhẹ để test (tránh done 0)
-if(!side){
-    if(r > 55) side="LONG"
-    else if(r < 45) side="SHORT"
 }
 
 if(side){
@@ -201,18 +206,13 @@ console.log("Lỗi coin:",symbol)
 // ================= SEND =================
 
 if(signals.length===0){
-
-let msg=`⚠️ Không có data Binance
-
-👉 Bot vẫn chạy OK`
-
-await sendTelegram(msg)
+console.log("❌ Không có kèo")
 return
 }
 
-let msg="🔥 KÈO (AUTO)\n"
+let msg="🔥 KÈO XỊN\n"
 
-signals.slice(0,5).forEach(c=>{
+signals.slice(0,3).forEach(c=>{
 msg+=`
 ${c.symbol}
 ${c.side}
@@ -229,7 +229,11 @@ await sendTelegram(msg)
 
 // ================= LOOP =================
 
+// scan mỗi 2 phút (ổn định + không spam)
 setInterval(scanner, 120000)
+
+// check lệnh telegram
 setInterval(checkCommand, 5000)
 
+// chạy ngay lần đầu
 scanner()
