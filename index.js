@@ -154,26 +154,23 @@ let side=null
 
 // ====== LOGIC GỐC ======
 
+// ====== LOGIC TEST (NỚI NHẸ) ======
+
+// LONG dễ hơn
 if(
 price > ema20 &&
-ema20 > ema50 &&
-r > 60 &&
-volNow > volAvg * 1.8 &&
-price > high20
+r > 52
 ){
 side="LONG"
 }
 
+// SHORT dễ hơn
 if(
 price < ema20 &&
-ema20 < ema50 &&
-r < 40 &&
-volNow > volAvg * 1.8 &&
-price < low20
+r < 48
 ){
 side="SHORT"
 }
-
 if(side){
 
 let tp,sl
