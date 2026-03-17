@@ -1,154 +1,172 @@
-const TelegramBot=require("node-telegram-bot-api")
+const TelegramBot = require("node-telegram-bot-api")
+const puppeteer = require("puppeteer")
 
-const TOKEN=process.env.BOT_TOKEN
+const TOKEN = process.env.BOT_TOKEN
 
-if(!TOKEN){
-console.log("BOT_TOKEN missing")
-process.exit(1)
-}
+const bot = new TelegramBot(TOKEN,{polling:true})
 
-const bot=new TelegramBot(TOKEN,{polling:true})
+console.log("BOT RUNNING")
 
-console.log("BOT STARTED")
+bot.onText(/\/scan/, async msg=>{
+
+const chatId = msg.chat.id
+
+bot.sendMessage(chatId,"🚀 Đang scan futures market...")
+
+const browser = await puppeteer.launch({
+args:["--no-sandbox","--disable-setuid-sandbox"]
+})
+
+const page = await browser.newPage()
+
+await page.goto("https://binance.com")
+
+const result = await page.evaluate(async()=>{
+
+async function ultimateFutureScanner(){
+
+let coins=[
+"BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
+"ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
+"MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
+"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT",
+"SEIUSDT","TIAUSDT","FILUSDT","AAVEUSDT","RNDRUSDT",
+"GALAUSDT","DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT",
+"STXUSDT","IMXUSDT","FLOWUSDT","EGLDUSDT","XTZUSDT",
+"KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT","APEUSDT",
+"LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT","CHZUSDT",
+"ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
+]
 
 function sleep(ms){
 return new Promise(r=>setTimeout(r,ms))
 }
 
-async function getKline(symbol){
+function ema(arr,p){
+let k=2/(p+1)
+let e=arr[0]
+for(let i=1;i<arr.length;i++){
+e=arr[i]*k+e*(1-k)
+}
+return e
+}
+
+function rsi(arr,p=14){
+let g=0,l=0
+for(let i=arr.length-p;i<arr.length;i++){
+let d=arr[i]-arr[i-1]
+if(d>=0) g+=d
+else l-=d
+}
+let rs=g/(l||1)
+return 100-(100/(1+rs))
+}
+
+function atr(high,low,close,p=14){
+let trs=[]
+for(let i=1;i<high.length;i++){
+let tr=Math.max(
+high[i]-low[i],
+Math.abs(high[i]-close[i-1]),
+Math.abs(low[i]-close[i-1])
+)
+trs.push(tr)
+}
+return trs.slice(-p).reduce((a,b)=>a+b)/p
+}
+
+async function getData(symbol){
 
 try{
 
-let res=await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=120`)
+let url=`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=200`
 
-let data=await res.json()
+let res=await fetch(url)
 
-if(!Array.isArray(data)){
-console.log("API ERROR",symbol)
-return null
-}
+if(!res.ok) return null
 
-return data
+return await res.json()
 
 }catch(e){
-
-console.log("FETCH FAIL",symbol)
 return null
-
 }
 
 }
-
-function ema(data,period){
-
-let k=2/(period+1)
-let ema=data[0]
-
-for(let i=1;i<data.length;i++){
-ema=data[i]*k+ema*(1-k)
-}
-
-return ema
-}
-
-function rsi(data){
-
-let gain=0
-let loss=0
-
-for(let i=data.length-14;i<data.length;i++){
-
-let diff=data[i]-data[i-1]
-
-if(diff>0) gain+=diff
-else loss-=diff
-
-}
-
-let rs=gain/(loss||1)
-
-return 100-(100/(1+rs))
-
-}
-
-async function scan(){
-
-console.log("SCANNING MARKET")
-
-let coins=[
-
-"BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
-"ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
-"MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
-"APTUSDT","OPUSDT","ARBUSDT","SUIUSDT","SEIUSDT",
-"TIAUSDT","FILUSDT","AAVEUSDT","RNDRUSDT","GALAUSDT",
-"DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT","STXUSDT",
-"IMXUSDT","FLOWUSDT","EGLDUSDT","XTZUSDT","KAVAUSDT",
-"CRVUSDT","SANDUSDT","MANAUSDT","APEUSDT","LDOUSDT",
-"RUNEUSDT","COMPUSDT","SNXUSDT","CHZUSDT","ZILUSDT",
-"1INCHUSDT","BATUSUSDT","ENSUSDT","KSMUSDT","ALGOUSDT"
-
-]
 
 let signals=[]
 
-for(let coin of coins){
+for(let symbol of coins){
 
-await sleep(300)
+await sleep(200)
 
-let data=await getKline(coin)
+let data=await getData(symbol)
 
 if(!data) continue
 
-let close=data.map(x=>parseFloat(x[4]))
+let closes=data.map(x=>parseFloat(x[4]))
+let highs=data.map(x=>parseFloat(x[2]))
+let lows=data.map(x=>parseFloat(x[3]))
+let volumes=data.map(x=>parseFloat(x[5]))
 
-let price=close[close.length-1]
+let price=closes[closes.length-1]
 
-let ema20=ema(close.slice(-40),20)
-let ema50=ema(close.slice(-80),50)
+let ema20=ema(closes.slice(-40),20)
+let ema50=ema(closes.slice(-80),50)
+let ema200=ema(closes.slice(-150),200)
 
-let r=rsi(close)
+let r=rsi(closes)
+let atrVal=atr(highs,lows,closes)
 
-let score=0
+let volNow=volumes[volumes.length-1]
+let volAvg=volumes.slice(-50).reduce((a,b)=>a+b)/50
+
+let high50=Math.max(...highs.slice(-50))
+let low50=Math.min(...lows.slice(-50))
+
+let last4=closes.slice(-4)
+let lastVol=volumes.slice(-4)
+
 let side=null
+let score=0
 
-if(ema20>ema50){
+if(ema20>ema50 && ema50>ema200){
 side="LONG"
-score+=50
+score+=60
 }
 
-if(ema20<ema50){
+if(ema20<ema50 && ema50<ema200){
 side="SHORT"
-score+=50
+score+=60
 }
 
-if(side==="LONG" && r>55) score+=30
-if(side==="SHORT" && r<45) score+=30
+if(side==="LONG" && r>50 && r<65) score+=20
+if(side==="SHORT" && r>35 && r<50) score+=20
 
-if(score>=80){
+if(lastVol[3]>lastVol[2] && lastVol[2]>lastVol[1]) score+=30
+
+if(volNow>volAvg*2) score+=40
+
+if(side==="LONG" && last4[3]>last4[2] && last4[2]>last4[1]) score+=30
+if(side==="SHORT" && last4[3]<last4[2] && last4[2]<last4[1]) score+=30
+
+if(side==="LONG" && price>high50*0.998) score+=40
+if(side==="SHORT" && price<low50*1.002) score+=40
+
+if(atrVal/price>0.004) score+=20
+
+if(side && score>=130){
 
 let tp,sl
 
 if(side==="LONG"){
-
-tp=price*1.03
+tp=price*1.05
 sl=price*0.985
-
 }else{
-
-tp=price*0.97
+tp=price*0.95
 sl=price*1.015
-
 }
 
-signals.push({
-coin,
-side,
-price,
-tp,
-sl,
-score
-})
+signals.push({symbol,side,price,tp,sl,score})
 
 }
 
@@ -156,44 +174,37 @@ score
 
 signals.sort((a,b)=>b.score-a.score)
 
-return signals[0]
-
+if(signals.length===0){
+return "❌ Không có kèo mạnh"
 }
 
-bot.onText(/\/start/,async msg=>{
+let result="🔥 BEST FUTURE SETUPS\n"
 
-let id=msg.chat.id
+signals.slice(0,3).forEach(c=>{
 
-bot.sendMessage(id,"🚀 Bot đang scan 50 coin...")
+result+=`
 
-let signal=await scan()
-
-if(!signal){
-
-bot.sendMessage(id,"❌ Chưa có kèo mạnh")
-
-return
-
-}
-
-let text=`
-
-🔥 FUTURE SIGNAL
-
-Coin: ${signal.coin}
-
-Side: ${signal.side}
-
-Entry: ${signal.price}
-
-TP: ${signal.tp.toFixed(4)}
-
-SL: ${signal.sl.toFixed(4)}
-
-Score: ${signal.score}
+${c.symbol}
+${c.side}
+Entry ${c.price.toFixed(4)}
+TP ${c.tp.toFixed(4)}
+SL ${c.sl.toFixed(4)}
+Score ${c.score}
 
 `
 
-bot.sendMessage(id,text)
+})
+
+return result
+
+}
+
+return await ultimateFutureScanner()
+
+})
+
+await browser.close()
+
+bot.sendMessage(chatId,result)
 
 })
