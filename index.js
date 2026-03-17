@@ -77,7 +77,7 @@ score+=15
 }
 
 // 👉 LOG GIỐNG CONSOLE
-console.log(symbol, "|", side, "| score:", score)
+console.log(symbol, "| side:", side, "| score:", score)
 
 // 👉 LẤY NHIỀU KÈO HƠN
 if(side && score>=100){
@@ -105,7 +105,7 @@ if(signals.length===0){
 
 console.log("❌ Không có kèo mạnh")
 
-await sendTelegram("❌ Không có kèo mạnh")
+await sendTelegram("❌ Không có kèo (market yếu)")
 return
 }
 
