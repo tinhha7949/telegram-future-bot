@@ -168,5 +168,5 @@ await sendTelegram(msg)
 }
 
 // ================= LOOP =================
-setInterval(scanner, 60000) // 5 phút
+setInterval(scanner, 60000) // 1 phút
 scanner()
