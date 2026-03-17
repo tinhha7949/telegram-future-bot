@@ -6,14 +6,14 @@ const CHAT_ID = process.env.CHAT_ID
 let lastUpdateId = 0
 
 // ================= TIMEOUT FETCH =================
-async function fetchWithTimeout(url, ms=5000){
+async function fetchWithTimeout(url, options={}, ms=5000){
     const controller = new AbortController()
     const timeout = setTimeout(()=>controller.abort(), ms)
 
     try{
         const res = await fetch(url,{
-            signal: controller.signal,
-            headers:{ "User-Agent":"Mozilla/5.0" }
+            ...options,
+            signal: controller.signal
         })
         clearTimeout(timeout)
         return res
@@ -23,20 +23,18 @@ async function fetchWithTimeout(url, ms=5000){
 }
 
 // ================= TELEGRAM =================
-async function sendTelegram(msg){
-    try{
-        await fetchWithTimeout(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,5000,{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({
-                chat_id: CHAT_ID,
-                text: msg
-            })
+await fetchWithTimeout(
+    `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+    {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+            chat_id: CHAT_ID,
+            text: msg
         })
-    }catch{
-        console.log("❌ Lỗi gửi Telegram")
-    }
-}
+    },
+    5000
+)
 
 // ================= COMMAND =================
 async function checkCommand(){
