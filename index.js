@@ -165,31 +165,75 @@ side="LONG"
 }
 
 // SHORT dễ hơn
-if(
-price < ema20 &&
-r < 48
-){
-side="SHORT"
+if(ema20>ema50 && ema50>ema200){
+side="LONG"
+score+=60
 }
-if(side){
+
+if(ema20<ema50 && ema50<ema200){
+side="SHORT"
+score+=60
+}
+
+// RSI MOMENTUM
+
+if(side==="LONG" && r>50 && r<65) score+=20
+if(side==="SHORT" && r>35 && r<50) score+=20
+
+// VOLUME BUILDUP (trước khi nổ)
+
+if(
+lastVol[3]>lastVol[2] &&
+lastVol[2]>lastVol[1]
+){
+score+=30
+}
+
+// VOLUME SPIKE
+
+if(volNow>volAvg*2) score+=40
+
+// MOMENTUM
+
+if(side==="LONG" &&
+last4[3]>last4[2] &&
+last4[2]>last4[1]) score+=30
+
+if(side==="SHORT" &&
+last4[3]<last4[2] &&
+last4[2]<last4[1]) score+=30
+
+// BREAKOUT
+
+if(side==="LONG" && price>high50*0.998) score+=40
+if(side==="SHORT" && price<low50*1.002) score+=40
+
+// VOLATILITY FILTER
+
+if(atrVal/price>0.004) score+=20
+
+if(side && score>=130){
 
 let tp,sl
 
 if(side==="LONG"){
-tp=price*1.025
-sl=price*0.992
+tp=price*1.05
+sl=price*0.985
 }else{
-tp=price*0.975
-sl=price*1.008
+tp=price*0.95
+sl=price*1.015
 }
 
-signals.push({symbol,side,price,tp,sl})
-}
+signals.push({
+symbol,
+side,
+price,
+tp,
+sl,
+score
+})
 
-}catch(e){
-console.log("Lỗi coin:",symbol)
 }
-
 }
 
 // ================= SEND =================
