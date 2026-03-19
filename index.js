@@ -110,142 +110,217 @@ async function scanner(){
 
 console.log("🚀 SCAN PRO...")
 
-let coins=[
-"BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
-"ADAUSDT","AVAXUSDT","DOGEUSDT","LINKUSDT","DOTUSDT",
-"MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","NEARUSDT",
-"INJUSDT","APTUSDT","OPUSDT","ARBUSDT","SUIUSDT",
-"SEIUSDT","TIAUSDT","FILUSDT","AAVEUSDT","RNDRUSDT",
-"GALAUSDT","DYDXUSDT","ETCUSDT","ICPUSDT","THETAUSDT",
-"STXUSDT","IMXUSDT","FLOWUSDT","EGLDUSDT",
-"XTZUSDT","KAVAUSDT","CRVUSDT","SANDUSDT","MANAUSDT",
-"APEUSDT","LDOUSDT","RUNEUSDT","COMPUSDT","SNXUSDT",
-"CHZUSDT","ZILUSDT","1INCHUSDT","BATUSDT","ENSUSDT"
+let symbols = [
+  "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","ADAUSDT",
+  "XRPUSDT","DOGEUSDT","DOTUSDT","MATICUSDT","LTCUSDT",
+  "AVAXUSDT","LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT",
+  "ALGOUSDT","VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT",
+  "FILUSDT","CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT",
+  "AAVEUSDT","MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT",
+  "1INCHUSDT","ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT",
+  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
+  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT",
+  "HNTUSDT","RVNUSDT","ANKRUSDT","XEMUSDT","HBARUSDT"
 ]
 
-let signals=[]
+let SCORE_THRESHOLD = 150
+let signals = []
 
-for(let symbol of coins){
+// ================= SCAN SONG SONG =================
+let results = await Promise.allSettled(
+  symbols.map(symbol => scan(symbol))
+)
 
-try{
+results.forEach((r, i) => {
+  if (r.status === "fulfilled" && r.value) signals.push(r.value)
+  else if (r.status === "rejected") console.error("Scan failed:", symbols[i], r.reason)
+})
 
-// ===== DATA 2 KHUNG =====
-let data15=await getData(symbol,"15m")
-let data1h=await getData(symbol,"1h")
+// ================= LỌC & SORT =================
+signals = signals.filter(s => s.score >= SCORE_THRESHOLD)  // chỉ kèo đẹp
+signals.sort((a,b) => b.score - a.score)                  // kèo mạnh nhất lên đầu
 
-if(!data15 || !data1h) continue
+console.table(signals)
 
-let closes=data15.map(x=>parseFloat(x[4]))
-let highs=data15.map(x=>parseFloat(x[2]))
-let lows=data15.map(x=>parseFloat(x[3]))
-let volumes=data15.map(x=>parseFloat(x[5]))
+// ================= CONFIG =================
+const LIMIT_15M = 300
+const LIMIT_1H  = 200
+const RISK_PER_TRADE = 0.01
+const ACCOUNT_BALANCE = 1000
+const MIN_VOL_15M = 100000  // volume tối thiểu 15m (tùy coin)
 
-let closes1h=data1h.map(x=>parseFloat(x[4]))
+async function scan(symbol){
+    // ===== LOAD DATA =====
+    let data15 = await getData(symbol,"15m",LIMIT_15M)
+    let data1h = await getData(symbol,"1h",LIMIT_1H)
 
-let price=closes.at(-1)
+    if(!data15 || !data1h) return null
+    if(data15.length < 250 || data1h.length < 120) return null
 
-// ===== EMA =====
-let ema20=ema(closes.slice(-40),20)
-let ema50=ema(closes.slice(-80),50)
-let ema200=ema(closes.slice(-120),200)
+    // ===== PARSE =====
+    let closes = data15.map(x=>+x[4])
+    let highs  = data15.map(x=>+x[2])
+    let lows   = data15.map(x=>+x[3])
+    let volumes= data15.map(x=>+x[5])
+    let closes1h = data1h.map(x=>+x[4])
 
-let ema20_1h=ema(closes1h.slice(-40),20)
-let ema50_1h=ema(closes1h.slice(-80),50)
+    let price = closes.at(-1)
 
-// ===== RSI =====
-let r=rsi(closes)
+    // ===== FILTER LIQUIDITY / VOLUME =====
+    let volAvg = volumes.slice(-30).reduce((a,b)=>a+b)/30
+    if(volAvg < MIN_VOL_15M) return null  // loại coin low liquidity
 
-// ===== VOLUME =====
-let volNow=volumes.at(-1)
-let volAvg=volumes.slice(-30).reduce((a,b)=>a+b)/30
+    // ================= INDICATORS =================
+    let ema20  = ema(closes.slice(-60),20)
+    let ema50  = ema(closes.slice(-120),50)
+    let ema200 = ema(closes.slice(-250),200)
 
-// ===== STRUCTURE =====
-let high50=Math.max(...highs.slice(-50))
-let low50=Math.min(...lows.slice(-50))
+    let ema20_1h = ema(closes1h.slice(-60),20)
+    let ema50_1h = ema(closes1h.slice(-120),50)
 
-let last4=closes.slice(-4)
-let lastVol=volumes.slice(-4)
+    let r = rsi(closes.slice(-50))
+    let atrVal = atr(data15.slice(-100))
 
-// ===== VOLATILITY =====
-let atrVal=(high50-low50)/50
+    // ================= PRE-CALC =================
+    let highs50 = highs.slice(-50)
+    let lows50  = lows.slice(-50)
+    let vol5    = volumes.slice(-5)
+    let last4   = closes.slice(-4)
 
-// ===== FILTER PRO =====
-let distance=Math.abs(price-ema20)/price
-let trendStrength=Math.abs(ema20-ema50)/price
-let lastCandleUp=closes.at(-1)>closes.at(-2)
+    let high50 = Math.max(...highs50)
+    let low50  = Math.min(...lows50)
 
-// ===== LOGIC =====
-let side=null
-let score=0
+    let volTrendUp = vol5.every((v,i,a)=> i===0 || v>=a[i-1])
 
-// TREND 2 KHUNG
-if(ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h){
-    side="LONG"
-    score+=60
+    let momentumUp = last4[3]>last4[2] && last4[2]>last4[1] && last4[1]>last4[0]
+    let momentumDown = last4[3]<last4[2] && last4[2]<last4[1] && last4[1]<last4[0]
+
+    let prevHigh = Math.max(...highs.slice(-25,-5))
+    let prevLow  = Math.min(...lows.slice(-25,-5))
+
+    let bosUp   = price > prevHigh
+    let bosDown = price < prevLow
+
+    let prevHigh50 = Math.max(...highs.slice(-51,-1))
+    let prevLow50  = Math.min(...lows.slice(-51,-1))
+
+    let sweepHigh = highs.at(-2) > prevHigh50 && closes.at(-2) < prevHigh50
+    let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
+
+    let pullbackLong  = price < ema20*1.01 && price > ema20*0.995
+    let pullbackShort = price > ema20*0.99 && price < ema20*1.005
+
+    // ================= MARKET REGIME =================
+    let range = (high50 - low50) / price
+    if(range < 0.01) return null
+
+    // ================= FILTER =================
+    let distance = Math.abs(price-ema20)/price
+    let trendStrength = Math.abs(ema20-ema50)/price
+    let lastCandleUp = closes.at(-1) > closes.at(-2)
+    let volNow = volumes.at(-1)
+    let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.98
+    let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.02
+    let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
+
+    // ================= LOGIC =================
+    let side = null
+    let score = 0
+
+    // TREND
+    if(ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h){
+        side="LONG"; score+=50
+    }
+    if(ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h){
+        side="SHORT"; score+=50
+    }
+
+    // BOS
+    if(side==="LONG" && bosUp) score+=40
+    if(side==="SHORT" && bosDown) score+=40
+
+    // SWEEP
+    if(side==="LONG" && sweepLow) score+=50
+    if(side==="SHORT" && sweepHigh) score+=50
+
+    // RSI
+    if(side==="LONG" && r>50 && r<65) score+=10
+    if(side==="SHORT" && r>35 && r<50) score+=10
+
+    // VOLUME
+    if(volTrendUp) score+=15
+    if(volNow > volAvg*1.8) score+=10
+
+    // MOMENTUM
+    if(side==="LONG" && momentumUp) score+=20
+    if(side==="SHORT" && momentumDown) score+=20
+
+    // PULLBACK
+    if(side==="LONG" && pullbackLong) score+=30
+    if(side==="SHORT" && pullbackShort) score+=30
+
+    // VOLATILITY
+    if(atrVal/price > 0.004) score+=10
+
+    // ================= FILTER FINAL =================
+    if(distance > (atrVal/price)*2) side=null
+    if(trendStrength < 0.002) side=null
+    if(fakePump || fakeDump) side=null
+    if(candleMove > 0.035) side=null
+    if(side==="LONG" && !lastCandleUp) side=null
+    if(side==="SHORT" && lastCandleUp) side=null
+
+    // ================= FINAL =================
+    if(!side || score < 165) return null
+
+    let sl, tp
+    if(side==="LONG"){
+        sl = price - atrVal*1.3
+        tp = price + atrVal*3
+    }else{
+        sl = price + atrVal*1.3
+        tp = price - atrVal*3
+    }
+
+    // ===== POSITION SIZE =====
+    let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
+    let lossPerUnit = Math.abs(price - sl)
+    let size = risk / lossPerUnit
+
+    // ===== TRAILING =====
+    let beTrigger = atrVal * 1.2
+    let trailTrigger = atrVal * 2
+
+    let rank = score>=180 ? "S+" : score>=165 ? "S" : "A"
+
+    return {
+        symbol,
+        side,
+        price,
+        tp,
+        sl,
+        size,
+        score,
+        rank,
+        beTrigger,
+        trailTrigger
+    }
 }
 
-if(ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h){
-    side="SHORT"
-    score+=60
+// ================= ATR =================
+function atr(data, period=14){
+    let trs=[]
+    for(let i=1;i<data.length;i++){
+        let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
+        trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
+    }
+    return trs.slice(-period).reduce((a,b)=>a+b)/period
 }
 
-// RSI
-if(side==="LONG" && r>50 && r<65) score+=20
-if(side==="SHORT" && r>35 && r<50) score+=20
-
-// VOLUME
-if(lastVol[3]>lastVol[2] && lastVol[2]>lastVol[1]) score+=30
-if(volNow>volAvg*2) score+=40
-
-// MOMENTUM
-if(side==="LONG" && last4[3]>last4[2] && last4[2]>last4[1]) score+=30
-if(side==="SHORT" && last4[3]<last4[2] && last4[2]<last4[1]) score+=30
-
-// BREAKOUT
-if(side==="LONG" && price>high50*0.998) score+=40
-if(side==="SHORT" && price<low50*1.002) score+=40
-
-// VOLATILITY
-if(atrVal/price>0.004) score+=20
-
-// ===== FILTER THÔNG MINH =====
-
-// tránh đu đỉnh
-if(distance>0.02) side=null
-
-// tránh sideway
-if(trendStrength<0.002) side=null
-
-// confirm nến
-if(side==="LONG" && !lastCandleUp) side=null
-if(side==="SHORT" && lastCandleUp) side=null
-
-// ===== FINAL =====
-if(side && score>=130){
-
-let tp,sl
-
-if(side==="LONG"){
-sl=price*0.985
-tp=price+(price-sl)*2
-}else{
-sl=price*1.015
-tp=price-(sl-price)*2
-}
-
-// rank
-let rank = score>=160 ? "S" : "A"
-let star = score>=160 ? "⭐⭐⭐" : "⭐⭐"
-
-signals.push({symbol,side,price,tp,sl,score,rank})
-
-}
-
-}catch(e){
-console.log("Lỗi coin:",symbol)
-}
-
-}
+let results = await Promise.allSettled(coins.map(symbol => scan(symbol)))
+let signals = results
+    .filter(r => r.status === 'fulfilled' && r.value)
+    .map(r => r.value)
 
 // ================= SEND =================
 
@@ -277,6 +352,6 @@ await sendTelegram(msg)
 // ================= LOOP =================
 
 setInterval(scanner, 300000)
-setInterval(checkCommand, 5000)
+setInterval(checkCommand, 10000)
 
 scanner()
