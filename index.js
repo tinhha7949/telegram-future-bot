@@ -1,7 +1,13 @@
-import fetch from "node-fetch"
-
+// ================= CONFIG =================
 const BOT_TOKEN = process.env.BOT_TOKEN
 const CHAT_ID = process.env.CHAT_ID
+
+const SCORE_THRESHOLD = 165
+const LIMIT_15M = 300
+const LIMIT_1H  = 200
+const RISK_PER_TRADE = 0.01
+const ACCOUNT_BALANCE = 1000
+const MIN_VOL_15M = 100000  // volume tối thiểu 15m (tùy coin)
 
 let lastUpdateId = 0
 
@@ -9,7 +15,6 @@ let lastUpdateId = 0
 async function sendTelegram(msg){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
-
         await fetch(url,{
             method:"POST",
             headers:{"Content-Type":"application/json"},
@@ -19,7 +24,7 @@ async function sendTelegram(msg){
             })
         })
     }catch(e){
-        console.log("❌ Lỗi gửi Telegram")
+        console.log("❌ Lỗi gửi Telegram:", e.message)
     }
 }
 
@@ -29,24 +34,17 @@ async function checkCommand(){
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`
         let res = await fetch(url)
         let data = await res.json()
-
         if(!data.result) return
-
         for(let update of data.result){
-
             lastUpdateId = update.update_id
-
             if(!update.message || !update.message.text) continue
-
             let text = update.message.text
-
             if(text === "/status"){
                 await sendTelegram("🤖 Bot vẫn đang chạy OK!")
             }
         }
-
     }catch(e){
-        console.log("⚠️ checkCommand lỗi nhẹ")
+        console.log("⚠️ checkCommand lỗi nhẹ:", e.message)
     }
 }
 
@@ -71,31 +69,33 @@ function rsi(arr,p=14){
     return 100-(100/(1+rs))
 }
 
-// ================= DATA =================
-async function getData(symbol){
+function atr(data, period=14){
+    let trs=[]
+    for(let i=1;i<data.length;i++){
+        let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
+        trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
+    }
+    return trs.slice(-period).reduce((a,b)=>a+b)/period
+}
 
+// ================= DATA =================
+async function getData(symbol, interval, limit){
     const urls = [
-        `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=15m&limit=150`,
-        `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=150`,
-        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=150`
+        `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+        `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
     ]
 
     for(let url of urls){
         try{
             let res = await fetch(url,{
-                headers:{
-                    "User-Agent":"Mozilla/5.0"
-                }
+                headers:{"User-Agent":"Mozilla/5.0"}
             })
-
             if(!res.ok) continue
-
             let data = await res.json()
-
             if(Array.isArray(data) && data.length > 0){
                 return data
             }
-
         }catch(e){
             continue
         }
@@ -105,55 +105,11 @@ async function getData(symbol){
     return null
 }
 
-// ================= MAIN =================
-async function scanner(){
-
-console.log("🚀 SCAN PRO...")
-
-let symbols = [
-  "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","ADAUSDT",
-  "XRPUSDT","DOGEUSDT","DOTUSDT","MATICUSDT","LTCUSDT",
-  "AVAXUSDT","LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT",
-  "ALGOUSDT","VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT",
-  "FILUSDT","CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT",
-  "AAVEUSDT","MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT",
-  "1INCHUSDT","ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT",
-  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT",
-  "HNTUSDT","RVNUSDT","ANKRUSDT","XEMUSDT","HBARUSDT"
-]
-
-let SCORE_THRESHOLD = 150
-let signals = []
-
-// ================= SCAN SONG SONG =================
-let results = await Promise.allSettled(
-  symbols.map(symbol => scan(symbol))
-)
-
-results.forEach((r, i) => {
-  if (r.status === "fulfilled" && r.value) signals.push(r.value)
-  else if (r.status === "rejected") console.error("Scan failed:", symbols[i], r.reason)
-})
-
-// ================= LỌC & SORT =================
-signals = signals.filter(s => s.score >= SCORE_THRESHOLD)  // chỉ kèo đẹp
-signals.sort((a,b) => b.score - a.score)                  // kèo mạnh nhất lên đầu
-
-console.table(signals)
-
-// ================= CONFIG =================
-const LIMIT_15M = 300
-const LIMIT_1H  = 200
-const RISK_PER_TRADE = 0.01
-const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 100000  // volume tối thiểu 15m (tùy coin)
-
+// ================= SCAN =================
 async function scan(symbol){
     // ===== LOAD DATA =====
     let data15 = await getData(symbol,"15m",LIMIT_15M)
     let data1h = await getData(symbol,"1h",LIMIT_1H)
-
     if(!data15 || !data1h) return null
     if(data15.length < 250 || data1h.length < 120) return null
 
@@ -163,21 +119,18 @@ async function scan(symbol){
     let lows   = data15.map(x=>+x[3])
     let volumes= data15.map(x=>+x[5])
     let closes1h = data1h.map(x=>+x[4])
-
     let price = closes.at(-1)
 
-    // ===== FILTER LIQUIDITY / VOLUME =====
+    // ===== FILTER LIQUIDITY =====
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b)/30
-    if(volAvg < MIN_VOL_15M) return null  // loại coin low liquidity
+    if(volAvg < MIN_VOL_15M) return null
 
     // ================= INDICATORS =================
     let ema20  = ema(closes.slice(-60),20)
     let ema50  = ema(closes.slice(-120),50)
     let ema200 = ema(closes.slice(-250),200)
-
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
-
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
 
@@ -186,31 +139,21 @@ async function scan(symbol){
     let lows50  = lows.slice(-50)
     let vol5    = volumes.slice(-5)
     let last4   = closes.slice(-4)
-
     let high50 = Math.max(...highs50)
     let low50  = Math.min(...lows50)
-
     let volTrendUp = vol5.every((v,i,a)=> i===0 || v>=a[i-1])
-
     let momentumUp = last4[3]>last4[2] && last4[2]>last4[1] && last4[1]>last4[0]
     let momentumDown = last4[3]<last4[2] && last4[2]<last4[1] && last4[1]<last4[0]
-
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
-
     let bosUp   = price > prevHigh
     let bosDown = price < prevLow
-
     let prevHigh50 = Math.max(...highs.slice(-51,-1))
     let prevLow50  = Math.min(...lows.slice(-51,-1))
-
     let sweepHigh = highs.at(-2) > prevHigh50 && closes.at(-2) < prevHigh50
     let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
-
     let pullbackLong  = price < ema20*1.01 && price > ema20*0.995
     let pullbackShort = price > ema20*0.99 && price < ema20*1.005
-
-    // ================= MARKET REGIME =================
     let range = (high50 - low50) / price
     if(range < 0.01) return null
 
@@ -228,12 +171,8 @@ async function scan(symbol){
     let score = 0
 
     // TREND
-    if(ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h){
-        side="LONG"; score+=50
-    }
-    if(ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h){
-        side="SHORT"; score+=50
-    }
+    if(ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h){ side="LONG"; score+=50 }
+    if(ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h){ side="SHORT"; score+=50 }
 
     // BOS
     if(side==="LONG" && bosUp) score+=40
@@ -271,70 +210,53 @@ async function scan(symbol){
     if(side==="SHORT" && lastCandleUp) side=null
 
     // ================= FINAL =================
-    if(!side || score < 165) return null
+    if(!side || score < SCORE_THRESHOLD) return null
 
     let sl, tp
-    if(side==="LONG"){
-        sl = price - atrVal*1.3
-        tp = price + atrVal*3
-    }else{
-        sl = price + atrVal*1.3
-        tp = price - atrVal*3
-    }
+    if(side==="LONG"){ sl = price - atrVal*1.3; tp = price + atrVal*3 }
+    else{ sl = price + atrVal*1.3; tp = price - atrVal*3 }
 
-    // ===== POSITION SIZE =====
     let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
     let lossPerUnit = Math.abs(price - sl)
     let size = risk / lossPerUnit
-
-    // ===== TRAILING =====
     let beTrigger = atrVal * 1.2
     let trailTrigger = atrVal * 2
-
     let rank = score>=180 ? "S+" : score>=165 ? "S" : "A"
 
-    return {
-        symbol,
-        side,
-        price,
-        tp,
-        sl,
-        size,
-        score,
-        rank,
-        beTrigger,
-        trailTrigger
+    return { symbol, side, price, tp, sl, size, score, rank, beTrigger, trailTrigger }
+}
+
+// ================= SCANNER =================
+async function scanner(){
+    console.log("🚀 SCAN PRO...")
+    let symbols = [
+        "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","ADAUSDT",
+        "XRPUSDT","DOGEUSDT","DOTUSDT","MATICUSDT","LTCUSDT",
+        "AVAXUSDT","LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT",
+        "ALGOUSDT","VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT",
+        "FILUSDT","CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT",
+        "AAVEUSDT","MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT",
+        "1INCHUSDT","ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT",
+        "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
+        "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT",
+        "HNTUSDT","RVNUSDT","ANKRUSDT","XEMUSDT","HBARUSDT"
+    ]
+
+    let results = await Promise.allSettled(symbols.map(symbol => scan(symbol)))
+    let signals = results
+        .filter(r => r.status==="fulfilled" && r.value)
+        .map(r => r.value)
+
+    if(signals.length===0){
+        console.log("❌ Không có kèo")
+        return
     }
-}
 
-// ================= ATR =================
-function atr(data, period=14){
-    let trs=[]
-    for(let i=1;i<data.length;i++){
-        let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
-        trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
-    }
-    return trs.slice(-period).reduce((a,b)=>a+b)/period
-}
+    signals = signals.sort((a,b)=>b.score-a.score)
 
-let results = await Promise.allSettled(coins.map(symbol => scan(symbol)))
-let signals = results
-    .filter(r => r.status === 'fulfilled' && r.value)
-    .map(r => r.value)
-
-// ================= SEND =================
-
-if(signals.length===0){
-console.log("❌ Không có kèo")
-return
-}
-
-signals.sort((a,b)=>b.score-a.score)
-
-let msg="🔥 PRO SIGNAL\n"
-
-signals.slice(0,3).forEach(c=>{
-msg+=`
+    let msg="🔥 PRO SIGNAL\n"
+    signals.slice(0,3).forEach(c=>{
+        msg+=`
 ${c.symbol} (${c.rank})
 ${c.side}
 Entry: ${c.price.toFixed(4)}
@@ -342,16 +264,19 @@ TP: ${c.tp.toFixed(4)}
 SL: ${c.sl.toFixed(4)}
 Score: ${c.score}
 `
-})
+    })
 
-console.log(msg)
-await sendTelegram(msg)
-
+    console.log(msg)
+    await sendTelegram(msg)
 }
 
 // ================= LOOP =================
+setInterval(() => { scanner().catch(e=>console.error("Lỗi scanner:",e)) }, 300000)
+setInterval(() => { checkCommand().catch(e=>console.error("Lỗi checkCommand:",e)) }, 10000)
 
-setInterval(scanner, 300000)
-setInterval(checkCommand, 10000)
-
-scanner()
+// ================= RUN =================
+async function main(){
+    await scanner()
+    await checkCommand()
+}
+main().catch(e => console.error("Lỗi main:", e))
