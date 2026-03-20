@@ -5,7 +5,9 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 130 
+const SCORE_THRESHOLD = 130
+const EARLY_THRESHOLD = 80
+
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
 const MIN_VOL_15M = 100000
@@ -41,7 +43,7 @@ async function checkCommand(){
             let text = u.message.text
 
             if(text === "/status"){
-                await sendTelegram("🤖 BOT đang chạy OK")
+                await sendTelegram("🤖 BOT SMART đang chạy OK")
             }
 
             if(text === "/backtest"){
@@ -102,7 +104,7 @@ async function getData(symbol, interval, limit){
     return null
 }
 
-// ================= CORE LOGIC =================
+// ================= CORE =================
 function coreLogic(data15, data1h){
 
     let closes = data15.map(x=>+x[4])
@@ -186,28 +188,18 @@ function coreLogic(data15, data1h){
     if(candleMove > 0.035) return null
     if(trendStrength < 0.002) return null
 
-    if(score >= SCORE_THRESHOLD){
-        type="MAIN"
+    // ===== RETURN =====
+    return {
+        side,
+        price,
+        score,
+        earlyScore,
+        earlySide,
+        type,
+        tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
+        sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
+        vol: volNow
     }
-    else if(earlyScore >= 70){
-        side = earlySide
-        score = earlyScore
-        type="EARLY"
-    }
-    else return null
-
-    if(!side) return null
-
-    let sl,tp
-    if(side==="LONG"){
-        sl = price - atrVal*1.2
-        tp = price + atrVal*2.5
-    }else{
-        sl = price + atrVal*1.2
-        tp = price - atrVal*2.5
-    }
-
-    return { side, tp, sl, price, score, type }
 }
 
 // ================= SCAN =================
@@ -219,12 +211,66 @@ async function scan(symbol){
     let r = coreLogic(data15, data1h)
     if(!r) return null
 
+    return { symbol, ...r }
+}
+
+// ================= SCANNER (SMART SELECT) =================
+async function scanner(){
+
+    console.log("🚀 SMART SCAN...")
+
+    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT"]
+
+    let results = await Promise.allSettled(symbols.map(scan))
+
+    let signals = results
+        .filter(r=>r.status==="fulfilled" && r.value)
+        .map(r=>r.value)
+
+    if(signals.length===0){
+        console.log("❌ No signal")
+        return
+    }
+
+    // ===== MAIN =====
+    let main = signals.filter(s => s.score >= SCORE_THRESHOLD)
+
+    let best = null
+
+    if(main.length > 0){
+        main.sort((a,b)=> b.score - a.score || b.vol - a.vol)
+        best = main[0]
+        best.type="MAIN"
+    }else{
+        let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
+        if(early.length === 0) return
+
+        early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
+        best = early[0]
+        best.side = best.earlySide
+        best.score = best.earlyScore
+        best.type="EARLY"
+    }
+
+    // ===== SIZE =====
     let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
-    if(r.type==="EARLY") risk *= 0.5
+    if(best.type==="EARLY") risk *= 0.5
 
-    let size = risk / Math.abs(r.price - r.sl)
+    let size = risk / Math.abs(best.price - best.sl)
 
-    return { symbol, ...r, size }
+    let msg = `🔥 BEST SIGNAL
+
+${best.symbol} (${best.type})
+${best.side}
+Entry: ${best.price.toFixed(4)}
+TP: ${best.tp.toFixed(4)}
+SL: ${best.sl.toFixed(4)}
+Size: ${size.toFixed(2)}
+Score: ${best.score}
+`
+
+    console.log(msg)
+    await sendTelegram(msg)
 }
 
 // ================= BACKTEST =================
@@ -242,8 +288,12 @@ async function backtest(symbol){
         let idx1h = Math.floor(i/4)
         let slice1h = data1h.slice(Math.max(0, idx1h-150), idx1h)
 
-        let sig = coreLogic(slice15, slice1h)
-        if(!sig) continue
+        let r = coreLogic(slice15, slice1h)
+        if(!r) continue
+
+        let side = r.score>=SCORE_THRESHOLD ? r.side : r.earlySide
+        let tp = r.tp
+        let sl = r.sl
 
         let result=null
 
@@ -251,12 +301,12 @@ async function backtest(symbol){
             let h=+data15[j][2]
             let l=+data15[j][3]
 
-            if(sig.side==="LONG"){
-                if(l<=sig.sl){ result="SL"; break }
-                if(h>=sig.tp){ result="TP"; break }
+            if(side==="LONG"){
+                if(l<=sl){ result="SL"; break }
+                if(h>=tp){ result="TP"; break }
             }else{
-                if(h>=sig.sl){ result="SL"; break }
-                if(l<=sig.tp){ result="TP"; break }
+                if(h>=sl){ result="SL"; break }
+                if(l<=tp){ result="TP"; break }
             }
         }
 
@@ -267,73 +317,6 @@ async function backtest(symbol){
 
     let winrate = total ? (win/total*100).toFixed(2) : 0
     return { total, win, loss, winrate }
-}
-
-// ================= SCANNER =================
-async function scanner(){
-
-    console.log("🚀 BOT 3 FINAL...")
-
-    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-  "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-  "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-  "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-  "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-  "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-  "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
-
-    let results = await Promise.allSettled(symbols.map(scan))
-
-    let signals = results
-        .filter(r=>r.status==="fulfilled" && r.value)
-        .map(r=>r.value)
-
-    if(signals.length===0){
-        console.log("❌ No signal")
-        return
-    }
-
-    // lọc kèo >= 130
-signals = signals.filter(c => c.score >= 130)
-
-if(signals.length === 0){
-    console.log("❌ No signal >=130")
-    return
-}
-
-// lấy kèo mạnh nhất
-signals.sort((a,b)=>b.score-a.score)
-let best = signals[0]
-
-// chỉ gửi 1 kèo
-let msg = `🔥 BEST SIGNAL
-
-${best.symbol} (${best.type})
-${best.side}
-Entry: ${best.price.toFixed(4)}
-TP: ${best.tp.toFixed(4)}
-SL: ${best.sl.toFixed(4)}
-Size: ${best.size.toFixed(2)}
-Score: ${best.score}
-`
-
-console.log(msg)
-await sendTelegram(msg)
-        msg+=`
-${c.symbol} (${c.type})
-${c.side}
-Entry: ${c.price.toFixed(4)}
-TP: ${c.tp.toFixed(4)}
-SL: ${c.sl.toFixed(4)}
-Size: ${c.size.toFixed(2)}
-Score: ${c.score}
-`
-    })
-
-    console.log(msg)
-    await sendTelegram(msg)
 }
 
 // ================= LOOP =================
