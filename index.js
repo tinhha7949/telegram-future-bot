@@ -5,6 +5,11 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
+const SCORE_THRESHOLD = 150
+const RISK_PER_TRADE = 0.01
+const ACCOUNT_BALANCE = 1000
+const MIN_VOL_15M = 100000
+
 let lastUpdateId = 0
 
 // ================= TELEGRAM =================
@@ -20,7 +25,7 @@ async function sendTelegram(msg){
             })
         })
     }catch(e){
-        console.log("❌ Lỗi gửi Telegram:", e.message)
+        console.log("❌ Telegram:", e.message)
     }
 }
 
@@ -32,34 +37,23 @@ async function checkCommand(){
         let data = await res.json()
         if(!data.result) return
 
-        for(let update of data.result){
-            lastUpdateId = update.update_id
-            if(!update.message || !update.message.text) continue
+        for(let u of data.result){
+            lastUpdateId = u.update_id
+            if(!u.message?.text) continue
 
-            let text = update.message.text
-
-            if(text === "/status"){
-                await sendTelegram("🤖 Bot vẫn đang chạy OK!")
-            }
-
-            if(text === "/backtest"){
-                await sendTelegram("⏳ Đang backtest BTCUSDT...")
-                let result = await backtest("BTCUSDT")
-                await sendTelegram(`📊 BACKTEST\n${JSON.stringify(result,null,2)}`)
+            if(u.message.text === "/status"){
+                await sendTelegram("🤖 BOT 3 đang chạy OK")
             }
         }
     }catch(e){
-        console.log("⚠️ checkCommand lỗi:", e.message)
+        console.log("⚠️ CMD:", e.message)
     }
 }
 
 // ================= INDICATORS =================
 function ema(arr,p){
-    let k=2/(p+1)
-    let e=arr[0]
-    for(let i=1;i<arr.length;i++){
-        e=arr[i]*k+e*(1-k)
-    }
+    let k=2/(p+1), e=arr[0]
+    for(let i=1;i<arr.length;i++) e=arr[i]*k+e*(1-k)
     return e
 }
 
@@ -74,18 +68,18 @@ function rsi(arr,p=14){
     return 100-(100/(1+rs))
 }
 
-function atr(data, period=14){
+function atr(data, p=14){
     let trs=[]
     for(let i=1;i<data.length;i++){
         let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
         trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
     }
-    return trs.slice(-period).reduce((a,b)=>a+b)/period
+    return trs.slice(-p).reduce((a,b)=>a+b,0)/p
 }
 
 // ================= DATA =================
 async function getData(symbol, interval, limit){
-    const urls = [
+    const urls=[
         `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
         `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
         `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
@@ -93,156 +87,164 @@ async function getData(symbol, interval, limit){
 
     for(let url of urls){
         try{
-            let res = await fetch(url,{ headers:{"User-Agent":"Mozilla/5.0"} })
+            let res=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}})
             if(!res.ok) continue
-            let data = await res.json()
-            if(Array.isArray(data) && data.length > 0){
-                return data
-            }
+            let data=await res.json()
+            if(Array.isArray(data)&&data.length>0) return data
         }catch(e){}
     }
 
-    console.log("❌ Binance lỗi:", symbol)
+    console.log("❌ DATA:", symbol)
     return null
 }
 
-// ================= CORE =================
-function scanCore(symbol, data15, data1h){
-
-    if(data15.length < 150 || data1h.length < 30) return null
-
-    let closes = data15.map(x=>+x[4])
-    let volumes= data15.map(x=>+x[5])
-    let closes1h = data1h.map(x=>+x[4])
-
-    let price = closes.at(-2)
-
-    let ema20  = ema(closes.slice(-50,-2),20)
-    let ema50  = ema(closes.slice(-100,-2),50)
-
-    let ema20_1h = ema(closes1h.slice(-50),20)
-    let ema50_1h = ema(closes1h.slice(-100),50)
-
-    let r = rsi(closes.slice(-30,-2))
-    let atrVal = atr(data15.slice(-50,-2))
-
-    let volAvg = volumes.slice(-30,-2).reduce((a,b)=>a+b)/28
-    let volNow = volumes.at(-2)
-
-    let side=null, score=0
-
-    if(ema20 > ema50 && ema20_1h > ema50_1h){
-        side="LONG"; score+=50
-    }
-
-    if(ema20 < ema50 && ema20_1h < ema50_1h){
-        side="SHORT"; score+=50
-    }
-
-    if(side==="LONG" && r>50) score+=10
-    if(side==="SHORT" && r<50) score+=10
-
-    if(volNow > volAvg*1.1) score+=10
-
-    if(!side || score < 60) return null
-
-    let sl,tp
-
-    if(side==="LONG"){
-        sl = price - atrVal
-        tp = price + atrVal*2
-    }else{
-        sl = price + atrVal
-        tp = price - atrVal*2
-    }
-
-    return { symbol, side, price, tp, sl, score }
-}
-
-// ================= SCAN =================
+// ================= CORE BOT 3 =================
 async function scan(symbol){
+
     let data15 = await getData(symbol,"15m",LIMIT_15M)
     let data1h = await getData(symbol,"1h",LIMIT_1H)
     if(!data15 || !data1h) return null
-    return scanCore(symbol, data15, data1h)
-}
+    if(data15.length<250 || data1h.length<120) return null
 
-// ================= BACKTEST =================
-async function backtest(symbol){
-    let data15 = await getData(symbol,"15m",1500)
-    let data1h = await getData(symbol,"1h",500)
+    let closes = data15.map(x=>+x[4])
+    let highs  = data15.map(x=>+x[2])
+    let lows   = data15.map(x=>+x[3])
+    let volumes= data15.map(x=>+x[5])
+    let closes1h = data1h.map(x=>+x[4])
 
-    if(!data15 || !data1h) return { error:"no data" }
+    let price = closes.at(-1)
 
-    let win=0, loss=0, total=0
+    let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
+    if(volAvg < MIN_VOL_15M) return null
 
-    for(let i=150;i<data15.length-50;i++){
+    // ===== INDICATOR =====
+    let ema20  = ema(closes.slice(-60),20)
+    let ema50  = ema(closes.slice(-120),50)
+    let ema200 = ema(closes.slice(-250),200)
 
-        let slice15 = data15.slice(0,i)
-        let idx1h = Math.floor(i/4)
-        let slice1h = data1h.slice(Math.max(0, idx1h-120), idx1h)
+    let ema20_1h = ema(closes1h.slice(-60),20)
+    let ema50_1h = ema(closes1h.slice(-120),50)
 
-        if(slice1h.length < 30) continue
+    let r = rsi(closes.slice(-50))
+    let atrVal = atr(data15.slice(-100))
 
-        let signal = scanCore(symbol, slice15, slice1h)
-        if(!signal) continue
+    let last4 = closes.slice(-4)
+    let momentumUp = last4[3]>last4[2] && last4[2]>last4[1]
+    let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
 
-        let { side, tp, sl } = signal
-        let result=null
+    let volNow = volumes.at(-1)
+    let volSpike = volNow > volAvg*1.3
 
-        for(let j=i+1;j<i+40;j++){
-            let h=+data15[j][2]
-            let l=+data15[j][3]
+    // ===== TREND =====
+    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
+    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
-            if(side==="LONG"){
-                if(l<=sl){ result="SL"; break }
-                if(h>=tp){ result="TP"; break }
-            }else{
-                if(h>=sl){ result="SL"; break }
-                if(l<=tp){ result="TP"; break }
-            }
-        }
+    // ===== BOS =====
+    let prevHigh = Math.max(...highs.slice(-25,-5))
+    let prevLow  = Math.min(...lows.slice(-25,-5))
+    let bosUp   = price > prevHigh
+    let bosDown = price < prevLow
 
-        if(result==="TP") win++
-        else loss++
+    // ===== MAIN =====
+    let side=null, score=0, type="MAIN"
 
-        total++
+    if(trendLong){ side="LONG"; score+=50 }
+    if(trendShort){ side="SHORT"; score+=50 }
+
+    if(side==="LONG" && bosUp) score+=40
+    if(side==="SHORT" && bosDown) score+=40
+
+    if(side==="LONG" && r>50 && r<65) score+=10
+    if(side==="SHORT" && r>35 && r<50) score+=10
+
+    if(volSpike) score+=10
+
+    if(side==="LONG" && momentumUp) score+=20
+    if(side==="SHORT" && momentumDown) score+=20
+
+    // ===== EARLY =====
+    let earlySide=null, earlyScore=0
+
+    if(trendLong){
+        earlySide="LONG"
+        earlyScore=50
+        if(momentumUp) earlyScore+=20
+        if(r>50) earlyScore+=10
+        if(volSpike) earlyScore+=10
     }
 
-    let winrate = total ? (win/total*100).toFixed(2) : 0
+    if(trendShort){
+        earlySide="SHORT"
+        earlyScore=50
+        if(momentumDown) earlyScore+=20
+        if(r<50) earlyScore+=10
+        if(volSpike) earlyScore+=10
+    }
 
-    return { total, win, loss, winrate }
+    // ===== SELECT =====
+    if(score >= SCORE_THRESHOLD){
+        type="MAIN"
+    }else if(earlyScore >= 70){
+        side=earlySide
+        score=earlyScore
+        type="EARLY"
+    }else return null
+
+    if(!side) return null
+
+    // ===== SL TP =====
+    let sl,tp
+    if(side==="LONG"){
+        sl = price - atrVal*1.2
+        tp = price + atrVal*2.5
+    }else{
+        sl = price + atrVal*1.2
+        tp = price - atrVal*2.5
+    }
+
+    // ===== SIZE =====
+    let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
+    if(type==="EARLY") risk *= 0.5
+
+    let lossPerUnit = Math.abs(price-sl)
+    let size = risk / lossPerUnit
+
+    let rank = type==="MAIN" ? "S" : "B"
+
+    return { symbol, side, price, tp, sl, size, score, rank, type }
 }
 
 // ================= SCANNER =================
 async function scanner(){
-    console.log("🚀 SCAN PRO...")
+    console.log("🚀 BOT 3 SCAN...")
 
-    let symbols = ["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-    "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-    "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-    "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-    "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-    "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-    "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-    "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-    "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+    let symbols = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT"]
 
-    let results = await Promise.allSettled(symbols.map(symbol => scan(symbol)))
+    let results = await Promise.allSettled(symbols.map(scan))
+
     let signals = results
-        .filter(r => r.status==="fulfilled" && r.value)
-        .map(r => r.value)
+        .filter(r=>r.status==="fulfilled" && r.value)
+        .map(r=>r.value)
 
     if(signals.length===0){
-        console.log("❌ Không có kèo")
+        console.log("❌ No signal")
         return
     }
 
-    signals = signals.sort((a,b)=>b.score-a.score)
+    signals.sort((a,b)=>b.score-a.score)
 
-    let msg="🔥 PRO SIGNAL\n"
+    let msg="🔥 BOT 3 SIGNAL\n"
+
     signals.slice(0,3).forEach(c=>{
-        msg+=`\n${c.symbol} ${c.side}\nEntry:${c.price.toFixed(4)}\nTP:${c.tp.toFixed(4)}\nSL:${c.sl.toFixed(4)}\nScore:${c.score}\n`
+        msg+=`
+${c.symbol} (${c.rank}-${c.type})
+${c.side}
+Entry: ${c.price.toFixed(4)}
+TP: ${c.tp.toFixed(4)}
+SL: ${c.sl.toFixed(4)}
+Size: ${c.size.toFixed(2)}
+Score: ${c.score}
+`
     })
 
     console.log(msg)
@@ -250,8 +252,8 @@ async function scanner(){
 }
 
 // ================= LOOP =================
-setInterval(() => scanner(), 300000)
-setInterval(() => checkCommand(), 5000)
+setInterval(()=>scanner(),300000)   // 5 phút
+setInterval(()=>checkCommand(),10000)
 
 // ================= RUN =================
 async function main(){
