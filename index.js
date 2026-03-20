@@ -2,16 +2,10 @@
 const BOT_TOKEN = process.env.BOT_TOKEN
 const CHAT_ID = process.env.CHAT_ID
 
-const SCORE_THRESHOLD = 80 
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
-const RISK_PER_TRADE = 0.01
-const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 100000
 
 let lastUpdateId = 0
-let activeTrades = []
-let lastSignals = []
 
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
@@ -52,47 +46,6 @@ async function checkCommand(){
                 await sendTelegram("⏳ Đang backtest BTCUSDT...")
                 let result = await backtest("BTCUSDT")
                 await sendTelegram(`📊 BACKTEST\n${JSON.stringify(result,null,2)}`)
-            }
-
-            // ===== ADD TRADE =====
-            if(text.startsWith("/add")){
-                let parts = text.split(" ")
-                let symbol = parts[1]
-                let side = parts[2]
-
-                let sig = lastSignals.find(s => s.symbol === symbol)
-
-                if(!sig){
-                    await sendTelegram("❌ Không tìm thấy kèo gần nhất")
-                    continue
-                }
-
-                activeTrades.push({
-                    symbol,
-                    side,
-                    entry: sig.price,
-                    tp: sig.tp,
-                    sl: sig.sl,
-                    status: "RUNNING"
-                })
-
-                await sendTelegram(`📌 Đã lưu lệnh ${symbol} ${side}`)
-            }
-
-            // ===== LIST =====
-            if(text === "/list"){
-                if(activeTrades.length === 0){
-                    await sendTelegram("❌ Không có lệnh")
-                    continue
-                }
-
-                let msg = "📊 LỆNH ĐANG CHẠY\n"
-
-                activeTrades.forEach(t=>{
-                    msg += `\n${t.symbol} ${t.side} (${t.status})`
-                })
-
-                await sendTelegram(msg)
             }
         }
     }catch(e){
@@ -261,54 +214,19 @@ async function backtest(symbol){
     return { total, win, loss, winrate }
 }
 
-// ================= MONITOR =================
-async function monitorTrades(){
-
-    for(let trade of activeTrades){
-
-        if(trade.status !== "RUNNING") continue
-
-        let data = await getData(trade.symbol,"15m",2)
-        if(!data) continue
-
-        let h = +data[1][2]
-        let l = +data[1][3]
-
-        if(trade.side==="LONG"){
-            if(l <= trade.sl){
-                trade.status="LOSS"
-                await sendTelegram(`❌ ${trade.symbol} SL`)
-            }
-            if(h >= trade.tp){
-                trade.status="WIN"
-                await sendTelegram(`✅ ${trade.symbol} TP`)
-            }
-        }else{
-            if(h >= trade.sl){
-                trade.status="LOSS"
-                await sendTelegram(`❌ ${trade.symbol} SL`)
-            }
-            if(l <= trade.tp){
-                trade.status="WIN"
-                await sendTelegram(`✅ ${trade.symbol} TP`)
-            }
-        }
-    }
-}
-
 // ================= SCANNER =================
 async function scanner(){
     console.log("🚀 SCAN PRO...")
 
     let symbols = ["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-  "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-  "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-  "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-  "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-  "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-  "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+    "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
+    "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
+    "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
+    "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
+    "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
+    "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
+    "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
+    "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
 
     let results = await Promise.allSettled(symbols.map(symbol => scan(symbol)))
     let signals = results
@@ -322,10 +240,8 @@ async function scanner(){
 
     signals = signals.sort((a,b)=>b.score-a.score)
 
-    lastSignals = signals.slice(0,3)
-
     let msg="🔥 PRO SIGNAL\n"
-    lastSignals.forEach(c=>{
+    signals.slice(0,3).forEach(c=>{
         msg+=`\n${c.symbol} ${c.side}\nEntry:${c.price.toFixed(4)}\nTP:${c.tp.toFixed(4)}\nSL:${c.sl.toFixed(4)}\nScore:${c.score}\n`
     })
 
@@ -336,7 +252,6 @@ async function scanner(){
 // ================= LOOP =================
 setInterval(() => scanner(), 300000)
 setInterval(() => checkCommand(), 5000)
-setInterval(() => monitorTrades(), 10000)
 
 // ================= RUN =================
 async function main(){
