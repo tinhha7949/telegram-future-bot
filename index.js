@@ -308,6 +308,10 @@ if(r.score >= SCORE_THRESHOLD){
 }else{
     continue
 }
+        if(!side) continue
+if(!r.tp || !r.sl) continue
+if(isNaN(r.tp) || isNaN(r.sl)) continue
+        
         let tp = r.tp
         let sl = r.sl
 
