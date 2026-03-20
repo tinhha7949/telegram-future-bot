@@ -5,9 +5,9 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 120       // tín hiệu mạnh
-const EARLY_THRESHOLD = 90       // early entry
-const SCORE_FALLBACK  = 70       // fallback trung bình
+const SCORE_THRESHOLD = 100       // tín hiệu mạnh
+const EARLY_THRESHOLD = 50       // early entry
+const SCORE_FALLBACK  = 50      // fallback trung bình
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
