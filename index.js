@@ -392,6 +392,7 @@ async function backtest(symbol){
 }
 
 // ===== chọn MAIN hoặc EARLY chuẩn =====
+// ===== chọn MAIN hoặc EARLY chuẩn =====
 if(r.score >= SCORE_THRESHOLD){
     side = r.side
 }
@@ -399,7 +400,41 @@ else if(r.earlyScore >= EARLY_THRESHOLD){
     side = r.earlySide
 }
 else{
-    continue // ❌ bỏ kèo yếu
+    continue
+}
+
+// ===== check lỗi =====
+if(!side) continue
+if(!r.tp || !r.sl) continue
+
+let tp = r.tp
+let sl = r.sl
+
+if(isNaN(tp) || isNaN(sl)) continue
+
+let result=null
+
+for(let j=i+1;j<i+40;j++){
+    let h=+data15[j][2]
+    let l=+data15[j][3]
+
+    if(side==="LONG"){
+        if(l<=sl){ result="SL"; break }
+        if(h>=tp){ result="TP"; break }
+    }else{
+        if(h>=sl){ result="SL"; break }
+        if(l<=tp){ result="TP"; break }
+    }
+}
+
+if(result==="TP") win++
+else loss++
+total++
+}
+
+let winrate = total ? (win/total*100).toFixed(2) : 0
+return { total, win, loss, winrate }
+}
 }
 
 // ===== check lỗi =====
