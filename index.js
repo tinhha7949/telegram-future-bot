@@ -5,8 +5,9 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 120 
-const EARLY_THRESHOLD = 70 
+const SCORE_THRESHOLD = 150       // tín hiệu mạnh
+const EARLY_THRESHOLD = 120       // early entry
+const SCORE_FALLBACK  = 100       // fallback trung bình
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -114,14 +115,12 @@ function coreLogic(data15, data1h, isBacktest=false){
     let closes1h = data1h.map(x=>+x[4])
 
     let price = closes.at(-1)
-
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     if(!isBacktest && volAvg < MIN_VOL_15M) return null
 
     let ema20  = ema(closes.slice(-60),20)
     let ema50  = ema(closes.slice(-120),50)
-    let ema200 = closes.length >= 200 ? ema(closes.slice(-250),200) : ema50
-
+    let ema200 = closes.length>=200 ? ema(closes.slice(-250),200) : ema50
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
 
@@ -135,70 +134,58 @@ function coreLogic(data15, data1h, isBacktest=false){
     let volNow = volumes.at(-1)
     let volSpike = volNow > volAvg*1.3
 
-    let trendLong = ema20>ema50 && ema20_1h>ema50_1h
-    let trendShort = ema20<ema50 && ema20_1h<ema50_1h
-
-    if(closes.length >= 200){
-        trendLong = trendLong && ema50>ema200
-        trendShort = trendShort && ema50<ema200
-    }
+    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
+    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
     let bosUp   = price > prevHigh
     let bosDown = price < prevLow
 
-    let side=null, score=0
+    // ===== MAIN =====
+    let side=null, score=0, type="MAIN"
 
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
-
     if(side==="LONG" && bosUp) score+=40
     if(side==="SHORT" && bosDown) score+=40
-
     if(side==="LONG" && r>50 && r<65) score+=10
     if(side==="SHORT" && r>35 && r<50) score+=10
-
     if(volSpike) score+=10
-
     if(side==="LONG" && momentumUp) score+=20
     if(side==="SHORT" && momentumDown) score+=20
 
+    // ===== EARLY (flexible như Bot 1) =====
     let earlySide=null, earlyScore=0
-
     if(trendLong){
-        earlySide="LONG"
-        earlyScore=50
+        earlySide="LONG"; earlyScore=50
         if(r>50) earlyScore+=10
         if(volNow > volAvg*1.1) earlyScore+=10
         if(momentumUp) earlyScore+=10
     }
-
     if(trendShort){
-        earlySide="SHORT"
-        earlyScore=50
+        earlySide="SHORT"; earlyScore=50
         if(r<50) earlyScore+=10
         if(volNow > volAvg*1.1) earlyScore+=10
         if(momentumDown) earlyScore+=10
     }
 
+    // ===== FILTER =====
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
-
     if(!isBacktest && range < 0.01) return null
     if(!isBacktest && candleMove > 0.035) return null
     if(!isBacktest && trendStrength < 0.002) return null
 
-    // ✅ FIX BACKTEST
-    if(!side && !earlySide) return null
-
+    // ===== RETURN =====
     return {
         side,
         price,
         score,
         earlyScore,
         earlySide,
+        type,
         tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
         sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
         vol: volNow
@@ -210,10 +197,8 @@ async function scan(symbol){
     let data15 = await getData(symbol,"15m",LIMIT_15M)
     let data1h = await getData(symbol,"1h",LIMIT_1H)
     if(!data15 || !data1h) return null
-
     let r = coreLogic(data15, data1h)
     if(!r) return null
-
     return { symbol, ...r }
 }
 
@@ -223,48 +208,51 @@ async function scanner(){
     console.log("🚀 SMART SCAN...")
 
     let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-  "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-  "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-  "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-  "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-  "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-  "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+        "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
+        "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
+        "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
+        "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
+        "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
+        "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
+        "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
+        "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
 
     let results = await Promise.allSettled(symbols.map(scan))
+    let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
+    if(signals.length===0){ console.log("❌ No signal"); return }
 
-    let signals = results
-        .filter(r=>r.status==="fulfilled" && r.value)
-        .map(r=>r.value)
-
-    if(signals.length===0){
-        console.log("❌ No signal")
-        return
-    }
-
+    // ===== SMART SELECT: MAIN -> EARLY -> FALLBACK =====
     let main = signals.filter(s => s.score >= SCORE_THRESHOLD)
-
     let best = null
 
-    if(main.length > 0){
+    if(main.length>0){
         main.sort((a,b)=> b.score - a.score || b.vol - a.vol)
         best = main[0]
         best.type="MAIN"
     }else{
         let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
-        if(early.length === 0) return
-
-        early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
-        best = early[0]
-        best.side = best.earlySide
-        best.score = best.earlyScore
-        best.type="EARLY"
+        if(early.length>0){
+            early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
+            best = early[0]
+            best.side = best.earlySide
+            best.score = best.earlyScore
+            best.type="EARLY"
+        }else{
+            let fallback = signals.filter(s=>s.score>=SCORE_FALLBACK)
+            if(fallback.length>0){
+                fallback.sort((a,b)=> b.score - a.score || b.vol - a.vol)
+                best = fallback[0]
+                best.type="FALLBACK"
+            }
+        }
     }
 
+    if(!best) return
+
+    // ===== SIZE RISK =====
     let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
     if(best.type==="EARLY") risk *= 0.5
-
+    if(best.type==="FALLBACK") risk *= 0.3
     let size = risk / Math.abs(best.price - best.sl)
 
     let msg = `🔥 BEST SIGNAL
@@ -301,35 +289,18 @@ async function backtest(symbol){
         if(!r) continue
 
         let side = null
-
-        // ✅ BACKTEST THOÁNG HƠN (FIX = 0)
-if(r.score >= SCORE_THRESHOLD){
-    side = r.side
-}
-else if(r.earlyScore >= EARLY_THRESHOLD){
-    side = r.earlySide
-}
-// 🔥 thêm fallback để test
-else if(r.score >= 100){
-    side = r.side
-}
-else{
-    continue
-}
-
-        if(!side) continue
-        if(!r.tp || !r.sl) continue
-        if(isNaN(r.tp) || isNaN(r.sl)) continue
+        if(r.score >= SCORE_THRESHOLD) side = r.side
+        else if(r.earlyScore >= EARLY_THRESHOLD) side = r.earlySide
+        else if(r.score >= SCORE_FALLBACK) side = r.side
+        else continue
 
         let tp = r.tp
         let sl = r.sl
+        if(!tp || !sl || isNaN(tp) || isNaN(sl)) continue
 
         let result=null
-
         for(let j=i+1;j<i+40;j++){
-            let h=+data15[j][2]
-            let l=+data15[j][3]
-
+            let h=+data15[j][2], l=+data15[j][3]
             if(side==="LONG"){
                 if(l<=sl){ result="SL"; break }
                 if(h>=tp){ result="TP"; break }
@@ -340,7 +311,6 @@ else{
         }
 
         if(!result) continue
-
         if(result==="TP") win++
         else loss++
         total++
@@ -351,8 +321,8 @@ else{
 }
 
 // ================= LOOP =================
-setInterval(()=>scanner(),300000)
-setInterval(()=>checkCommand(),10000)
+setInterval(()=>scanner(),300000)  // 5 phút
+setInterval(()=>checkCommand(),10000) // check telegram command
 
 // ================= RUN =================
 scanner()
