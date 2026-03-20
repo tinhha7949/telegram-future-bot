@@ -2,7 +2,7 @@
 const BOT_TOKEN = process.env.BOT_TOKEN
 const CHAT_ID = process.env.CHAT_ID
 
-const SCORE_THRESHOLD = 150
+const SCORE_THRESHOLD = 80 
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 const RISK_PER_TRADE = 0.01
