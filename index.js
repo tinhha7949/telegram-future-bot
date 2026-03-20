@@ -113,7 +113,8 @@ async function getData(symbol, interval, limit){
 // ================= COER (NEW) =================
 function scanCore(symbol, data15, data1h){
 
-    if(data15.length < 200 || data1h.length < 30) return null
+    // 👉 nới điều kiện để không bị null sớm
+    if(data15.length < 150 || data1h.length < 30) return null
 
     let closes = data15.map(x=>+x[4])
     let highs  = data15.map(x=>+x[2])
@@ -121,59 +122,54 @@ function scanCore(symbol, data15, data1h){
     let volumes= data15.map(x=>+x[5])
     let closes1h = data1h.map(x=>+x[4])
 
+    // 👉 dùng nến đóng
     let price = closes.at(-2)
 
+    let ema20  = ema(closes.slice(-50,-2),20)
+    let ema50  = ema(closes.slice(-100,-2),50)
+    let ema200 = ema(closes.slice(-150,-2),200)
+
+    let ema20_1h = ema(closes1h.slice(-50),20)
+    let ema50_1h = ema(closes1h.slice(-100),50)
+
+    let r = rsi(closes.slice(-30,-2))
+    let atrVal = atr(data15.slice(-50,-2))
+
     let volAvg = volumes.slice(-30,-2).reduce((a,b)=>a+b)/28
-    if(volAvg < MIN_VOL_15M) return null
-
-    let ema20  = ema(closes.slice(-60,-2),20)
-    let ema50  = ema(closes.slice(-120,-2),50)
-    let ema200 = ema(closes.slice(-200,-2),200)
-
-    let ema20_1h = ema(closes1h.slice(-60),20)
-    let ema50_1h = ema(closes1h.slice(-120),50)
-
-    let r = rsi(closes.slice(-50,-2))
-    let atrVal = atr(data15.slice(-100,-2))
-
-    let high50 = Math.max(...highs.slice(-50,-2))
-    let low50  = Math.min(...lows.slice(-50,-2))
-
-    let prevHigh = Math.max(...highs.slice(-25,-5))
-    let prevLow  = Math.min(...lows.slice(-25,-5))
-
-    let bosUp   = price > prevHigh
-    let bosDown = price < prevLow
-
-    let sweepHigh = highs.at(-3) > high50 && closes.at(-3) < high50
-    let sweepLow  = lows.at(-3) < low50 && closes.at(-3) > low50
+    let volNow = volumes.at(-2)
 
     let side=null, score=0
 
-    if(ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h){
+    // ===== TREND =====
+    if(ema20 > ema50 && ema20_1h > ema50_1h){
         side="LONG"; score+=50
     }
 
-    if(ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h){
+    if(ema20 < ema50 && ema20_1h < ema50_1h){
         side="SHORT"; score+=50
     }
 
-    if(side==="LONG" && (bosUp || sweepLow)) score+=40
-    if(side==="SHORT" && (bosDown || sweepHigh)) score+=40
-
+    // ===== RSI =====
     if(side==="LONG" && r>50) score+=10
     if(side==="SHORT" && r<50) score+=10
 
-    if(!side || score < SCORE_THRESHOLD) return null
+    // ===== VOLUME =====
+    if(volNow > volAvg*1.1) score+=10
+
+    // 👉 QUAN TRỌNG: KHÔNG cho return sớm quá
+    if(!side) return null
+
+    // 👉 hạ threshold riêng cho backtest
+    if(score < 60) return null
 
     let sl,tp
 
     if(side==="LONG"){
-        sl = price - atrVal*1.3
-        tp = price + atrVal*2.5
+        sl = price - atrVal
+        tp = price + atrVal*2
     }else{
-        sl = price + atrVal*1.3
-        tp = price - atrVal*2.5
+        sl = price + atrVal
+        tp = price - atrVal*2
     }
 
     return { symbol, side, price, tp, sl, score }
@@ -195,25 +191,35 @@ async function backtest(symbol){
 
     if(!data15 || !data1h) return { error:"no data" }
 
-    let win=0, loss=0
+    let win=0, loss=0, total=0
 
-    for(let i=300;i<data15.length-50;i++){
+    for(let i=150;i<data15.length-50;i++){
 
         let slice15 = data15.slice(0,i)
 
         let idx1h = Math.floor(i/4)
-        let slice1h = data1h.slice(Math.max(0, idx1h-200), idx1h)
 
-        if(slice1h.length < 60) continue
+        // 👉 FIX CHUẨN: luôn có đủ data 1H
+        let slice1h = data1h.slice(Math.max(0, idx1h-120), idx1h)
+
+        if(slice1h.length < 30) continue
 
         let signal = scanCore(symbol, slice15, slice1h)
+
+        // 👉 DEBUG (giữ lại để kiểm tra)
+        if(signal){
+            console.log("SIGNAL at", i)
+        }
+
         if(!signal) continue
 
         let { side, tp, sl } = signal
         let result=null
 
-        for(let j=i+1;j<i+50;j++){
-            let h=+data15[j][2], l=+data15[j][3]
+        for(let j=i+1;j<i+40;j++){
+
+            let h=+data15[j][2]
+            let l=+data15[j][3]
 
             if(side==="LONG"){
                 if(l<=sl){ result="SL"; break }
@@ -226,9 +232,10 @@ async function backtest(symbol){
 
         if(result==="TP") win++
         else loss++
+
+        total++
     }
 
-    let total = win+loss
     let winrate = total ? (win/total*100).toFixed(2) : 0
 
     return { total, win, loss, winrate }
