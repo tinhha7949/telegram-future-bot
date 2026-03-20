@@ -291,9 +291,28 @@ async function backtest(symbol){
         let r = coreLogic(slice15, slice1h)
         if(!r) continue
 
-        let side = r.score>=SCORE_THRESHOLD ? r.side : r.earlySide
-        let tp = r.tp
-        let sl = r.sl
+        let side = null
+
+// ===== chọn MAIN hoặc EARLY chuẩn =====
+if(r.score >= SCORE_THRESHOLD){
+    side = r.side
+}
+else if(r.earlyScore >= EARLY_THRESHOLD){
+    side = r.earlySide
+}
+else{
+    continue // ❌ bỏ kèo yếu
+}
+
+// ===== check lỗi =====
+if(!side) continue
+if(!r.tp || !r.sl) continue
+
+let tp = r.tp
+let sl = r.sl
+
+// ❗ tránh NaN
+if(isNaN(tp) || isNaN(sl)) continue
 
         let result=null
 
