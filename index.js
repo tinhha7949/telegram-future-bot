@@ -94,7 +94,7 @@ async function getData(symbol, interval, limit){
 
     for(let url of urls){
         try{
-            let res=await fetch(url)
+            let res=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}})
             if(!res.ok) continue
             let data=await res.json()
             if(Array.isArray(data)&&data.length>0) return data
@@ -143,7 +143,7 @@ function coreLogic(data15, data1h, isBacktest=false){
     let bosUp   = price > prevHigh
     let bosDown = price < prevLow
 
-    let side=null, score=0
+    let side=null, score=0, type="MAIN"
 
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
@@ -191,10 +191,88 @@ function coreLogic(data15, data1h, isBacktest=false){
         score,
         earlyScore,
         earlySide,
+        type,
         tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
         sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
         vol: volNow
     }
+}
+
+// ================= SCAN =================
+async function scan(symbol){
+    let data15 = await getData(symbol,"15m",LIMIT_15M)
+    let data1h = await getData(symbol,"1h",LIMIT_1H)
+    if(!data15 || !data1h) return null
+
+    let r = coreLogic(data15, data1h)
+    if(!r) return null
+
+    return { symbol, ...r }
+}
+
+// ================= SCANNER =================
+async function scanner(){
+
+    console.log("🚀 SMART SCAN...")
+
+    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
+  "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
+  "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
+  "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
+  "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
+  "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
+  "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
+  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
+  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+
+    let results = await Promise.allSettled(symbols.map(scan))
+
+    let signals = results
+        .filter(r=>r.status==="fulfilled" && r.value)
+        .map(r=>r.value)
+
+    if(signals.length===0){
+        console.log("❌ No signal")
+        return
+    }
+
+    let main = signals.filter(s => s.score >= SCORE_THRESHOLD)
+
+    let best = null
+
+    if(main.length > 0){
+        main.sort((a,b)=> b.score - a.score || b.vol - a.vol)
+        best = main[0]
+        best.type="MAIN"
+    }else{
+        let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
+        if(early.length === 0) return
+
+        early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
+        best = early[0]
+        best.side = best.earlySide
+        best.score = best.earlyScore
+        best.type="EARLY"
+    }
+
+    let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
+    if(best.type==="EARLY") risk *= 0.5
+
+    let size = risk / Math.abs(best.price - best.sl)
+
+    let msg = `🔥 BEST SIGNAL
+
+${best.symbol} (${best.type})
+${best.side}
+Entry: ${best.price.toFixed(4)}
+TP: ${best.tp.toFixed(4)}
+SL: ${best.sl.toFixed(4)}
+Size: ${size.toFixed(2)}
+Score: ${best.score}
+`
+
+    console.log(msg)
+    await sendTelegram(msg)
 }
 
 // ================= BACKTEST =================
@@ -204,10 +282,6 @@ async function backtest(symbol){
     let data1h = await getData(symbol,"1h",500)
     if(!data15 || !data1h) return {error:"no data"}
 
-    let balance = ACCOUNT_BALANCE
-    let peak = balance
-    let maxDD = 0
-
     let win=0, loss=0, total=0
 
     for(let i=250;i<data15.length-50;i++){
@@ -216,21 +290,10 @@ async function backtest(symbol){
         let idx1h = Math.floor(i/4)
         let slice1h = data1h.slice(Math.max(0, idx1h-150), idx1h)
 
-        let r = coreLogic(slice15, slice1h, true)
+        let r = coreLogic(slice15, slice1h, true) // ✅ FIX DUY NHẤT
         if(!r) continue
 
-        let side=null
-
-        if(r.score >= SCORE_THRESHOLD){
-            side = r.side
-        }
-        else if(r.earlyScore >= EARLY_THRESHOLD){
-            side = r.earlySide
-        }
-        else continue
-
-        if(!side || !r.tp || !r.sl) continue
-
+        let side = r.score>=SCORE_THRESHOLD ? r.side : r.earlySide
         let tp = r.tp
         let sl = r.sl
 
@@ -249,26 +312,18 @@ async function backtest(symbol){
             }
         }
 
-        if(!result) continue
-
-        total++
-
         if(result==="TP") win++
         else loss++
+        total++
     }
 
     let winrate = total ? (win/total*100).toFixed(2) : 0
-
     return { total, win, loss, winrate }
 }
 
 // ================= LOOP =================
-setInterval(() => { scanner().catch(e=>console.error("Lỗi scanner:",e)) }, 300000)
-setInterval(() => { checkCommand().catch(e=>console.error("Lỗi checkCommand:",e)) }, 10000)
+setInterval(()=>scanner(),300000)
+setInterval(()=>checkCommand(),10000)
 
 // ================= RUN =================
-async function main(){
-    await scanner()
-    await checkCommand()
-}
-main().catch(e => console.error("Lỗi main:", e))
+scanner()
