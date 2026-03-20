@@ -5,7 +5,7 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 150
+const SCORE_THRESHOLD = 130 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
 const MIN_VOL_15M = 100000
@@ -295,11 +295,32 @@ async function scanner(){
         return
     }
 
-    signals.sort((a,b)=>b.score-a.score)
+    // lọc kèo >= 130
+signals = signals.filter(c => c.score >= 130)
 
-    let msg="🔥 BOT FINAL\n"
+if(signals.length === 0){
+    console.log("❌ No signal >=130")
+    return
+}
 
-    signals.slice(0,3).forEach(c=>{
+// lấy kèo mạnh nhất
+signals.sort((a,b)=>b.score-a.score)
+let best = signals[0]
+
+// chỉ gửi 1 kèo
+let msg = `🔥 BEST SIGNAL
+
+${best.symbol} (${best.type})
+${best.side}
+Entry: ${best.price.toFixed(4)}
+TP: ${best.tp.toFixed(4)}
+SL: ${best.sl.toFixed(4)}
+Size: ${best.size.toFixed(2)}
+Score: ${best.score}
+`
+
+console.log(msg)
+await sendTelegram(msg)
         msg+=`
 ${c.symbol} (${c.type})
 ${c.side}
