@@ -7,7 +7,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 100       // tín hiệu mạnh
 const EARLY_THRESHOLD = 50       // early entry
-const SCORE_FALLBACK  = 10      // fallback trung bình
+const SCORE_FALLBACK  = 100      // fallback trung bình
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -118,14 +118,13 @@ function adx(data,p=14){
 }
 
 // ================= DATA =================
-// Lấy kline data (15m, 1h, ...) với fallback giống style cũ
+// Lấy kline data (15m, 1h, ...) với fallback 3 nguồn
 async function getData(symbol, interval, limit){
     const urls = [
         `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
         `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
         `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
     ]
-
     for(let url of urls){
         try{
             let res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
@@ -137,9 +136,10 @@ async function getData(symbol, interval, limit){
     return null
 }
 
-// Lấy order book depth (Future) theo style cũ với fallback
+// Lấy order book depth (Future + Spot) với 3 nguồn fallback
 async function getOrderBook(symbol, limit=50){
     const urls = [
+        `https://data-api.binance.vision/api/v3/depth?symbol=${symbol}&limit=${limit}`,
         `https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=${limit}`,
         `https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${limit}`
     ]
@@ -154,11 +154,12 @@ async function getOrderBook(symbol, limit=50){
     return null
 }
 
-// Lấy Open Interest (Future) theo style cũ
+// Lấy Open Interest (Future) với 3 nguồn fallback
 async function getOpenInterest(symbol){
     const urls = [
+        `https://data-api.binance.vision/api/v3/openInterest?symbol=${symbol}`,
         `https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`,
-        `https://fapi.binance.com/fapi/v2/openInterest?symbol=${symbol}` // fallback
+        `https://fapi.binance.com/fapi/v2/openInterest?symbol=${symbol}`
     ]
     for(let url of urls){
         try{
