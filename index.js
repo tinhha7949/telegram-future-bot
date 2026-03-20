@@ -5,8 +5,8 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 130
-const EARLY_THRESHOLD = 80 
+const SCORE_THRESHOLD = 150
+const EARLY_THRESHOLD = 120
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -94,7 +94,7 @@ async function getData(symbol, interval, limit){
 
     for(let url of urls){
         try{
-            let res=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}})
+            let res=await fetch(url)
             if(!res.ok) continue
             let data=await res.json()
             if(Array.isArray(data)&&data.length>0) return data
@@ -143,8 +143,7 @@ function coreLogic(data15, data1h, isBacktest=false){
     let bosUp   = price > prevHigh
     let bosDown = price < prevLow
 
-    // ===== MAIN =====
-    let side=null, score=0, type="MAIN"
+    let side=null, score=0
 
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
@@ -160,7 +159,6 @@ function coreLogic(data15, data1h, isBacktest=false){
     if(side==="LONG" && momentumUp) score+=20
     if(side==="SHORT" && momentumDown) score+=20
 
-    // ===== EARLY =====
     let earlySide=null, earlyScore=0
 
     if(trendLong){
@@ -179,7 +177,6 @@ function coreLogic(data15, data1h, isBacktest=false){
         if(momentumDown) earlyScore+=10
     }
 
-    // ===== FILTER =====
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
@@ -188,97 +185,16 @@ function coreLogic(data15, data1h, isBacktest=false){
     if(!isBacktest && candleMove > 0.035) return null
     if(!isBacktest && trendStrength < 0.002) return null
 
-    // ===== RETURN =====
     return {
         side,
         price,
         score,
         earlyScore,
         earlySide,
-        type,
         tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
         sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
         vol: volNow
     }
-}
-
-// ================= SCAN =================
-async function scan(symbol){
-    let data15 = await getData(symbol,"15m",LIMIT_15M)
-    let data1h = await getData(symbol,"1h",LIMIT_1H)
-    if(!data15 || !data1h) return null
-
-    let r = coreLogic(data15, data1h)
-    if(!r) return null
-
-    return { symbol, ...r }
-}
-
-// ================= SCANNER (SMART SELECT) =================
-async function scanner(){
-
-    console.log("🚀 SMART SCAN...")
-
-    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-  "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-  "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-  "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-  "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-  "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-  "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
-
-    let results = await Promise.allSettled(symbols.map(scan))
-
-    let signals = results
-        .filter(r=>r.status==="fulfilled" && r.value)
-        .map(r=>r.value)
-
-    if(signals.length===0){
-        console.log("❌ No signal")
-        return
-    }
-
-    // ===== MAIN =====
-    let main = signals.filter(s => s.score >= SCORE_THRESHOLD)
-
-    let best = null
-
-    if(main.length > 0){
-        main.sort((a,b)=> b.score - a.score || b.vol - a.vol)
-        best = main[0]
-        best.type="MAIN"
-    }else{
-        let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
-        if(early.length === 0) return
-
-        early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
-        best = early[0]
-        best.side = best.earlySide
-        best.score = best.earlyScore
-        best.type="EARLY"
-    }
-
-    // ===== SIZE =====
-    let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
-    if(best.type==="EARLY") risk *= 0.5
-
-    let size = risk / Math.abs(best.price - best.sl)
-
-    let msg = `🔥 BEST SIGNAL
-
-${best.symbol} (${best.type})
-${best.side}
-Entry: ${best.price.toFixed(4)}
-TP: ${best.tp.toFixed(4)}
-SL: ${best.sl.toFixed(4)}
-Size: ${size.toFixed(2)}
-Score: ${best.score}
-`
-
-    console.log(msg)
-    await sendTelegram(msg)
 }
 
 // ================= BACKTEST =================
@@ -294,9 +210,6 @@ async function backtest(symbol){
 
     let win=0, loss=0, total=0
 
-    const FEE = 0.0004   // phí 0.04%
-    const SLIPPAGE = 0.0005 // trượt giá nhẹ
-
     for(let i=250;i<data15.length-50;i++){
 
         let slice15 = data15.slice(0,i)
@@ -306,39 +219,24 @@ async function backtest(symbol){
         let r = coreLogic(slice15, slice1h, true)
         if(!r) continue
 
-        // ===== CHỌN LỆNH =====
         let side=null
-        let isEarly=false
 
         if(r.score >= SCORE_THRESHOLD){
             side = r.side
         }
         else if(r.earlyScore >= EARLY_THRESHOLD){
             side = r.earlySide
-            isEarly = true
         }
         else continue
 
         if(!side || !r.tp || !r.sl) continue
 
-        let entry = r.price * (1 + (side==="LONG" ? SLIPPAGE : -SLIPPAGE))
         let tp = r.tp
         let sl = r.sl
 
-        if(isNaN(tp) || isNaN(sl)) continue
-
-        // ===== SIZE =====
-        let risk = balance * RISK_PER_TRADE
-        if(isEarly) risk *= 0.5
-
-        let size = risk / Math.abs(entry - sl)
-        if(!isFinite(size) || size <= 0) continue
-
         let result=null
 
-        // ===== SIMULATE =====
         for(let j=i+1;j<i+40;j++){
-
             let h=+data15[j][2]
             let l=+data15[j][3]
 
@@ -355,125 +253,22 @@ async function backtest(symbol){
 
         total++
 
-        // ===== PNL =====
-        let pnl=0
-
-        if(result==="TP"){
-            let rr = Math.abs(tp-entry) / Math.abs(entry-sl)
-            pnl = risk * rr
-            win++
-        }else{
-            pnl = -risk
-            loss++
-        }
-
-        // trừ phí
-        pnl -= (entry * size * FEE)
-
-        balance += pnl
-
-        // ===== DRAWDOWN =====
-        if(balance > peak) peak = balance
-        let dd = (peak - balance) / peak
-        if(dd > maxDD) maxDD = dd
-    }
-
-    let winrate = total ? (win/total*100).toFixed(2) : 0
-
-    return {
-        total,
-        win,
-        loss,
-        winrate,
-        balance: balance.toFixed(2),
-        profit: (balance - ACCOUNT_BALANCE).toFixed(2),
-        drawdown: (maxDD*100).toFixed(2)+"%"
-    }
-}
-
-// ===== chọn MAIN hoặc EARLY chuẩn =====
-// ===== chọn MAIN hoặc EARLY chuẩn =====
-if(r.score >= SCORE_THRESHOLD){
-    side = r.side
-}
-else if(r.earlyScore >= EARLY_THRESHOLD){
-    side = r.earlySide
-}
-else{
-    continue
-}
-
-// ===== check lỗi =====
-if(!side) continue
-if(!r.tp || !r.sl) continue
-
-let tp = r.tp
-let sl = r.sl
-
-if(isNaN(tp) || isNaN(sl)) continue
-
-let result=null
-
-for(let j=i+1;j<i+40;j++){
-    let h=+data15[j][2]
-    let l=+data15[j][3]
-
-    if(side==="LONG"){
-        if(l<=sl){ result="SL"; break }
-        if(h>=tp){ result="TP"; break }
-    }else{
-        if(h>=sl){ result="SL"; break }
-        if(l<=tp){ result="TP"; break }
-    }
-}
-
-if(result==="TP") win++
-else loss++
-total++
-}
-
-let winrate = total ? (win/total*100).toFixed(2) : 0
-return { total, win, loss, winrate }
-}
-}
-
-// ===== check lỗi =====
-if(!side) continue
-if(!r.tp || !r.sl) continue
-
-let tp = r.tp
-let sl = r.sl
-
-// ❗ tránh NaN
-if(isNaN(tp) || isNaN(sl)) continue
-
-        let result=null
-
-        for(let j=i+1;j<i+40;j++){
-            let h=+data15[j][2]
-            let l=+data15[j][3]
-
-            if(side==="LONG"){
-                if(l<=sl){ result="SL"; break }
-                if(h>=tp){ result="TP"; break }
-            }else{
-                if(h>=sl){ result="SL"; break }
-                if(l<=tp){ result="TP"; break }
-            }
-        }
-
         if(result==="TP") win++
         else loss++
-        total++
     }
 
     let winrate = total ? (win/total*100).toFixed(2) : 0
+
     return { total, win, loss, winrate }
 }
 
 // ================= LOOP =================
-setInterval(()=>scanner(),300000)
-setInterval(()=>checkCommand(),10000)
+setInterval(() => { scanner().catch(e=>console.error("Lỗi scanner:",e)) }, 300000)
+setInterval(() => { checkCommand().catch(e=>console.error("Lỗi checkCommand:",e)) }, 10000)
 
 // ================= RUN =================
-scanner()
+async function main(){
+    await scanner()
+    await checkCommand()
+}
+main().catch(e => console.error("Lỗi main:", e))
