@@ -136,20 +136,19 @@ function coreLogic(data15, data1h, isBacktest=false){
     let volSpike = volNow > volAvg*1.3
 
     let trendLong = ema20>ema50 && ema20_1h>ema50_1h
-let trendShort = ema20<ema50 && ema20_1h<ema50_1h
+    let trendShort = ema20<ema50 && ema20_1h<ema50_1h
 
-// chỉ check ema200 khi đủ dữ liệu
-if(closes.length >= 200){
-    trendLong = trendLong && ema50>ema200
-    trendShort = trendShort && ema50<ema200
-}
+    if(closes.length >= 200){
+        trendLong = trendLong && ema50>ema200
+        trendShort = trendShort && ema50<ema200
+    }
 
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
     let bosUp   = price > prevHigh
     let bosDown = price < prevLow
 
-    let side=null, score=0, type="MAIN"
+    let side=null, score=0
 
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
@@ -191,13 +190,15 @@ if(closes.length >= 200){
     if(!isBacktest && candleMove > 0.035) return null
     if(!isBacktest && trendStrength < 0.002) return null
 
+    // ✅ FIX BACKTEST
+    if(!side && !earlySide) return null
+
     return {
         side,
         price,
         score,
         earlyScore,
         earlySide,
-        type,
         tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
         sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
         vol: volNow
@@ -221,15 +222,7 @@ async function scanner(){
 
     console.log("🚀 SMART SCAN...")
 
-    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-  "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-  "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-  "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-  "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-  "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-  "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT"]
 
     let results = await Promise.allSettled(symbols.map(scan))
 
@@ -296,22 +289,23 @@ async function backtest(symbol){
         let idx1h = Math.floor(i/4)
         let slice1h = data1h.slice(Math.max(0, idx1h-150), idx1h)
 
-        let r = coreLogic(slice15, slice1h, true) // ✅ FIX DUY NHẤT
+        let r = coreLogic(slice15, slice1h, true)
         if(!r) continue
 
         let side = null
 
-if(r.score >= SCORE_THRESHOLD){
-    side = r.side
-}else if(r.earlyScore >= EARLY_THRESHOLD){
-    side = r.earlySide
-}else{
-    continue
-}
+        if(r.score >= SCORE_THRESHOLD){
+            side = r.side
+        }else if(r.earlyScore >= EARLY_THRESHOLD){
+            side = r.earlySide
+        }else{
+            continue
+        }
+
         if(!side) continue
-if(!r.tp || !r.sl) continue
-if(isNaN(r.tp) || isNaN(r.sl)) continue
-        
+        if(!r.tp || !r.sl) continue
+        if(isNaN(r.tp) || isNaN(r.sl)) continue
+
         let tp = r.tp
         let sl = r.sl
 
@@ -329,6 +323,8 @@ if(isNaN(r.tp) || isNaN(r.sl)) continue
                 if(l<=tp){ result="TP"; break }
             }
         }
+
+        if(!result) continue
 
         if(result==="TP") win++
         else loss++
