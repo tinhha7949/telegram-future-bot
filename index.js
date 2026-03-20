@@ -120,7 +120,7 @@ function coreLogic(data15, data1h, isBacktest=false){
 
     let ema20  = ema(closes.slice(-60),20)
     let ema50  = ema(closes.slice(-120),50)
-    let ema200 = ema(closes.slice(-250),200)
+    let ema200 = closes.length >= 200 ? ema(closes.slice(-250),200) : ema50
 
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
@@ -135,8 +135,14 @@ function coreLogic(data15, data1h, isBacktest=false){
     let volNow = volumes.at(-1)
     let volSpike = volNow > volAvg*1.3
 
-    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
-    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
+    let trendLong = ema20>ema50 && ema20_1h>ema50_1h
+let trendShort = ema20<ema50 && ema20_1h<ema50_1h
+
+// chỉ check ema200 khi đủ dữ liệu
+if(closes.length >= 200){
+    trendLong = trendLong && ema50>ema200
+    trendShort = trendShort && ema50<ema200
+}
 
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
