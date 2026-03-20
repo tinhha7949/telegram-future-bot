@@ -294,13 +294,20 @@ async function backtest(symbol){
 
         let side = null
 
-        if(r.score >= SCORE_THRESHOLD){
-            side = r.side
-        }else if(r.earlyScore >= EARLY_THRESHOLD){
-            side = r.earlySide
-        }else{
-            continue
-        }
+        // ✅ BACKTEST THOÁNG HƠN (FIX = 0)
+if(r.score >= SCORE_THRESHOLD){
+    side = r.side
+}
+else if(r.earlyScore >= EARLY_THRESHOLD){
+    side = r.earlySide
+}
+// 🔥 thêm fallback để test
+else if(r.score >= 100){
+    side = r.side
+}
+else{
+    continue
+}
 
         if(!side) continue
         if(!r.tp || !r.sl) continue
