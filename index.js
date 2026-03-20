@@ -113,7 +113,7 @@ async function getData(symbol, interval, limit){
 // ================= COER (NEW) =================
 function scanCore(symbol, data15, data1h){
 
-    if(data15.length < 250 || data1h.length < 60) return null
+    if(data15.length < 200 || data1h.length < 30) return null
 
     let closes = data15.map(x=>+x[4])
     let highs  = data15.map(x=>+x[2])
@@ -202,7 +202,7 @@ async function backtest(symbol){
         let slice15 = data15.slice(0,i)
 
         let idx1h = Math.floor(i/4)
-        let slice1h = data1h.slice(0, idx1h)
+        let slice1h = data1h.slice(Math.max(0, idx1h-200), idx1h)
 
         if(slice1h.length < 60) continue
 
