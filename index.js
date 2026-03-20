@@ -193,12 +193,15 @@ function convertTo1H(data15){
 
 async function backtest(symbol){
 
-    let data = await getData(symbol,"15m",1500)
+    let data = await getData(symbol,"15m",2000)
     if(!data) return { error:"no data" }
 
     let win=0, loss=0
+    let balance = ACCOUNT_BALANCE
+    let equity = []
+    let trades = 0
 
-    for(let i=300;i<data.length-50;i++){
+    for(let i=300;i<data.length-60;i++){
 
         let slice15 = data.slice(0,i)
         let slice1h = convertTo1H(slice15)
@@ -206,10 +209,12 @@ async function backtest(symbol){
         let signal = scanCore(symbol, slice15, slice1h)
         if(!signal) continue
 
-        let { side, tp, sl } = signal
-        let result=null
+        let { side, tp, sl, price } = signal
 
-        for(let j=i+1;j<data.length;j++){
+        let result=null
+        let maxHold = 50
+
+        for(let j=i+1;j<Math.min(i+maxHold,data.length);j++){
             let h=+data[j][2], l=+data[j][3]
 
             if(side==="LONG"){
@@ -221,14 +226,46 @@ async function backtest(symbol){
             }
         }
 
-        if(result==="TP") win++
-        if(result==="SL") loss++
+        if(!result) result="TIMEOUT"
+
+        // ===== PnL =====
+        let risk = balance * RISK_PER_TRADE
+        let rr = Math.abs(tp-price) / Math.abs(price-sl)
+
+        if(result==="TP"){
+            balance += risk * rr
+            win++
+        }else{
+            balance -= risk
+            loss++
+        }
+
+        trades++
+        equity.push(balance)
     }
 
     let total = win+loss
     let winrate = total ? (win/total*100).toFixed(2) : 0
 
-    return { total, win, loss, winrate }
+    // ===== DRAWDOWN =====
+    let peak = equity[0] || balance
+    let maxDD = 0
+
+    for(let e of equity){
+        if(e > peak) peak = e
+        let dd = (peak - e) / peak
+        if(dd > maxDD) maxDD = dd
+    }
+
+    return {
+        trades,
+        win,
+        loss,
+        winrate,
+        finalBalance: balance.toFixed(2),
+        pnlPercent: (((balance-ACCOUNT_BALANCE)/ACCOUNT_BALANCE)*100).toFixed(2)+"%",
+        maxDrawdown: (maxDD*100).toFixed(2)+"%"
+    }
 }
 
 // ================= SCANNER =================
