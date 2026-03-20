@@ -7,7 +7,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 100       // tín hiệu mạnh
 const EARLY_THRESHOLD = 50       // early entry
-const SCORE_FALLBACK  = 100      // fallback trung bình
+const SCORE_FALLBACK  = 10      // fallback trung bình
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
