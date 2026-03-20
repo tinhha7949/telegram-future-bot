@@ -19,13 +19,10 @@ async function sendTelegram(msg){
         await fetch(url,{
             method:"POST",
             headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({
-                chat_id: CHAT_ID,
-                text: msg
-            })
+            body: JSON.stringify({ chat_id: CHAT_ID, text: msg })
         })
     }catch(e){
-        console.log("❌ Telegram:", e.message)
+        console.log("❌ TELE:", e.message)
     }
 }
 
@@ -41,8 +38,16 @@ async function checkCommand(){
             lastUpdateId = u.update_id
             if(!u.message?.text) continue
 
-            if(u.message.text === "/status"){
-                await sendTelegram("🤖 BOT 3 đang chạy OK")
+            let text = u.message.text
+
+            if(text === "/status"){
+                await sendTelegram("🤖 BOT đang chạy OK")
+            }
+
+            if(text === "/backtest"){
+                await sendTelegram("⏳ Backtest BTCUSDT...")
+                let r = await backtest("BTCUSDT")
+                await sendTelegram(`📊 RESULT\n${JSON.stringify(r,null,2)}`)
             }
         }
     }catch(e){
@@ -68,7 +73,7 @@ function rsi(arr,p=14){
     return 100-(100/(1+rs))
 }
 
-function atr(data, p=14){
+function atr(data,p=14){
     let trs=[]
     for(let i=1;i<data.length;i++){
         let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
@@ -94,17 +99,11 @@ async function getData(symbol, interval, limit){
         }catch(e){}
     }
 
-    console.log("❌ DATA:", symbol)
     return null
 }
 
-// ================= CORE BOT 3 =================
-async function scan(symbol){
-
-    let data15 = await getData(symbol,"15m",LIMIT_15M)
-    let data1h = await getData(symbol,"1h",LIMIT_1H)
-    if(!data15 || !data1h) return null
-    if(data15.length<250 || data1h.length<120) return null
+// ================= CORE LOGIC =================
+function coreLogic(data15, data1h){
 
     let closes = data15.map(x=>+x[4])
     let highs  = data15.map(x=>+x[2])
@@ -117,7 +116,6 @@ async function scan(symbol){
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     if(volAvg < MIN_VOL_15M) return null
 
-    // ===== INDICATOR =====
     let ema20  = ema(closes.slice(-60),20)
     let ema50  = ema(closes.slice(-120),50)
     let ema200 = ema(closes.slice(-250),200)
@@ -135,11 +133,9 @@ async function scan(symbol){
     let volNow = volumes.at(-1)
     let volSpike = volNow > volAvg*1.3
 
-    // ===== TREND =====
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
-    // ===== BOS =====
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
     let bosUp   = price > prevHigh
@@ -168,31 +164,40 @@ async function scan(symbol){
     if(trendLong){
         earlySide="LONG"
         earlyScore=50
-        if(momentumUp) earlyScore+=20
         if(r>50) earlyScore+=10
-        if(volSpike) earlyScore+=10
+        if(volNow > volAvg*1.1) earlyScore+=10
+        if(momentumUp) earlyScore+=10
     }
 
     if(trendShort){
         earlySide="SHORT"
         earlyScore=50
-        if(momentumDown) earlyScore+=20
         if(r<50) earlyScore+=10
-        if(volSpike) earlyScore+=10
+        if(volNow > volAvg*1.1) earlyScore+=10
+        if(momentumDown) earlyScore+=10
     }
 
-    // ===== SELECT =====
+    // ===== FILTER =====
+    let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
+    let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
+    let trendStrength = Math.abs(ema20-ema50)/price
+
+    if(range < 0.01) return null
+    if(candleMove > 0.035) return null
+    if(trendStrength < 0.002) return null
+
     if(score >= SCORE_THRESHOLD){
         type="MAIN"
-    }else if(earlyScore >= 70){
-        side=earlySide
-        score=earlyScore
+    }
+    else if(earlyScore >= 70){
+        side = earlySide
+        score = earlyScore
         type="EARLY"
-    }else return null
+    }
+    else return null
 
     if(!side) return null
 
-    // ===== SL TP =====
     let sl,tp
     if(side==="LONG"){
         sl = price - atrVal*1.2
@@ -202,23 +207,82 @@ async function scan(symbol){
         tp = price - atrVal*2.5
     }
 
-    // ===== SIZE =====
+    return { side, tp, sl, price, score, type }
+}
+
+// ================= SCAN =================
+async function scan(symbol){
+    let data15 = await getData(symbol,"15m",LIMIT_15M)
+    let data1h = await getData(symbol,"1h",LIMIT_1H)
+    if(!data15 || !data1h) return null
+
+    let r = coreLogic(data15, data1h)
+    if(!r) return null
+
     let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
-    if(type==="EARLY") risk *= 0.5
+    if(r.type==="EARLY") risk *= 0.5
 
-    let lossPerUnit = Math.abs(price-sl)
-    let size = risk / lossPerUnit
+    let size = risk / Math.abs(r.price - r.sl)
 
-    let rank = type==="MAIN" ? "S" : "B"
+    return { symbol, ...r, size }
+}
 
-    return { symbol, side, price, tp, sl, size, score, rank, type }
+// ================= BACKTEST =================
+async function backtest(symbol){
+
+    let data15 = await getData(symbol,"15m",1500)
+    let data1h = await getData(symbol,"1h",500)
+    if(!data15 || !data1h) return {error:"no data"}
+
+    let win=0, loss=0, total=0
+
+    for(let i=250;i<data15.length-50;i++){
+
+        let slice15 = data15.slice(0,i)
+        let idx1h = Math.floor(i/4)
+        let slice1h = data1h.slice(Math.max(0, idx1h-150), idx1h)
+
+        let sig = coreLogic(slice15, slice1h)
+        if(!sig) continue
+
+        let result=null
+
+        for(let j=i+1;j<i+40;j++){
+            let h=+data15[j][2]
+            let l=+data15[j][3]
+
+            if(sig.side==="LONG"){
+                if(l<=sig.sl){ result="SL"; break }
+                if(h>=sig.tp){ result="TP"; break }
+            }else{
+                if(h>=sig.sl){ result="SL"; break }
+                if(l<=sig.tp){ result="TP"; break }
+            }
+        }
+
+        if(result==="TP") win++
+        else loss++
+        total++
+    }
+
+    let winrate = total ? (win/total*100).toFixed(2) : 0
+    return { total, win, loss, winrate }
 }
 
 // ================= SCANNER =================
 async function scanner(){
-    console.log("🚀 BOT 3 SCAN...")
 
-    let symbols = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT"]
+    console.log("🚀 BOT 3 FINAL...")
+
+    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
+  "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
+  "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
+  "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
+  "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
+  "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
+  "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
+  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
+  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
 
     let results = await Promise.allSettled(symbols.map(scan))
 
@@ -233,11 +297,11 @@ async function scanner(){
 
     signals.sort((a,b)=>b.score-a.score)
 
-    let msg="🔥 BOT 3 SIGNAL\n"
+    let msg="🔥 BOT FINAL\n"
 
     signals.slice(0,3).forEach(c=>{
         msg+=`
-${c.symbol} (${c.rank}-${c.type})
+${c.symbol} (${c.type})
 ${c.side}
 Entry: ${c.price.toFixed(4)}
 TP: ${c.tp.toFixed(4)}
@@ -252,11 +316,8 @@ Score: ${c.score}
 }
 
 // ================= LOOP =================
-setInterval(()=>scanner(),300000)   // 5 phút
+setInterval(()=>scanner(),300000)
 setInterval(()=>checkCommand(),10000)
 
 // ================= RUN =================
-async function main(){
-    await scanner()
-}
-main()
+scanner()
