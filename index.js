@@ -1,88 +1,85 @@
 // ================= CONFIG =================
-const BOT_TOKEN = process.env.BOT_TOKEN
-const CHAT_ID = process.env.CHAT_ID
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CHAT_ID = process.env.CHAT_ID;
 
-const LIMIT_15M = 300
-const LIMIT_1H  = 200
+const LIMIT_15M = 300;
+const LIMIT_1H  = 200;
 
-const SCORE_THRESHOLD = 130       // tín hiệu mạnh
-const EARLY_THRESHOLD = 100       // early entry
-const SCORE_FALLBACK  = 80       // fallback trung bình
+const SCORE_THRESHOLD = 150;
+const EARLY_THRESHOLD = 120;
 
-const RISK_PER_TRADE = 0.01
-const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 100000
+const RISK_PER_TRADE = 0.01;
+const ACCOUNT_BALANCE = 1000;
 
-let lastUpdateId = 0
+let lastUpdateId = 0;
+let lastSentSignals = {};
 
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
     try{
-        let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
+        let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
         await fetch(url,{
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body: JSON.stringify({ chat_id: CHAT_ID, text: msg })
-        })
+        });
     }catch(e){
-        console.log("❌ TELE:", e.message)
+        console.log("❌ TELE:", e.message);
     }
 }
 
 // ================= COMMAND =================
 async function checkCommand(){
     try{
-        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`
-        let res = await fetch(url)
-        let data = await res.json()
-        if(!data.result) return
+        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`;
+        let res = await fetch(url);
+        let data = await res.json();
+        if(!data.result) return;
 
         for(let u of data.result){
-            lastUpdateId = u.update_id
-            if(!u.message?.text) continue
-
-            let text = u.message.text
+            lastUpdateId = u.update_id;
+            if(!u.message?.text) continue;
+            let text = u.message.text;
 
             if(text === "/status"){
-                await sendTelegram("🤖 BOT SMART đang chạy OK")
+                await sendTelegram("🤖 BOT SMART đang chạy OK");
             }
-
             if(text === "/backtest"){
-                await sendTelegram("⏳ Backtest BTCUSDT...")
-                let r = await backtest("BTCUSDT")
-                await sendTelegram(`📊 RESULT\n${JSON.stringify(r,null,2)}`)
+                await sendTelegram("⏳ Backtest BTCUSDT...");
+                let r = await backtest("BTCUSDT");
+                await sendTelegram(`📊 RESULT\n${JSON.stringify(r,null,2)}`);
             }
         }
     }catch(e){
-        console.log("⚠️ CMD:", e.message)
+        console.log("⚠️ CMD:", e.message);
     }
 }
 
 // ================= INDICATORS =================
 function ema(arr,p){
-    let k=2/(p+1), e=arr[0]
-    for(let i=1;i<arr.length;i++) e=arr[i]*k+e*(1-k)
-    return e
+    let k=2/(p+1), e=arr[0];
+    for(let i=1;i<arr.length;i++) e=arr[i]*k+e*(1-k);
+    return e;
 }
 
 function rsi(arr,p=14){
-    let g=0,l=0
+    let g=0,l=0;
     for(let i=arr.length-p;i<arr.length;i++){
-        let d=arr[i]-arr[i-1]
-        if(d>=0) g+=d
-        else l-=d
+        let d=arr[i]-arr[i-1];
+        if(d>=0) g+=d;
+        else l-=d;
     }
-    let rs=g/(l||1)
-    return 100-(100/(1+rs))
+    let rs=g/(l||1);
+    return 100-(100/(1+rs));
 }
 
 function atr(data,p=14){
-    let trs=[]
+    let trs=[];
     for(let i=1;i<data.length;i++){
-        let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
-        trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
+        let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4];
+        trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)));
     }
-    return trs.slice(-p).reduce((a,b)=>a+b,0)/p
+    return trs.slice(-p).reduce((a,b)=>a+b,0)/p;
 }
 
 // ================= DATA =================
@@ -91,238 +88,181 @@ async function getData(symbol, interval, limit){
         `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
         `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
         `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
-    ]
+    ];
 
     for(let url of urls){
         try{
-            let res=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}})
-            if(!res.ok) continue
-            let data=await res.json()
-            if(Array.isArray(data)&&data.length>0) return data
+            let res=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"}});
+            if(!res.ok) continue;
+            let data=await res.json();
+            if(Array.isArray(data)&&data.length>0) return data;
         }catch(e){}
     }
-
-    return null
+    return null;
 }
 
-// ================= CORE =================
-function coreLogic(data15, data1h, isBacktest=false){
+// ================= CORE LOGIC =================
+function coreLogic(data15, data1h){
+    let closes = data15.map(x=>+x[4]);
+    let highs  = data15.map(x=>+x[2]);
+    let lows   = data15.map(x=>+x[3]);
+    let volumes= data15.map(x=>+x[5]);
+    let closes1h = data1h.map(x=>+x[4]);
 
-    let closes = data15.map(x=>+x[4])
-    let highs  = data15.map(x=>+x[2])
-    let lows   = data15.map(x=>+x[3])
-    let volumes= data15.map(x=>+x[5])
-    let closes1h = data1h.map(x=>+x[4])
+    let price = closes.at(-1);
 
-    let price = closes.at(-1)
-    let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
-    if(!isBacktest && volAvg < MIN_VOL_15M) return null
+    let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30;
+    if(volAvg < 1000) return null; // tránh coin ít volume quá
 
-    let ema20  = ema(closes.slice(-60),20)
-    let ema50  = ema(closes.slice(-120),50)
-    let ema200 = closes.length>=200 ? ema(closes.slice(-250),200) : ema50
-    let ema20_1h = ema(closes1h.slice(-60),20)
-    let ema50_1h = ema(closes1h.slice(-120),50)
+    let ema20  = ema(closes.slice(-60),20);
+    let ema50  = ema(closes.slice(-120),50);
+    let ema200 = closes.length>=200 ? ema(closes.slice(-250),200) : ema50;
 
-    let r = rsi(closes.slice(-50))
-    let atrVal = atr(data15.slice(-100))
+    let ema20_1h = ema(closes1h.slice(-60),20);
+    let ema50_1h = ema(closes1h.slice(-120),50);
 
-    let last4 = closes.slice(-4)
-    let momentumUp = last4[3]>last4[2] && last4[2]>last4[1]
-    let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
+    let r = rsi(closes.slice(-50));
+    let r1h = rsi(closes1h.slice(-50));
+    let atrVal = atr(data15.slice(-100));
 
-    let volNow = volumes.at(-1)
-    let volSpike = volNow > volAvg*1.3
+    let last4 = closes.slice(-4);
+    let momentumUp = last4[3]>last4[2] && last4[2]>last4[1];
+    let momentumDown = last4[3]<last4[2] && last4[2]<last4[1];
 
-    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
-    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
+    let volNow = volumes.at(-1);
+    let volSpike = volNow > volAvg*1.3;
 
-    let prevHigh = Math.max(...highs.slice(-25,-5))
-    let prevLow  = Math.min(...lows.slice(-25,-5))
-    let bosUp   = price > prevHigh
-    let bosDown = price < prevLow
+    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h;
+    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h;
 
-    // ===== MAIN =====
-    let side=null, score=0, type="MAIN"
+    let prevHigh = Math.max(...highs.slice(-25,-5));
+    let prevLow  = Math.min(...lows.slice(-25,-5));
+    let bosUp   = price > prevHigh;
+    let bosDown = price < prevLow;
 
-    if(trendLong){ side="LONG"; score+=50 }
-    if(trendShort){ side="SHORT"; score+=50 }
-    if(side==="LONG" && bosUp) score+=40
-    if(side==="SHORT" && bosDown) score+=40
-    if(side==="LONG" && r>50 && r<65) score+=10
-    if(side==="SHORT" && r>35 && r<50) score+=10
-    if(volSpike) score+=10
-    if(side==="LONG" && momentumUp) score+=20
-    if(side==="SHORT" && momentumDown) score+=20
+    // ===== MAIN SIGNAL =====
+    let side=null, score=0, type="MAIN";
+    if(trendLong){ side="LONG"; score+=50; if(momentumUp) score+=10; if(r>50 && r<70) score+=10; if(volSpike) score+=10; if(bosUp) score+=20; }
+    if(trendShort){ side="SHORT"; score+=50; if(momentumDown) score+=10; if(r<50 && r>30) score+=10; if(volSpike) score+=10; if(bosDown) score+=20; }
 
-    // ===== EARLY (flexible như Bot 1) =====
-    let earlySide=null, earlyScore=0
-    if(trendLong){
-        earlySide="LONG"; earlyScore=50
-        if(r>50) earlyScore+=10
-        if(volNow > volAvg*1.1) earlyScore+=10
-        if(momentumUp) earlyScore+=10
-    }
-    if(trendShort){
-        earlySide="SHORT"; earlyScore=50
-        if(r<50) earlyScore+=10
-        if(volNow > volAvg*1.1) earlyScore+=10
-        if(momentumDown) earlyScore+=10
-    }
+    // ===== EARLY SIGNAL =====
+    let earlySide=null, earlyScore=0;
+    if(trendLong){ earlySide="LONG"; earlyScore=50; if(r>50) earlyScore+=10; if(volNow>volAvg*1.1) earlyScore+=10; if(momentumUp) earlyScore+=10; }
+    if(trendShort){ earlySide="SHORT"; earlyScore=50; if(r<50) earlyScore+=10; if(volNow>volAvg*1.1) earlyScore+=10; if(momentumDown) earlyScore+=10; }
 
     // ===== FILTER =====
-    let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
-    let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
-    let trendStrength = Math.abs(ema20-ema50)/price
-    if(!isBacktest && range < 0.01) return null
-    if(!isBacktest && candleMove > 0.035) return null
-    if(!isBacktest && trendStrength < 0.002) return null
+    let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price;
+    let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price;
+    let trendStrength = Math.abs(ema20-ema50)/price;
+    if(range < 0.005) return null; // nhỏ quá bỏ qua
+    if(candleMove > 0.06) return null; // spike quá
+    if(trendStrength < 0.001) return null;
 
     // ===== RETURN =====
     return {
         side,
-        price,
         score,
-        earlyScore,
         earlySide,
-        type,
-        tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
-        sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
-        vol: volNow
+        earlyScore,
+        price,
+        tp: side==="LONG" ? price + atrVal*2.5*(1+trendStrength) : price - atrVal*2.5*(1+trendStrength),
+        sl: side==="LONG" ? price - atrVal*1.2*(1+trendStrength) : price + atrVal*1.2*(1+trendStrength),
+        vol: volNow,
+        type
     }
 }
 
 // ================= SCAN =================
 async function scan(symbol){
-    let data15 = await getData(symbol,"15m",LIMIT_15M)
-    let data1h = await getData(symbol,"1h",LIMIT_1H)
-    if(!data15 || !data1h) return null
-    let r = coreLogic(data15, data1h)
-    if(!r) return null
-    return { symbol, ...r }
+    let data15 = await getData(symbol,"15m",LIMIT_15M);
+    let data1h = await getData(symbol,"1h",LIMIT_1H);
+    if(!data15 || !data1h) return null;
+
+    let r = coreLogic(data15,data1h);
+    if(!r) return null;
+    return { symbol, ...r };
 }
 
 // ================= SCANNER =================
 async function scanner(){
-
-    console.log("🚀 SMART SCAN...")
+    console.log("🚀 SMART SCAN...");
 
     let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-        "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-        "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-        "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-        "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-        "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-        "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-        "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-        "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+    "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
+    "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
+    "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT"];
 
-    let results = await Promise.allSettled(symbols.map(scan))
-    let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
-    if(signals.length===0){ console.log("❌ No signal"); return }
+    let results = await Promise.allSettled(symbols.map(scan));
+    let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value);
+    if(signals.length===0){ console.log("❌ No signal"); return; }
 
-    // ===== SMART SELECT: MAIN -> EARLY -> FALLBACK =====
-    let main = signals.filter(s => s.score >= SCORE_THRESHOLD)
-    let best = null
+    // Top 3 signals
+    signals.sort((a,b)=> (b.score || b.earlyScore) - (a.score || a.earlyScore) || b.vol - a.vol);
+    let topSignals = signals.slice(0,3);
 
-    if(main.length>0){
-        main.sort((a,b)=> b.score - a.score || b.vol - a.vol)
-        best = main[0]
-        best.type="MAIN"
-    }else{
-        let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
-        if(early.length>0){
-            early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
-            best = early[0]
-            best.side = best.earlySide
-            best.score = best.earlyScore
-            best.type="EARLY"
-        }else{
-            let fallback = signals.filter(s=>s.score>=SCORE_FALLBACK)
-            if(fallback.length>0){
-                fallback.sort((a,b)=> b.score - a.score || b.vol - a.vol)
-                best = fallback[0]
-                best.type="FALLBACK"
-            }
-        }
-    }
+    for(let best of topSignals){
+        if(!best.side && best.earlySide){ best.side = best.earlySide; best.score = best.earlyScore; best.type="EARLY"; }
 
-    if(!best) return
+        // Dynamic risk sizing
+        let risk = ACCOUNT_BALANCE * RISK_PER_TRADE;
+        if(best.type==="EARLY") risk *= 0.5;
+        let size = risk / Math.abs(best.price - best.sl);
 
-    // ===== SIZE RISK =====
-    let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
-    if(best.type==="EARLY") risk *= 0.5
-    if(best.type==="FALLBACK") risk *= 0.3
-    let size = risk / Math.abs(best.price - best.sl)
-
-    let msg = `🔥 BEST SIGNAL
-
+        let msg = `🔥 BEST SIGNAL
 ${best.symbol} (${best.type})
 ${best.side}
 Entry: ${best.price.toFixed(4)}
 TP: ${best.tp.toFixed(4)}
 SL: ${best.sl.toFixed(4)}
 Size: ${size.toFixed(2)}
-Score: ${best.score}
-`
+Score: ${best.score}`;
 
-    console.log(msg)
-    await sendTelegram(msg)
+        // Telegram spam control
+        if(!lastSentSignals[best.symbol] || lastSentSignals[best.symbol] < best.score){
+            console.log(msg);
+            await sendTelegram(msg);
+            lastSentSignals[best.symbol] = best.score;
+        }
+    }
 }
 
 // ================= BACKTEST =================
 async function backtest(symbol){
+    let data15 = await getData(symbol,"15m",1500);
+    let data1h = await getData(symbol,"1h",500);
+    if(!data15 || !data1h) return {error:"no data"};
 
-    let data15 = await getData(symbol,"15m",1500)
-    let data1h = await getData(symbol,"1h",500)
-    if(!data15 || !data1h) return {error:"no data"}
-
-    let win=0, loss=0, total=0
-
+    let win=0, loss=0, total=0;
     for(let i=250;i<data15.length-50;i++){
+        let slice15 = data15.slice(0,i);
+        let idx1h = Math.floor(i/4);
+        let slice1h = data1h.slice(Math.max(0,idx1h-150), idx1h);
+        let r = coreLogic(slice15,slice1h);
+        if(!r) continue;
 
-        let slice15 = data15.slice(0,i)
-        let idx1h = Math.floor(i/4)
-        let slice1h = data1h.slice(Math.max(0, idx1h-150), idx1h)
+        let side = r.score>=SCORE_THRESHOLD ? r.side : r.earlySide;
+        if(!side) continue;
 
-        let r = coreLogic(slice15, slice1h, true)
-        if(!r) continue
-
-        let side = null
-        if(r.score >= SCORE_THRESHOLD) side = r.side
-        else if(r.earlyScore >= EARLY_THRESHOLD) side = r.earlySide
-        else if(r.score >= SCORE_FALLBACK) side = r.side
-        else continue
-
-        let tp = r.tp
-        let sl = r.sl
-        if(!tp || !sl || isNaN(tp) || isNaN(sl)) continue
-
-        let result=null
-        for(let j=i+1;j<i+40;j++){
-            let h=+data15[j][2], l=+data15[j][3]
-            if(side==="LONG"){
-                if(l<=sl){ result="SL"; break }
-                if(h>=tp){ result="TP"; break }
-            }else{
-                if(h>=sl){ result="SL"; break }
-                if(l<=tp){ result="TP"; break }
-            }
+        let tp = r.tp;
+        let sl = r.sl;
+        let result=null;
+        for(let j=i+1;j<i+50;j++){
+            let h=+data15[j][2], l=+data15[j][3];
+            if(side==="LONG"){ if(l<=sl){ result="SL"; break } if(h>=tp){ result="TP"; break } }
+            else{ if(h>=sl){ result="SL"; break } if(l<=tp){ result="TP"; break } }
         }
 
-        if(!result) continue
-        if(result==="TP") win++
-        else loss++
-        total++
+        if(result==="TP") win++;
+        else loss++;
+        total++;
     }
-
-    let winrate = total ? (win/total*100).toFixed(2) : 0
-    return { total, win, loss, winrate }
+    let winrate = total ? (win/total*100).toFixed(2) : 0;
+    return { total, win, loss, winrate };
 }
 
 // ================= LOOP =================
-setInterval(()=>scanner(),300000)  // 5 phút
-setInterval(()=>checkCommand(),10000) // check telegram command
+setInterval(()=>scanner(), 300000); // 5 phút
+setInterval(()=>checkCommand(),10000);
 
 // ================= RUN =================
-scanner()
+scanner();
