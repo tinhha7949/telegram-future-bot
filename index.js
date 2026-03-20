@@ -6,7 +6,7 @@ const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 130
-const EARLY_THRESHOLD = 20 
+const EARLY_THRESHOLD = 80 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -105,7 +105,7 @@ async function getData(symbol, interval, limit){
 }
 
 // ================= CORE =================
-function coreLogic(data15, data1h){
+function coreLogic(data15, data1h, isBacktest=false){
 
     let closes = data15.map(x=>+x[4])
     let highs  = data15.map(x=>+x[2])
@@ -116,7 +116,7 @@ function coreLogic(data15, data1h){
     let price = closes.at(-1)
 
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
-    if(volAvg < MIN_VOL_15M) return null
+    if(!isBacktest && volAvg < MIN_VOL_15M) return null
 
     let ema20  = ema(closes.slice(-60),20)
     let ema50  = ema(closes.slice(-120),50)
@@ -184,9 +184,9 @@ function coreLogic(data15, data1h){
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
 
-    if(range < 0.01) return null
-    if(candleMove > 0.035) return null
-    if(trendStrength < 0.002) return null
+    if(!isBacktest && range < 0.01) return null
+    if(!isBacktest && candleMove > 0.035) return null
+    if(!isBacktest && trendStrength < 0.002) return null
 
     // ===== RETURN =====
     return {
@@ -219,7 +219,15 @@ async function scanner(){
 
     console.log("🚀 SMART SCAN...")
 
-    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT"]
+    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
+  "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
+  "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
+  "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
+  "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
+  "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
+  "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
+  "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
+  "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
 
     let results = await Promise.allSettled(symbols.map(scan))
 
