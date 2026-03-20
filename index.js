@@ -280,7 +280,14 @@ async function backtest(symbol){
     let data1h = await getData(symbol,"1h",500)
     if(!data15 || !data1h) return {error:"no data"}
 
+    let balance = ACCOUNT_BALANCE
+    let peak = balance
+    let maxDD = 0
+
     let win=0, loss=0, total=0
+
+    const FEE = 0.0004   // phí 0.04%
+    const SLIPPAGE = 0.0005 // trượt giá nhẹ
 
     for(let i=250;i<data15.length-50;i++){
 
@@ -288,10 +295,93 @@ async function backtest(symbol){
         let idx1h = Math.floor(i/4)
         let slice1h = data1h.slice(Math.max(0, idx1h-150), idx1h)
 
-        let r = coreLogic(slice15, slice1h)
+        let r = coreLogic(slice15, slice1h, true)
         if(!r) continue
 
-        let side = null
+        // ===== CHỌN LỆNH =====
+        let side=null
+        let isEarly=false
+
+        if(r.score >= SCORE_THRESHOLD){
+            side = r.side
+        }
+        else if(r.earlyScore >= EARLY_THRESHOLD){
+            side = r.earlySide
+            isEarly = true
+        }
+        else continue
+
+        if(!side || !r.tp || !r.sl) continue
+
+        let entry = r.price * (1 + (side==="LONG" ? SLIPPAGE : -SLIPPAGE))
+        let tp = r.tp
+        let sl = r.sl
+
+        if(isNaN(tp) || isNaN(sl)) continue
+
+        // ===== SIZE =====
+        let risk = balance * RISK_PER_TRADE
+        if(isEarly) risk *= 0.5
+
+        let size = risk / Math.abs(entry - sl)
+        if(!isFinite(size) || size <= 0) continue
+
+        let result=null
+
+        // ===== SIMULATE =====
+        for(let j=i+1;j<i+40;j++){
+
+            let h=+data15[j][2]
+            let l=+data15[j][3]
+
+            if(side==="LONG"){
+                if(l<=sl){ result="SL"; break }
+                if(h>=tp){ result="TP"; break }
+            }else{
+                if(h>=sl){ result="SL"; break }
+                if(l<=tp){ result="TP"; break }
+            }
+        }
+
+        if(!result) continue
+
+        total++
+
+        // ===== PNL =====
+        let pnl=0
+
+        if(result==="TP"){
+            let rr = Math.abs(tp-entry) / Math.abs(entry-sl)
+            pnl = risk * rr
+            win++
+        }else{
+            pnl = -risk
+            loss++
+        }
+
+        // trừ phí
+        pnl -= (entry * size * FEE)
+
+        balance += pnl
+
+        // ===== DRAWDOWN =====
+        if(balance > peak) peak = balance
+        let dd = (peak - balance) / peak
+        if(dd > maxDD) maxDD = dd
+    }
+
+    let winrate = total ? (win/total*100).toFixed(2) : 0
+
+    return {
+        total,
+        win,
+        loss,
+        winrate,
+        balance: balance.toFixed(2),
+        profit: (balance - ACCOUNT_BALANCE).toFixed(2),
+        drawdown: (maxDD*100).toFixed(2)+"%"
+    }
+}
 
 // ===== chọn MAIN hoặc EARLY chuẩn =====
 if(r.score >= SCORE_THRESHOLD){
