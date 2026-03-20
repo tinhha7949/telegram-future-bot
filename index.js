@@ -119,22 +119,28 @@ function scanCore(symbol, data15, data1h){
     let volumes= data15.map(x=>+x[5])
     let closes1h = data1h.map(x=>+x[4])
 
-    let price = closes.at(-1)
+    // ===== FIX QUAN TRỌNG: dùng nến đã đóng =====
+    let price = closes.at(-2)
+    let prevClose = closes.at(-3)
 
-    let volAvg = volumes.slice(-30).reduce((a,b)=>a+b)/30
+    let volAvg = volumes.slice(-30,-2).reduce((a,b)=>a+b)/30
     if(volAvg < MIN_VOL_15M) return null
 
-    let ema20  = ema(closes.slice(-60),20)
-    let ema50  = ema(closes.slice(-120),50)
-    let ema200 = ema(closes.slice(-250),200)
-    let ema20_1h = ema(closes1h.slice(-60),20)
-    let ema50_1h = ema(closes1h.slice(-120),50)
+    let ema20  = ema(closes.slice(-60,-2),20)
+    let ema50  = ema(closes.slice(-120,-2),50)
+    let ema200 = ema(closes.slice(-250,-2),200)
 
-    let r = rsi(closes.slice(-50))
-    let atrVal = atr(data15.slice(-100))
+    let ema20_1h = ema(closes1h.slice(-60,-2),20)
+    let ema50_1h = ema(closes1h.slice(-120,-2),50)
 
-    let high50 = Math.max(...highs.slice(-50))
-    let low50  = Math.min(...lows.slice(-50))
+    let r = rsi(closes.slice(-50,-2))
+    let atrVal = atr(data15.slice(-100,-2))
+
+    let highs50 = highs.slice(-50,-2)
+    let lows50  = lows.slice(-50,-2)
+
+    let high50 = Math.max(...highs50)
+    let low50  = Math.min(...lows50)
 
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
@@ -142,25 +148,70 @@ function scanCore(symbol, data15, data1h){
     let bosUp   = price > prevHigh
     let bosDown = price < prevLow
 
-    let sweepHigh = highs.at(-2) > high50 && closes.at(-2) < high50
-    let sweepLow  = lows.at(-2) < low50 && closes.at(-2) > low50
+    let prevHigh50 = Math.max(...highs.slice(-51,-2))
+    let prevLow50  = Math.min(...lows.slice(-51,-2))
+
+    let sweepHigh = highs.at(-3) > prevHigh50 && closes.at(-3) < prevHigh50
+    let sweepLow  = lows.at(-3) < prevLow50 && closes.at(-3) > prevLow50
+
+    let last4 = closes.slice(-6,-2)
+    let momentumUp = last4.every((v,i,a)=> i===0 || v>=a[i-1])
+    let momentumDown = last4.every((v,i,a)=> i===0 || v<=a[i-1])
+
+    let pullbackLong  = Math.abs(price-ema20)/price < 0.01
+    let pullbackShort = pullbackLong
+
+    let range = (high50 - low50)/price
+    if(range < 0.008) return null
 
     let side=null, score=0
 
-    if(ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h){ side="LONG"; score+=50 }
-    if(ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h){ side="SHORT"; score+=50 }
+    // ===== TREND =====
+    if(ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h){
+        side="LONG"; score+=40
+    }
+    if(ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h){
+        side="SHORT"; score+=40
+    }
 
-    if(side==="LONG" && (bosUp || sweepLow)) score+=40
-    if(side==="SHORT" && (bosDown || sweepHigh)) score+=40
+    // ===== STRUCTURE =====
+    if(side==="LONG"){
+        if(sweepLow) score+=40
+        else if(bosUp) score+=25
+    }
 
-    if(side==="LONG" && r>50 && r<65) score+=10
-    if(side==="SHORT" && r>35 && r<50) score+=10
+    if(side==="SHORT"){
+        if(sweepHigh) score+=40
+        else if(bosDown) score+=25
+    }
 
-    if(score < SCORE_THRESHOLD) return null
+    // ===== RSI =====
+    if(side==="LONG" && r>48 && r<70) score+=10
+    if(side==="SHORT" && r>30 && r<52) score+=10
+
+    // ===== MOMENTUM =====
+    if(side==="LONG" && momentumUp) score+=10
+    if(side==="SHORT" && momentumDown) score+=10
+
+    // ===== PULLBACK =====
+    if(pullbackLong) score+=15
+
+    // ===== VOLUME =====
+    let volNow = volumes.at(-2)
+    if(volNow > volAvg*1.5) score+=10
+
+    // ===== FINAL FILTER =====
+    if(score < 80) return null
 
     let sl,tp
-    if(side==="LONG"){ sl = price - atrVal*1.3; tp = price + atrVal*3 }
-    else{ sl = price + atrVal*1.3; tp = price - atrVal*3 }
+
+    if(side==="LONG"){
+        sl = price - atrVal*1
+        tp = price + atrVal*1.8
+    }else{
+        sl = price + atrVal*1
+        tp = price - atrVal*1.8
+    }
 
     return { symbol, side, price, tp, sl, score }
 }
