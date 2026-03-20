@@ -225,37 +225,29 @@ async function scan(symbol){
 }
 
 // ================= BACKTEST (NEW) =================
-function convertTo1H(data15){
-    let res=[]
-    for(let i=0;i<data15.length;i+=4){
-        let chunk = data15.slice(i,i+4)
-        if(chunk.length<4) continue
-        res.push([
-            chunk[0][0],
-            chunk[0][1],
-            Math.max(...chunk.map(x=>+x[2])),
-            Math.min(...chunk.map(x=>+x[3])),
-            chunk.at(-1)[4],
-            chunk.reduce((a,b)=>a+ +b[5],0)
-        ])
-    }
-    return res
-}
-
 async function backtest(symbol){
 
-    let data = await getData(symbol,"15m",2000)
-    if(!data) return { error:"no data" }
+    let data15 = await getData(symbol,"15m",2000)
+    let data1h = await getData(symbol,"1h",600)
 
-    let win=0, loss=0
+    if(!data15 || !data1h){
+        return { error:"no data" }
+    }
+
+    let win=0, loss=0, trades=0
     let balance = ACCOUNT_BALANCE
     let equity = []
-    let trades = 0
 
-    for(let i=300;i<data.length-60;i++){
+    for(let i=300;i<data15.length-60;i++){
 
-        let slice15 = data.slice(0,i)
-        let slice1h = convertTo1H(slice15)
+        let slice15 = data15.slice(0,i)
+
+        // 👉 FIX CHUẨN: lấy 1h thật
+        let idx1h = Math.floor(i/4)
+        let slice1h = data1h.slice(0, idx1h)
+
+        // 👉 tránh thiếu data
+        if(slice1h.length < 120) continue
 
         let signal = scanCore(symbol, slice15, slice1h)
         if(!signal) continue
@@ -265,8 +257,9 @@ async function backtest(symbol){
         let result=null
         let maxHold = 50
 
-        for(let j=i+1;j<Math.min(i+maxHold,data.length);j++){
-            let h=+data[j][2], l=+data[j][3]
+        for(let j=i+1;j<Math.min(i+maxHold,data15.length);j++){
+            let h=+data15[j][2]
+            let l=+data15[j][3]
 
             if(side==="LONG"){
                 if(l<=sl){ result="SL"; break }
@@ -279,7 +272,6 @@ async function backtest(symbol){
 
         if(!result) result="TIMEOUT"
 
-        // ===== PnL =====
         let risk = balance * RISK_PER_TRADE
         let rr = Math.abs(tp-price) / Math.abs(price-sl)
 
@@ -298,7 +290,7 @@ async function backtest(symbol){
     let total = win+loss
     let winrate = total ? (win/total*100).toFixed(2) : 0
 
-    // ===== DRAWDOWN =====
+    // ===== drawdown =====
     let peak = equity[0] || balance
     let maxDD = 0
 
