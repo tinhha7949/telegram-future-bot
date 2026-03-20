@@ -293,7 +293,15 @@ async function backtest(symbol){
         let r = coreLogic(slice15, slice1h, true) // ✅ FIX DUY NHẤT
         if(!r) continue
 
-        let side = r.score>=SCORE_THRESHOLD ? r.side : r.earlySide
+        let side = null
+
+if(r.score >= SCORE_THRESHOLD){
+    side = r.side
+}else if(r.earlyScore >= EARLY_THRESHOLD){
+    side = r.earlySide
+}else{
+    continue
+}
         let tp = r.tp
         let sl = r.sl
 
