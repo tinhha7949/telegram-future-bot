@@ -5,20 +5,19 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 120
-const EARLY_THRESHOLD = 80
-const SCORE_FALLBACK  = 70
+const SCORE_THRESHOLD = 100
+const EARLY_THRESHOLD = 50
+const SCORE_FALLBACK  = 10
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 100000
+const MIN_VOL_15M = 80000 // nới lỏng
 
 const SPREAD = 0.0005
 const FEE = 0.0004
 const SLIPPAGE = 0.0003
 
 let lastUpdateId = 0
-let currentPosition = null
 
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
@@ -29,26 +28,9 @@ async function sendTelegram(msg){
             headers:{"Content-Type":"application/json"},
             body: JSON.stringify({ chat_id: CHAT_ID, text: msg })
         })
-    }catch(e){ console.log("❌ TELE:", e.message) }
-}
-
-// ================= DATA (FIX RESTORED) =================
-async function getData(symbol, interval, limit){
-    const urls = [
-        `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
-        `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
-        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
-    ]
-
-    for(let url of urls){
-        try{
-            let res = await fetch(url)
-            if(!res.ok) continue
-            let data = await res.json()
-            if(Array.isArray(data) && data.length>0) return data
-        }catch(e){}
+    }catch(e){
+        console.log("❌ TELE:", e.message)
     }
-    return null
 }
 
 // ================= COMMAND =================
@@ -63,11 +45,15 @@ async function checkCommand(){
             lastUpdateId = u.update_id
             if(!u.message?.text) continue
 
-            if(u.message.text === "/status"){
-                await sendTelegram("🤖 BOT đang chạy OK")
+            let text = u.message.text
+
+            if(text === "/status"){
+                await sendTelegram("🤖 BOT SMART đang chạy OK")
             }
         }
-    }catch(e){ console.log("⚠️ CMD:", e.message) }
+    }catch(e){
+        console.log("⚠️ CMD:", e.message)
+    }
 }
 
 // ================= INDICATORS =================
@@ -77,7 +63,8 @@ function rsi(arr,p=14){
     let g=0,l=0
     for(let i=arr.length-p;i<arr.length;i++){
         let d=arr[i]-arr[i-1]
-        if(d>=0) g+=d; else l-=d
+        if(d>=0) g+=d
+        else l-=d
     }
     let rs=g/(l||1)
     return 100-(100/(1+rs))
@@ -118,10 +105,64 @@ function adx(data,p=14){
     return Math.abs(diPlus-diMinus)/(diPlus+diMinus)*100
 }
 
+// ================= DATA =================
+async function getData(symbol, interval, limit){
+    const urls = [
+        `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+        `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+    ]
+    for(let url of urls){
+        try{
+            let res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
+            if(!res.ok) continue
+            let data = await res.json()
+            if(Array.isArray(data) && data.length>0) return data
+        }catch(e){}
+    }
+    return null
+}
+
+async function getOrderBook(symbol, limit=50){
+    const urls = [
+        `https://data-api.binance.vision/api/v3/depth?symbol=${symbol}&limit=${limit}`,
+        `https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=${limit}`,
+        `https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${limit}`
+    ]
+    for(let url of urls){
+        try{
+            let res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
+            if(!res.ok) continue
+            let data = await res.json()
+            if(data?.bids && data?.asks) return data
+        }catch(e){}
+    }
+    return null
+}
+
+async function getOpenInterest(symbol){
+    const urls = [
+        `https://data-api.binance.vision/api/v3/openInterest?symbol=${symbol}`,
+        `https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`,
+        `https://fapi.binance.com/fapi/v2/openInterest?symbol=${symbol}`
+    ]
+    for(let url of urls){
+        try{
+            let res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
+            if(!res.ok) continue
+            let data = await res.json()
+            if(data?.openInterest) return +data.openInterest
+        }catch(e){}
+    }
+    return 0
+}
+
 // ================= CORE =================
 async function coreLogicAdvanced(data15, data1h, symbol){
 
     let closes = data15.map(x=>+x[4])
+    let highs  = data15.map(x=>+x[2])
+    let lows   = data15.map(x=>+x[3])
     let volumes= data15.map(x=>+x[5])
     let closes1h = data1h.map(x=>+x[4])
 
@@ -131,28 +172,46 @@ async function coreLogicAdvanced(data15, data1h, symbol){
 
     let ema20  = ema(closes.slice(-60),20)
     let ema50  = ema(closes.slice(-120),50)
+    let ema200 = closes.length>=200 ? ema(closes.slice(-250),200) : ema50
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
 
-    let trendLong = ema20>ema50 && ema20_1h>ema50_1h
-    let trendShort = ema20<ema50 && ema20_1h<ema50_1h
+    let momentumUp = closes.at(-1)>closes.at(-2) && closes.at(-2)>closes.at(-3)
+    let momentumDown = closes.at(-1)<closes.at(-2) && closes.at(-2)<closes.at(-3)
+
+    let volNow = volumes.at(-1)
+    let volSpike = volNow > volAvg*1.2
+
+    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
+    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
+
+    let prevHigh = Math.max(...highs.slice(-25,-5))
+    let prevLow  = Math.min(...lows.slice(-25,-5))
 
     let bb = bollinger(closes)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
     let adxVal = adx(data15)
 
-    if(bbWidth<0.015 || adxVal<20) return null
+    if(bbWidth<0.01) return null
+    if(adxVal<18) return null
+
+    let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
+    let trendStrength = Math.abs(ema20-ema50)/price
+
+    if(range < 0.008) return null
+    if(trendStrength < 0.0015) return null
 
     let side=null, score=0
 
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
 
-    if(side==="LONG" && r>50) score+=20
-    if(side==="SHORT" && r<50) score+=20
+    if(volSpike) score+=10
+    if(side==="LONG" && momentumUp) score+=15
+    if(side==="SHORT" && momentumDown) score+=15
 
     if(score < SCORE_FALLBACK) return null
 
@@ -160,8 +219,8 @@ async function coreLogicAdvanced(data15, data1h, symbol){
         side,
         price,
         score,
-        tp: side==="LONG" ? price + atrVal*2 : price - atrVal*2,
-        sl: side==="LONG" ? price - atrVal : price + atrVal,
+        tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
+        sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
         atr: atrVal
     }
 }
@@ -175,23 +234,13 @@ async function scan(symbol){
     let r = await coreLogicAdvanced(data15, data1h, symbol)
     if(!r) return null
 
-    if(currentPosition && currentPosition.symbol === symbol) return null
-
     return { symbol, ...r }
 }
 
 // ================= SCANNER =================
 async function scanner(){
 
-    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-        "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-        "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-        "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-        "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-        "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-        "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-        "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-        "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"]
 
     let results = await Promise.allSettled(symbols.map(scan))
     let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
@@ -203,8 +252,6 @@ async function scanner(){
 
     let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
     let size = risk / Math.abs(best.price - best.sl)
-
-    currentPosition = best
 
     let msg = `🔥 SIGNAL\n\n${best.symbol}\n${best.side}\nEntry: ${best.price.toFixed(4)}\nTP: ${best.tp.toFixed(4)}\nSL: ${best.sl.toFixed(4)}\nSize: ${size.toFixed(2)}\nScore: ${best.score}`
 
