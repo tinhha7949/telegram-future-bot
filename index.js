@@ -11,7 +11,7 @@ const SCORE_FALLBACK  = 10
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 80000   // nới
+const MIN_VOL_15M = 80000 // nới
 
 const SPREAD = 0.0005
 const FEE = 0.0004
@@ -109,7 +109,7 @@ function adx(data,p=14){
     return Math.abs(diPlus-diMinus)/(diPlus+diMinus)*100
 }
 
-// ================= DATA (GIỮ 3 NGUỒN) =================
+// ================= DATA (3 NGUỒN GIỮ NGUYÊN) =================
 async function getData(symbol, interval, limit){
     const urls = [
         `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
@@ -176,7 +176,7 @@ function volumeProfile(data, bins=20){
     return {vp, highVolBins, binSize, minP, maxP}
 }
 
-// ================= CORE LOGIC =================
+// ================= CORE LOGIC (GIỮ NGUYÊN + NỚI FILTER) =================
 async function coreLogicAdvanced(data15, data1h, symbol){
 
     let closes = data15.map(x=>+x[4])
@@ -203,7 +203,7 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
 
     let volNow = volumes.at(-1)
-    let volSpike = volNow > volAvg*1.2
+    let volSpike = volNow > volAvg*1.2 // nới
 
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
@@ -236,7 +236,7 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     let oi = await getOpenInterest(symbol)
     if(oi<volAvg*7) return null
 
-    let side=null, score=0
+    let side=null, score=0, type="MAIN"
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
     if(side==="LONG" && bosUp) score+=40
@@ -275,6 +275,7 @@ async function coreLogicAdvanced(data15, data1h, symbol){
         score,
         earlyScore,
         earlySide,
+        type,
         tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
         sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
         vol: volNow,
@@ -282,7 +283,7 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     }
 }
 
-// ================= SCAN + LOOP =================
+// ================= SCAN + SCANNER =================
 async function scan(symbol){
     let data15 = await getData(symbol,"15m",LIMIT_15M)
     let data1h = await getData(symbol,"1h",LIMIT_1H)
@@ -293,24 +294,27 @@ async function scan(symbol){
 }
 
 async function scanner(){
-    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","NEARUSDT","EOSUSDT"]
+
+    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
+        "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
+        "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
+        "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT"]
 
     let results = await Promise.allSettled(symbols.map(scan))
     let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
-
     if(signals.length===0) return
 
     let main = signals.filter(s => s.score >= SCORE_THRESHOLD)
     let best = null
 
     if(main.length>0){
-        main.sort((a,b)=> b.score - a.score)
+        main.sort((a,b)=> b.score - a.score || b.vol - a.vol)
         best = main[0]
         best.type="MAIN"
     }else{
         let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
         if(early.length>0){
-            early.sort((a,b)=> b.earlyScore - a.earlyScore)
+            early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
             best = early[0]
             best.side = best.earlySide
             best.score = best.earlyScore
@@ -318,7 +322,7 @@ async function scanner(){
         }else{
             let fallback = signals.filter(s=>s.score>=SCORE_FALLBACK)
             if(fallback.length>0){
-                fallback.sort((a,b)=> b.score - a.score)
+                fallback.sort((a,b)=> b.score - a.score || b.vol - a.vol)
                 best = fallback[0]
                 best.type="FALLBACK"
             }
@@ -332,6 +336,8 @@ async function scanner(){
     if(best.type==="FALLBACK") risk *= 0.3
     let size = risk / Math.abs(best.price - best.sl)
 
+    let trailingSL = best.side==="LONG" ? best.price - best.atr : best.price + best.atr
+
     let msg = `🔥 BEST SIGNAL
 
 ${best.symbol} (${best.type})
@@ -339,12 +345,15 @@ ${best.side}
 Entry: ${best.price.toFixed(4)}
 TP: ${best.tp.toFixed(4)}
 SL: ${best.sl.toFixed(4)}
+Trailing SL: ${trailingSL.toFixed(4)}
 Size: ${size.toFixed(2)}
 Score: ${best.score}`
 
     await sendTelegram(msg)
 }
 
+// ================= LOOP =================
 setInterval(()=>scanner(),300000)
 setInterval(()=>checkCommand(),10000)
+
 scanner()
