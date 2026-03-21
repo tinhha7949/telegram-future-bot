@@ -154,7 +154,7 @@ async function coreLogicAdvanced(data15, data1h, symbol, isBacktest=false){
     let momentumUp = last4[3]>last4[2] && last4[2]>last4[1]
     let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
     let volNow = volumes.at(-1)
-    let volSpike = volNow > volAvg*1.3
+    let volSpike = volNow > volAvg*1.5
 
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
@@ -167,16 +167,16 @@ async function coreLogicAdvanced(data15, data1h, symbol, isBacktest=false){
     let bb = bollinger(closes,20,2)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
     let adxVal = adx(data15,14)
-    if(!isBacktest && bbWidth<0.015) return null
-    if(!isBacktest && adxVal<20) return null
+    if(!isBacktest && bbWidth<0.02) return null
+    if(!isBacktest && adxVal<25) return null
 
     let side=null, score=0, type="MAIN"
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
     if(side==="LONG" && bosUp) score+=40
     if(side==="SHORT" && bosDown) score+=40
-    if(side==="LONG" && r>50 && r<65) score+=10
-    if(side==="SHORT" && r>35 && r<50) score+=10
+    if(side==="LONG" && r>52 && r<62) score+=10
+    if(side==="SHORT" && r>38 && r<48) score+=10
     if(volSpike) score+=10
     if(side==="LONG" && momentumUp) score+=20
     if(side==="SHORT" && momentumDown) score+=20
@@ -198,9 +198,9 @@ async function coreLogicAdvanced(data15, data1h, symbol, isBacktest=false){
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(!isBacktest && range < 0.01) return null
+    if(!isBacktest && range < 0.015) return null
     if(!isBacktest && candleMove > 0.035) return null
-    if(!isBacktest && trendStrength < 0.002) return null
+    if(!isBacktest && trendStrength < 0.003) return null
 
     return {
         side,
