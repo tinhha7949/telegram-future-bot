@@ -11,7 +11,7 @@ const SCORE_FALLBACK  = 10
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 80000 // nới lỏng
+const MIN_VOL_15M = 80000   // nới
 
 const SPREAD = 0.0005
 const FEE = 0.0004
@@ -48,7 +48,7 @@ async function checkCommand(){
             let text = u.message.text
 
             if(text === "/status"){
-                await sendTelegram("🤖 BOT SMART đang chạy OK")
+                await sendTelegram("🤖 BOT SMART nâng cấp đang chạy OK")
             }
         }
     }catch(e){
@@ -57,7 +57,11 @@ async function checkCommand(){
 }
 
 // ================= INDICATORS =================
-function ema(arr,p){ let k=2/(p+1), e=arr[0]; for(let i=1;i<arr.length;i++) e=arr[i]*k+e*(1-k); return e }
+function ema(arr,p){
+    let k=2/(p+1), e=arr[0]
+    for(let i=1;i<arr.length;i++) e=arr[i]*k+e*(1-k)
+    return e
+}
 
 function rsi(arr,p=14){
     let g=0,l=0
@@ -105,7 +109,7 @@ function adx(data,p=14){
     return Math.abs(diPlus-diMinus)/(diPlus+diMinus)*100
 }
 
-// ================= DATA =================
+// ================= DATA (GIỮ 3 NGUỒN) =================
 async function getData(symbol, interval, limit){
     const urls = [
         `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
@@ -114,7 +118,7 @@ async function getData(symbol, interval, limit){
     ]
     for(let url of urls){
         try{
-            let res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
+            let res = await fetch(url)
             if(!res.ok) continue
             let data = await res.json()
             if(Array.isArray(data) && data.length>0) return data
@@ -131,7 +135,7 @@ async function getOrderBook(symbol, limit=50){
     ]
     for(let url of urls){
         try{
-            let res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
+            let res = await fetch(url)
             if(!res.ok) continue
             let data = await res.json()
             if(data?.bids && data?.asks) return data
@@ -148,7 +152,7 @@ async function getOpenInterest(symbol){
     ]
     for(let url of urls){
         try{
-            let res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
+            let res = await fetch(url)
             if(!res.ok) continue
             let data = await res.json()
             if(data?.openInterest) return +data.openInterest
@@ -157,7 +161,22 @@ async function getOpenInterest(symbol){
     return 0
 }
 
-// ================= CORE =================
+function volumeProfile(data, bins=20){
+    let closes = data.map(x=>+x[4])
+    let minP = Math.min(...closes)
+    let maxP = Math.max(...closes)
+    let binSize = (maxP - minP)/bins
+    let vp = new Array(bins).fill(0)
+    for(let i=0;i<data.length;i++){
+        let idx = Math.min(Math.floor((+data[i][4]-minP)/binSize), bins-1)
+        vp[idx] += +data[i][5]
+    }
+    let maxVol = Math.max(...vp)
+    let highVolBins = vp.map((v,i)=>v>=maxVol*0.7 ? i : -1).filter(i=>i>=0)
+    return {vp, highVolBins, binSize, minP, maxP}
+}
+
+// ================= CORE LOGIC =================
 async function coreLogicAdvanced(data15, data1h, symbol){
 
     let closes = data15.map(x=>+x[4])
@@ -165,22 +184,23 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     let lows   = data15.map(x=>+x[3])
     let volumes= data15.map(x=>+x[5])
     let closes1h = data1h.map(x=>+x[4])
-
     let price = closes.at(-1)
+
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     if(volAvg < MIN_VOL_15M) return null
 
     let ema20  = ema(closes.slice(-60),20)
     let ema50  = ema(closes.slice(-120),50)
-    let ema200 = closes.length>=200 ? ema(closes.slice(-250),200) : ema50
+    let ema200 = ema(closes.slice(-250),200)
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
 
-    let momentumUp = closes.at(-1)>closes.at(-2) && closes.at(-2)>closes.at(-3)
-    let momentumDown = closes.at(-1)<closes.at(-2) && closes.at(-2)<closes.at(-3)
+    let last4 = closes.slice(-4)
+    let momentumUp = last4[3]>last4[2] && last4[2]>last4[1]
+    let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
 
     let volNow = volumes.at(-1)
     let volSpike = volNow > volAvg*1.2
@@ -190,84 +210,141 @@ async function coreLogicAdvanced(data15, data1h, symbol){
 
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
+    let bosUp   = price > prevHigh
+    let bosDown = price < prevLow
 
-    let bb = bollinger(closes)
+    let bb = bollinger(closes,20,2)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
-    let adxVal = adx(data15)
+    let adxVal = adx(data15,14)
 
     if(bbWidth<0.01) return null
     if(adxVal<18) return null
 
+    let vp = volumeProfile(data15)
+    let priceBin = Math.floor((price - vp.minP)/vp.binSize)
+    if(vp.highVolBins.length>0 && !vp.highVolBins.includes(priceBin)) return null
+
+    let ob = await getOrderBook(symbol)
+    if(ob){
+        let bidVol = ob.bids.reduce((a,b)=>a+parseFloat(b[1]),0)
+        let askVol = ob.asks.reduce((a,b)=>a+parseFloat(b[1]),0)
+        let obRatio = bidVol/(askVol||1)
+        if(obRatio<0.7 && trendLong) return null
+        if(obRatio>1.3 && trendShort) return null
+    }
+
+    let oi = await getOpenInterest(symbol)
+    if(oi<volAvg*7) return null
+
+    let side=null, score=0
+    if(trendLong){ side="LONG"; score+=50 }
+    if(trendShort){ side="SHORT"; score+=50 }
+    if(side==="LONG" && bosUp) score+=40
+    if(side==="SHORT" && bosDown) score+=40
+    if(side==="LONG" && r>50 && r<65) score+=10
+    if(side==="SHORT" && r>35 && r<50) score+=10
+    if(volSpike) score+=10
+    if(side==="LONG" && momentumUp) score+=20
+    if(side==="SHORT" && momentumDown) score+=20
+
+    let earlySide=null, earlyScore=0
+    if(trendLong){
+        earlySide="LONG"; earlyScore=50
+        if(r>50) earlyScore+=10
+        if(volNow > volAvg*1.1) earlyScore+=10
+        if(momentumUp) earlyScore+=10
+    }
+    if(trendShort){
+        earlySide="SHORT"; earlyScore=50
+        if(r<50) earlyScore+=10
+        if(volNow > volAvg*1.1) earlyScore+=10
+        if(momentumDown) earlyScore+=10
+    }
+
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
+    let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
 
     if(range < 0.008) return null
+    if(candleMove > 0.035) return null
     if(trendStrength < 0.0015) return null
-
-    let side=null, score=0
-
-    if(trendLong){ side="LONG"; score+=50 }
-    if(trendShort){ side="SHORT"; score+=50 }
-
-    if(volSpike) score+=10
-    if(side==="LONG" && momentumUp) score+=15
-    if(side==="SHORT" && momentumDown) score+=15
-
-    if(score < SCORE_FALLBACK) return null
 
     return {
         side,
         price,
         score,
+        earlyScore,
+        earlySide,
         tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
         sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
+        vol: volNow,
         atr: atrVal
     }
 }
 
-// ================= SCAN =================
+// ================= SCAN + LOOP =================
 async function scan(symbol){
     let data15 = await getData(symbol,"15m",LIMIT_15M)
     let data1h = await getData(symbol,"1h",LIMIT_1H)
     if(!data15 || !data1h) return null
-
     let r = await coreLogicAdvanced(data15, data1h, symbol)
     if(!r) return null
-
     return { symbol, ...r }
 }
 
-// ================= SCANNER =================
 async function scanner(){
-
-    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-        "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-        "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-        "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-        "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-        "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-        "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-        "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-        "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","NEARUSDT","EOSUSDT"]
 
     let results = await Promise.allSettled(symbols.map(scan))
     let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
 
     if(signals.length===0) return
 
-    signals.sort((a,b)=> b.score - a.score)
-    let best = signals[0]
+    let main = signals.filter(s => s.score >= SCORE_THRESHOLD)
+    let best = null
+
+    if(main.length>0){
+        main.sort((a,b)=> b.score - a.score)
+        best = main[0]
+        best.type="MAIN"
+    }else{
+        let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
+        if(early.length>0){
+            early.sort((a,b)=> b.earlyScore - a.earlyScore)
+            best = early[0]
+            best.side = best.earlySide
+            best.score = best.earlyScore
+            best.type="EARLY"
+        }else{
+            let fallback = signals.filter(s=>s.score>=SCORE_FALLBACK)
+            if(fallback.length>0){
+                fallback.sort((a,b)=> b.score - a.score)
+                best = fallback[0]
+                best.type="FALLBACK"
+            }
+        }
+    }
+
+    if(!best) return
 
     let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
+    if(best.type==="EARLY") risk *= 0.5
+    if(best.type==="FALLBACK") risk *= 0.3
     let size = risk / Math.abs(best.price - best.sl)
 
-    let msg = `🔥 SIGNAL\n\n${best.symbol}\n${best.side}\nEntry: ${best.price.toFixed(4)}\nTP: ${best.tp.toFixed(4)}\nSL: ${best.sl.toFixed(4)}\nSize: ${size.toFixed(2)}\nScore: ${best.score}`
+    let msg = `🔥 BEST SIGNAL
+
+${best.symbol} (${best.type})
+${best.side}
+Entry: ${best.price.toFixed(4)}
+TP: ${best.tp.toFixed(4)}
+SL: ${best.sl.toFixed(4)}
+Size: ${size.toFixed(2)}
+Score: ${best.score}`
 
     await sendTelegram(msg)
 }
 
-// ================= LOOP =================
 setInterval(()=>scanner(),300000)
 setInterval(()=>checkCommand(),10000)
-
 scanner()
