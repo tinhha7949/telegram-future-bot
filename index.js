@@ -11,7 +11,7 @@ const SCORE_FALLBACK  = 10
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 80000 // nới
+const MIN_VOL_15M = 60000 // nới
 
 const SPREAD = 0.0005
 const FEE = 0.0004
@@ -203,7 +203,7 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
 
     let volNow = volumes.at(-1)
-    let volSpike = volNow > volAvg*1.2 // nới
+    let volSpike = volNow > volAvg*1.1 // nới
 
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
@@ -217,8 +217,8 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     let bbWidth = (bb.upper-bb.lower)/bb.mid
     let adxVal = adx(data15,14)
 
-    if(bbWidth<0.01) return null
-    if(adxVal<18) return null
+    if(bbWidth<0.008) return null
+    if(adxVal<15) return null
 
     let vp = volumeProfile(data15)
     let priceBin = Math.floor((price - vp.minP)/vp.binSize)
@@ -234,7 +234,7 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     }
 
     let oi = await getOpenInterest(symbol)
-    if(oi<volAvg*7) return null
+    if(oi<volAvg*5) return null
 
     let side=null, score=0, type="MAIN"
     if(trendLong){ side="LONG"; score+=50 }
@@ -265,9 +265,9 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
 
-    if(range < 0.008) return null
+    if(range < 0.006) return null
     if(candleMove > 0.035) return null
-    if(trendStrength < 0.0015) return null
+    if(trendStrength < 0.0012) return null
 
     return {
         side,
