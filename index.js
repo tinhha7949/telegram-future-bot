@@ -5,13 +5,13 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 100
-const EARLY_THRESHOLD = 50
-const SCORE_FALLBACK  = 10
+const SCORE_THRESHOLD = 120
+const EARLY_THRESHOLD = 80
+const SCORE_FALLBACK  = 70
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 60000 // nới
+const MIN_VOL_15M = 100000
 
 const SPREAD = 0.0005
 const FEE = 0.0004
@@ -83,6 +83,7 @@ function atr(data,p=14){
     return trs.slice(-p).reduce((a,b)=>a+b,0)/p
 }
 
+// ===== BOLLINGER =====
 function bollinger(arr,p=20,mult=2){
     let slice = arr.slice(-p)
     let mean = slice.reduce((a,b)=>a+b,0)/p
@@ -90,6 +91,7 @@ function bollinger(arr,p=20,mult=2){
     return {upper: mean + mult*std, lower: mean - mult*std, mid: mean}
 }
 
+// ===== ADX =====
 function adx(data,p=14){
     let trs=[], DMplus=[], DMminus=[]
     for(let i=1;i<data.length;i++){
@@ -109,16 +111,17 @@ function adx(data,p=14){
     return Math.abs(diPlus-diMinus)/(diPlus+diMinus)*100
 }
 
-// ================= DATA (3 NGUỒN GIỮ NGUYÊN) =================
+// ================= DATA =================
 async function getData(symbol, interval, limit){
     const urls = [
         `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
         `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
         `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
     ]
+
     for(let url of urls){
         try{
-            let res = await fetch(url)
+            let res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
             if(!res.ok) continue
             let data = await res.json()
             if(Array.isArray(data) && data.length>0) return data
@@ -127,57 +130,8 @@ async function getData(symbol, interval, limit){
     return null
 }
 
-async function getOrderBook(symbol, limit=50){
-    const urls = [
-        `https://data-api.binance.vision/api/v3/depth?symbol=${symbol}&limit=${limit}`,
-        `https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=${limit}`,
-        `https://fapi.binance.com/fapi/v1/depth?symbol=${symbol}&limit=${limit}`
-    ]
-    for(let url of urls){
-        try{
-            let res = await fetch(url)
-            if(!res.ok) continue
-            let data = await res.json()
-            if(data?.bids && data?.asks) return data
-        }catch(e){}
-    }
-    return null
-}
-
-async function getOpenInterest(symbol){
-    const urls = [
-        `https://data-api.binance.vision/api/v3/openInterest?symbol=${symbol}`,
-        `https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`,
-        `https://fapi.binance.com/fapi/v2/openInterest?symbol=${symbol}`
-    ]
-    for(let url of urls){
-        try{
-            let res = await fetch(url)
-            if(!res.ok) continue
-            let data = await res.json()
-            if(data?.openInterest) return +data.openInterest
-        }catch(e){}
-    }
-    return 0
-}
-
-function volumeProfile(data, bins=20){
-    let closes = data.map(x=>+x[4])
-    let minP = Math.min(...closes)
-    let maxP = Math.max(...closes)
-    let binSize = (maxP - minP)/bins
-    let vp = new Array(bins).fill(0)
-    for(let i=0;i<data.length;i++){
-        let idx = Math.min(Math.floor((+data[i][4]-minP)/binSize), bins-1)
-        vp[idx] += +data[i][5]
-    }
-    let maxVol = Math.max(...vp)
-    let highVolBins = vp.map((v,i)=>v>=maxVol*0.7 ? i : -1).filter(i=>i>=0)
-    return {vp, highVolBins, binSize, minP, maxP}
-}
-
-// ================= CORE LOGIC (GIỮ NGUYÊN + NỚI FILTER) =================
-async function coreLogicAdvanced(data15, data1h, symbol){
+// ================= CORE =================
+async function coreLogicAdvanced(data15, data1h, symbol, isBacktest=false){
 
     let closes = data15.map(x=>+x[4])
     let highs  = data15.map(x=>+x[2])
@@ -185,25 +139,22 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     let volumes= data15.map(x=>+x[5])
     let closes1h = data1h.map(x=>+x[4])
     let price = closes.at(-1)
-
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
-    if(volAvg < MIN_VOL_15M) return null
+    if(!isBacktest && volAvg < MIN_VOL_15M) return null
 
     let ema20  = ema(closes.slice(-60),20)
     let ema50  = ema(closes.slice(-120),50)
-    let ema200 = ema(closes.slice(-250),200)
+    let ema200 = closes.length>=200 ? ema(closes.slice(-250),200) : ema50
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
-
     let last4 = closes.slice(-4)
     let momentumUp = last4[3]>last4[2] && last4[2]>last4[1]
     let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
-
     let volNow = volumes.at(-1)
-    let volSpike = volNow > volAvg*1.1 // nới
+    let volSpike = volNow > volAvg*1.3
 
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
@@ -216,25 +167,8 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     let bb = bollinger(closes,20,2)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
     let adxVal = adx(data15,14)
-
-    if(bbWidth<0.008) return null
-    if(adxVal<15) return null
-
-    let vp = volumeProfile(data15)
-    let priceBin = Math.floor((price - vp.minP)/vp.binSize)
-    if(vp.highVolBins.length>0 && !vp.highVolBins.includes(priceBin)) return null
-
-    let ob = await getOrderBook(symbol)
-    if(ob){
-        let bidVol = ob.bids.reduce((a,b)=>a+parseFloat(b[1]),0)
-        let askVol = ob.asks.reduce((a,b)=>a+parseFloat(b[1]),0)
-        let obRatio = bidVol/(askVol||1)
-        if(obRatio<0.7 && trendLong) return null
-        if(obRatio>1.3 && trendShort) return null
-    }
-
-    let oi = await getOpenInterest(symbol)
-    if(oi<volAvg*5) return null
+    if(!isBacktest && bbWidth<0.015) return null
+    if(!isBacktest && adxVal<20) return null
 
     let side=null, score=0, type="MAIN"
     if(trendLong){ side="LONG"; score+=50 }
@@ -264,10 +198,9 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
-
-    if(range < 0.006) return null
-    if(candleMove > 0.035) return null
-    if(trendStrength < 0.0012) return null
+    if(!isBacktest && range < 0.01) return null
+    if(!isBacktest && candleMove > 0.035) return null
+    if(!isBacktest && trendStrength < 0.002) return null
 
     return {
         side,
@@ -283,7 +216,7 @@ async function coreLogicAdvanced(data15, data1h, symbol){
     }
 }
 
-// ================= SCAN + SCANNER =================
+// ================= SCAN =================
 async function scan(symbol){
     let data15 = await getData(symbol,"15m",LIMIT_15M)
     let data1h = await getData(symbol,"1h",LIMIT_1H)
@@ -293,21 +226,17 @@ async function scan(symbol){
     return { symbol, ...r }
 }
 
+// ================= SCANNER =================
 async function scanner(){
 
+    console.log("🚀 SMART SCAN nâng cấp...")
+
     let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-        "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-        "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-        "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
-        "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-        "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-        "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-        "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-        "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+        "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT"]
 
     let results = await Promise.allSettled(symbols.map(scan))
     let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
-    if(signals.length===0) return
+    if(signals.length===0){ console.log("❌ No signal"); return }
 
     let main = signals.filter(s => s.score >= SCORE_THRESHOLD)
     let best = null
@@ -352,8 +281,10 @@ TP: ${best.tp.toFixed(4)}
 SL: ${best.sl.toFixed(4)}
 Trailing SL: ${trailingSL.toFixed(4)}
 Size: ${size.toFixed(2)}
-Score: ${best.score}`
+Score: ${best.score}
+`
 
+    console.log(msg)
     await sendTelegram(msg)
 }
 
@@ -361,4 +292,5 @@ Score: ${best.score}`
 setInterval(()=>scanner(),300000)
 setInterval(()=>checkCommand(),10000)
 
+// ================= RUN =================
 scanner()
