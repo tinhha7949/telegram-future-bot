@@ -203,17 +203,21 @@ async function coreLogicAdvanced(data15, data1h, symbol, isBacktest=false){
     if(!isBacktest && trendStrength < 0.003) return null
 
     return {
-        side,
-        price,
-        score,
-        earlyScore,
-        earlySide,
-        type,
-        tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
-        sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
-        vol: volNow,
-        atr: atrVal
-    }
+    side,
+    price,
+    score,
+    earlyScore,
+    earlySide,
+    type,
+    tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
+    sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
+    vol: volNow,
+    atr: atrVal,
+
+    // ===== ADD =====
+    adx: adxVal,
+    bbWidth: bbWidth
+}
 }
 
 // ================= SCAN =================
@@ -253,23 +257,40 @@ async function scanner(){
         best = main[0]
         best.type="MAIN"
     }else{
-        let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
-        if(early.length>0){
-            early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
-            best = early[0]
-            best.side = best.earlySide
-            best.score = best.earlyScore
-            best.type="EARLY"
-        }else{
-            let fallback = signals.filter(s=>s.score>=SCORE_FALLBACK)
-            if(fallback.length>0){
-                fallback.sort((a,b)=> b.score - a.score || b.vol - a.vol)
-                best = fallback[0]
-                best.type="FALLBACK"
-            }
+       let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
+
+if(early.length > 0){
+
+    early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
+
+    best = early[0]
+    best.side = best.earlySide
+    best.score = best.earlyScore
+    best.type = "EARLY"
+
+}else{
+
+    let fallback = signals.filter(s => 
+        s.score >= SCORE_FALLBACK
+        && s.score < EARLY_THRESHOLD
+        && (
+            s.adx >= 35
+            || s.bbWidth > 0.03
+        )
+    )
+
+    if(fallback.length > 0){
+
+        fallback.sort((a,b)=> b.score - a.score || b.vol - a.vol)
+
+        best = fallback[0]
+        best.type = "FALLBACK"
+
+        if(best.score >= 100){
+            best.score = 90
         }
     }
-
+}
     if(!best) return
 
     let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
