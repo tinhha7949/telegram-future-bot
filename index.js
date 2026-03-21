@@ -253,45 +253,49 @@ async function scanner(){
     let best = null
 
     if(main.length>0){
-        main.sort((a,b)=> b.score - a.score || b.vol - a.vol)
-        best = main[0]
-        best.type="MAIN"
-    }else{
-       let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
-
-if(early.length > 0){
-
-    early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
-
-    best = early[0]
-    best.side = best.earlySide
-    best.score = best.earlyScore
-    best.type = "EARLY"
+    main.sort((a,b)=> b.score - a.score || b.vol - a.vol)
+    best = main[0]
+    best.type="MAIN"
 
 }else{
 
-    let fallback = signals.filter(s => 
-        s.score >= SCORE_FALLBACK
-        && s.score < EARLY_THRESHOLD
-        && (
-            s.adx >= 35
-            || s.bbWidth > 0.03
+    let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
+
+    if(early.length > 0){
+
+        early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
+
+        best = early[0]
+        best.side = best.earlySide
+        best.score = best.earlyScore
+        best.type = "EARLY"
+
+    }else{
+
+        let fallback = signals.filter(s => 
+            s.score >= SCORE_FALLBACK
+            && s.score < EARLY_THRESHOLD
+            && (
+                s.adx >= 35
+                || s.bbWidth > 0.03
+            )
         )
-    )
 
-    if(fallback.length > 0){
+        if(fallback.length > 0){
 
-        fallback.sort((a,b)=> b.score - a.score || b.vol - a.vol)
+            fallback.sort((a,b)=> b.score - a.score || b.vol - a.vol)
 
-        best = fallback[0]
-        best.type = "FALLBACK"
+            best = fallback[0]
+            best.type = "FALLBACK"
 
-        if(best.score >= 100){
-            best.score = 90
+            if(best.score >= 100){
+                best.score = 90
+            }
         }
     }
-}
-    if(!best) return
+} // ✅ CÁI NÀY BẠN BỊ THIẾU
+
+if(!best) return
 
     let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
     if(best.type==="EARLY") risk *= 0.5
