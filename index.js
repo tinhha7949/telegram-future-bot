@@ -240,7 +240,15 @@ async function scan(symbol){
 // ================= SCANNER =================
 async function scanner(){
 
-    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT"]
+    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
+        "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
+        "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
+        "VETUSDT","FTMUSDT","NEARUSDT","EOSUSDT","FILUSDT",
+        "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
+        "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
+        "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
+        "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
+        "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
 
     let results = await Promise.allSettled(symbols.map(scan))
     let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
