@@ -342,7 +342,6 @@ if(!symbols || symbols.length === 0){
 
         let fallback = signals.filter(s => 
             s.score >= SCORE_FALLBACK
-            && s.score < EARLY_THRESHOLD
             && (
                 s.adx >= 35
                 || s.bbWidth > 0.03
