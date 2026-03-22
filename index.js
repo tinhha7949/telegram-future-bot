@@ -213,7 +213,16 @@ let distanceFromEMA = Math.abs(price - ema20)/price
 let candleBody = Math.abs(closes.at(-1) - closes.at(-2))
 let candleRange = highs.at(-1) - lows.at(-1)
 let volStrong = volNow > volAvg * 1.8
+// ===== PULLBACK ENTRY =====
+let pullbackShort = (
+    price > ema20 &&
+    r > 45 && r < 60
+)
 
+let pullbackLong = (
+    price < ema20 &&
+    r < 55 && r > 40
+)
 // ===== BOS CONFIRM =====
 let bosConfirmUp = closes.at(-1) > prevHigh && closes.at(-2) > prevHigh
 let bosConfirmDown = closes.at(-1) < prevLow && closes.at(-2) < prevLow
@@ -226,6 +235,9 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     let adxVal = adx(data15,14)
     if(!isBacktest && bbWidth<0.02) return null
     if(!isBacktest && adxVal<25) return null
+    // ❌ tránh đuổi giá
+    if(!isBacktest && side==="SHORT" && price < ema20) return null
+    if(!isBacktest && side==="LONG" && price > ema20) return null
     if(!isBacktest && volNow < volAvg * 1.1) return null
     if(!isBacktest && distanceFromEMA > 0.025) return null
     if(!isBacktest && candleRange > 0 && candleBody / candleRange < 0.4) return null
@@ -234,8 +246,8 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     let side=null, score=0, type="MAIN"
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
-    if(side==="LONG" && bosConfirmUp) score+=30
-    if(side==="SHORT" && bosConfirmDown) score+=30
+    if(side==="LONG" && bosConfirmUp && pullbackLong) score+=40
+    if(side==="SHORT" && bosConfirmDown && pullbackShort) score+=40
     if(side==="LONG" && r>55 && r<65) score+=12
     if(side==="SHORT" && r>35 && r<45) score+=12
     if(volSpike) score+=12
@@ -275,8 +287,20 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     earlyScore,
     earlySide,
     type,
-    tp: side==="LONG" ? price + atrVal*2.5 : price - atrVal*2.5,
-    sl: side==="LONG" ? price - atrVal*1.2 : price + atrVal*1.2,
+    tp: (() => {
+    let slPrice = side==="LONG"
+        ? Math.min(...lows.slice(-10))
+        : Math.max(...highs.slice(-10))
+
+    let rr = 2
+
+    return side==="LONG"
+        ? price + (price - slPrice)*rr
+        : price - (slPrice - price)*rr
+})(),
+    sl: side==="LONG"
+    ? Math.min(...lows.slice(-10))
+    : Math.max(...highs.slice(-10)),
     vol: volNow,
     atr: atrVal,
 
