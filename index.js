@@ -221,12 +221,12 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     let side=null, score=0, type="MAIN"
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
-    if(side==="LONG" && bosConfirmUp) score+=40
-    if(side==="SHORT" && bosConfirmDown) score+=40
+    if(side==="LONG" && bosConfirmUp) score+=30
+    if(side==="SHORT" && bosConfirmDown) score+=30
     if(side==="LONG" && r>55 && r<65) score+=12
     if(side==="SHORT" && r>35 && r<45) score+=12
-    if(volSpike) score+=10
-    if(volStrong) score+=15
+    if(volSpike) score+=12
+    if(volStrong) score+=18
     if(side==="LONG" && momentumUp) score+=20
     if(side==="SHORT" && momentumDown) score+=20
     if(side==="LONG" && closes.at(-1) > closes.at(-2)) score+=5
