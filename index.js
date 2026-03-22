@@ -139,10 +139,21 @@ async function getTopSymbols(){
     ]
 
     for(let url of urls){
-        try{
-            let res = await fetch(url)
-            if(!res.ok) continue
-            let data = await res.json()
+    try{
+        console.log("🌐 Fetching:", url)
+
+        let res = await fetch(url)
+
+        if(!res.ok){
+            console.log("❌ Fail:", url)
+            continue
+        }
+
+        let data = await res.json()
+
+        if(Array.isArray(data) && data.length > 0){
+
+            console.log("✅ SUCCESS:", url)
 
             let filtered = data
                 .filter(c => 
@@ -155,9 +166,14 @@ async function getTopSymbols(){
                 .slice(0, 25)
 
             return filtered.map(c => c.symbol)
+        }else{
+            console.log("⚠️ Empty or invalid data:", url)
+        }
 
-        }catch(e){}
+    }catch(e){
+        console.log("❌ ERROR:", url, e.message)
     }
+}
 
     console.log("❌ AUTO FILTER FAIL")
     return null
@@ -301,7 +317,10 @@ if(!cachedSymbols || now - lastSymbolsUpdate > 900000){
 }
 
 let symbols = cachedSymbols || []
-console.log(`✅ Using ${symbols.length} symbols`)
+if(symbols && symbols.length > 0){
+    console.log(`✅ Using ${symbols.length} symbols`)
+    console.log("📊 Symbols:", symbols)
+}
     
 if(!symbols || symbols.length === 0){
     console.log("⚠️ fallback to default list")
