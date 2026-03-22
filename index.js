@@ -224,10 +224,10 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     let bb = bollinger(closes,20,2)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
     let adxVal = adx(data15,14)
-    if(!isBacktest && bbWidth<0.022) return null
-    if(!isBacktest && adxVal<28) return null
-    if(!isBacktest && volNow < volAvg * 1.2) return null
-    if(!isBacktest && distanceFromEMA > 0.02) return null
+    if(!isBacktest && bbWidth<0.02) return null
+    if(!isBacktest && adxVal<25) return null
+    if(!isBacktest && volNow < volAvg * 1.1) return null
+    if(!isBacktest && distanceFromEMA > 0.025) return null
     if(!isBacktest && candleRange > 0 && candleBody / candleRange < 0.4) return null
     if(!isBacktest && !trendStrongHTF) return null
 
@@ -264,9 +264,9 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(!isBacktest && range < 0.015) return null
-    if(!isBacktest && candleMove > 0.035) return null
-    if(!isBacktest && trendStrength < 0.003) return null
+    if(!isBacktest && range < 0.012) return null
+    if(!isBacktest && candleMove > 0.4) return null
+    if(!isBacktest && trendStrength < 0.0025) return null
 
     return {
     side,
