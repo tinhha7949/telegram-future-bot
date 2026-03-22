@@ -288,30 +288,31 @@ async function scanner(){
 
     console.log("🚀 SMART SCAN nâng cấp...")
 
-    let now = Date.now()
+   let now = Date.now()
 
-if(!cachedSymbols || now - lastSymbolsUpdate > 900000){ // 15 phút
+if(!cachedSymbols || now - lastSymbolsUpdate > 900000){
     console.log("🔄 Updating symbols...")
     let newSymbols = await getTopSymbols()
 
-if(newSymbols && newSymbols.length > 0){
-    cachedSymbols = newSymbols
-    lastSymbolsUpdate = now
+    if(newSymbols && newSymbols.length > 0){
+        cachedSymbols = newSymbols
+        lastSymbolsUpdate = now
+    }
 }
-let symbols = cachedSymbols
 
+let symbols = cachedSymbols  // ✅ ĐẶT Ở NGOÀI
+console.log(`✅ Using ${symbols.length} symbols`)
+    
 if(!symbols || symbols.length === 0){
     console.log("⚠️ fallback to default list")
 
     symbols = [
-"BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT",
-"AVAXUSDT","LINKUSDT","DOTUSDT","MATICUSDT",
-"ATOMUSDT","NEARUSDT","FILUSDT","LTCUSDT",
-"AAVEUSDT","MKRUSDT","OPUSDT","IMXUSDT","RUNEUSDT"
-]
-    
+        "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT",
+        "AVAXUSDT","LINKUSDT","DOTUSDT","MATICUSDT",
+        "ATOMUSDT","NEARUSDT","FILUSDT","LTCUSDT",
+        "AAVEUSDT","MKRUSDT","OPUSDT","IMXUSDT","RUNEUSDT"
+    ]
 }
-
     let results = await Promise.allSettled(symbols.map(scan))
     let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
     if(signals.length===0){ console.log("❌ No signal"); return }
