@@ -171,7 +171,7 @@ async function coreLogicAdvanced(data15, data1h, symbol, isBacktest=false){
     let volumes= data15.map(x=>+x[5])
     let closes1h = data1h.map(x=>+x[4])
     let price = closes.at(-1)
-    let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
+    let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30 || 1
     if(!isBacktest && volAvg < MIN_VOL_15M) return null
 
     let ema20  = ema(closes.slice(-60),20)
@@ -183,8 +183,8 @@ async function coreLogicAdvanced(data15, data1h, symbol, isBacktest=false){
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
     let last4 = closes.slice(-4)
-    let momentumUp = last4[3]>last4[2] && last4[2]>last4[1]
-    let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
+    let momentumUp = last4.length === 4 && last4[3]>last4[2] && last4[2]>last4[1]
+    let momentumDown = last4.length === 4 && last4[3]<last4[2] && last4[2]<last4[1]
     let volNow = volumes.at(-1)
     let volSpike = volNow > volAvg*1.5
 
