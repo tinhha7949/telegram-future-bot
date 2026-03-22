@@ -149,7 +149,7 @@ async function getTopSymbols(){
                     c.symbol.endsWith("USDT") &&
                     !c.symbol.includes("UP") &&
                     !c.symbol.includes("DOWN") &&
-                    !c.symbol.includes("BUSD") &&
+                    !c.symbol.includes("BUSD")
                 )
                 .sort((a,b)=> b.quoteVolume - a.quoteVolume)
                 .slice(0, 25)
@@ -299,7 +299,7 @@ if(!cachedSymbols || now - lastSymbolsUpdate > 900000){
     }
 }
 
-let symbols = cachedSymbols  // ✅ ĐẶT Ở NGOÀI
+let symbols = cachedSymbols || []
 console.log(`✅ Using ${symbols.length} symbols`)
     
 if(!symbols || symbols.length === 0){
