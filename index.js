@@ -213,6 +213,7 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     let adxVal = adx(data15,14)
     if(!isBacktest && bbWidth<0.022) return null
     if(!isBacktest && adxVal<28) return null
+    if(!isBacktest && volNow < volAvg * 1.2) return null
     if(!isBacktest && distanceFromEMA > 0.02) return null
     if(!isBacktest && candleRange > 0 && candleBody / candleRange < 0.4) return null
     if(!isBacktest && !trendStrongHTF) return null
