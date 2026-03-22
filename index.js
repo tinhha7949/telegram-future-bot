@@ -163,36 +163,56 @@ async function coreLogicAdvanced(data15, data1h, symbol, isBacktest=false){
     let prevLow  = Math.min(...lows.slice(-25,-5))
     let bosUp   = price > prevHigh
     let bosDown = price < prevLow
+    // ===== NEW FILTER =====
+let distanceFromEMA = Math.abs(price - ema20)/price
+let candleBody = Math.abs(closes.at(-1) - closes.at(-2))
+let candleRange = highs.at(-1) - lows.at(-1)
+let volStrong = volNow > volAvg * 1.8
+
+// ===== BOS CONFIRM =====
+let bosConfirmUp = price > prevHigh && closes.at(-2) > prevHigh
+let bosConfirmDown = price < prevLow && closes.at(-2) < prevLow
+
+// ===== HTF TREND STRENGTH =====
+let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
 
     let bb = bollinger(closes,20,2)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
     let adxVal = adx(data15,14)
-    if(!isBacktest && bbWidth<0.02) return null
-    if(!isBacktest && adxVal<25) return null
+    if(!isBacktest && bbWidth<0.022) return null
+    if(!isBacktest && adxVal<28) return null
+    if(!isBacktest && distanceFromEMA > 0.02) return null
+    if(!isBacktest && candleBody / candleRange < 0.4) return null
+    if(!isBacktest && !trendStrongHTF) return null
 
     let side=null, score=0, type="MAIN"
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
-    if(side==="LONG" && bosUp) score+=40
-    if(side==="SHORT" && bosDown) score+=40
-    if(side==="LONG" && r>52 && r<62) score+=10
-    if(side==="SHORT" && r>38 && r<48) score+=10
+    if(side==="LONG" && bosConfirmUp) score+=40
+    if(side==="SHORT" && bosConfirmDown) score+=40
+    if(side==="LONG" && r>55 && r<65) score+=10
+    if(side==="SHORT" && r>35 && r<45) score+=10
     if(volSpike) score+=10
+    if(volStrong) score+=15
     if(side==="LONG" && momentumUp) score+=20
     if(side==="SHORT" && momentumDown) score+=20
+    if(side==="LONG" && closes.at(-1) > closes.at(-2)) score+=5
+    if(side==="SHORT" && closes.at(-1) < closes.at(-2)) score+=5
+
+
 
     let earlySide=null, earlyScore=0
     if(trendLong){
         earlySide="LONG"; earlyScore=50
         if(r>50) earlyScore+=10
         if(volNow > volAvg*1.1) earlyScore+=10
-        if(momentumUp) earlyScore+=10
+        if(momentumUp) earlyScore+=12
     }
     if(trendShort){
         earlySide="SHORT"; earlyScore=50
         if(r<50) earlyScore+=10
         if(volNow > volAvg*1.1) earlyScore+=10
-        if(momentumDown) earlyScore+=10
+        if(momentumDown) earlyScore+=12
     }
 
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
