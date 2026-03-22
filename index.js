@@ -292,10 +292,12 @@ async function scanner(){
 
 if(!cachedSymbols || now - lastSymbolsUpdate > 900000){ // 15 phút
     console.log("🔄 Updating symbols...")
-    cachedSymbols = await getTopSymbols()
+    let newSymbols = await getTopSymbols()
+
+if(newSymbols && newSymbols.length > 0){
+    cachedSymbols = newSymbols
     lastSymbolsUpdate = now
 }
-
 let symbols = cachedSymbols
 
 if(!symbols || symbols.length === 0){
