@@ -129,7 +129,39 @@ async function getData(symbol, interval, limit){
     }
     return null
 }
+// ================= AUTO COIN FILTER =================
+async function getTopSymbols(){
 
+    let urls = [
+        "https://api.binance.com/api/v3/ticker/24hr",
+        "https://data-api.binance.vision/api/v3/ticker/24hr"
+    ]
+
+    for(let url of urls){
+        try{
+            let res = await fetch(url)
+            if(!res.ok) continue
+            let data = await res.json()
+
+            let filtered = data
+                .filter(c => 
+                    c.symbol.endsWith("USDT") &&
+                    !c.symbol.includes("UP") &&
+                    !c.symbol.includes("DOWN") &&
+                    !c.symbol.includes("BUSD") &&
+                    +c.quoteVolume > 50000000
+                )
+                .sort((a,b)=> b.quoteVolume - a.quoteVolume)
+                .slice(0, 25)
+
+            return filtered.map(c => c.symbol)
+
+        }catch(e){}
+    }
+
+    console.log("❌ AUTO FILTER FAIL")
+    return null
+}
 // ================= CORE =================
 async function coreLogicAdvanced(data15, data1h, symbol, isBacktest=false){
 
@@ -255,15 +287,19 @@ async function scanner(){
 
     console.log("🚀 SMART SCAN nâng cấp...")
 
-    let symbols=["BTCUSDT","ETHUSDT","BNBUSDT","ADAUSDT","XRPUSDT",
-        "SOLUSDT","DOTUSDT","MATICUSDT","LTCUSDT","AVAXUSDT",
-        "LINKUSDT","TRXUSDT","ATOMUSDT","XLMUSDT","ALGOUSDT",
-        "VETUSDT","FTMUSDT","NEARUSDT","FILUSDT",
-        "CHZUSDT","KSMUSDT","SANDUSDT","GRTUSDT","AAVEUSDT",
-        "MKRUSDT","COMPUSDT","SNXUSDT","CRVUSDT","1INCHUSDT",
-        "ZRXUSDT","BATUSDT","ENJUSDT","LRCUSDT","OPUSDT",
-        "STXUSDT","MINAUSDT","COTIUSDT","IMXUSDT","RUNEUSDT",
-        "KLAYUSDT","TFUELUSDT","ONTUSDT","QTUMUSDT","NEOUSDT"]
+    let symbols = await getTopSymbols()
+
+if(!symbols || symbols.length === 0){
+    console.log("⚠️ fallback to default list")
+
+    symbols = [
+"BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT",
+"AVAXUSDT","LINKUSDT","DOTUSDT","MATICUSDT",
+"ATOMUSDT","NEARUSDT","FILUSDT","LTCUSDT",
+"AAVEUSDT","MKRUSDT","OPUSDT","IMXUSDT","RUNEUSDT"
+]
+    
+}
 
     let results = await Promise.allSettled(symbols.map(scan))
     let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
