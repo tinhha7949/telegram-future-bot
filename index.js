@@ -170,8 +170,8 @@ let candleRange = highs.at(-1) - lows.at(-1)
 let volStrong = volNow > volAvg * 1.8
 
 // ===== BOS CONFIRM =====
-let bosConfirmUp = price > prevHigh && closes.at(-2) > prevHigh
-let bosConfirmDown = price < prevLow && closes.at(-2) < prevLow
+let bosConfirmUp = closes.at(-1) > prevHigh && closes.at(-2) > prevHigh
+let bosConfirmDown = closes.at(-1) < prevLow && closes.at(-2) < prevLow
 
 // ===== HTF TREND STRENGTH =====
 let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
@@ -182,7 +182,7 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     if(!isBacktest && bbWidth<0.022) return null
     if(!isBacktest && adxVal<28) return null
     if(!isBacktest && distanceFromEMA > 0.02) return null
-    if(!isBacktest && candleBody / candleRange < 0.4) return null
+    if(!isBacktest && candleRange > 0 && candleBody / candleRange < 0.4) return null
     if(!isBacktest && !trendStrongHTF) return null
 
     let side=null, score=0, type="MAIN"
@@ -190,8 +190,8 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     if(trendShort){ side="SHORT"; score+=50 }
     if(side==="LONG" && bosConfirmUp) score+=40
     if(side==="SHORT" && bosConfirmDown) score+=40
-    if(side==="LONG" && r>55 && r<65) score+=10
-    if(side==="SHORT" && r>35 && r<45) score+=10
+    if(side==="LONG" && r>55 && r<65) score+=12
+    if(side==="SHORT" && r>35 && r<45) score+=12
     if(volSpike) score+=10
     if(volStrong) score+=15
     if(side==="LONG" && momentumUp) score+=20
