@@ -5,9 +5,9 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 130
-const EARLY_THRESHOLD = 75
-const SCORE_FALLBACK  = 90
+const SCORE_THRESHOLD = 120
+const EARLY_THRESHOLD = 70
+const SCORE_FALLBACK  = 85
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -370,7 +370,7 @@ signals.forEach(s => {
 
 // ===== EARLY =====
 signals.forEach(s => {
-    if(s.earlyScore >= EARLY_THRESHOLD){
+    if(s.earlyScore >= EARLY_THRESHOLD && s.score < SCORE_THRESHOLD){
         candidates.push({
             ...s,
             side: s.earlySide,
@@ -384,6 +384,7 @@ signals.forEach(s => {
 signals.forEach(s => {
     if(
         s.score >= SCORE_FALLBACK &&
+        s.score < SCORE_THRESHOLD &&
         (
             s.adx >= 35 ||
             s.bbWidth > 0.03
@@ -395,7 +396,6 @@ signals.forEach(s => {
         })
     }
 })
-
 if(candidates.length === 0) return
 
 // ===== SORT =====
