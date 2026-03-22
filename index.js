@@ -140,12 +140,10 @@ async function getTopSymbols(){
 
     for(let url of urls){
     try{
-        console.log("🌐 Fetching:", url)
-
+       
         let res = await fetch(url)
 
         if(!res.ok){
-            console.log("❌ Fail:", url)
             continue
         }
 
@@ -153,7 +151,6 @@ async function getTopSymbols(){
 
         if(Array.isArray(data) && data.length > 0){
 
-            console.log("✅ SUCCESS:", url)
 
             let filtered = data
                 .filter(c => 
@@ -319,7 +316,6 @@ if(!cachedSymbols || now - lastSymbolsUpdate > 900000){
 let symbols = cachedSymbols || []
 if(symbols && symbols.length > 0){
     console.log(`✅ Using ${symbols.length} symbols`)
-    console.log("📊 Symbols:", symbols)
 }
     
 if(!symbols || symbols.length === 0){
