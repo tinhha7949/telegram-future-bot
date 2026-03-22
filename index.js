@@ -317,50 +317,60 @@ if(!symbols || symbols.length === 0){
     let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
     if(signals.length===0){ console.log("❌ No signal"); return }
 
-    let main = signals.filter(s => s.score >= SCORE_THRESHOLD)
-    let best = null
+    let candidates = []
 
-    if(main.length>0){
-    main.sort((a,b)=> b.score - a.score || b.vol - a.vol)
-    best = main[0]
-    best.type="MAIN"
-
-}else{
-
-    let early = signals.filter(s => s.earlyScore >= EARLY_THRESHOLD)
-
-    if(early.length > 0){
-
-        early.sort((a,b)=> b.earlyScore - a.earlyScore || b.vol - a.vol)
-
-        best = early[0]
-        best.side = best.earlySide
-        best.score = best.earlyScore
-        best.type = "EARLY"
-
-    }else{
-
-        let fallback = signals.filter(s => 
-            s.score >= SCORE_FALLBACK
-            && (
-                s.adx >= 35
-                || s.bbWidth > 0.03
-            )
-        )
-
-        if(fallback.length > 0){
-
-            fallback.sort((a,b)=> b.score - a.score || b.vol - a.vol)
-
-            best = fallback[0]
-            best.type = "FALLBACK"
-
-            if(best.score >= 100){
-                best.score = 90
-            }
-        }
+// ===== MAIN =====
+signals.forEach(s => {
+    if(s.score >= SCORE_THRESHOLD){
+        candidates.push({
+            ...s,
+            type: "MAIN"
+        })
     }
-} // ✅ CÁI NÀY BẠN BỊ THIẾU
+})
+
+// ===== EARLY =====
+signals.forEach(s => {
+    if(s.earlyScore >= EARLY_THRESHOLD){
+        candidates.push({
+            ...s,
+            side: s.earlySide,
+            score: s.earlyScore,
+            type: "EARLY"
+        })
+    }
+})
+
+// ===== FALLBACK =====
+signals.forEach(s => {
+    if(
+        s.score >= SCORE_FALLBACK &&
+        (
+            s.adx >= 35 ||
+            s.bbWidth > 0.03
+        )
+    ){
+        candidates.push({
+            ...s,
+            type: "FALLBACK"
+        })
+    }
+})
+
+if(candidates.length === 0) return
+
+// ===== SORT =====
+candidates.sort((a,b)=> b.score - a.score || b.vol - a.vol)
+
+let best = candidates[0]
+
+// ===== FIX EARLY ĐÈ FALLBACK =====
+if(best.type === "EARLY" && best.score < 85){
+    let betterFallback = candidates.find(c => 
+        c.type === "FALLBACK" && c.score > best.score + 5
+    )
+    if(betterFallback) best = betterFallback
+}
 
 if(!best) return
 
