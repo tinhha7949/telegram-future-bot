@@ -150,7 +150,7 @@ async function getTopSymbols(){
                     !c.symbol.includes("UP") &&
                     !c.symbol.includes("DOWN") &&
                     !c.symbol.includes("BUSD") &&
-                    +c.quoteVolume > 50000000
+                    +c.quoteVolume > 20000000
                 )
                 .sort((a,b)=> b.quoteVolume - a.quoteVolume)
                 .slice(0, 25)
