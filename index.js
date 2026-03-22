@@ -18,7 +18,8 @@ const FEE = 0.0004
 const SLIPPAGE = 0.0003
 
 let lastUpdateId = 0
-
+let cachedSymbols = null
+let lastSymbolsUpdate = 0
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
     try{
@@ -287,7 +288,15 @@ async function scanner(){
 
     console.log("🚀 SMART SCAN nâng cấp...")
 
-    let symbols = await getTopSymbols()
+    let now = Date.now()
+
+if(!cachedSymbols || now - lastSymbolsUpdate > 900000){ // 15 phút
+    console.log("🔄 Updating symbols...")
+    cachedSymbols = await getTopSymbols()
+    lastSymbolsUpdate = now
+}
+
+let symbols = cachedSymbols
 
 if(!symbols || symbols.length === 0){
     console.log("⚠️ fallback to default list")
