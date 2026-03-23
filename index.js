@@ -245,19 +245,6 @@ async function coreLogic(data15, data1h){
         if(volNow > volAvg*1.2) earlyScore+=10
     }
 
-  let sl = null
-let tp = null
-
-if(side === "LONG"){
-    sl = price - atrVal * 1.5
-    tp = price + atrVal * 2
-}
-
-if(side === "SHORT"){
-    sl = price + atrVal * 1.5
-    tp = price - atrVal * 2
-}
-
 // ===== STRUCTURE SL =====
 let swingLow = Math.min(...lows.slice(-10))
 let swingHigh = Math.max(...highs.slice(-10))
