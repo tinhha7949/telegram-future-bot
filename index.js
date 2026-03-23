@@ -281,7 +281,10 @@ async function scanner(){
         }
 
         // ===== SYMBOL LIST =====
-        let symbols = cachedSymbols || ["BTCUSDT","ETHUSDT","SOLUSDT"]
+        let symbols = cachedSymbols || ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT",
+        "AVAXUSDT","LINKUSDT","DOTUSDT","MATICUSDT",
+        "ATOMUSDT","NEARUSDT","FILUSDT","LTCUSDT",
+        "AAVEUSDT","MKRUSDT","OPUSDT","IMXUSDT","RUNEUSDT"]
 
         if(symbols && symbols.length > 0){
             console.log(`✅ Using ${symbols.length} symbols`)
