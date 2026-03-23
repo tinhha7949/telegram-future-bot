@@ -298,36 +298,38 @@ async function scanner(){
 
     let candidates = []
 
-    signals.forEach(s=>{
-        if(s.score >= SCORE_THRESHOLD){
-            candidates.push({...s, type:"MAIN"})
-        }
-    })
+   signals.forEach(s=>{
+    if(s.score >= SCORE_THRESHOLD){
+        candidates.push({...s, type:"MAIN"})
+    }
+})
 
-    signals.forEach(s=>{
-        if(s.earlyScore >= EARLY_THRESHOLD && s.score < SCORE_THRESHOLD){
-            candidates.push({
-                ...s,
-                side: s.earlySide,
-                score: s.earlyScore,
-                type:"EARLY"
-            })
-        }
-    }) 
+signals.forEach(s=>{
+    if(s.earlyScore >= EARLY_THRESHOLD && s.score < SCORE_THRESHOLD){
+        candidates.push({
+            ...s,
+            side: s.earlySide,
+            score: s.earlyScore,
+            type:"EARLY"
+        })
+    }
+})
 
-   if(!candidates || candidates.length === 0){
+// ✅ CHỈ GIỮ CÁI NÀY
+if(candidates.length === 0){
     console.log("❌ No signal")
     return
 }
 
-   if(signals.length===0){
-    console.log("❌ No signal")
-    return
-}
-    candidates.sort((a,b)=> b.score - a.score)
+// ❌ XÓA CÁI NÀY ĐI
+// if(signals.length===0){...}
 
-    let best = candidates[0]
-    if(!best){
+candidates.sort((a,b)=> b.score - a.score)
+
+let best = candidates[0]
+
+// ✅ GIỮ CÁI NÀY
+if(!best){
     console.log("❌ No best candidate")
     return
 }
