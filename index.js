@@ -261,15 +261,25 @@ async function scan(symbol){
 
 // ================= SCANNER =================
 async function scanner(){
+    console.log("🚀 SMART SCAN...")
 
     let now = Date.now()
 
-    if(!cachedSymbols || now-lastSymbolsUpdate>900000){
-        cachedSymbols = await getTopSymbols()
+    if(!cachedSymbols || now - lastSymbolsUpdate > 900000){
+    console.log("🔄 Updating symbols...")
+
+    let newSymbols = await getTopSymbols()
+
+    if(newSymbols && newSymbols.length > 0){
+        cachedSymbols = newSymbols
         lastSymbolsUpdate = now
     }
+}
 
     let symbols = cachedSymbols || ["BTCUSDT","ETHUSDT","SOLUSDT"]
+    if(symbols && symbols.length > 0){
+    console.log(`✅ Using ${symbols.length} symbols`)
+}
 
     let results = await Promise.allSettled(symbols.map(scan))
     let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
@@ -298,8 +308,10 @@ async function scanner(){
         }
     })
 
-    if(candidates.length===0) return
-
+   if(signals.length===0){
+    console.log("❌ No signal")
+    return
+}
     candidates.sort((a,b)=> b.score - a.score)
 
     let best = candidates[0]
