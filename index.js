@@ -280,7 +280,7 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
     let trendStrength = Math.abs(ema20-ema50)/price
     if(!isBacktest && range < 0.01) return null
     if(!isBacktest && candleMove > 0.4) return null
-    if(!isBacktest && trendStrength < 0.0015) return null
+    if(!isBacktest && trendStrength < 0.002) return null
 
     return {
     side,
