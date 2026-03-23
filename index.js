@@ -224,6 +224,7 @@ async function coreLogic(data15, data1h){
     if(side==="SHORT" && r>35 && r<50) score+=10
 
     if(atrVal/price > 0.004) score+=10
+    if(!side) return null
 
     // ===== EARLY =====
     let earlySide=null, earlyScore=0
@@ -244,9 +245,112 @@ async function coreLogic(data15, data1h){
         if(volNow > volAvg*1.2) earlyScore+=10
     }
 
-    return { side, score, earlySide, earlyScore, price, atr: atrVal }
+  let sl = null
+let tp = null
+
+if(side === "LONG"){
+    sl = price - atrVal * 1.5
+    tp = price + atrVal * 2
 }
 
+if(side === "SHORT"){
+    sl = price + atrVal * 1.5
+    tp = price - atrVal * 2
+}
+
+// ===== STRUCTURE SL =====
+let swingLow = Math.min(...lows.slice(-10))
+let swingHigh = Math.max(...highs.slice(-10))
+
+let sl = null
+let tp = null
+
+// ===== SL =====
+if(side === "LONG"){
+    sl = swingLow - atrVal * 0.5
+
+    if(sl >= price){
+        sl = price - atrVal * 1.5
+    }
+}
+
+if(side === "SHORT"){
+    sl = swingHigh + atrVal * 0.5
+
+    if(sl <= price){
+        sl = price + atrVal * 1.5
+    }
+}
+
+// ===== SL TP PRO =====
+
+let swingLow = Math.min(...lows.slice(-10))
+let swingHigh = Math.max(...highs.slice(-10))
+
+let sl = null
+let tp = null
+
+// ===== SL =====
+if(side === "LONG"){
+    sl = swingLow - atrVal * 0.5
+
+    if(sl >= price){
+        sl = price - atrVal * 1.5
+    }
+}
+
+if(side === "SHORT"){
+    sl = swingHigh + atrVal * 0.5
+
+    if(sl <= price){
+        sl = price + atrVal * 1.5
+    }
+}
+
+// ===== VALIDATE =====
+let minDistance = price * 0.002
+
+if(Math.abs(price - sl) < minDistance){
+    if(side === "LONG"){
+        sl = price - atrVal * 1.5
+    }else{
+        sl = price + atrVal * 1.5
+    }
+}
+
+// ===== MAX DISTANCE =====
+let maxDistance = price * 0.03
+
+if(Math.abs(price - sl) > maxDistance){
+    if(side === "LONG"){
+        sl = price - atrVal * 1.5
+    }else{
+        sl = price + atrVal * 1.5
+    }
+}
+
+// ===== TP =====
+let rr = 2.2
+
+if(side === "LONG"){
+    tp = price + (price - sl) * rr
+}else{
+    tp = price - (sl - price) * rr
+}
+
+// ===== ROUND =====
+function round(n){ return Number(n.toFixed(4)) }
+
+return {
+    side,
+    score,
+    earlySide,
+    earlyScore,
+    price: round(price),
+    sl: round(sl),
+    tp: round(tp),
+    atr: atrVal
+}
 // ================= SCAN =================
 async function scan(symbol){
     let data15 = await getData(symbol,"15m",LIMIT_15M)
@@ -350,6 +454,10 @@ async function scanner(){
         if(best.type === "EARLY") risk *= 0.5
 
         let diff = Math.abs(best.price - best.sl)
+        if(!best.sl || !best.tp){
+    console.log("❌ Missing SL TP")
+    return
+}
 
         if(!diff || diff === 0){
             console.log("❌ Invalid SL distance")
