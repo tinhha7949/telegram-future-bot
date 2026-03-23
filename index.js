@@ -228,7 +228,7 @@ let bosConfirmUp = closes.at(-1) > prevHigh && closes.at(-2) > prevHigh
 let bosConfirmDown = closes.at(-1) < prevLow && closes.at(-2) < prevLow
 
 // ===== HTF TREND STRENGTH =====
-let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.0005
+let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
 
     let bb = bollinger(closes,20,2)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
@@ -244,8 +244,8 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.0005
     let side=null, score=0, type="MAIN"
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
-   // if(!isBacktest && side==="SHORT" && price < ema20 *1.01) return null
-  //  if(!isBacktest && side==="LONG" && price > ema20 *0.99) return null
+    if(!isBacktest && side==="SHORT" && price < ema20 *1.002) return null
+    if(!isBacktest && side==="LONG" && price > ema20 *0.998) return null
     if(side==="LONG" && bosConfirmUp && pullbackLong) score+=40
     if(side==="SHORT" && bosConfirmDown && pullbackShort) score+=40
     if(side==="LONG" && r>55 && r<65) score+=12
