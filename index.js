@@ -248,8 +248,8 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
     if(trendShort){ side="SHORT"; score+=50 }
     if(!isBacktest && side==="LONG" && price < ema20 * 0.998) return null
     if(!isBacktest && side==="SHORT" && price > ema20 * 1.002) return null
-    if(side==="LONG" && bosConfirmUp && pullbackLong) score+=40
-    if(side==="SHORT" && bosConfirmDown && pullbackShort) score+=40
+    if(side==="LONG" && (bosConfirmUp || pullbackLong)) score+=40
+    if(side==="SHORT" && (bosConfirmDown || pullbackShort)) score+=40
     if(side==="LONG" && r>55 && r<65) score+=12
     if(side==="SHORT" && r>35 && r<45) score+=12
     if(volSpike) score+=12
@@ -277,6 +277,8 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
 
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
+    let avoidPump = candleMove < 0.02
+    if(!isBacktest && !avoidPump) return null
     let trendStrength = Math.abs(ema20-ema50)/price
     if(!isBacktest && range < 0.01) return null
     if(!isBacktest && candleMove > 0.4) return null
@@ -291,9 +293,9 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
     type,
     tp: (() => {
     let slPrice = side==="LONG"
-        ? Math.min(...lows.slice(-10))
-        : Math.max(...highs.slice(-10))
-
+    ? Math.min(...lows.slice(-5))
+    : Math.max(...highs.slice(-5))
+        
     let rr = 2
 
     return side==="LONG"
