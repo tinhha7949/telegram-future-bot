@@ -245,98 +245,51 @@ async function coreLogic(data15, data1h){
         if(volNow > volAvg*1.2) earlyScore+=10
     }
 
-// ===== STRUCTURE SL =====
-let swingLow = Math.min(...lows.slice(-10))
-let swingHigh = Math.max(...highs.slice(-10))
+    // ===== STRUCTURE SL/TP =====
+    let swingLow = Math.min(...lows.slice(-10))
+    let swingHigh = Math.max(...highs.slice(-10))
 
-let sl = null
-let tp = null
+    let sl = null
+    let tp = null
+    let rr = 2.2
 
-// ===== SL =====
-if(side === "LONG"){
-    sl = swingLow - atrVal * 0.5
-
-    if(sl >= price){
-        sl = price - atrVal * 1.5
-    }
-}
-
-if(side === "SHORT"){
-    sl = swingHigh + atrVal * 0.5
-
-    if(sl <= price){
-        sl = price + atrVal * 1.5
-    }
-}
-
-// ===== SL TP PRO =====
-
-let swingLow = Math.min(...lows.slice(-10))
-let swingHigh = Math.max(...highs.slice(-10))
-
-let sl = null
-let tp = null
-
-// ===== SL =====
-if(side === "LONG"){
-    sl = swingLow - atrVal * 0.5
-
-    if(sl >= price){
-        sl = price - atrVal * 1.5
-    }
-}
-
-if(side === "SHORT"){
-    sl = swingHigh + atrVal * 0.5
-
-    if(sl <= price){
-        sl = price + atrVal * 1.5
-    }
-}
-
-// ===== VALIDATE =====
-let minDistance = price * 0.002
-
-if(Math.abs(price - sl) < minDistance){
     if(side === "LONG"){
-        sl = price - atrVal * 1.5
-    }else{
-        sl = price + atrVal * 1.5
+        sl = swingLow - atrVal * 0.5
+        if(sl >= price) sl = price - atrVal * 1.5
+        tp = price + (price - sl) * rr
+    }else if(side === "SHORT"){
+        sl = swingHigh + atrVal * 0.5
+        if(sl <= price) sl = price + atrVal * 1.5
+        tp = price - (sl - price) * rr
     }
-}
 
-// ===== MAX DISTANCE =====
-let maxDistance = price * 0.03
+    // ===== VALIDATE MIN/MAX DISTANCE =====
+    let minDistance = price * 0.002
+    let maxDistance = price * 0.03
 
-if(Math.abs(price - sl) > maxDistance){
-    if(side === "LONG"){
-        sl = price - atrVal * 1.5
-    }else{
-        sl = price + atrVal * 1.5
+    if(Math.abs(price - sl) < minDistance){
+        sl = side==="LONG" ? price - atrVal * 1.5 : price + atrVal * 1.5
+        tp = side==="LONG" ? price + (price - sl) * rr : price - (sl - price) * rr
     }
-}
 
-// ===== TP =====
-let rr = 2.2
+    if(Math.abs(price - sl) > maxDistance){
+        sl = side==="LONG" ? price - atrVal * 1.5 : price + atrVal * 1.5
+        tp = side==="LONG" ? price + (price - sl) * rr : price - (sl - price) * rr
+    }
 
-if(side === "LONG"){
-    tp = price + (price - sl) * rr
-}else{
-    tp = price - (sl - price) * rr
-}
+    // ===== ROUND =====
+    function round(n){ return Number(n.toFixed(4)) }
 
-// ===== ROUND =====
-function round(n){ return Number(n.toFixed(4)) }
-
-return {
-    side,
-    score,
-    earlySide,
-    earlyScore,
-    price: round(price),
-    sl: round(sl),
-    tp: round(tp),
-    atr: atrVal
+    return {
+        side,
+        score,
+        earlySide,
+        earlyScore,
+        price: round(price),
+        sl: round(sl),
+        tp: round(tp),
+        atr: round(atrVal)
+    }
 }
 // ================= SCAN =================
 async function scan(symbol){
