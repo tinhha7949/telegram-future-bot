@@ -379,8 +379,9 @@ Score: ${best.score}
         await sendTelegram(msg)
 
     }catch(e){
-        console.log("❌ SCANNER ERROR:", e.message)
-    }
+    console.log("❌ Scanner error:")
+    console.log(e)
+}
 }
 // ================= LOOP =================
 setInterval(()=>scanner(),300000)
