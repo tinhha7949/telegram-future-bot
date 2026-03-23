@@ -230,7 +230,7 @@ let bosConfirmUp = closes.at(-1) > prevHigh && closes.at(-2) > prevHigh
 let bosConfirmDown = closes.at(-1) < prevLow && closes.at(-2) < prevLow
 
 // ===== HTF TREND STRENGTH =====
-let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
+let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.0015
 
     let bb = bollinger(closes,20,2)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
@@ -282,9 +282,12 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
     let avoidPump = candleMove < 0.02
     if(!isBacktest && !avoidPump) return null
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(!isBacktest && range < 0.01) return null
+    if(!isBacktest && range < 0.015) return null
     if(!isBacktest && candleMove > 0.4) return null
-    if(!isBacktest && trendStrength < 0.002) return null
+    if(!isBacktest && trendStrength < 0.0025) return null
+    // fix 0
+    if(!side) return null
+    if(!price || price === 0) return null
 
     return {
     side,
