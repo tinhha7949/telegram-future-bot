@@ -43,7 +43,7 @@ async function checkCommand(){
             if(!u.message?.text) continue
 
             if(u.message.text === "/status"){
-                await sendTelegram("🤖 BOT PRO đang chạy OK")
+                await sendTelegram("🤖 BOT đang chạy OK")
             }
         }
     }catch(e){
@@ -251,8 +251,10 @@ async function coreLogic(data15, data1h){
 async function scan(symbol){
     let data15 = await getData(symbol,"15m",LIMIT_15M)
     let data1h = await getData(symbol,"1h",LIMIT_1H)
-    if(!data15 || !data1h) return null
-
+   if(!data15 || !data1h){
+    console.log(`❌ No data: ${symbol}`)
+    return null
+}
     let r = await coreLogic(data15,data1h)
     if(!r || !r.side) return null
 
@@ -261,6 +263,7 @@ async function scan(symbol){
 
 // ================= SCANNER =================
 async function scanner(){
+    try{
     console.log("🚀 SMART SCAN...")
 
     let now = Date.now()
@@ -273,6 +276,10 @@ async function scanner(){
     if(newSymbols && newSymbols.length > 0){
         cachedSymbols = newSymbols
         lastSymbolsUpdate = now
+    }
+}
+            }catch(e){
+        console.log("❌ SCANNER ERROR:", e.message)
     }
 }
 
@@ -306,7 +313,12 @@ async function scanner(){
                 type:"EARLY"
             })
         }
-    })
+    }) 
+
+   if(!candidates || candidates.length === 0){
+    console.log("❌ No signal")
+    return
+}
 
    if(signals.length===0){
     console.log("❌ No signal")
@@ -315,9 +327,17 @@ async function scanner(){
     candidates.sort((a,b)=> b.score - a.score)
 
     let best = candidates[0]
+    if(!best){
+    console.log("❌ No best candidate")
+    return
+}
 
     let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
     if(best.type==="EARLY") risk *= 0.5
+    if(!best.type){
+    console.log("❌ Invalid best type")
+    return
+}
 
     let sl = best.side==="LONG"
         ? best.price - best.atr*1.3
@@ -327,7 +347,14 @@ async function scanner(){
         ? best.price + best.atr*3
         : best.price - best.atr*3
 
-    let size = risk / Math.abs(best.price - sl)
+   let diff = Math.abs(best.price - sl)
+
+if(!diff || diff === 0){
+    console.log("❌ Invalid SL distance")
+    return
+}
+
+let size = risk / diff
 
     let msg = `🔥 PRO SIGNAL
 
