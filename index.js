@@ -276,12 +276,10 @@ async function scanner(){
 
             if(newSymbols && newSymbols.length > 0){
                 cachedSymbols = newSymbols
-                lastSymbolsUpdate = now 
-                
-                 }catch(e){
-        console.log("❌ SCANNER ERROR:", e.message)
-    }
-}
+                lastSymbolsUpdate = now
+            }
+        }
+
         // ===== SYMBOL LIST =====
         let symbols = cachedSymbols || ["BTCUSDT","ETHUSDT","SOLUSDT"]
 
