@@ -263,13 +263,13 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     if(trendLong){
         earlySide="LONG"; earlyScore=50
         if(r>50) earlyScore+=10
-        if(volNow > volAvg*1.2) earlyScore+=10
+        if(volNow > volAvg*1.1) earlyScore+=10
         if(momentumUp) earlyScore+=12
     }
     if(trendShort){
         earlySide="SHORT"; earlyScore=50
         if(r<50) earlyScore+=10
-        if(volNow > volAvg*1.2) earlyScore+=10
+        if(volNow > volAvg*1.1) earlyScore+=10
         if(momentumDown) earlyScore+=12
     }
 
