@@ -276,7 +276,7 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(!isBacktest && range < 0.012) return null
+    if(!isBacktest && range < 0.008) return null
     if(!isBacktest && candleMove > 0.4) return null
     if(!isBacktest && trendStrength < 0.0025) return null
 
