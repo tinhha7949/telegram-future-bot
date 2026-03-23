@@ -282,9 +282,9 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.0015
     let avoidPump = candleMove < 0.02
     if(!isBacktest && !avoidPump) return null
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(!isBacktest && range < 0.015) return null
+    if(!isBacktest && range < 0.01) return null
     if(!isBacktest && candleMove > 0.4) return null
-    if(!isBacktest && trendStrength < 0.0025) return null
+    if(!isBacktest && trendStrength < 0.002) return null
     // fix 0
     if(!side) return null
     if(!price || price === 0) return null
