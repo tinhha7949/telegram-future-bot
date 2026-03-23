@@ -248,6 +248,8 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
     if(trendShort){ side="SHORT"; score+=50 }
     if(!isBacktest && side==="LONG" && price < ema20 * 0.998) return null
     if(!isBacktest && side==="SHORT" && price > ema20 * 1.002) return null
+   // if(side==="LONG" && bosConfirmUp && pullbackLong) score+=40
+   // if(side==="SHORT" && bosConfirmDown && pullbackShort) score+=40
     if(side==="LONG" && (bosConfirmUp || pullbackLong)) score+=40
     if(side==="SHORT" && (bosConfirmDown || pullbackShort)) score+=40
     if(side==="LONG" && r>55 && r<65) score+=12
