@@ -264,115 +264,123 @@ async function scan(symbol){
 // ================= SCANNER =================
 async function scanner(){
     try{
-    console.log("🚀 SMART SCAN...")
+        console.log("🚀 SMART SCAN...")
 
-    let now = Date.now()
+        let now = Date.now()
 
-    if(!cachedSymbols || now - lastSymbolsUpdate > 900000){
-    console.log("🔄 Updating symbols...")
+        // ===== UPDATE SYMBOL =====
+        if(!cachedSymbols || now - lastSymbolsUpdate > 900000){
+            console.log("🔄 Updating symbols...")
 
-    let newSymbols = await getTopSymbols()
+            let newSymbols = await getTopSymbols()
 
-    if(newSymbols && newSymbols.length > 0){
-        cachedSymbols = newSymbols
-        lastSymbolsUpdate = now
-    }
-}
-            }catch(e){
+            if(newSymbols && newSymbols.length > 0){
+                cachedSymbols = newSymbols
+                lastSymbolsUpdate = now 
+                
+                 }catch(e){
         console.log("❌ SCANNER ERROR:", e.message)
     }
 }
+        // ===== SYMBOL LIST =====
+        let symbols = cachedSymbols || ["BTCUSDT","ETHUSDT","SOLUSDT"]
 
-    let symbols = cachedSymbols || ["BTCUSDT","ETHUSDT","SOLUSDT"]
-    if(symbols && symbols.length > 0){
-    console.log(`✅ Using ${symbols.length} symbols`)
-}
+        if(symbols && symbols.length > 0){
+            console.log(`✅ Using ${symbols.length} symbols`)
+        }
 
-    let results = await Promise.allSettled(symbols.map(scan))
-    let signals = results.filter(r=>r.status==="fulfilled" && r.value).map(r=>r.value)
+        // ===== SCAN =====
+        let results = await Promise.allSettled(symbols.map(scan))
 
-    if(signals.length===0){
-        console.log("❌ No signal")
-        return
-    }
+        let signals = results
+            .filter(r => r.status === "fulfilled" && r.value)
+            .map(r => r.value)
 
-    let candidates = []
+        if(!signals || signals.length === 0){
+            console.log("❌ No signal")
+            return
+        }
 
-   signals.forEach(s=>{
-    if(s.score >= SCORE_THRESHOLD){
-        candidates.push({...s, type:"MAIN"})
-    }
-})
+        let candidates = []
 
-signals.forEach(s=>{
-    if(s.earlyScore >= EARLY_THRESHOLD && s.score < SCORE_THRESHOLD){
-        candidates.push({
-            ...s,
-            side: s.earlySide,
-            score: s.earlyScore,
-            type:"EARLY"
+        // ===== MAIN =====
+        signals.forEach(s=>{
+            if(s.score >= SCORE_THRESHOLD){
+                candidates.push({...s, type:"MAIN"})
+            }
         })
-    }
-})
 
-// ✅ CHỈ GIỮ CÁI NÀY
-if(candidates.length === 0){
-    console.log("❌ No signal")
-    return
-}
+        // ===== EARLY =====
+        signals.forEach(s=>{
+            if(s.earlyScore >= EARLY_THRESHOLD && s.score < SCORE_THRESHOLD){
+                candidates.push({
+                    ...s,
+                    side: s.earlySide,
+                    score: s.earlyScore,
+                    type:"EARLY"
+                })
+            }
+        })
 
-// ❌ XÓA CÁI NÀY ĐI
-// if(signals.length===0){...}
+        // ===== NO CANDIDATE =====
+        if(!candidates || candidates.length === 0){
+            console.log("❌ No signal")
+            return
+        }
 
-candidates.sort((a,b)=> b.score - a.score)
+        // ===== SORT =====
+        candidates.sort((a,b)=> b.score - a.score)
 
-let best = candidates[0]
+        let best = candidates[0]
 
-// ✅ GIỮ CÁI NÀY
-if(!best){
-    console.log("❌ No best candidate")
-    return
-}
+        if(!best){
+            console.log("❌ No best candidate")
+            return
+        }
 
-    let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
-    if(best.type==="EARLY") risk *= 0.5
-    if(!best.type){
-    console.log("❌ Invalid best type")
-    return
-}
+        if(!best.type){
+            console.log("❌ Invalid best type")
+            return
+        }
 
-    let sl = best.side==="LONG"
-        ? best.price - best.atr*1.3
-        : best.price + best.atr*1.3
+        // ===== RISK =====
+        let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
 
-    let tp = best.side==="LONG"
-        ? best.price + best.atr*3
-        : best.price - best.atr*3
+        if(best.type === "EARLY") risk *= 0.5
 
-   let diff = Math.abs(best.price - sl)
+        let diff = Math.abs(best.price - best.sl)
 
-if(!diff || diff === 0){
-    console.log("❌ Invalid SL distance")
-    return
-}
+        if(!diff || diff === 0){
+            console.log("❌ Invalid SL distance")
+            return
+        }
 
-let size = risk / diff
+        let size = risk / diff
 
-    let msg = `🔥 PRO SIGNAL
+        let trailingSL = best.side === "LONG"
+            ? best.price - best.atr
+            : best.price + best.atr
+
+        // ===== MESSAGE =====
+        let msg = `🔥 BEST SIGNAL
 
 ${best.symbol} (${best.type})
 ${best.side}
 Entry: ${best.price.toFixed(4)}
-TP: ${tp.toFixed(4)}
-SL: ${sl.toFixed(4)}
+TP: ${best.tp.toFixed(4)}
+SL: ${best.sl.toFixed(4)}
+Trailing SL: ${trailingSL.toFixed(4)}
 Size: ${size.toFixed(2)}
 Score: ${best.score}
 `
 
-    console.log(msg)
-    await sendTelegram(msg)
-}
+        console.log(msg)
+        await sendTelegram(msg)
 
+    }catch(e){
+        console.log("❌ SCANNER ERROR:", e.message)
+    }
+}
 // ================= LOOP =================
 setInterval(()=>scanner(),300000)
 setInterval(()=>checkCommand(),10000)
