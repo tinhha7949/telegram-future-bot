@@ -238,16 +238,16 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
     if(!isBacktest && bbWidth<0.02) return null
     if(!isBacktest && adxVal<25) return null
     // ❌ tránh đuổi giá
-    if(!isBacktest && volNow < volAvg * 0.9) return null
+    if(!isBacktest && volNow < volAvg * 1.1) return null
     if(!isBacktest && distanceFromEMA > 0.025) return null
     if(!isBacktest && candleRange > 0 && candleBody / candleRange < 0.4) return null
-   // if(!isBacktest && !trendStrongHTF) return null
+    if(!isBacktest && !trendStrongHTF) return null
 
     let side=null, score=0, type="MAIN"
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
-    if(!isBacktest && side==="SHORT" && price < ema20 *1.002) return null
-    if(!isBacktest && side==="LONG" && price > ema20 *0.998) return null
+    if(!isBacktest && side==="LONG" && price < ema20 * 0.998) return null
+    if(!isBacktest && side==="SHORT" && price > ema20 * 1.002) return null
     if(side==="LONG" && bosConfirmUp && pullbackLong) score+=40
     if(side==="SHORT" && bosConfirmDown && pullbackShort) score+=40
     if(side==="LONG" && r>55 && r<65) score+=12
@@ -278,7 +278,7 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(!isBacktest && range < 0.004) return null
+    if(!isBacktest && range < 0.01) return null
     if(!isBacktest && candleMove > 0.4) return null
     if(!isBacktest && trendStrength < 0.0015) return null
 
