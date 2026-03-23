@@ -228,7 +228,7 @@ let bosConfirmUp = closes.at(-1) > prevHigh && closes.at(-2) > prevHigh
 let bosConfirmDown = closes.at(-1) < prevLow && closes.at(-2) < prevLow
 
 // ===== HTF TREND STRENGTH =====
-let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.002
+let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
 
     let bb = bollinger(closes,20,2)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
