@@ -213,15 +213,17 @@ let distanceFromEMA = Math.abs(price - ema20)/price
 let candleBody = Math.abs(closes.at(-1) - closes.at(-2))
 let candleRange = highs.at(-1) - lows.at(-1)
 let volStrong = volNow > volAvg * 1.8
-// ===== PULLBACK ENTRY =====
-let pullbackShort = (
-    price > ema20 &&
+// ===== PULLBACK ENTRY (FIX ANTI FOMO) =====
+let pullbackLong = (
+    price > ema20 * 0.995 &&
+    price < ema20 * 1.01 &&
     r > 45 && r < 60
 )
 
-let pullbackLong = (
-    price < ema20 &&
-    r < 55 && r > 40
+let pullbackShort = (
+    price < ema20 * 1.005 &&
+    price > ema20 * 0.99 &&
+    r > 40 && r < 55
 )
 // ===== BOS CONFIRM =====
 let bosConfirmUp = closes.at(-1) > prevHigh && closes.at(-2) > prevHigh
