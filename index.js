@@ -228,7 +228,7 @@ let bosConfirmUp = closes.at(-1) > prevHigh && closes.at(-2) > prevHigh
 let bosConfirmDown = closes.at(-1) < prevLow && closes.at(-2) < prevLow
 
 // ===== HTF TREND STRENGTH =====
-let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
+let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.0005
 
     let bb = bollinger(closes,20,2)
     let bbWidth = (bb.upper-bb.lower)/bb.mid
@@ -236,7 +236,7 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
     if(!isBacktest && bbWidth<0.02) return null
     if(!isBacktest && adxVal<25) return null
     // ❌ tránh đuổi giá
-    if(!isBacktest && volNow < volAvg * 1.05) return null
+    if(!isBacktest && volNow < volAvg * 0.9) return null
     if(!isBacktest && distanceFromEMA > 0.025) return null
     if(!isBacktest && candleRange > 0 && candleBody / candleRange < 0.4) return null
     if(!isBacktest && !trendStrongHTF) return null
@@ -276,7 +276,7 @@ let trendStrongHTF = Math.abs(ema20_1h - ema50_1h)/price > 0.001
     let range = (Math.max(...highs.slice(-50)) - Math.min(...lows.slice(-50))) / price
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(!isBacktest && range < 0.006) return null
+    if(!isBacktest && range < 0.004) return null
     if(!isBacktest && candleMove > 0.4) return null
     if(!isBacktest && trendStrength < 0.0015) return null
 
