@@ -245,25 +245,8 @@ async function coreLogic(data15, data1h){
         if(volNow > volAvg*1.2) earlyScore+=10
     }
 
-  // ===== CALL TPSL =====
-let tpsl = calculateTPSL({
-    side,
-    price,
-    highs,
-    lows,
-    closes,
-    atrVal,
-    ema20,
-    ema50,
-    score,
-    earlySide,
-    earlyScore
-})
-
-if(!tpsl) return null
-
+  
 // ===== MARKET STATE =====
-let trendStrength = Math.abs(ema20 - ema50) / price
 let isTrending = trendStrength > 0.004
 
 // ===== SWING =====
@@ -456,9 +439,6 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
         return null
     }
 }
-
-// ===== ROUND =====
-function round(n){ return Number(n.toFixed(4)) }
 
 // ===== ROUND =====
 function round(n){ return Number(n.toFixed(4)) }
