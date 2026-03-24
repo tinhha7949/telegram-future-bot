@@ -15,6 +15,7 @@ const MIN_VOL_15M = 100000
 let lastUpdateId = 0
 let cachedSymbols = null
 let lastSymbolsUpdate = 0
+let lastSignalTime = {}
 
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
@@ -247,7 +248,7 @@ async function coreLogic(data15, data1h){
 
   
 // ===== MARKET STATE =====
-let isTrending = trendStrength > 0.004
+let isTrending = trendStrength > 0.003 // 0.004 
 
 // ===== SWING =====
 let swingLow = Math.min(...lows.slice(-20))
@@ -290,7 +291,7 @@ function pickBestTP(candidates, price, risk, side){
             ? (c.price - price)
             : (price - c.price)
 
-        if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5){
+        if(rr >= 1.2 && dist >= atrVal * 0.7 && dist <= atrVal * 4){ // if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5)
             valid.push({...c, rr, dist})
         }
     }
@@ -312,7 +313,7 @@ let tp = null
 // ===== LONG =====
 if(side === "LONG"){
 
-    sl = swingLow - atrVal * 0.6
+    sl = swingLow - atrVal * 0.8 // 0.6
     if(sl >= price) sl = price - atrVal * 1.5
 
     let risk = price - sl
@@ -550,6 +551,19 @@ async function scanner(){
             console.log("❌ Invalid best type")
             return
         }
+        // ===== BLOCK DUPLICATE SIGNAL =====
+let nowTime = Date.now()
+
+if(lastSignalTime[best.symbol]){
+    let diff = nowTime - lastSignalTime[best.symbol]
+
+    if(diff < 3600000){ // 1 tiếng
+        console.log(`⛔ Skip duplicate: ${best.symbol}`)
+        return
+    }
+}
+
+lastSignalTime[best.symbol] = nowTime
 
         // ===== RISK =====
         let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
