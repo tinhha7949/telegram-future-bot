@@ -225,7 +225,7 @@ async function coreLogic(data15, data1h){
 
     if(atrVal/price > 0.004) score+=10
     if(!side) return null
-
+    
     // ===== EARLY =====
     let earlySide=null, earlyScore=0
 
@@ -245,7 +245,8 @@ async function coreLogic(data15, data1h){
         if(volNow > volAvg*1.2) earlyScore+=10
     }
 
-  function calculateTPSL({
+  // ===== CALL TPSL =====
+let tpsl = calculateTPSL({
     side,
     price,
     highs,
@@ -257,7 +258,9 @@ async function coreLogic(data15, data1h){
     score,
     earlySide,
     earlyScore
-}){
+})
+
+if(!tpsl) return null
 
 // ===== MARKET STATE =====
 let trendStrength = Math.abs(ema20 - ema50) / price
@@ -457,6 +460,9 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
 // ===== ROUND =====
 function round(n){ return Number(n.toFixed(4)) }
 
+// ===== ROUND =====
+function round(n){ return Number(n.toFixed(4)) }
+
 return {
     side,
     score,
@@ -467,7 +473,6 @@ return {
     tp: round(tp),
     atr: round(atrVal)
 }
-
 }
 // ================= SCAN =================
 async function scan(symbol){
