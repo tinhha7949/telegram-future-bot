@@ -245,51 +245,230 @@ async function coreLogic(data15, data1h){
         if(volNow > volAvg*1.2) earlyScore+=10
     }
 
-    // ===== STRUCTURE SL/TP =====
-    let swingLow = Math.min(...lows.slice(-10))
-    let swingHigh = Math.max(...highs.slice(-10))
+   // ===== MARKET STATE =====
+let trendStrength = Math.abs(ema20 - ema50) / price
+let isTrending = trendStrength > 0.004
 
-    let sl = null
-    let tp = null
-    let rr = 2.2
+// ===== SWING =====
+let swingLow = Math.min(...lows.slice(-20))
+let swingHigh = Math.max(...highs.slice(-20))
 
-    if(side === "LONG"){
-        sl = swingLow - atrVal * 0.5
-        if(sl >= price) sl = price - atrVal * 1.5
-        tp = price + (price - sl) * rr
-    }else if(side === "SHORT"){
-        sl = swingHigh + atrVal * 0.5
-        if(sl <= price) sl = price + atrVal * 1.5
-        tp = price - (sl - price) * rr
+// ===== STRUCTURE =====
+let resistance = Math.max(...highs.slice(-30))
+let support = Math.min(...lows.slice(-30))
+
+// ===== LIQUIDITY =====
+function findLiquidityHigh(highs){
+    let zone = highs.slice(-25)
+    let max = Math.max(...zone)
+    let count = zone.filter(h => Math.abs(h - max) / max < 0.002).length
+    return count >= 2 ? max : null
+}
+
+function findLiquidityLow(lows){
+    let zone = lows.slice(-25)
+    let min = Math.min(...zone)
+    let count = zone.filter(l => Math.abs(l - min) / min < 0.002).length
+    return count >= 2 ? min : null
+}
+
+let liqHigh = findLiquidityHigh(highs)
+let liqLow = findLiquidityLow(lows)
+
+// ===== PICK TP (NO BIAS) =====
+function pickBestTP(candidates, price, risk, side){
+
+    let valid = []
+
+    for(let c of candidates){
+
+        let rr = side==="LONG"
+            ? (c.price - price) / risk
+            : (price - c.price) / risk
+
+        let dist = side==="LONG"
+            ? (c.price - price)
+            : (price - c.price)
+
+        // 🔥 FILTER REAL
+        if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5){
+            valid.push({...c, rr, dist})
+        }
     }
 
-    // ===== VALIDATE MIN/MAX DISTANCE =====
-    let minDistance = price * 0.002
-    let maxDistance = price * 0.03
+    if(valid.length === 0) return null
 
-    if(Math.abs(price - sl) < minDistance){
-        sl = side==="LONG" ? price - atrVal * 1.5 : price + atrVal * 1.5
-        tp = side==="LONG" ? price + (price - sl) * rr : price - (sl - price) * rr
+    // 🔥 SORT
+    valid.sort((a,b)=>{
+        if(isTrending){
+            return b.rr - a.rr // trend → ăn RR
+        }
+        return side==="LONG"
+            ? a.price - b.price // sideway → ăn gần
+            : b.price - a.price
+    })
+
+    return valid[0].price
+}
+
+// ===== INIT =====
+let sl = null
+let tp = null
+
+// ===== LONG =====
+if(side === "LONG"){
+
+    sl = swingLow - atrVal * 0.6
+    if(sl >= price) sl = price - atrVal * 1.5
+
+    let risk = price - sl
+
+    let candidates = []
+
+    if(resistance > price) candidates.push({price: resistance, type:"res"})
+    if(liqHigh && liqHigh > price) candidates.push({price: liqHigh, type:"liq"})
+
+    if(candidates.length === 0){
+        candidates.push({price: price + atrVal * 2, type:"atr"})
     }
 
-    if(Math.abs(price - sl) > maxDistance){
-        sl = side==="LONG" ? price - atrVal * 1.5 : price + atrVal * 1.5
-        tp = side==="LONG" ? price + (price - sl) * rr : price - (sl - price) * rr
+    tp = pickBestTP(candidates, price, risk, "LONG")
+
+    // ===== FALLBACK (KHÔNG ẢO) =====
+    if(!tp){
+        if(resistance > price){
+            tp = resistance
+        }else if(liqHigh && liqHigh > price){
+            tp = liqHigh
+        }else{
+            tp = price + atrVal * 2
+        }
     }
 
-    // ===== ROUND =====
-    function round(n){ return Number(n.toFixed(4)) }
+    let dist = tp - price
 
-    return {
-        side,
-        score,
-        earlySide,
-        earlyScore,
-        price: round(price),
-        sl: round(sl),
-        tp: round(tp),
-        atr: round(atrVal)
+    if(dist > atrVal * 4){
+        tp = price + (isTrending ? atrVal * 3 : atrVal * 2.5)
     }
+
+    if(dist < atrVal * 0.8) return null
+
+    // ===== MOMENTUM =====
+    let last3 = closes.slice(-3)
+    let weak = last3[2] < last3[1] && last3[1] < last3[0]
+
+    if(weak && dist > atrVal * 2.5){
+        tp = price + atrVal * 1.8
+    }
+}
+
+// ===== SHORT =====
+if(side === "SHORT"){
+
+    sl = swingHigh + atrVal * 0.6
+    if(sl <= price) sl = price + atrVal * 1.5
+
+    let risk = sl - price
+
+    let candidates = []
+
+    if(support < price) candidates.push({price: support, type:"sup"})
+    if(liqLow && liqLow < price) candidates.push({price: liqLow, type:"liq"})
+
+    if(candidates.length === 0){
+        candidates.push({price: price - atrVal * 2, type:"atr"})
+    }
+
+    tp = pickBestTP(candidates, price, risk, "SHORT")
+
+    if(!tp){
+        if(support < price){
+            tp = support
+        }else if(liqLow && liqLow < price){
+            tp = liqLow
+        }else{
+            tp = price - atrVal * 2
+        }
+    }
+
+    let dist = price - tp
+
+    if(dist > atrVal * 4){
+        tp = price - (isTrending ? atrVal * 3 : atrVal * 2.5)
+    }
+
+    if(dist < atrVal * 0.8) return null
+
+    let last3 = closes.slice(-3)
+    let weak = last3[2] > last3[1] && last3[1] > last3[0]
+
+    if(weak && dist > atrVal * 2.5){
+        tp = price - atrVal * 1.8
+    }
+}
+
+// ===== VALIDATE SL + RECALC TP =====
+let minDistance = price * 0.002
+let maxDistance = price * 0.03
+
+if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
+
+    sl = side==="LONG"
+        ? price - atrVal * 1.5
+        : price + atrVal * 1.5
+
+    let risk = Math.abs(price - sl)
+
+    let candidates = []
+
+    if(side==="LONG"){
+        if(resistance > price) candidates.push({price: resistance, type:"res"})
+        if(liqHigh && liqHigh > price) candidates.push({price: liqHigh, type:"liq"})
+    }else{
+        if(support < price) candidates.push({price: support, type:"sup"})
+        if(liqLow && liqLow < price) candidates.push({price: liqLow, type:"liq"})
+    }
+
+    tp = pickBestTP(candidates, price, risk, side)
+
+    if(!tp){
+        tp = side==="LONG"
+            ? price + atrVal * 2
+            : price - atrVal * 2
+    }
+
+    // 🔥 FINAL CHECK
+    let rr = side==="LONG"
+        ? (tp - price) / risk
+        : (price - tp) / risk
+
+    if(rr < 1.2) return null
+
+    let newDist = Math.abs(tp - price)
+
+    if(newDist > atrVal * 4){
+        tp = side==="LONG"
+            ? price + atrVal * 2.5
+            : price - atrVal * 2.5
+    }
+
+    if(newDist < atrVal * 0.8){
+        return null
+    }
+}
+
+// ===== ROUND =====
+function round(n){ return Number(n.toFixed(4)) }
+
+return {
+    side,
+    score,
+    earlySide,
+    earlyScore,
+    price: round(price),
+    sl: round(sl),
+    tp: round(tp),
+    atr: round(atrVal)
 }
 // ================= SCAN =================
 async function scan(symbol){
