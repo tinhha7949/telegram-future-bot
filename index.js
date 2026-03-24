@@ -245,7 +245,21 @@ async function coreLogic(data15, data1h){
         if(volNow > volAvg*1.2) earlyScore+=10
     }
 
-   // ===== MARKET STATE =====
+  function calculateTPSL({
+    side,
+    price,
+    highs,
+    lows,
+    closes,
+    atrVal,
+    ema20,
+    ema50,
+    score,
+    earlySide,
+    earlyScore
+}){
+
+// ===== MARKET STATE =====
 let trendStrength = Math.abs(ema20 - ema50) / price
 let isTrending = trendStrength > 0.004
 
@@ -275,7 +289,7 @@ function findLiquidityLow(lows){
 let liqHigh = findLiquidityHigh(highs)
 let liqLow = findLiquidityLow(lows)
 
-// ===== PICK TP (NO BIAS) =====
+// ===== PICK TP =====
 function pickBestTP(candidates, price, risk, side){
 
     let valid = []
@@ -290,7 +304,6 @@ function pickBestTP(candidates, price, risk, side){
             ? (c.price - price)
             : (price - c.price)
 
-        // 🔥 FILTER REAL
         if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5){
             valid.push({...c, rr, dist})
         }
@@ -298,14 +311,9 @@ function pickBestTP(candidates, price, risk, side){
 
     if(valid.length === 0) return null
 
-    // 🔥 SORT
     valid.sort((a,b)=>{
-        if(isTrending){
-            return b.rr - a.rr // trend → ăn RR
-        }
-        return side==="LONG"
-            ? a.price - b.price // sideway → ăn gần
-            : b.price - a.price
+        if(isTrending) return b.rr - a.rr
+        return side==="LONG" ? a.price - b.price : b.price - a.price
     })
 
     return valid[0].price
@@ -334,15 +342,10 @@ if(side === "LONG"){
 
     tp = pickBestTP(candidates, price, risk, "LONG")
 
-    // ===== FALLBACK (KHÔNG ẢO) =====
     if(!tp){
-        if(resistance > price){
-            tp = resistance
-        }else if(liqHigh && liqHigh > price){
-            tp = liqHigh
-        }else{
-            tp = price + atrVal * 2
-        }
+        if(resistance > price) tp = resistance
+        else if(liqHigh && liqHigh > price) tp = liqHigh
+        else tp = price + atrVal * 2
     }
 
     let dist = tp - price
@@ -353,7 +356,6 @@ if(side === "LONG"){
 
     if(dist < atrVal * 0.8) return null
 
-    // ===== MOMENTUM =====
     let last3 = closes.slice(-3)
     let weak = last3[2] < last3[1] && last3[1] < last3[0]
 
@@ -382,13 +384,9 @@ if(side === "SHORT"){
     tp = pickBestTP(candidates, price, risk, "SHORT")
 
     if(!tp){
-        if(support < price){
-            tp = support
-        }else if(liqLow && liqLow < price){
-            tp = liqLow
-        }else{
-            tp = price - atrVal * 2
-        }
+        if(support < price) tp = support
+        else if(liqLow && liqLow < price) tp = liqLow
+        else tp = price - atrVal * 2
     }
 
     let dist = price - tp
@@ -437,7 +435,6 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
             : price - atrVal * 2
     }
 
-    // 🔥 FINAL CHECK
     let rr = side==="LONG"
         ? (tp - price) / risk
         : (price - tp) / risk
@@ -469,6 +466,8 @@ return {
     sl: round(sl),
     tp: round(tp),
     atr: round(atrVal)
+}
+
 }
 // ================= SCAN =================
 async function scan(symbol){
