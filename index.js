@@ -521,7 +521,7 @@ async function scanner(){
 
         // ===== EARLY =====
         signals.forEach(s=>{
-            if(s.earlyScore >= EARLY_THRESHOLD && s.score < SCORE_THRESHOLD){
+            if(s.earlyScore >= EARLY_THRESHOLD){
                 candidates.push({
                     ...s,
                     side: s.earlySide,
