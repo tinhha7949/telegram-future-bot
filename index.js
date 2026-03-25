@@ -166,6 +166,18 @@ async function coreLogic(data15, data1h){
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
+    // ===== ANTI CHASE + PULLBACK =====
+let distEma = Math.abs(price - ema20) / price
+
+// không đu giá
+if(distEma > 0.006) return null
+
+// không vào khi vừa pump/dump mạnh
+let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+if(lastMove > 0.02 || lastMove < -0.02) return null
+
+// chỉ vào khi giá gần EMA (pullback)
+let nearEma = distEma < 0.0025
 
     // ===== STRUCTURE =====
     let prevHigh = Math.max(...highs.slice(-25,-5))
@@ -209,8 +221,8 @@ async function coreLogic(data15, data1h){
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
 
-    if(side==="LONG" && bosUp) score+=40
-    if(side==="SHORT" && bosDown) score+=40
+    if(side==="LONG" && bosUp && distEma < 0.003) score+=25
+    if(side==="SHORT" && bosDown && distEma < 0.003) score+=25
 
     if(side==="LONG" && sweepLow) score+=50
     if(side==="SHORT" && sweepHigh) score+=50
@@ -226,25 +238,24 @@ async function coreLogic(data15, data1h){
 
     if(atrVal/price > 0.004) score+=10
     if(!side) return null
+    // ===== REQUIRE PULLBACK =====
+if(side === "LONG" && !nearEma) return null
+if(side === "SHORT" && !nearEma) return null
     
     // ===== EARLY =====
     let earlySide=null, earlyScore=0
 
-    if(trendLong){
-        earlySide="LONG"
-        earlyScore=50
-        if(r>50) earlyScore+=10
-        if(momentumUp) earlyScore+=10
-        if(volNow > volAvg*1.2) earlyScore+=10
-    }
+    if(trendLong && nearEma){
+    earlySide="LONG"
+    earlyScore=50
+    if(r>50 && r<60) earlyScore+=10
+}
 
-    if(trendShort){
-        earlySide="SHORT"
-        earlyScore=50
-        if(r<50) earlyScore+=10
-        if(momentumDown) earlyScore+=10
-        if(volNow > volAvg*1.2) earlyScore+=10
-    }
+if(trendShort && nearEma){
+    earlySide="SHORT"
+    earlyScore=50
+    if(r<50 && r>40) earlyScore+=10
+}
 
   
 // ===== MARKET STATE =====
@@ -257,6 +268,12 @@ let swingHigh = Math.max(...highs.slice(-20))
 // ===== STRUCTURE =====
 let resistance = Math.max(...highs.slice(-30))
 let support = Math.min(...lows.slice(-30))
+// ===== AVOID BAD ZONE =====
+let distToRes = (resistance - price) / price
+let distToSup = (price - support) / price
+
+if(side === "LONG" && distToRes < 0.003) return null
+if(side === "SHORT" && distToSup < 0.003) return null
 
 // ===== LIQUIDITY =====
 function findLiquidityHigh(highs){
