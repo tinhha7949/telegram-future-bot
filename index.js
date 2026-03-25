@@ -354,8 +354,8 @@ if(side === "LONG"){
 
     let dist = tp - price
 
-    if(dist > atrVal * 4){
-        tp = price + (isTrending ? atrVal * 3 : atrVal * 2.5)
+    if(dist > atrVal * 5){
+        tp = price + (isTrending ? atrVal * 4 : atrVal * 3)
     }
 
     if(dist < atrVal * 0.8) return null
@@ -395,8 +395,8 @@ if(side === "SHORT"){
 
     let dist = price - tp
 
-    if(dist > atrVal * 4){
-        tp = price - (isTrending ? atrVal * 3 : atrVal * 2.5)
+    if(dist > atrVal * 5){
+        tp = price - (isTrending ? atrVal * 4 : atrVal * 3)
     }
 
     if(dist < atrVal * 0.8) return null
@@ -443,7 +443,7 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
         ? (tp - price) / risk
         : (price - tp) / risk
 
-    if(rr < 1.2) return null
+    if(rr < 1.5) return null
 
     let newDist = Math.abs(tp - price)
 
