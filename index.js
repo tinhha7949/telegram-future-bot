@@ -178,7 +178,10 @@ if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.0035 // 0.0025
-
+// ===== PULLBACK PHẢI CÓ LỰC =====
+//if(nearEma && volNow < volAvg){
+   // return null
+//}
     // ===== STRUCTURE =====
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
@@ -307,7 +310,7 @@ let support = Math.min(...lows.slice(-30))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
-if(side === "LONG" && distToRes < 0.003) return null
+if(side === "LONG" && distToRes < 0.003) return null // 0.005 nếu mua đỉnh bán đáy
 if(side === "SHORT" && distToSup < 0.003) return null
 
 // ===== LIQUIDITY =====
