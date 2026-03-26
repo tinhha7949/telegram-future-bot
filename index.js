@@ -609,16 +609,11 @@ async function scanner(){
         }
 
         // ===== SORT =====
-       let main = candidates.find(c => c.type === "MAIN")
-let early = candidates.find(c => c.type === "EARLY")
+      candidates.sort((a,b)=> b.score - a.score)
 
-let best = null
+let main = candidates.find(c => c.type === "MAIN")
 
-if(main){
-    best = main
-}else if(early){
-    best = early
-}
+let best = main || candidates[0]
         
         if(!best){
             console.log("❌ No best candidate")
