@@ -5,8 +5,8 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 130
-const EARLY_THRESHOLD = 70
+const SCORE_THRESHOLD = 110 // 140
+const EARLY_THRESHOLD = 60 // 80
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -170,14 +170,14 @@ async function coreLogic(data15, data1h){
 let distEma = Math.abs(price - ema20) / price
 
 // không đu giá
-if(distEma > 0.006) return null
+if(distEma > 0.007) return null // 0.006
 
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-if(lastMove > 0.02 || lastMove < -0.02) return null
+if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.0025
+let nearEma = distEma < 0.0035 // 0.0025
 
     // ===== STRUCTURE =====
     let prevHigh = Math.max(...highs.slice(-25,-5))
@@ -196,6 +196,9 @@ let nearEma = distEma < 0.0025
     let last4 = closes.slice(-4)
     let momentumUp = last4[3]>last4[2] && last4[2]>last4[1]
     let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
+    // ===== CONTINUATION STRUCTURE =====
+    let higherLow = lows.at(-2) > lows.at(-5)
+    let lowerHigh = highs.at(-2) < highs.at(-5)
 
     // ===== VOLUME =====
     let volNow = volumes.at(-1)
@@ -206,7 +209,7 @@ let nearEma = distEma < 0.0025
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(trendStrength < 0.002) return null
+    if(trendStrength < 0.0018) return null // 0.002
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     if(candleMove > 0.03) return null
@@ -217,22 +220,46 @@ let nearEma = distEma < 0.0025
 
     // ===== SCORE =====
     let side=null, score=0
+    let setupType = null // breakout | pullback
 
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
 
-    if(side==="LONG" && bosUp && distEma < 0.003) score+=25
-    if(side==="SHORT" && bosDown && distEma < 0.003) score+=25
+    // ===== BREAKOUT =====
+if(side==="LONG" && bosUp){
+    score += 30
+    setupType = "BREAKOUT"
+}
+if(side==="SHORT" && bosDown){
+    score += 30
+    setupType = "BREAKOUT"
+}
 
-    if(side==="LONG" && sweepLow) score+=50
-    if(side==="SHORT" && sweepHigh) score+=50
+// ===== PULLBACK =====
+if(side==="LONG" && nearEma){
+    score += 20
+    if(!setupType) setupType = "PULLBACK"
+}
+if(side==="SHORT" && nearEma){
+    score += 20
+    if(!setupType) setupType = "PULLBACK"
+}
+    if(bosUp || bosDown){
+    setupType = "BREAKOUT"
+}
 
-    if(volTrendUp) score+=15
-    if(volNow > volAvg*1.5) score+=10
+    if(side==="LONG" && sweepLow) score+=35 // 50
+    if(side==="SHORT" && sweepHigh) score+=35 // 50
 
-    if(side==="LONG" && momentumUp) score+=20
-    if(side==="SHORT" && momentumDown) score+=20
+    if(volTrendUp) score+=20 // 15 ở dưới là 10 
+    if(volNow > volAvg*1.5) score+=15 
 
+    if(side==="LONG" && momentumUp) score+=25   // 20
+    if(side==="SHORT" && momentumDown) score+=25    // 20
+
+    if(side==="LONG" && higherLow) score+=15
+    if(side==="SHORT" && lowerHigh) score+=15
+   
     if(side==="LONG" && r>50 && r<65) score+=10
     if(side==="SHORT" && r>35 && r<50) score+=10
 
@@ -253,12 +280,17 @@ if(side === "SHORT" && !nearEma){
     earlySide="LONG"
     earlyScore=50
     if(r>50 && r<60) earlyScore+=10
+    if(momentumUp) earlyScore+=10   // thêm
+    if(volNow > volAvg) earlyScore+=5 // thêm    
 }
 
 if(trendShort && nearEma){
     earlySide="SHORT"
     earlyScore=50
     if(r<50 && r>40) earlyScore+=10
+    if(momentumDown) earlyScore+=10 // thêm
+    if(volNow > volAvg) earlyScore+=5 // thêm
+}
 }
 
   
@@ -312,7 +344,7 @@ function pickBestTP(candidates, price, risk, side){
             ? (c.price - price)
             : (price - c.price)
 
-        if(rr >= 1.2 && dist >= atrVal * 0.7 && dist <= atrVal * 4){ // if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5)
+        if(rr >= 1.2 && dist >= atrVal * 0.7 && dist <= atrVal * 4.5){ // if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5) hoặc 4
             valid.push({...c, rr, dist})
         }
     }
@@ -334,8 +366,13 @@ let tp = null
 // ===== LONG =====
 if(side === "LONG"){
 
-    sl = swingLow - atrVal * 0.8 // 0.6
-    if(sl >= price) sl = price - atrVal * 1.5
+   if(setupType === "BREAKOUT"){
+    sl = swingLow - atrVal * 0.6
+}else{
+    sl = swingLow - atrVal * 0.8
+}
+
+if(sl >= price) sl = price - atrVal * 1.5
 
     let risk = price - sl
 
@@ -358,9 +395,13 @@ if(side === "LONG"){
 
     let dist = tp - price
 
-    if(dist > atrVal * 5){
-        tp = price + (isTrending ? atrVal * 4 : atrVal * 3)
+   if(dist > atrVal * 5){
+    if(setupType === "BREAKOUT"){
+        tp = price + atrVal * 4.5
+    }else{
+        tp = price + atrVal * 3
     }
+}
 
     if(dist < atrVal * 0.8) return null
 
@@ -375,8 +416,13 @@ if(side === "LONG"){
 // ===== SHORT =====
 if(side === "SHORT"){
 
+    if(setupType === "BREAKOUT"){
     sl = swingHigh + atrVal * 0.6
-    if(sl <= price) sl = price + atrVal * 1.5
+}else{
+    sl = swingHigh + atrVal * 0.8
+}
+
+if(sl <= price) sl = price + atrVal * 1.5
 
     let risk = sl - price
 
@@ -399,9 +445,13 @@ if(side === "SHORT"){
 
     let dist = price - tp
 
-    if(dist > atrVal * 5){
-        tp = price - (isTrending ? atrVal * 4 : atrVal * 3)
+   if(dist > atrVal * 5){
+    if(setupType === "BREAKOUT"){
+        tp = price - atrVal * 4.5
+    }else{
+        tp = price - atrVal * 3
     }
+}
 
     if(dist < atrVal * 0.8) return null
 
@@ -447,7 +497,7 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
         ? (tp - price) / risk
         : (price - tp) / risk
 
-    if(rr < 1.5) return null
+    if(rr < 1.4) return null // 1.5
 
     let newDist = Math.abs(tp - price)
 
@@ -468,6 +518,7 @@ function round(n){ return Number(n.toFixed(4)) }
 return {
     side,
     score,
+    setup: setupType,
     earlySide,
     earlyScore,
     price: round(price),
@@ -559,10 +610,17 @@ async function scanner(){
         }
 
         // ===== SORT =====
-        candidates.sort((a,b)=> b.score - a.score)
+       let main = candidates.find(c => c.type === "MAIN")
+let early = candidates.find(c => c.type === "EARLY")
 
-        let best = candidates[0]
+let best = null
 
+if(main){
+    best = main
+}else if(early){
+    best = early
+}
+        
         if(!best){
             console.log("❌ No best candidate")
             return
@@ -578,7 +636,7 @@ let nowTime = Date.now()
 if(lastSignalTime[best.symbol]){
     let diff = nowTime - lastSignalTime[best.symbol]
 
-    if(diff < 3600000){ // 1 tiếng
+    if(diff < 2700000){ // 1 tiếng // 3600000
         console.log(`⛔ Skip duplicate: ${best.symbol}`)
         return
     }
@@ -609,9 +667,9 @@ lastSignalTime[best.symbol] = nowTime
             : best.price + best.atr
 
         // ===== MESSAGE =====
-        let msg = `🔥 BEST SIGNAL
+       let msg = `🔥 BEST SIGNAL
 
-${best.symbol} (${best.type})
+${best.symbol} (${best.type} - ${best.setup})
 ${best.side}
 Entry: ${best.price.toFixed(4)}
 TP: ${best.tp.toFixed(4)}
