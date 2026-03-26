@@ -5,8 +5,8 @@ const CHAT_ID = process.env.CHAT_ID
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
-const SCORE_THRESHOLD = 110 // 140
-const EARLY_THRESHOLD = 60 // 80
+const SCORE_THRESHOLD = 50 // 110
+const EARLY_THRESHOLD = 10 // 60
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
