@@ -291,7 +291,6 @@ if(trendShort && nearEma){
     if(momentumDown) earlyScore+=10 // thêm
     if(volNow > volAvg) earlyScore+=5 // thêm
 }
-}
 
   
 // ===== MARKET STATE =====
