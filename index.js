@@ -152,8 +152,18 @@ async function coreLogic(data15, data1h){
     let closes1h = data1h.map(x=>+x[4])
 
     let price = closes.at(-1)
+    let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
+
+if(range < 0.008){
+    return null
+}
 
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
+    let volNow = volumes.at(-1)
+
+if(volNow < volAvg * 0.8){
+    return null
+}
     if(volAvg < MIN_VOL_15M) return null
 
     // ===== EMA =====
@@ -204,7 +214,6 @@ let nearEma = distEma < 0.0035 // 0.0025
     let lowerHigh = highs.at(-2) < highs.at(-5)
 
     // ===== VOLUME =====
-    let volNow = volumes.at(-1)
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
 
     // ===== FILTER =====
@@ -212,7 +221,7 @@ let nearEma = distEma < 0.0035 // 0.0025
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(trendStrength < 0.0018) return null // 0.002
+    if(trendStrength < 0.002) return null // 0.0022
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     if(candleMove > 0.03) return null
@@ -247,7 +256,7 @@ if(side==="SHORT" && nearEma){
     score += 20
     if(!setupType) setupType = "PULLBACK"
 }
-    if(bosUp || bosDown){
+    if(!setupType && (bosUp || bosDown)){
     setupType = "BREAKOUT"
 }
 
@@ -283,7 +292,7 @@ if(side === "SHORT" && !nearEma){
     earlySide="LONG"
     earlyScore=50
     if(r>50 && r<60) earlyScore+=10
-    if(momentumUp) earlyScore+=10   // thêm
+    if(momentumUp) earlyScore+=5  // thêm
     if(volNow > volAvg) earlyScore+=5 // thêm    
 }
 
@@ -291,7 +300,7 @@ if(trendShort && nearEma){
     earlySide="SHORT"
     earlyScore=50
     if(r<50 && r>40) earlyScore+=10
-    if(momentumDown) earlyScore+=10 // thêm
+    if(momentumDown) earlyScore+=5 // thêm
     if(volNow > volAvg) earlyScore+=5 // thêm
 }
 
@@ -310,8 +319,8 @@ let support = Math.min(...lows.slice(-30))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
-if(side === "LONG" && distToRes < 0.003) return null // 0.005 nếu mua đỉnh bán đáy
-if(side === "SHORT" && distToSup < 0.003) return null
+if(side === "LONG" && distToRes < 0.0045) return null // 0.005 nếu mua đỉnh bán đáy
+if(side === "SHORT" && distToSup < 0.0045) return null
 
 // ===== LIQUIDITY =====
 function findLiquidityHigh(highs){
@@ -516,11 +525,23 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
 
 // ===== ROUND =====
 function round(n){ return Number(n.toFixed(4)) }
+    // ==== CANDLE STRENGTH FILTER ====
+    let open = +data15.at(-1)[1]
+let close = +data15.at(-1)[4]
+
+let body = Math.abs(close - open)
+let rangeCandle = highs.at(-1) - lows.at(-1)
+
+if(rangeCandle === 0 || body / rangeCandle < 0.4){ // nếu muốn chắc hơn rõ nâng 0.5
+    return null
+}
 
 return {
     side,
     score,
     setup: setupType,
+    momentumUp,
+    momentumDown,
     earlySide,
     earlyScore,
     price: round(price),
@@ -595,14 +616,14 @@ async function scanner(){
 
         // ===== EARLY =====
         signals.forEach(s=>{
-            if(s.earlyScore >= EARLY_THRESHOLD){
-                candidates.push({
-                    ...s,
-                    side: s.earlySide,
-                    score: s.earlyScore,
-                    type:"EARLY"
-                })
-            }
+            if(s.earlyScore >= EARLY_THRESHOLD && s.earlySide){
+    candidates.push({
+        ...s,
+        side: s.earlySide,
+        score: s.earlyScore,
+        type:"EARLY"
+    })
+}
         })
 
         // ===== NO CANDIDATE =====
@@ -622,34 +643,49 @@ let best = main || candidates[0]
             console.log("❌ No best candidate")
             return
         }
-        // ===== EARLY FILTER XỊN =====
+       // ❌ check trước
+if(!best || !best.type){
+    console.log("❌ Invalid best")
+    return
+}
+
+// ===== EARLY FILTER =====
 if(best.type === "EARLY"){
 
-   let entry = best.price
-let rr = Math.abs(best.tp - entry) / Math.abs(entry - best.sl)
-
-    if(best.score < 65){
-        console.log("❌ Skip early: score thấp")
+    if(best.setup !== "PULLBACK"){
+        console.log("❌ Early không phải pullback")
         return
     }
 
-    if(rr < 1.3){
-        console.log("❌ Skip early: RR thấp")
+    let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
+
+    if(best.score < 65){
+        console.log("❌ Early score thấp")
+        return
+    }
+
+    if(rr < 1.2){
+        console.log("❌ RR thấp")
+        return
+    }
+
+    // filter nhẹ thông minh
+    let weakMomentum =
+        Math.abs(best.price - best.sl)/best.price < 0.002 &&
+        !best.momentumUp && !best.momentumDown
+
+    if(weakMomentum){
+        console.log("❌ Early quá yếu")
         return
     }
 }
-
-        if(!best.type){
-            console.log("❌ Invalid best type")
-            return
-        }
         // ===== BLOCK DUPLICATE SIGNAL =====
 let nowTime = Date.now()
 
 if(lastSignalTime[best.symbol]){
     let diff = nowTime - lastSignalTime[best.symbol]
 
-    if(diff < 5400000){ // 1 tiếng // 3600000
+    if(diff < 7200000){ // 1 tiếng // 3600000
         console.log(`⛔ Skip duplicate: ${best.symbol}`)
         return
     }
@@ -676,16 +712,18 @@ if(!diff || diff === 0){
 }
 
         let size = risk / diff
-        // ===== SIZE FILTER  =====
-if(best.type === "EARLY" && size < 800){
-    console.log("❌ Skip early: size nhỏ")
-    return
-}
-
+       
         let trailingSL = best.side === "LONG"
             ? best.price - best.atr
             : best.price + best.atr
+        let rr = best.side === "LONG"
+    ? (best.tp - best.price) / (best.price - best.sl)
+    : (best.price - best.tp) / (best.sl - best.price)
 
+if(rr < 1.3){
+    console.log("❌ RR thấp")
+    return
+}
         // ===== MESSAGE =====
        let msg = `🔥 BEST SIGNAL
 
