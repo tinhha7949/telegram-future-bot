@@ -633,7 +633,7 @@ let nowTime = Date.now()
 if(lastSignalTime[best.symbol]){
     let diff = nowTime - lastSignalTime[best.symbol]
 
-    if(diff < 2700000){ // 1 tiếng // 3600000
+    if(diff < 5400000){ // 1 tiếng // 3600000
         console.log(`⛔ Skip duplicate: ${best.symbol}`)
         return
     }
