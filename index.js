@@ -6,7 +6,7 @@ const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 110 // 110
-const EARLY_THRESHOLD = 60 // 60
+const EARLY_THRESHOLD = 65  // 60
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -622,6 +622,22 @@ let best = main || candidates[0]
             console.log("❌ No best candidate")
             return
         }
+        // ===== EARLY FILTER XỊN =====
+if(best.type === "EARLY"){
+
+   let entry = best.price
+let rr = Math.abs(best.tp - entry) / Math.abs(entry - best.sl)
+
+    if(best.score < 65){
+        console.log("❌ Skip early: score thấp")
+        return
+    }
+
+    if(rr < 1.3){
+        console.log("❌ Skip early: RR thấp")
+        return
+    }
+}
 
         if(!best.type){
             console.log("❌ Invalid best type")
@@ -645,19 +661,26 @@ lastSignalTime[best.symbol] = nowTime
         let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
 
         if(best.type === "EARLY") risk *= 0.5
-
-        let diff = Math.abs(best.price - best.sl)
-        if(!best.sl || !best.tp){
+// ===== CHECK SL TP TRƯỚC =====
+if(!best.sl || !best.tp){
     console.log("❌ Missing SL TP")
     return
 }
 
-        if(!diff || diff === 0){
-            console.log("❌ Invalid SL distance")
-            return
-        }
+// ===== TÍNH DIFF SAU =====
+let diff = Math.abs(best.price - best.sl)
+
+if(!diff || diff === 0){
+    console.log("❌ Invalid SL distance")
+    return
+}
 
         let size = risk / diff
+        // ===== SIZE FILTER  =====
+if(best.type === "EARLY" && size < 800){
+    console.log("❌ Skip early: size nhỏ")
+    return
+}
 
         let trailingSL = best.side === "LONG"
             ? best.price - best.atr
