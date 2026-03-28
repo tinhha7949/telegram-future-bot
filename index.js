@@ -16,6 +16,19 @@ let lastUpdateId = 0
 let cachedSymbols = null
 let lastSymbolsUpdate = 0
 let lastSignalTime = {}
+// ===== AI MEMORY =====
+let aiMemory = {
+    breakout_strong_win: 0,
+    breakout_strong_loss: 0,
+
+    breakout_weak_win: 0,
+    breakout_weak_loss: 0,
+
+    pullback_weak_win: 0,
+    pullback_weak_loss: 0
+}
+// ===== ACTIVE TRADES =====
+let activeTrades = []
 
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
@@ -176,6 +189,21 @@ if(volNow < volAvg * 0.8){
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
+    // ===== MARKET REGIME =====
+let emaGap = Math.abs(ema20 - ema50) / price
+let atrRatio = atrVal / price
+
+let marketState = "SIDEWAY"
+
+// TREND MẠNH
+if(emaGap > 0.004 && atrRatio > 0.0045){
+    marketState = "TREND_STRONG"
+}
+// TREND YẾU
+else if(emaGap > 0.0025){
+    marketState = "TREND_WEAK"
+}
+// còn lại là SIDEWAY
     // ===== ANTI CHASE + PULLBACK =====
 let distEma = Math.abs(price - ema20) / price
 
@@ -222,6 +250,13 @@ let nearEma = distEma < 0.0045 // 0.0025 // 0.0035
 
     let trendStrength = Math.abs(ema20-ema50)/price
     if(trendStrength < 0.002) return null // 0.0022
+    
+    // ===== FILTER SIDEWAY =====
+if(marketState === "SIDEWAY"){
+    if(!sweepHigh && !sweepLow){
+        return null
+    }
+}
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     if(candleMove > 0.03) return null
@@ -239,21 +274,23 @@ let nearEma = distEma < 0.0045 // 0.0025 // 0.0035
 
     // ===== BREAKOUT =====
 if(side==="LONG" && bosUp){
-    score += 30
+    score += marketState === "TREND_STRONG" ? 40 : 20
     setupType = "BREAKOUT"
 }
+
 if(side==="SHORT" && bosDown){
-    score += 30
+    score += marketState === "TREND_STRONG" ? 40 : 20
     setupType = "BREAKOUT"
 }
 
 // ===== PULLBACK =====
-if(side==="LONG" && nearEma){
-    score += 20
+ if(side==="LONG" && nearEma){
+    score += marketState === "TREND_WEAK" ? 30 : 15
     if(!setupType) setupType = "PULLBACK"
 }
+
 if(side==="SHORT" && nearEma){
-    score += 20
+    score += marketState === "TREND_WEAK" ? 30 : 15
     if(!setupType) setupType = "PULLBACK"
 }
     if(!setupType && (bosUp || bosDown)){
@@ -277,6 +314,35 @@ if(side==="SHORT" && nearEma){
 
     if(atrVal/price > 0.004) score+=10
     if(!side) return null
+    // ===== AI SCORE =====
+function getWinRate(win, loss){
+    win = win || 0
+    loss = loss || 0
+
+    let total = win + loss
+    if(total === 0) return 0.5
+
+    return win / total
+}
+
+let aiBoost = 0
+
+if(setupType === "BREAKOUT" && marketState === "TREND_STRONG"){
+    let wr = getWinRate(aiMemory.breakout_strong_win, aiMemory.breakout_strong_loss)
+    aiBoost = (wr - 0.5) * 40
+}
+
+if(setupType === "BREAKOUT" && marketState === "TREND_WEAK"){
+    let wr = getWinRate(aiMemory.breakout_weak_win, aiMemory.breakout_weak_loss)
+    aiBoost = (wr - 0.5) * 40
+}
+
+if(setupType === "PULLBACK" && marketState === "TREND_WEAK"){
+    let wr = getWinRate(aiMemory.pullback_weak_win, aiMemory.pullback_weak_loss)
+    aiBoost = (wr - 0.5) * 40
+}
+
+score += aiBoost
     // ===== REQUIRE PULLBACK =====
 if(side === "LONG" && !nearEma){
     score -= 25
@@ -373,14 +439,32 @@ function pickBestTP(candidates, price, risk, side){
 // ===== INIT =====
 let sl = null
 let tp = null
+    // TP SL THEO 
+    let tpMult = 1
+let slMult = 1
+
+if(marketState === "TREND_STRONG"){
+    tpMult = 1.3
+    slMult = 1.2
+}
+
+if(marketState === "TREND_WEAK"){
+    tpMult = 1
+    slMult = 1
+}
+
+if(marketState === "SIDEWAY"){
+    tpMult = 0.7
+    slMult = 0.8
+}
 
 // ===== LONG =====
 if(side === "LONG"){
 
    if(setupType === "BREAKOUT"){
-    sl = swingLow - atrVal * 0.6
+    sl = swingLow - atrVal * 0.6 * slMult
 }else{
-    sl = swingLow - atrVal * 0.8
+   sl = swingLow - atrVal * 0.8 * slMult
 }
 
 if(sl >= price) sl = price - atrVal * 1.5
@@ -401,16 +485,16 @@ if(sl >= price) sl = price - atrVal * 1.5
     if(!tp){
         if(resistance > price) tp = resistance
         else if(liqHigh && liqHigh > price) tp = liqHigh
-        else tp = price + atrVal * 2
+        else tp = price + atrVal * 2 * tpMult
     }
 
     let dist = tp - price
 
    if(dist > atrVal * 5){
     if(setupType === "BREAKOUT"){
-        tp = price + atrVal * 4.5
+        tp = price + atrVal * 4.5 * tpMult
     }else{
-        tp = price + atrVal * 3
+        tp = price + atrVal * 3 * tpMult
     }
 }
 
@@ -420,7 +504,7 @@ if(sl >= price) sl = price - atrVal * 1.5
     let weak = last3[2] < last3[1] && last3[1] < last3[0]
 
     if(weak && dist > atrVal * 2.5){
-        tp = price + atrVal * 1.8
+       tp = price + atrVal * 1.8 * tpMult
     }
 }
 
@@ -428,9 +512,9 @@ if(sl >= price) sl = price - atrVal * 1.5
 if(side === "SHORT"){
 
     if(setupType === "BREAKOUT"){
-    sl = swingHigh + atrVal * 0.6
+    sl = swingHigh + atrVal * 0.6 * slMult
 }else{
-    sl = swingHigh + atrVal * 0.8
+    sl = swingHigh + atrVal * 0.8 * slMult
 }
 
 if(sl <= price) sl = price + atrVal * 1.5
@@ -451,16 +535,16 @@ if(sl <= price) sl = price + atrVal * 1.5
     if(!tp){
         if(support < price) tp = support
         else if(liqLow && liqLow < price) tp = liqLow
-        else tp = price - atrVal * 2
+        else tp = price - atrVal * 2 * slMult
     }
 
     let dist = price - tp
 
    if(dist > atrVal * 5){
     if(setupType === "BREAKOUT"){
-        tp = price - atrVal * 4.5
+        tp = price - atrVal * 4.5 * slMult
     }else{
-        tp = price - atrVal * 3
+        tp = price - atrVal * 3 * slMult
     }
 }
 
@@ -470,7 +554,7 @@ if(sl <= price) sl = price + atrVal * 1.5
     let weak = last3[2] > last3[1] && last3[1] > last3[0]
 
     if(weak && dist > atrVal * 2.5){
-        tp = price - atrVal * 1.8
+        tp = price - atrVal * 1.8 * slMult
     }
 }
 
@@ -481,8 +565,8 @@ let maxDistance = price * 0.03
 if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
 
     sl = side==="LONG"
-        ? price - atrVal * 1.5
-        : price + atrVal * 1.5
+        ? price - atrVal * 1.5 * slMult
+        : price + atrVal * 1.5 * slMult
 
     let risk = Math.abs(price - sl)
 
@@ -500,8 +584,8 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
 
     if(!tp){
         tp = side==="LONG"
-            ? price + atrVal * 2
-            : price - atrVal * 2
+            ? price + atrVal * 2 * slMult
+            : price - atrVal * 2 * slMult
     }
 
     let rr = side==="LONG"
@@ -514,8 +598,8 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
 
     if(newDist > atrVal * 4){
         tp = side==="LONG"
-            ? price + atrVal * 2.5
-            : price - atrVal * 2.5
+            ? price + atrVal * 2.5 * slMult
+            : price - atrVal * 2.5 * slMult
     }
 
     if(newDist < atrVal * 0.8){
@@ -535,11 +619,50 @@ let rangeCandle = highs.at(-1) - lows.at(-1)
 if(rangeCandle === 0 || body / rangeCandle < 0.4){ // nếu muốn chắc hơn rõ nâng 0.5
     return null
 }
+// ===== ANTI FOMO (đu đỉnh / bắt đáy) =====
 
+// đảm bảo có ema20
+let ema20 = ema20_15m
+
+// nến cuối
+let last = candles[candles.length - 1]
+let body = Math.abs(last.close - last.open)
+
+// khoảng cách giá tới EMA
+let distance = Math.abs(price - ema20)
+
+// ===== 1. CHẶN ĐU ĐỈNH / BẮT ĐÁY =====
+if(side === "LONG" && price > ema20 + atrVal * 1.8){  // nếu ít lệnh chỉnh 2.2 
+    return null
+}
+
+if(side === "SHORT" && price < ema20 - atrVal * 1.8){  // nếu ít lệnh chỉnh 2.2 
+    return null
+}
+
+// ===== 2. CHẶN NẾN ĐẢO CHIỀU MẠNH =====
+if(side === "LONG" && last.close < last.open && body > atrVal * 0.8){
+    return null
+}
+
+if(side === "SHORT" && last.close > last.open && body > atrVal * 0.8){
+    return null
+}
+
+// ===== 3. CHỈ CHO ENTRY GẦN EMA =====
+if(side === "LONG" && price > ema20 + atrVal * 1.2){  // nếu ít lệnh chỉnh 1.5
+    return null
+}
+
+if(side === "SHORT" && price < ema20 - atrVal * 1.2){  // nếu ít lệnh chỉnh 1.
+    return null
+}
+    
 return {
     side,
     score,
     setup: setupType,
+    marketState,
     momentumUp,
     momentumDown,
     earlySide,
@@ -550,6 +673,7 @@ return {
     atr: round(atrVal)
 }
 }
+
 // ================= SCAN =================
 async function scan(symbol){
     let data15 = await getData(symbol,"15m",LIMIT_15M)
@@ -633,7 +757,11 @@ async function scanner(){
         }
 
         // ===== SORT =====
-      candidates.sort((a,b)=> b.score - a.score)
+      candidates.sort((a,b)=>{
+    if(a.marketState === "TREND_STRONG" && b.marketState !== "TREND_STRONG") return -1
+    if(b.marketState === "TREND_STRONG" && a.marketState !== "TREND_STRONG") return 1
+    return b.score - a.score
+})
 
 let main = candidates.find(c => c.type === "MAIN")
 
@@ -728,7 +856,7 @@ if(rr < 1.3){
        let msg = `🔥 BEST SIGNAL
 
 ${best.symbol} (${best.type} - ${best.setup})
-${best.side}
+${best.side} | ${best.marketState}
 Entry: ${best.price.toFixed(4)}
 TP: ${best.tp.toFixed(4)}
 SL: ${best.sl.toFixed(4)}
@@ -739,14 +867,102 @@ Score: ${best.score}
 
         console.log(msg)
         await sendTelegram(msg)
+        // ===== SAVE TRADE =====
+activeTrades.push({
+    symbol: best.symbol,
+    side: best.side,
+    entry: best.price,
+    tp: best.tp,
+    sl: best.sl,
+    setup: best.setup,
+    marketState: best.marketState,
+    time: Date.now()
+})
 
     }catch(e){
     console.log("❌ Scanner error:")
     console.log(e)
 }
 }
+function updateAI(result, setup, market){
+
+    let key = ""
+
+    if(setup === "BREAKOUT" && market === "TREND_STRONG"){
+        key = "breakout_strong"
+    }
+
+    if(setup === "BREAKOUT" && market === "TREND_WEAK"){
+        key = "breakout_weak"
+    }
+
+    if(setup === "PULLBACK" && market === "TREND_WEAK"){
+        key = "pullback_weak"
+    }
+
+    if(!key) return
+
+    if(result === "WIN") aiMemory[key+"_win"]++
+    else aiMemory[key+"_loss"]++
+
+    console.log("🧠 AI:", aiMemory)
+}
+async function checkTrades(){
+
+    if(activeTrades.length === 0) return
+
+    for(let i = activeTrades.length - 1; i >= 0; i--){
+
+        let t = activeTrades[i]
+
+        try{
+            let data = await getData(t.symbol,"1m",2)
+            if(!data) continue
+
+            let price = +data.at(-1)[4]
+
+            let win = false
+            let done = false
+
+            if(t.side === "LONG"){
+                if(price >= t.tp){ win = true; done = true }
+                if(price <= t.sl){ win = false; done = true }
+            }
+
+            if(t.side === "SHORT"){
+                if(price <= t.tp){ win = true; done = true }
+                if(price >= t.sl){ win = false; done = true }
+            }
+
+            // timeout 2h
+            if(Date.now() - t.time > 7200000){
+                done = true
+            }
+
+           if(done){
+
+    if(Date.now() - t.time <= 7200000){
+       updateAI(win ? "WIN" : "LOSS", t.setup, t.marketState)
+    }
+
+                await sendTelegram(
+`📊 RESULT ${t.symbol}
+${t.side}
+${win ? "✅ WIN" : "❌ LOSS"}`
+                )
+
+                activeTrades.splice(i,1)
+            }
+
+        }catch(e){
+            console.log("❌ checkTrades:", e.message)
+        }
+    }
+}
 // ================= LOOP =================
 setInterval(()=>scanner(),300000)
 setInterval(()=>checkCommand(),10000)
+setInterval(()=>checkTrades(),60000)
 
 scanner()
+
