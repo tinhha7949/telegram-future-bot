@@ -207,15 +207,6 @@ else if(emaGap > 0.0025){
     // ===== ANTI CHASE + PULLBACK =====
 let distEma = Math.abs(price - ema20) / price
 
-// không đu giá
-if(distEma > 0.007){
-    score -= 30
-}
-
-if(distEma > 0.012){
-    return null
-}
-
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
@@ -391,8 +382,8 @@ let support = Math.min(...lows.slice(-30))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
-if(side === "LONG" && distToRes < 0.0045) return null // 0.005 nếu mua đỉnh bán đáy
-if(side === "SHORT" && distToSup < 0.0045) return null
+if(side === "LONG" && distToRes < 0.0035) return null // 0.0045 nếu mua đỉnh bán đáy
+if(side === "SHORT" && distToSup < 0.0035) return null
 
 // ===== LIQUIDITY =====
 function findLiquidityHigh(highs){
@@ -637,12 +628,12 @@ let lastBody = Math.abs(lastClose - lastOpen)
 let distance = Math.abs(price - ema20)
 
 // ===== 1. TRỪ ĐIỂM (xa EMA) =====
-if(distance > atrVal * 1.5){ // nếu quá ít lệnh fix 1.7
+if(distance > atrVal * 1.7){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
     score -= 25
 }
 
 // ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
-if(distance > atrVal * 2.5){ // nếu quá ít lệnh fix 3.
+if(distance > atrVal * 3){ // nếu quá ít lệnh fix 3 nếu rác 2.
     return null
 }
 
@@ -845,7 +836,7 @@ if(!diff || diff === 0){
     ? (best.tp - best.price) / (best.price - best.sl)
     : (best.price - best.tp) / (best.sl - best.price)
 
-if(rr < 1.3){
+if(rr < 1.25){
     console.log("❌ RR thấp")
     return
 }
