@@ -168,7 +168,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.006){
+if(range < 0.004){
     return null
 }
 
@@ -204,7 +204,7 @@ else{
 }
 
 // sideway yếu → bỏ luôn
-if(trendHTF < 0.007 && trendLTF < 0.007){
+if(trendHTF < 0.004 && trendLTF < 0.004){
     return null
 }
 
