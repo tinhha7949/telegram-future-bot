@@ -141,8 +141,9 @@ async function getTopSymbols(){
                             !c.symbol.includes("DOWN") &&
                             !c.symbol.includes("BUSD")
                         )
-                        .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
-                        .slice(0,25)
+                       .filter(c => Number(c.quoteVolume) > 50000000)
+                    .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
+                .slice(0,40)
                         .map(c => c.symbol)
                 }
 
@@ -167,7 +168,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.008){
+if(range < 0.006){
     return null
 }
 
@@ -189,6 +190,15 @@ if(volNow < volAvg * 0.8){
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
+    // ===== FILTER COIN RÁC (WICK) =====
+let lastHigh = highs.at(-1)
+let lastLow = lows.at(-1)
+
+let wickSize = lastHigh - lastLow
+
+if(wickSize > atrVal * 2.5){
+    return null
+}
     // ===== MARKET REGIME =====
 let emaGap = Math.abs(ema20 - ema50) / price
 let atrRatio = atrVal / price
