@@ -141,7 +141,7 @@ async function getTopSymbols(){
                             !c.symbol.includes("DOWN") &&
                             !c.symbol.includes("BUSD")
                         )
-                       .filter(c => Number(c.quoteVolume) > 50000000)
+            
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
                 .slice(0,40)
                         .map(c => c.symbol)
@@ -187,7 +187,29 @@ if(volNow < volAvg * 0.8){
 
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
+    
+    let trendStrength = Math.abs(ema20_1h - ema50_1h) / price
+    
+let marketType = "SIDEWAY"
 
+if(trendStrength > 0.003){
+    marketType = "STRONG_TREND"
+}else if(trendStrength > 0.0015){
+    marketType = "TREND"
+}
+
+let dynamicThreshold = SCORE_THRESHOLD
+
+if(marketType === "STRONG_TREND"){
+    dynamicThreshold = 90
+}
+else if(marketType === "TREND"){
+    dynamicThreshold = 95
+}
+else{
+    dynamicThreshold = 105
+}
+    
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
     // ===== FILTER COIN RÁC (WICK) =====
@@ -255,8 +277,8 @@ let nearEma = distEma < 0.0045 // 0.0025 // 0.0035
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
-    let trendStrength = Math.abs(ema20-ema50)/price
-    if(trendStrength < 0.002) return null // 0.0022
+    let trendStrength15m = Math.abs(ema20 - ema50)/price
+    if(trendStrength15m < 0.002) return null // 0.0022
     
     // ===== FILTER SIDEWAY =====
 if(marketState === "SIDEWAY"){
@@ -379,7 +401,7 @@ if(trendShort && nearEma){
 
   
 // ===== MARKET STATE =====
-let isTrending = trendStrength > 0.003 // 0.004 
+let isTrending = trendStrength15m > 0.003 // 0.004 
 
 // ===== SWING =====
 let swingLow = Math.min(...lows.slice(-20))
@@ -659,6 +681,7 @@ if(side === "SHORT" && lastClose > lastOpen && lastBody > atrVal * 0.8){
 return {
     side,
     score,
+    dynamicThreshold,
     setup: setupType,
     marketState,
     momentumUp,
@@ -671,7 +694,6 @@ return {
     atr: round(atrVal)
 }
 }
-
 // ================= SCAN =================
 async function scan(symbol){
     let data15 = await getData(symbol,"15m",LIMIT_15M)
@@ -731,7 +753,7 @@ async function scanner(){
 
         // ===== MAIN =====
         signals.forEach(s=>{
-            if(s.score >= SCORE_THRESHOLD){
+           if(s.score >= s.dynamicThreshold){
                 candidates.push({...s, type:"MAIN"})
             }
         })
