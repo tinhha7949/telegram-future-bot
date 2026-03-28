@@ -208,7 +208,13 @@ else if(emaGap > 0.0025){
 let distEma = Math.abs(price - ema20) / price
 
 // không đu giá
-if(distEma > 0.007) return null // 0.006
+if(distEma > 0.007){
+    score -= 30
+}
+
+if(distEma > 0.012){
+    return null
+}
 
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
@@ -619,42 +625,33 @@ let rangeCandle = highs.at(-1) - lows.at(-1)
 if(rangeCandle === 0 || body / rangeCandle < 0.4){ // nếu muốn chắc hơn rõ nâng 0.5
     return null
 }
-// ===== ANTI FOMO (đu đỉnh / bắt đáy) =====
+// ===== ANTI FOMO (FIX CHUẨN) tránh đu đỉnh đu đáy =====
 
-// đảm bảo có ema20
-let ema20 = ema20_15m
+// dùng dữ liệu có sẵn
+let lastOpen = +data15.at(-1)[1]
+let lastClose = +data15.at(-1)[4]
 
-// nến cuối
-let last = candles[candles.length - 1]
-let body = Math.abs(last.close - last.open)
+let lastBody = Math.abs(lastClose - lastOpen)
 
-// khoảng cách giá tới EMA
+// khoảng cách tới EMA
 let distance = Math.abs(price - ema20)
 
-// ===== 1. CHẶN ĐU ĐỈNH / BẮT ĐÁY =====
-if(side === "LONG" && price > ema20 + atrVal * 1.8){  // nếu ít lệnh chỉnh 2.2 
+// ===== 1. TRỪ ĐIỂM (xa EMA) =====
+if(distance > atrVal * 1.5){ // nếu quá ít lệnh fix 1.7
+    score -= 25
+}
+
+// ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
+if(distance > atrVal * 2.5){ // nếu quá ít lệnh fix 3.
     return null
 }
 
-if(side === "SHORT" && price < ema20 - atrVal * 1.8){  // nếu ít lệnh chỉnh 2.2 
+// ===== 3. NẾN ĐẢO CHIỀU MẠNH =====
+if(side === "LONG" && lastClose < lastOpen && lastBody > atrVal * 0.8){
     return null
 }
 
-// ===== 2. CHẶN NẾN ĐẢO CHIỀU MẠNH =====
-if(side === "LONG" && last.close < last.open && body > atrVal * 0.8){
-    return null
-}
-
-if(side === "SHORT" && last.close > last.open && body > atrVal * 0.8){
-    return null
-}
-
-// ===== 3. CHỈ CHO ENTRY GẦN EMA =====
-if(side === "LONG" && price > ema20 + atrVal * 1.2){  // nếu ít lệnh chỉnh 1.5
-    return null
-}
-
-if(side === "SHORT" && price < ema20 - atrVal * 1.2){  // nếu ít lệnh chỉnh 1.
+if(side === "SHORT" && lastClose > lastOpen && lastBody > atrVal * 0.8){
     return null
 }
     
