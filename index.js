@@ -6,7 +6,7 @@ const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 110 // 110
-const EARLY_THRESHOLD = 65  // 60
+const EARLY_THRESHOLD = 60  // 60
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -187,7 +187,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.0035 // 0.0025
+let nearEma = distEma < 0.0045 // 0.0025 // 0.0035
 // ===== PULLBACK PHẢI CÓ LỰC =====
 //if(nearEma && volNow < volAvg){
    // return null
@@ -659,7 +659,7 @@ if(best.type === "EARLY"){
 
     let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
 
-    if(best.score < 65){
+    if(best.score < 60){
         console.log("❌ Early score thấp")
         return
     }
