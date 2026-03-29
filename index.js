@@ -181,7 +181,7 @@ if(range < 0.004){
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.7){
+if(volNow < volAvg * 0.6){
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
