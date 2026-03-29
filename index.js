@@ -955,14 +955,18 @@ async function checkTrades(){
                 if(price >= t.sl){ win = false; done = true }
             }
 
-            // timeout 2h
-            if(Date.now() - t.time > 7200000){
-                done = true
-            }
+            // timeout 3h
+            if(Date.now() - t.time > 10800000){
+
+    console.log(`⏳ Timeout bỏ tracking: ${t.symbol}`)
+
+    activeTrades.splice(i,1)
+    continue
+}
 
            if(done){
 
-    if(Date.now() - t.time <= 7200000){
+    if(Date.now() - t.time <= 10800000){
        updateAI(win ? "WIN" : "LOSS", t.setup, t.marketState)
     }
 
