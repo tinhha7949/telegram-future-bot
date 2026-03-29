@@ -831,16 +831,17 @@ if(best.type !== "EARLY" && rr < 1.25){
         // ===== BLOCK DUPLICATE SIGNAL =====
 let nowTime = Date.now()
 
-if(lastSignalTime[best.symbol]){
-    let diff = nowTime - lastSignalTime[best.symbol]
+let signalKey = `${best.symbol}_${best.type}_${best.setup}_${best.side}`
 
-    if(diff < 3600000){ // 1 tiếng // 7200000
-        console.log(`⛔ Skip duplicate: ${best.symbol}`)
+if(lastSignalTime[signalKey]){
+    let diff = Date.now() - lastSignalTime[signalKey]
+
+    if(diff < 3600000){
+        console.log(`⛔ Skip duplicate: ${signalKey}`)
         return
     }
 }
 
-lastSignalTime[best.symbol] = nowTime
 
         // ===== RISK =====
         let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
@@ -888,6 +889,7 @@ Score: ${best.score}
 
         console.log(msg)
         await sendTelegram(msg)
+        lastSignalTime[signalKey] = Date.now()
         // ===== SAVE TRADE =====
 activeTrades.push({
     symbol: best.symbol,
