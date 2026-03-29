@@ -806,27 +806,27 @@ if(best.type === "EARLY"){
         return
     }
 
-    if(rr < 1.2){
-        console.log("❌ RR thấp")
-        return
-    }
+    if(best.type === "EARLY" && rr < 1.1){
+    return
+}
+if(best.type !== "EARLY" && rr < 1.25){
+    return
+}
 
     // nếu là breakout thì yêu cầu momentum rõ
-    if(best.setup === "BREAKOUT"){
-        if(!best.momentumUp && !best.momentumDown){
-            console.log("❌ Breakout yếu")
-            return
-        }
+    if(best.setup === "BREAKOUT" && best.type !== "EARLY"){
+    if(!best.momentumUp && !best.momentumDown){
+        return
     }
+}
 
     let weakMomentum =
     Math.abs(best.price - best.sl)/best.price < 0.0015 &&
     !best.momentumUp && !best.momentumDown
     
-    if(best.setup === "PULLBACK" && weakMomentum){
-        console.log("❌ Pullback quá yếu")
-        return
-    }
+    if(best.setup === "PULLBACK" && weakMomentum && best.type !== "EARLY"){
+    return
+}
 }
         // ===== BLOCK DUPLICATE SIGNAL =====
 let nowTime = Date.now()
@@ -923,8 +923,16 @@ function updateAI(result, setup, market){
 
     if(!key) return
 
-    if(result === "WIN") aiMemory[key+"_win"]++
-    else aiMemory[key+"_loss"]++
+    if(result === "WIN"){
+    aiMemory[key+"_win"]++
+}
+else if(result === "LOSS"){
+    aiMemory[key+"_loss"]++
+}
+else if(result === "TIMEOUT"){
+    // giảm nhẹ vì lệnh không đạt TP/SL
+    aiMemory[key+"_loss"] += 0.3
+}
 
     console.log("🧠 AI:", aiMemory)
 }
@@ -955,29 +963,40 @@ async function checkTrades(){
                 if(price >= t.sl){ win = false; done = true }
             }
 
-            // timeout 3h
-            if(Date.now() - t.time > 10800000){
+            // timeout 6h
+let isTimeout = Date.now() - t.time > 21600000
 
-    console.log(`⏳ Timeout bỏ tracking: ${t.symbol}`)
+// ===== TIMEOUT TRƯỚC =====
+if(isTimeout){
+
+    console.log(`⏳ Timeout: ${t.symbol}`)
+
+    updateAI("TIMEOUT", t.setup, t.marketState)
+
+    await sendTelegram(
+`⏳ TIMEOUT ${t.symbol}
+${t.side}
+⛔ Không chạm TP/SL trong 6h`
+    )
 
     activeTrades.splice(i,1)
     continue
 }
 
-           if(done){
+// ===== SAU ĐÓ MỚI CHECK TP/SL =====
+if(done){
 
-    if(Date.now() - t.time <= 10800000){
-       updateAI(win ? "WIN" : "LOSS", t.setup, t.marketState)
-    }
+    updateAI(win ? "WIN" : "LOSS", t.setup, t.marketState)
 
-                await sendTelegram(
+    await sendTelegram(
 `📊 RESULT ${t.symbol}
 ${t.side}
 ${win ? "✅ WIN" : "❌ LOSS"}`
-                )
+    )
 
-                activeTrades.splice(i,1)
-            }
+    activeTrades.splice(i,1)
+    continue
+}
 
         }catch(e){
             console.log("❌ checkTrades:", e.message)
