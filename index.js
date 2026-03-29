@@ -624,7 +624,7 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
         ? (tp - price) / risk
         : (price - tp) / risk
 
-    if(rr < 1.4) return null // 1.5
+    if(rr < 1.3) return null // 1.5
 
     let newDist = Math.abs(tp - price)
 
@@ -875,7 +875,7 @@ if(!diff || diff === 0){
     ? (best.tp - best.price) / (best.price - best.sl)
     : (best.price - best.tp) / (best.sl - best.price)
 
-if(rr < 1.25){
+if(rr < 1.3){
     console.log("❌ RR thấp")
     return
 }
