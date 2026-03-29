@@ -7,7 +7,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.3
+const RR_THRESHOLD = 1.2
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -147,7 +147,7 @@ async function getTopSymbols(){
                             !c.symbol.includes("DOWN") &&
                             !c.symbol.includes("BUSD")
                         )
-                      
+                    //   .filter(c => Number(c.quoteVolume) > 30000000)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
                 .slice(0,40)
                         .map(c => c.symbol)
@@ -174,14 +174,14 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.0035){
+if(range < 0.004){
     return null
 }
 
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.6){
+if(volNow < volAvg * 0.65){
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
