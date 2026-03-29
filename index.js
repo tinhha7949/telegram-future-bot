@@ -7,6 +7,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
+const RR_THRESHOLD = 1.3
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -567,16 +568,16 @@ if(sl <= price) sl = price + atrVal * 1.5
     if(!tp){
         if(support < price) tp = support
         else if(liqLow && liqLow < price) tp = liqLow
-        else tp = price - atrVal * 2 * slMult
+        else tp = price - atrVal * 2 * tpMult
     }
 
     let dist = price - tp
 
    if(dist > atrVal * 5){
     if(setupType === "BREAKOUT"){
-        tp = price - atrVal * 4.5 * slMult
+        tp = price - atrVal * 4.5 * tpMult
     }else{
-        tp = price - atrVal * 3 * slMult
+        tp = price - atrVal * 3 * tpMult
     }
 }
 
@@ -586,7 +587,7 @@ if(sl <= price) sl = price + atrVal * 1.5
     let weak = last3[2] > last3[1] && last3[1] > last3[0]
 
     if(weak && dist > atrVal * 2.5){
-        tp = price - atrVal * 1.8 * slMult
+        tp = price - atrVal * 1.8 * tpMult
     }
 }
 
@@ -616,22 +617,22 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
 
     if(!tp){
         tp = side==="LONG"
-            ? price + atrVal * 2 * slMult
-            : price - atrVal * 2 * slMult
+            ? price + atrVal * 2 * tpMult
+            : price - atrVal * 2 * tpMult
     }
 
     let rr = side==="LONG"
         ? (tp - price) / risk
         : (price - tp) / risk
 
-    if(rr < 1.3) return null // 1.5
+   // if(rr < RR_THRESHOLD) return null // 1.5
 
     let newDist = Math.abs(tp - price)
 
     if(newDist > atrVal * 4){
         tp = side==="LONG"
-            ? price + atrVal * 2.5 * slMult
-            : price - atrVal * 2.5 * slMult
+            ? price + atrVal * 2.5 * tpMult
+            : price - atrVal * 2.5 * tpMult
     }
 
     if(newDist < atrVal * 0.8){
@@ -801,7 +802,7 @@ if(!best || !best.type){
     return
 }
 
-// ===== EARLY FILTER =====
+// ===== EARLY =====
 if(best.type === "EARLY"){
 
     let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
@@ -811,13 +812,20 @@ if(best.type === "EARLY"){
         return
     }
 
-    if(best.type === "EARLY" && rr < 1.1){
-    return
-}
-if(best.type !== "EARLY" && rr < 1.25){
-    return
+    if(rr < 1.1){
+        return
+    }
 }
 
+// ===== MAIN =====
+if(best.type !== "EARLY"){
+
+    let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
+
+    if(rr < 1.25){
+        return
+    }
+}
     // nếu là breakout thì yêu cầu momentum rõ
     if(best.setup === "BREAKOUT" && best.type !== "EARLY"){
     if(!best.momentumUp && !best.momentumDown){
@@ -831,7 +839,6 @@ if(best.type !== "EARLY" && rr < 1.25){
     
     if(best.setup === "PULLBACK" && weakMomentum && best.type !== "EARLY"){
     return
-}
 }
         // ===== BLOCK DUPLICATE SIGNAL =====
 let nowTime = Date.now()
@@ -875,10 +882,10 @@ if(!diff || diff === 0){
     ? (best.tp - best.price) / (best.price - best.sl)
     : (best.price - best.tp) / (best.sl - best.price)
 
-if(rr < 1.3){
-    console.log("❌ RR thấp")
-    return
-}
+// if(rr < RR_THRESHOLD){
+    // console.log("❌ RR thấp")
+  //   return
+// }
         // ===== MESSAGE =====
        let msg = `🔥 BEST SIGNAL
 
