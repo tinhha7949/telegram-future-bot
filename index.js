@@ -11,7 +11,7 @@ const RR_THRESHOLD = 1.3
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 100000
+const MIN_VOL_15M = 70000 // 100000 nếu rác
 
 let lastUpdateId = 0
 let cachedSymbols = null
