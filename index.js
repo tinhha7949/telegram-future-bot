@@ -174,7 +174,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.004){
+if(range < 0.0035){
     return null
 }
 
