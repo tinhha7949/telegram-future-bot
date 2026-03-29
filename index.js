@@ -34,13 +34,18 @@ let activeTrades = []
 async function sendTelegram(msg){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
-        await fetch(url,{
+        let res = await fetch(url,{
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body: JSON.stringify({ chat_id: CHAT_ID, text: msg })
         })
+
+        let data = await res.json()
+        return data.ok   // 👈 QUAN TRỌNG
+
     }catch(e){
         console.log("❌ TELE:", e.message)
+        return false
     }
 }
 
@@ -888,8 +893,12 @@ Score: ${best.score}
 `
 
         console.log(msg)
-        await sendTelegram(msg)
-        lastSignalTime[signalKey] = Date.now()
+        // send tele
+        let ok = await sendTelegram(msg)
+
+if(ok !== false){
+    lastSignalTime[signalKey] = Date.now()
+}
         // ===== SAVE TRADE =====
 activeTrades.push({
     symbol: best.symbol,
