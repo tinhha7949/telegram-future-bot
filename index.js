@@ -242,7 +242,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.0045 // 0.0025 // 0.0035
+let nearEma = distEma < 0.006 // 0.0025 // 0.0035
 // ===== PULLBACK PHẢI CÓ LỰC =====
 //if(nearEma && volNow < volAvg){
    // return null
