@@ -204,7 +204,7 @@ else{
 }
 
 // sideway yếu → bỏ luôn
-if(trendHTF < 0.004 && trendLTF < 0.004){
+if(trendHTF < 0.0025 && trendLTF < 0.002){
     return null
 }
 
@@ -372,10 +372,10 @@ if(setupType === "PULLBACK" && marketState === "TREND_WEAK"){
 score += aiBoost
     // ===== REQUIRE PULLBACK =====
 if(side === "LONG" && !nearEma){
-    score -= 25
+    score -= 10
 }
 if(side === "SHORT" && !nearEma){
-    score -= 25
+    score -= 10
 }
     
     // ===== EARLY =====
@@ -663,7 +663,7 @@ if(distance > atrVal * 1.7){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
 }
 
 // ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
-if(distance > atrVal * 3){ // nếu quá ít lệnh fix 3 nếu rác 2.
+if(distance > atrVal * 3.5){ // nếu quá ít lệnh fix 3 nếu rác 2.
     return null
 }
 
@@ -799,11 +799,6 @@ if(!best || !best.type){
 // ===== EARLY FILTER =====
 if(best.type === "EARLY"){
 
-    if(best.setup !== "PULLBACK"){
-        console.log("❌ Early không phải pullback")
-        return
-    }
-
     let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
 
     if(best.score < EARLY_THRESHOLD){
@@ -816,13 +811,20 @@ if(best.type === "EARLY"){
         return
     }
 
-    // filter nhẹ thông minh
-    let weakMomentum =
-        Math.abs(best.price - best.sl)/best.price < 0.002 &&
-        !best.momentumUp && !best.momentumDown
+    // nếu là breakout thì yêu cầu momentum rõ
+    if(best.setup === "BREAKOUT"){
+        if(!best.momentumUp && !best.momentumDown){
+            console.log("❌ Breakout yếu")
+            return
+        }
+    }
 
-    if(weakMomentum){
-        console.log("❌ Early quá yếu")
+    let weakMomentum =
+    Math.abs(best.price - best.sl)/best.price < 0.0015 &&
+    !best.momentumUp && !best.momentumDown
+    
+    if(best.setup === "PULLBACK" && weakMomentum){
+        console.log("❌ Pullback quá yếu")
         return
     }
 }
