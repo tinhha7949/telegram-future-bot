@@ -1,3 +1,11 @@
+// Lỗi tiềm ẩn có thể commen thử 
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args))
+// DB 
+const { MongoClient } = require("mongodb")
+
+const client = new MongoClient(process.env.MONGO_URI)
+
+let db, trades
 // ================= CONFIG =================
 const BOT_TOKEN = process.env.BOT_TOKEN
 const CHAT_ID = process.env.CHAT_ID
@@ -14,136 +22,14 @@ const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 50000 // 100000 hoặc  nếu rác
+const MIN_VOL_15M = 40000 // 100000 hoặc  nếu rác
 
 let lastUpdateId = 0
 let cachedSymbols = null
 let lastSymbolsUpdate = 0
 let lastSignalTime = {}
-
-let setup = "BREAKOUT"
-let marketState = "TREND"
-// ================= AI MEMORY =================
-function getWinRate(win, loss){
-    win = win || 0
-    loss = loss || 0
-
-    let total = win + loss
-    if(total === 0) return 0.5
-
-    return win / total
-}
-
 // ===== ACTIVE TRADES =====
 let activeTrades = []
-
-// AI
-let aiMemory = {
-    setups: {},
-    markets: {}
-}
-
-let lastMessageId = null
-
-// ===== TELEGRAM AI STORAGE =====
-async function saveMemory(){
-
-    try{
-
-        let data = JSON.stringify(aiMemory)
-
-        // lần đầu → gửi
-        if(!lastMessageId){
-
-            let res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN_2}/sendMessage`,{
-                method:"POST",
-                headers:{ "Content-Type":"application/json" },
-                body: JSON.stringify({
-                    chat_id: AI_CHAT_ID,
-                    text: "AI_MEMORY:" + data.slice(0, 3000) // chống quá dài
-                })
-            })
-
-            let json = await res.json()
-
-            if(!json.ok){
-                console.log("❌ SEND FAIL:", json)
-                return
-            }
-
-            lastMessageId = json.result.message_id
-            console.log("✅ AI saved (new message)")
-        }
-
-        // các lần sau → edit
-        else{
-
-            let res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN_2}/editMessageText`,{
-                method:"POST",
-                headers:{ "Content-Type":"application/json" },
-                body: JSON.stringify({
-                    chat_id: AI_CHAT_ID,
-                    message_id: lastMessageId,
-                    text: "AI_MEMORY:" + data.slice(0, 3000)
-                })
-            })
-
-            let json = await res.json()
-
-            if(!json.ok){
-                console.log("❌ EDIT FAIL:", json)
-
-                // fallback: gửi mới nếu edit lỗi
-                lastMessageId = null
-            }else{
-                console.log("✅ AI updated")
-            }
-        }
-
-    }catch(e){
-        console.log("❌ SAVE AI ERROR:", e.message)
-    }
-}
-
-
-async function loadMemory(){
-
-    try{
-
-        let res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN_2}/getUpdates`)
-        let data = await res.json()
-
-        if(!data.ok){
-            console.log("❌ LOAD FAIL:", data)
-            return
-        }
-
-        let messages = data.result.reverse()
-
-        for(let msg of messages){
-
-            let text = msg.message?.text || ""
-
-            if(text.startsWith("AI_MEMORY:")){
-
-                try{
-                    aiMemory = JSON.parse(text.replace("AI_MEMORY:", ""))
-                    lastMessageId = msg.message.message_id
-
-                    console.log("✅ Loaded AI từ Telegram phụ")
-                    return
-                }catch(e){
-                    console.log("❌ parse AI lỗi")
-                }
-            }
-        }
-
-        console.log("⚠️ chưa có AI memory")
-
-    }catch(e){
-        console.log("❌ LOAD AI ERROR:", e.message)
-    }
-}
 
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
@@ -163,17 +49,21 @@ async function sendTelegram(msg){
         return false
     }
 }
-// Telegram phụ để lưu AI memory
+// Telegram phụ
 async function sendTelegram2(msg){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN_2}/sendMessage`
-        await fetch(url,{
+        let res = await fetch(url,{
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body: JSON.stringify({ chat_id: AI_CHAT_ID, text: msg })
         })
+        let data = await res.json()
+        return data.ok
+
     }catch(e){
         console.log("❌ TELE 2:", e.message)
+        return false
     }
 }
 
@@ -304,6 +194,7 @@ async function coreLogic(data15, data1h){
 if(range < 0.003){ // 0.4 
     return null
 }
+
 
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
@@ -474,13 +365,6 @@ if(side==="SHORT" && nearEma){
 
     if(atrVal/price > 0.004) score+=10
     if(!side) return null
-    // ===== AI SCORE =====
-let s = aiMemory.setups[setupType] || { win:0, loss:0 }
-let wr = getWinRate(s.win, s.loss)
-
-if(wr > 0.6) score += 10
-if(wr < 0.4) score -= 10
-
     // ===== REQUIRE PULLBACK =====
 if(side === "LONG" && !nearEma){
     score -= 10
@@ -507,7 +391,18 @@ if(trendShort && nearEma){
     if(momentumDown) earlyScore+=5 // thêm
     if(volNow > volAvg) earlyScore+=5 // thêm
 }
+// DB AI
+let dbAI = await getDBStats(setupType, marketState)
 
+// 🔥 tăng điểm kèo tốt
+if(dbAI.winrate > 0.65 && dbAI.total > 30){
+    score += 15
+}
+
+// 🔥 giảm điểm kèo xấu
+if(dbAI.winrate < 0.4 && dbAI.total > 30){
+    score -= 20
+}
   
 // ===== MARKET STATE =====
 let isTrending = trendStrength > 0.003 // 0.004 
@@ -558,20 +453,10 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
         let dist = side==="LONG"
             ? (c.price - price)
             : (price - c.price)
-
-       // ===== AI TP ADJUST =====
-let s = aiMemory.setups[setupType] || { win:0, loss:0 }
-let wr = getWinRate(s.win, s.loss)
-
-// win thấp → ép TP gần
-let rrMin = RR_THRESHOLD
-
-if(wr > 0.6) rrMin = RR_THRESHOLD * 0.9
-if(wr < 0.4) rrMin = RR_THRESHOLD * 1.1
-
-if(rr >= rrMin && dist >= atrVal * 0.7 && dist <= atrVal * 3.5){
-    valid.push({...c, rr, dist})
-}
+    
+         if(rr >= RR_THRESHOLD && dist >= atrVal * 0.7 && dist <= atrVal * 3.5){ // if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5) hoặc 4
+            valid.push({...c, rr, dist})
+        }
     }
 
     if(valid.length === 0) return null
@@ -906,16 +791,7 @@ async function scanner(){
 let main = candidates.find(c => c.type === "MAIN")
 
 let best = main || candidates[0]
-// ===== AI FILTER =====
-let s = aiMemory.setups[best.setup] || { win:0, loss:0 }
-let wr = getWinRate(s.win, s.loss)
-// đủ data mới chặn
-let total = s.win + s.loss
-
-if(total > 20 && wr < 0.4){
-    console.log("❌ AI chặn kèo xấu:", best.symbol)
-    return
-}
+// ===== CHECK BEST CANDIDATE =====
         
         if(!best){
             console.log("❌ No best candidate")
@@ -1003,25 +879,6 @@ if(!diff || diff === 0){
         let trailingSL = best.side === "LONG"
             ? best.price - best.atr
             : best.price + best.atr
-// ===== AI RR ADJUST =====
-let s2 = aiMemory.setups[best.setup] || { win:0, loss:0 }
-let wr2 = getWinRate(s2.win, s2.loss)
-let total2 = s2.win + s2.loss
-
-// win cao → TP xa hơn
-if(wr2 > 0.6){
-    best.tp = best.side === "LONG"
-        ? best.tp + best.atr * 0.5
-        : best.tp - best.atr * 0.5
-}
-
-// win thấp → TP gần lại
-if(wr2 < 0.4){
-    best.tp = best.side === "LONG"
-        ? best.price + (best.tp - best.price) * 0.7
-        : best.price - (best.price - best.tp) * 0.7
-}
-
 // ===== TÍNH RR =====
 let rr = best.side === "LONG"
     ? (best.tp - best.price) / (best.price - best.sl)
@@ -1031,6 +888,13 @@ let rr = best.side === "LONG"
     // console.log("❌ RR thấp")
   //   return
 // }
+// ===== CHECK DB AI =====
+let dbAI = await getDBStats(best.setup, best.marketState)
+
+if(dbAI.total > 50 && dbAI.winrate < 0.35){
+    console.log("❌ DB chặn:", best.symbol)
+    return
+}
         // ===== MESSAGE =====
        let msg = `🔥 BEST SIGNAL
 
@@ -1052,7 +916,7 @@ if(ok !== false){
     lastSignalTime[signalKey] = Date.now()
 }
         // ===== SAVE TRADE =====
-activeTrades.push({
+let trade = {
     symbol: best.symbol,
     side: best.side,
     entry: best.price,
@@ -1060,47 +924,20 @@ activeTrades.push({
     sl: best.sl,
     setup: best.setup,
     marketState: best.marketState,
-    time: Date.now()
-})
+    atr: best.atr,
+    time: Date.now(),
+    result: "PENDING"
+}
+
+activeTrades.push(trade)
+
+// 🔥 THÊM DÒNG NÀY (lưu DB)
+await trades.insertOne(trade)
 
     }catch(e){
     console.log("❌ Scanner error:")
     console.log(e)
 }
-}
-// HỌC AI
-async function updateAI(result, setup, market){
-
-    // ===== SETUP =====
-    if(!aiMemory.setups[setup]){
-        aiMemory.setups[setup] = { win: 0, loss: 0 }
-    }
-
-    if(result === "WIN") aiMemory.setups[setup].win++
-    else aiMemory.setups[setup].loss++
-
-    let s = aiMemory.setups[setup]
-    let total = s.win + s.loss
-
-    s.winrate = total ? s.win / total : 0.5
-    s.confidence = Math.min(total / 20, 1)
-
-    // ===== MARKET =====
-    if(!aiMemory.markets[market]){
-        aiMemory.markets[market] = { win: 0, loss: 0 }
-    }
-
-    if(result === "WIN") aiMemory.markets[market].win++
-    else aiMemory.markets[market].loss++
-
-    let m = aiMemory.markets[market]
-    let mTotal = m.win + m.loss
-
-    m.winrate = mTotal ? m.win / mTotal : 0.5
-
-    console.log("🧠 AI:", aiMemory)
-
-    await saveMemory()
 }
 ////////////////////
 async function checkTrades(){
@@ -1137,12 +974,14 @@ let isTimeout = Date.now() - t.time > 21600000
 
 // ===== TIMEOUT TRƯỚC =====
 if(isTimeout){
-
+    
+    await trades.updateOne(
+    { symbol: t.symbol, time: t.time },
+    { $set: { result: "TIMEOUT" } }
+)
     console.log(`⏳ Timeout: ${t.symbol}`)
 
-    // await updateAI(win ? "WIN" : "LOSS", t.setup, t.marketState)
-
-    await sendTelegram(
+    await sendTelegram2(
 `⏳ TIMEOUT ${t.symbol}
 ${t.side}
 ⛔ Không chạm TP/SL trong 6h`
@@ -1154,15 +993,18 @@ ${t.side}
 
 // ===== SAU ĐÓ MỚI CHECK TP/SL =====
 if(done){
-
-    await updateAI(win ? "WIN" : "LOSS", t.setup, t.marketState)
+        // 🔥 UPDATE DB
+    await trades.updateOne(
+        { symbol: t.symbol, time: t.time },
+        { $set: { result: win ? "WIN" : "LOSS" } }
+    )
 
     let msg =
 `📊 RESULT ${t.symbol}
 ${t.side}
 ${win ? "✅ WIN" : "❌ LOSS"}`
     
-//await sendTelegram(msg)
+// await sendTelegram(msg)
     await sendTelegram2(msg)
 
     activeTrades.splice(i,1)
@@ -1174,29 +1016,56 @@ ${win ? "✅ WIN" : "❌ LOSS"}`
         }
     }
 } 
-/// AI DECAY
-async function decayAI(){
-
-    for(let s in aiMemory.setups){
-        aiMemory.setups[s].win *= 0.98
-        aiMemory.setups[s].loss *= 0.98
-    }
-
-    for(let m in aiMemory.markets){
-        aiMemory.markets[m].win *= 0.98
-        aiMemory.markets[m].loss *= 0.98
-    }
-    await saveMemory()
-}
 // ================= LOOP =================
 setInterval(()=>scanner(),300000)
 setInterval(()=>checkCommand(),10000)
 setInterval(()=>checkTrades(),60000)
-setInterval(()=>decayAI(),3600000)
 
 async function start(){
-    await loadMemory()
-    scanner()
+    try{
+
+        if(!process.env.MONGO_URI){
+            throw new Error("❌ Thiếu MONGO_URI")
+        }
+
+        await client.connect()
+
+        db = client.db("trading")
+        trades = db.collection("trades")
+
+        console.log("✅ MongoDB connected")
+
+        // 🔥 LOAD LẠI LỆNH
+        activeTrades = await trades.find({ result: "PENDING" }).toArray()
+        console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
+
+        scanner()
+
+    }catch(e){
+        console.log("❌ Start error:", e.message)
+    }
 }
 
+async function getDBStats(setup, market){
+
+    let data = await trades.find({
+        setup: setup,
+        marketState: market,
+        result: { $in: ["WIN", "LOSS"] }
+    }).toArray()
+
+    let total = data.length
+    let win = data.filter(x => x.result === "WIN").length
+
+    if(total < 30){
+        return { winrate: 0.5, total }
+    }
+
+    return {
+        winrate: win / total,
+        total
+    }
+}
+
+            
 start()
