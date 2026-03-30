@@ -7,7 +7,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.3 // 1.35 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -174,14 +174,14 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.004){
+if(range < 0.003){ // 0.4 
     return null
 }
 
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.7){
+if(volNow < volAvg * 0.6){ //0.007
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
@@ -210,7 +210,7 @@ else{
 }
 
 // sideway yếu → bỏ luôn
-if(trendHTF < 0.0025 && trendLTF < 0.002){
+if(trendHTF < 0.0015 && trendLTF < 0.0012){ // 0.0025 0.002
     return null
 }
 
@@ -250,7 +250,7 @@ if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.006 // 0.0025 // 0.0035 // 0.5 nếu đu 
 // ===== PULLBACK PHẢI CÓ LỰC =====
-if(nearEma && volNow < volAvg * 0.7){ // nâng 0.8 nếu sideway
+if(nearEma && volNow < volAvg * 0.6){ // nâng 0.8 nếu sideway
     return null
 }
     // ===== STRUCTURE =====
@@ -454,7 +454,7 @@ function pickBestTP(candidates, price, risk, side){
             ? (c.price - price)
             : (price - c.price)
 
-        if(rr >= 1.2 && dist >= atrVal * 0.7 && dist <= atrVal * 4.5){ // if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5) hoặc 4
+        if(rr >= RR_THRESHOLD && dist >= atrVal * 0.7 && dist <= atrVal * 3.5){ // if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5) hoặc 4
             valid.push({...c, rr, dist})
         }
     }
@@ -649,7 +649,7 @@ let close = +data15.at(-1)[4]
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-if(rangeCandle === 0 || body / rangeCandle < 0.4){ // nếu muốn chắc hơn rõ nâng 0.5
+if(rangeCandle === 0 || body / rangeCandle < 0.3){ // nếu muốn chắc hơn rõ nâng 0.4 
     return null
 }
 // ===== ANTI FOMO (FIX CHUẨN) tránh đu đỉnh đu đáy =====
@@ -669,7 +669,7 @@ if(distance > atrVal * 1.7){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
 }
 
 // ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
-if(distance > atrVal * 3.5){ // nếu quá ít lệnh fix 3 nếu rác 2.
+if(distance > atrVal * 3){ // cũ 3.5
     return null
 }
 
