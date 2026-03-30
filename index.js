@@ -149,7 +149,7 @@ async function getTopSymbols(){
                         )
                     //   .filter(c => Number(c.quoteVolume) > 30000000)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
-                .slice(0,40)
+                .slice(0,60)
                         .map(c => c.symbol)
                 }
 
