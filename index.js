@@ -1,5 +1,5 @@
 // Lỗi tiềm ẩn có thể commen thử 
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args))
+// const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args))
 // DB 
 const { MongoClient } = require("mongodb")
 
