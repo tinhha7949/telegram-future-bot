@@ -7,7 +7,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.2
+const RR_THRESHOLD = 1.3
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -181,7 +181,7 @@ if(range < 0.004){
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.65){
+if(volNow < volAvg * 0.7){
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
