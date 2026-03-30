@@ -2,6 +2,9 @@
 const BOT_TOKEN = process.env.BOT_TOKEN
 const CHAT_ID = process.env.CHAT_ID
 
+const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
+const AI_CHAT_ID = process.env.AI_CHAT_ID
+
 const LIMIT_15M = 300
 const LIMIT_1H  = 200
 
@@ -11,25 +14,136 @@ const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 40000 // 100000 hoặc  nếu rác
+const MIN_VOL_15M = 50000 // 100000 hoặc  nếu rác
 
 let lastUpdateId = 0
 let cachedSymbols = null
 let lastSymbolsUpdate = 0
 let lastSignalTime = {}
-// ===== AI MEMORY =====
-let aiMemory = {
-    breakout_strong_win: 0,
-    breakout_strong_loss: 0,
 
-    breakout_weak_win: 0,
-    breakout_weak_loss: 0,
+let setup = "BREAKOUT"
+let marketState = "TREND"
+// ================= AI MEMORY =================
+function getWinRate(win, loss){
+    win = win || 0
+    loss = loss || 0
 
-    pullback_weak_win: 0,
-    pullback_weak_loss: 0
+    let total = win + loss
+    if(total === 0) return 0.5
+
+    return win / total
 }
+
 // ===== ACTIVE TRADES =====
 let activeTrades = []
+
+// AI
+let aiMemory = {
+    setups: {},
+    markets: {}
+}
+
+let lastMessageId = null
+
+// ===== TELEGRAM AI STORAGE =====
+async function saveMemory(){
+
+    try{
+
+        let data = JSON.stringify(aiMemory)
+
+        // lần đầu → gửi
+        if(!lastMessageId){
+
+            let res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN_2}/sendMessage`,{
+                method:"POST",
+                headers:{ "Content-Type":"application/json" },
+                body: JSON.stringify({
+                    chat_id: AI_CHAT_ID,
+                    text: "AI_MEMORY:" + data.slice(0, 3000) // chống quá dài
+                })
+            })
+
+            let json = await res.json()
+
+            if(!json.ok){
+                console.log("❌ SEND FAIL:", json)
+                return
+            }
+
+            lastMessageId = json.result.message_id
+            console.log("✅ AI saved (new message)")
+        }
+
+        // các lần sau → edit
+        else{
+
+            let res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN_2}/editMessageText`,{
+                method:"POST",
+                headers:{ "Content-Type":"application/json" },
+                body: JSON.stringify({
+                    chat_id: AI_CHAT_ID,
+                    message_id: lastMessageId,
+                    text: "AI_MEMORY:" + data.slice(0, 3000)
+                })
+            })
+
+            let json = await res.json()
+
+            if(!json.ok){
+                console.log("❌ EDIT FAIL:", json)
+
+                // fallback: gửi mới nếu edit lỗi
+                lastMessageId = null
+            }else{
+                console.log("✅ AI updated")
+            }
+        }
+
+    }catch(e){
+        console.log("❌ SAVE AI ERROR:", e.message)
+    }
+}
+
+
+async function loadMemory(){
+
+    try{
+
+        let res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN_2}/getUpdates`)
+        let data = await res.json()
+
+        if(!data.ok){
+            console.log("❌ LOAD FAIL:", data)
+            return
+        }
+
+        let messages = data.result.reverse()
+
+        for(let msg of messages){
+
+            let text = msg.message?.text || ""
+
+            if(text.startsWith("AI_MEMORY:")){
+
+                try{
+                    aiMemory = JSON.parse(text.replace("AI_MEMORY:", ""))
+                    lastMessageId = msg.message.message_id
+
+                    console.log("✅ Loaded AI từ Telegram phụ")
+                    return
+                }catch(e){
+                    console.log("❌ parse AI lỗi")
+                }
+            }
+        }
+
+        console.log("⚠️ chưa có AI memory")
+
+    }catch(e){
+        console.log("❌ LOAD AI ERROR:", e.message)
+    }
+}
 
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
@@ -47,6 +161,19 @@ async function sendTelegram(msg){
     }catch(e){
         console.log("❌ TELE:", e.message)
         return false
+    }
+}
+// Telegram phụ để lưu AI memory
+async function sendTelegram2(msg){
+    try{
+        let url = `https://api.telegram.org/bot${BOT_TOKEN_2}/sendMessage`
+        await fetch(url,{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ chat_id: AI_CHAT_ID, text: msg })
+        })
+    }catch(e){
+        console.log("❌ TELE 2:", e.message)
     }
 }
 
@@ -348,34 +475,12 @@ if(side==="SHORT" && nearEma){
     if(atrVal/price > 0.004) score+=10
     if(!side) return null
     // ===== AI SCORE =====
-function getWinRate(win, loss){
-    win = win || 0
-    loss = loss || 0
+let s = aiMemory.setups[setupType] || { win:0, loss:0 }
+let wr = getWinRate(s.win, s.loss)
 
-    let total = win + loss
-    if(total === 0) return 0.5
+if(wr > 0.6) score += 10
+if(wr < 0.4) score -= 10
 
-    return win / total
-}
-
-let aiBoost = 0
-
-if(setupType === "BREAKOUT" && marketState === "TREND_STRONG"){
-    let wr = getWinRate(aiMemory.breakout_strong_win, aiMemory.breakout_strong_loss)
-    aiBoost = (wr - 0.5) * 40
-}
-
-if(setupType === "BREAKOUT" && marketState === "TREND_WEAK"){
-    let wr = getWinRate(aiMemory.breakout_weak_win, aiMemory.breakout_weak_loss)
-    aiBoost = (wr - 0.5) * 40
-}
-
-if(setupType === "PULLBACK" && marketState === "TREND_WEAK"){
-    let wr = getWinRate(aiMemory.pullback_weak_win, aiMemory.pullback_weak_loss)
-    aiBoost = (wr - 0.5) * 40
-}
-
-score += aiBoost
     // ===== REQUIRE PULLBACK =====
 if(side === "LONG" && !nearEma){
     score -= 10
@@ -440,7 +545,7 @@ let liqHigh = findLiquidityHigh(highs)
 let liqLow = findLiquidityLow(lows)
 
 // ===== PICK TP =====
-function pickBestTP(candidates, price, risk, side){
+function pickBestTP(candidates, price, risk, side, setupType, atrVal){
 
     let valid = []
 
@@ -454,9 +559,19 @@ function pickBestTP(candidates, price, risk, side){
             ? (c.price - price)
             : (price - c.price)
 
-        if(rr >= RR_THRESHOLD && dist >= atrVal * 0.7 && dist <= atrVal * 3.5){ // if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5) hoặc 4
-            valid.push({...c, rr, dist})
-        }
+       // ===== AI TP ADJUST =====
+let s = aiMemory.setups[setupType] || { win:0, loss:0 }
+let wr = getWinRate(s.win, s.loss)
+
+// win thấp → ép TP gần
+let rrMin = RR_THRESHOLD
+
+if(wr > 0.6) rrMin = RR_THRESHOLD * 0.9
+if(wr < 0.4) rrMin = RR_THRESHOLD * 1.1
+
+if(rr >= rrMin && dist >= atrVal * 0.7 && dist <= atrVal * 3.5){
+    valid.push({...c, rr, dist})
+}
     }
 
     if(valid.length === 0) return null
@@ -513,7 +628,7 @@ if(sl >= price) sl = price - atrVal * 1.5
         candidates.push({price: price + atrVal * 2, type:"atr"})
     }
 
-    tp = pickBestTP(candidates, price, risk, "LONG")
+    tp = pickBestTP(candidates, price, risk, "LONG", setupType, atrVal)
 
     if(!tp){
         if(resistance > price) tp = resistance
@@ -563,7 +678,7 @@ if(sl <= price) sl = price + atrVal * 1.5
         candidates.push({price: price - atrVal * 2, type:"atr"})
     }
 
-    tp = pickBestTP(candidates, price, risk, "SHORT")
+    tp = pickBestTP(candidates, price, risk, "SHORT", setupType, atrVal)
 
     if(!tp){
         if(support < price) tp = support
@@ -613,7 +728,7 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
         if(liqLow && liqLow < price) candidates.push({price: liqLow, type:"liq"})
     }
 
-    tp = pickBestTP(candidates, price, risk, side)
+   tp = pickBestTP(candidates, price, risk, side, setupType, atrVal)
 
     if(!tp){
         tp = side==="LONG"
@@ -791,6 +906,16 @@ async function scanner(){
 let main = candidates.find(c => c.type === "MAIN")
 
 let best = main || candidates[0]
+// ===== AI FILTER =====
+let s = aiMemory.setups[best.setup] || { win:0, loss:0 }
+let wr = getWinRate(s.win, s.loss)
+// đủ data mới chặn
+let total = s.win + s.loss
+
+if(total > 20 && wr < 0.4){
+    console.log("❌ AI chặn kèo xấu:", best.symbol)
+    return
+}
         
         if(!best){
             console.log("❌ No best candidate")
@@ -878,7 +1003,27 @@ if(!diff || diff === 0){
         let trailingSL = best.side === "LONG"
             ? best.price - best.atr
             : best.price + best.atr
-        let rr = best.side === "LONG"
+// ===== AI RR ADJUST =====
+let s2 = aiMemory.setups[best.setup] || { win:0, loss:0 }
+let wr2 = getWinRate(s2.win, s2.loss)
+let total2 = s2.win + s2.loss
+
+// win cao → TP xa hơn
+if(wr2 > 0.6){
+    best.tp = best.side === "LONG"
+        ? best.tp + best.atr * 0.5
+        : best.tp - best.atr * 0.5
+}
+
+// win thấp → TP gần lại
+if(wr2 < 0.4){
+    best.tp = best.side === "LONG"
+        ? best.price + (best.tp - best.price) * 0.7
+        : best.price - (best.price - best.tp) * 0.7
+}
+
+// ===== TÍNH RR =====
+let rr = best.side === "LONG"
     ? (best.tp - best.price) / (best.price - best.sl)
     : (best.price - best.tp) / (best.sl - best.price)
 
@@ -923,37 +1068,41 @@ activeTrades.push({
     console.log(e)
 }
 }
-function updateAI(result, setup, market){
+// HỌC AI
+async function updateAI(result, setup, market){
 
-    let key = ""
-
-    if(setup === "BREAKOUT" && market === "TREND_STRONG"){
-        key = "breakout_strong"
+    // ===== SETUP =====
+    if(!aiMemory.setups[setup]){
+        aiMemory.setups[setup] = { win: 0, loss: 0 }
     }
 
-    if(setup === "BREAKOUT" && market === "TREND_WEAK"){
-        key = "breakout_weak"
+    if(result === "WIN") aiMemory.setups[setup].win++
+    else aiMemory.setups[setup].loss++
+
+    let s = aiMemory.setups[setup]
+    let total = s.win + s.loss
+
+    s.winrate = total ? s.win / total : 0.5
+    s.confidence = Math.min(total / 20, 1)
+
+    // ===== MARKET =====
+    if(!aiMemory.markets[market]){
+        aiMemory.markets[market] = { win: 0, loss: 0 }
     }
 
-    if(setup === "PULLBACK" && market === "TREND_WEAK"){
-        key = "pullback_weak"
-    }
+    if(result === "WIN") aiMemory.markets[market].win++
+    else aiMemory.markets[market].loss++
 
-    if(!key) return
+    let m = aiMemory.markets[market]
+    let mTotal = m.win + m.loss
 
-    if(result === "WIN"){
-    aiMemory[key+"_win"]++
-}
-else if(result === "LOSS"){
-    aiMemory[key+"_loss"]++
-}
-else if(result === "TIMEOUT"){
-    // giảm nhẹ vì lệnh không đạt TP/SL
-    aiMemory[key+"_loss"] += 0.3
-}
+    m.winrate = mTotal ? m.win / mTotal : 0.5
 
     console.log("🧠 AI:", aiMemory)
+
+    await saveMemory()
 }
+////////////////////
 async function checkTrades(){
 
     if(activeTrades.length === 0) return
@@ -974,12 +1123,14 @@ async function checkTrades(){
             if(t.side === "LONG"){
                 if(price >= t.tp){ win = true; done = true }
                 if(price <= t.sl){ win = false; done = true }
+                
             }
 
             if(t.side === "SHORT"){
                 if(price <= t.tp){ win = true; done = true }
                 if(price >= t.sl){ win = false; done = true }
             }
+        
 
             // timeout 6h
 let isTimeout = Date.now() - t.time > 21600000
@@ -989,7 +1140,7 @@ if(isTimeout){
 
     console.log(`⏳ Timeout: ${t.symbol}`)
 
-    updateAI("TIMEOUT", t.setup, t.marketState)
+    // await updateAI(win ? "WIN" : "LOSS", t.setup, t.marketState)
 
     await sendTelegram(
 `⏳ TIMEOUT ${t.symbol}
@@ -1004,13 +1155,15 @@ ${t.side}
 // ===== SAU ĐÓ MỚI CHECK TP/SL =====
 if(done){
 
-    updateAI(win ? "WIN" : "LOSS", t.setup, t.marketState)
+    await updateAI(win ? "WIN" : "LOSS", t.setup, t.marketState)
 
-    await sendTelegram(
+    let msg =
 `📊 RESULT ${t.symbol}
 ${t.side}
 ${win ? "✅ WIN" : "❌ LOSS"}`
-    )
+    
+//await sendTelegram(msg)
+    await sendTelegram2(msg)
 
     activeTrades.splice(i,1)
     continue
@@ -1020,10 +1173,30 @@ ${win ? "✅ WIN" : "❌ LOSS"}`
             console.log("❌ checkTrades:", e.message)
         }
     }
+} 
+/// AI DECAY
+async function decayAI(){
+
+    for(let s in aiMemory.setups){
+        aiMemory.setups[s].win *= 0.98
+        aiMemory.setups[s].loss *= 0.98
+    }
+
+    for(let m in aiMemory.markets){
+        aiMemory.markets[m].win *= 0.98
+        aiMemory.markets[m].loss *= 0.98
+    }
+    await saveMemory()
 }
 // ================= LOOP =================
 setInterval(()=>scanner(),300000)
 setInterval(()=>checkCommand(),10000)
 setInterval(()=>checkTrades(),60000)
+setInterval(()=>decayAI(),3600000)
 
-scanner()
+async function start(){
+    await loadMemory()
+    scanner()
+}
+
+start()
