@@ -7,11 +7,11 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.3
+const RR_THRESHOLD = 1.3 // 1.35 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 100000 // 100000 nếu rác
+const MIN_VOL_15M = 40000 // 100000 hoặc  nếu rác
 
 let lastUpdateId = 0
 let cachedSymbols = null
@@ -248,11 +248,11 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.006 // 0.0025 // 0.0035
+let nearEma = distEma < 0.006 // 0.0025 // 0.0035 // 0.5 nếu đu 
 // ===== PULLBACK PHẢI CÓ LỰC =====
-//if(nearEma && volNow < volAvg){
-   // return null
-//}
+if(nearEma && volNow < volAvg * 0.7){ // nâng 0.8 nếu sideway
+    return null
+}
     // ===== STRUCTURE =====
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
@@ -822,7 +822,7 @@ if(best.type !== "EARLY"){
 
     let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
 
-    if(rr < 1.25){
+    if(rr < RR_THRESHOLD){
         return
     }
 }
