@@ -22,7 +22,7 @@ const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 70000 // 100000 hoặc  nếu rác
+const MIN_VOL_15M = 50000 // 100000 hoặc  nếu rác
 
 let lastUpdateId = 0
 let cachedSymbols = null
@@ -191,7 +191,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.003){ // 0.4 
+if(range < 0.002){ // 0.4 
     return null
 }
 
@@ -199,7 +199,7 @@ if(range < 0.003){ // 0.4
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.6){ //0.007
+if(volNow < volAvg * 0.5){ //0.007
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
@@ -268,7 +268,7 @@ if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.006 // 0.0025 // 0.0035 // 0.5 nếu đu 
 // ===== PULLBACK PHẢI CÓ LỰC =====
-if(nearEma && volNow < volAvg * 0.6){ // nâng 0.8 nếu sideway
+if(nearEma && volNow < volAvg * 0.5){ // nâng 0.8 nếu sideway
     return null
 }
     // ===== STRUCTURE =====
@@ -813,7 +813,7 @@ if(best.type === "EARLY"){
         return
     }
 
-    if(rr < 1.1){
+    if(rr < 1.05){
         return
     }
 }
