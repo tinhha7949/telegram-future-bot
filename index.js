@@ -18,11 +18,13 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.25 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 40000 // 100000 hoặc  nếu rác
+const MIN_VOL_15M = 100000 // 100000 hoặc  nếu rác
+
+const DEBUG_AI = false
 
 let lastUpdateId = 0
 let cachedSymbols = null
@@ -229,7 +231,7 @@ else{
 }
 
 // sideway yếu → bỏ luôn
-if(trendHTF < 0.0015 && trendLTF < 0.0012){ // 0.0025 0.002
+if(trendHTF < 0.002 && trendLTF < 0.0018){ // 0.0025 0.002
     return null
 }
 
@@ -1189,8 +1191,6 @@ if(data.length === 0){
     return { winrate: 0.5, total: 0 }
 }
 
-console.log("📊 DB used:", data.length)
-
         // ===== TIME DECAY AI =====
         let winScore = 0
         let lossScore = 0
@@ -1224,6 +1224,7 @@ console.log("📊 DB used:", data.length)
             `🤖 AI ${setup}-${market}-${side}-${volatility} | WR:${finalWR.toFixed(2)} | N:${data.length}`
         )
     }    
+    console.log("📊 DB used:", data.length)
         return {
             winrate: finalWR,
             total: data.length
