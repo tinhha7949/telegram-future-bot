@@ -1133,37 +1133,63 @@ async function getDBStats(setup, market, side, volatility){
 
     try{
 
-        // ===== QUERY CHÍNH (THÊM VOL) =====
-        let data = await trades.find({
-            setup,
-            marketState: market,
-            side,
-            result: { $ne: "PENDING" }
-        }).toArray()
-        // lọc volatility sau nếu có
-data = data.filter(t => !t.volatility || t.volatility === volatility)
+        const col = trades
 
-        // ===== FALLBACK =====
-        if(data.length < 20){
-            data = await trades.find({
-                setup,
-                side,
-                result: { $in: ["WIN", "LOSS", "TIMEOUT"] }
-            }).toArray()
-            // lọc volatility sau
-data = data.filter(t => !t.volatility || t.volatility === volatility)
-        }
+// ===== QUERY CHÍNH =====
+let data = await col.find({
+    setup,
+    marketState: market,
+    side,
+    result: { $ne: "PENDING" }
+}).toArray()
 
-        if(data.length < 20){
-            data = await trades.find({
-                side,
-                result: { $in: ["WIN", "LOSS", "TIMEOUT"] }
-            }).toArray()
-        }
+// ===== ƯU TIÊN volatility nếu có =====
+let filtered = data.filter(t => !t.volatility || t.volatility === volatility)
 
-        if(data.length === 0){
-            return { winrate: 0.5, total: 0 }
-        }
+// nếu đủ data thì dùng luôn
+if(filtered.length >= 10){
+    data = filtered
+}
+
+// ===== FALLBACK 1 =====
+if(data.length < 10){
+    data = await col.find({
+        setup,
+        marketState: market,
+        side,
+        result: { $ne: "PENDING" }
+    }).toArray()
+
+    let f = data.filter(t => !t.volatility || t.volatility === volatility)
+    if(f.length >= 5) data = f
+}
+
+// ===== FALLBACK 2 =====
+if(data.length < 20){
+    data = await col.find({
+        setup,
+        side,
+        result: { $ne: "PENDING" }
+    }).toArray()
+
+    let f = data.filter(t => !t.volatility || t.volatility === volatility)
+    if(f.length >= 5) data = f
+}
+
+// ===== FALLBACK 3 =====
+if(data.length < 20){
+    data = await col.find({
+        side,
+        result: { $ne: "PENDING" }
+    }).toArray()
+}
+
+// ===== FINAL =====
+if(data.length === 0){
+    return { winrate: 0.5, total: 0 }
+}
+
+console.log("📊 DB used:", data.length)
 
         // ===== TIME DECAY AI =====
         let winScore = 0
@@ -1193,11 +1219,11 @@ data = data.filter(t => !t.volatility || t.volatility === volatility)
         let confidence = Math.min(data.length / 40, 1)
 
         let finalWR = 0.5 + (rawWR - 0.5) * confidence
-
+    if(DEBUG_AI){
         console.log(
             `🤖 AI ${setup}-${market}-${side}-${volatility} | WR:${finalWR.toFixed(2)} | N:${data.length}`
         )
-
+    }    
         return {
             winrate: finalWR,
             total: data.length
