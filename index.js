@@ -400,19 +400,7 @@ if(trendShort && nearEma){
     if(momentumDown) earlyScore+=5 // thêm
     if(volNow > volAvg) earlyScore+=5 // thêm
 }
-// DB AI
-let dbAI = await getDBStats(setupType, marketState, side, volatility)
 
-// 🔥 dbai 
-let aiScore = (dbAI.winrate - 0.5) * 100
-score += aiScore
-if(dbAI.total > 30 && dbAI.winrate > 0.6){
-    score += 10
-}
-
-if(dbAI.total > 30 && dbAI.winrate < 0.4){
-    score -= 15
-}
 // ===== MARKET STATE =====
 let isTrending = trendStrength > 0.003 // 0.004 
 
@@ -484,7 +472,7 @@ let tp = null
 // ===== AI TP/SL =====
 let rrAI = await getBestTPSL(setupType, marketState, side)
 
-let rr = 1.5
+let rrAIValue = 1.5
 if(rrAI && rrAI.rr && rrAI.rr > 0){
     rr = rrAI.rr
 }
@@ -553,13 +541,17 @@ if(sl >= price) sl = price - atrVal * 1.5
     let weak = last3[2] < last3[1] && last3[1] < last3[0]
 
     
-       // ===== AI RR (SAFE) =====
+       // ===== AI RR (FIX) =====
 if(sl && price){
 
     let riskAI = Math.abs(price - sl)
 
     if(riskAI > 0){
-        tp = price + riskAI * rr
+        let rrTP = price + riskAI * rr
+
+        if(!tp || rrTP < tp){
+            tp = rrTP
+        }
     }
 }
 if(weak && dist > atrVal * 2.5){
@@ -612,13 +604,17 @@ if(sl <= price) sl = price + atrVal * 1.5
     let last3 = closes.slice(-3)
     let weak = last3[2] > last3[1] && last3[1] > last3[0]
 
-        // ===== AI RR (SAFE) =====
+        // ===== AI RR (FIX) =====
 if(sl && price){
 
     let riskAI = Math.abs(sl - price)
 
     if(riskAI > 0){
-        tp = price - riskAI * rr
+        let rrTP = price - riskAI * rr
+
+        if(!tp || rrTP > tp){
+            tp = rrTP
+        }
     }
 }
 if(weak && dist > atrVal * 2.5){
@@ -802,39 +798,72 @@ async function scanner(){
             return
         }
 
-        let candidates = []
+        // ===== BUILD CANDIDATES + AI =====
+let candidates = []
+let dbCache = {}
 
-        // ===== MAIN =====
-        signals.forEach(s=>{
-            if(s.score >= s.dynamicThreshold){
-                candidates.push({...s, type:"MAIN"})
-            }
+for (let s of signals){
+
+    // ===== MAIN =====
+    let keyMain = `${s.setup}-${s.marketState}-${s.side}-${s.volatility}`
+
+    if(!dbCache[keyMain]){
+        dbCache[keyMain] = await getDBStats(
+            s.setup,
+            s.marketState,
+            s.side,
+            s.volatility
+        )
+    }
+
+    let dbMain = dbCache[keyMain]
+
+    let weightMain = Math.min(dbMain.total / 50, 1)
+    let aiMain = (dbMain.winrate - 0.5) * 200 * weightMain
+
+    if(dbMain.total < 15) aiMain *= 0.5
+
+    let finalMain = s.score + aiMain
+
+    if(finalMain >= s.dynamicThreshold){
+        candidates.push({
+            ...s,
+            finalScore: finalMain,
+            type: "MAIN"
         })
+    }
 
-        // ===== EARLY =====
-        signals.forEach(s=>{
-            if(s.earlyScore >= EARLY_THRESHOLD && s.earlySide){
-    candidates.push({
-        ...s,
-        side: s.earlySide,
-        score: s.earlyScore,
-        type:"EARLY"
-    })
-}
+    // ===== EARLY =====
+    if(s.earlyScore >= EARLY_THRESHOLD && s.earlySide){
+
+        let keyEarly = `${s.setup}-${s.marketState}-${s.earlySide}-${s.volatility}`
+
+        if(!dbCache[keyEarly]){
+            dbCache[keyEarly] = await getDBStats(
+                s.setup,
+                s.marketState,
+                s.earlySide,
+                s.volatility
+            )
+        }
+
+        let dbEarly = dbCache[keyEarly]
+
+        let weightEarly = Math.min(dbEarly.total / 50, 1)
+        let aiEarly = (dbEarly.winrate - 0.5) * 200 * weightEarly
+
+        if(dbEarly.total < 15) aiEarly *= 0.5
+
+        let finalEarly = s.earlyScore + aiEarly * 0.7
+
+        candidates.push({
+            ...s,
+            side: s.earlySide,
+            score: s.earlyScore,
+            finalScore: finalEarly,
+            type: "EARLY"
         })
-// ===== AI RANKING =====
-for(let c of candidates){
-
-    let db = await getDBStats(
-        c.setup,
-        c.marketState,
-        c.side,
-        c.volatility
-    )
-
-    let weight = Math.min(db.total / 50, 1)
-
-    c.finalScore = c.score * 0.7 + (db.winrate * 100) * 0.3 * weight
+    }
 }
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
@@ -844,9 +873,11 @@ for(let c of candidates){
 
         // ===== SORT =====
       candidates.sort((a,b)=>{
+
     if(a.marketState === "TREND_STRONG" && b.marketState !== "TREND_STRONG") return -1
     if(b.marketState === "TREND_STRONG" && a.marketState !== "TREND_STRONG") return 1
-  return (b.finalScore || b.score) - (a.finalScore || a.score)
+
+    return (b.finalScore || b.score) - (a.finalScore || a.score)
 })
 
 let main = candidates.find(c => c.type === "MAIN")
@@ -862,11 +893,6 @@ let dbAI = await getDBStats(
 )
 
 // ===== CHECK BEST CANDIDATE =====
-        
-        if(!best){
-            console.log("❌ No best candidate")
-            return
-        }
        // ❌ check trước
 if(!best || !best.type){
     console.log("❌ Invalid best")
@@ -928,6 +954,8 @@ if(lastSignalTime[symbolKey]){
 
         // ===== RISK =====
         let multiplier = 1
+        if(dbAI.winrate > 0.6) multiplier = 1.5
+        if(dbAI.winrate < 0.45) multiplier = 0.6
 
 let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
 
@@ -951,8 +979,6 @@ if(!diff || diff === 0){
         let trailingSL = best.side === "LONG"
             ? best.price - best.atr
             : best.price + best.atr
-            if(dbAI.winrate > 0.6) multiplier = 1.5
-if(dbAI.winrate < 0.45) multiplier = 0.6
             
 // ===== TÍNH RR =====
 let rr = best.side === "LONG"
@@ -974,7 +1000,7 @@ if(best.marketState === "SIDEWAY"){
     threshold = 0.52
 }
 
-if(dbAI.total > 20 && dbAI.winrate < threshold){
+if(dbAI.total > 30 && dbAI.winrate < threshold){
     console.log(`❌ AI BLOCK ${best.symbol} WR:${dbAI.winrate.toFixed(2)}`)
     return
 }
@@ -1221,10 +1247,10 @@ if(data.length === 0){
     }   
     if(DEBUG_AI){ 
     console.log("📊 DB used:", data.length)
+    }
         return {
             winrate: finalWR,
             total: data.length
-        }
     }
     }catch(e){
         console.log("❌ DB ERROR:", e.message)
