@@ -1137,6 +1137,13 @@ async function start(){
 
         await client.connect()
 
+        try{
+    await client.db("admin").command({ ping: 1 })
+    console.log("🟢 DB CONNECTED OK")
+}catch(e){
+    console.log("🔴 DB CONNECT FAIL:", e.message)
+}
+
         db = client.db("trading")
         trades = db.collection("trades")
 
@@ -1165,60 +1172,68 @@ async function getDBStats(setup, market, side, volatility){
     }
 
     try{
+        // 🔥 CHECK DB (giảm spam)
+        if(Math.random() < 0.1){
+            await client.db("admin").command({ ping: 1 })
+            console.log("🟢 DB OK")
+        }
 
         const col = trades
 
-// ===== lấy dữ liệu db =====
-let totalDB = await col.countDocuments({
-    result: { $ne: "PENDING" }
-})
+        // ===== lấy dữ liệu db =====
+        let totalDB = await col.countDocuments({
+            result: { $ne: "PENDING" }
+        })
 
-let minSample = Math.min(Math.max(20, Math.floor(totalDB * 0.1)), 50)
+        let minSample = Math.min(Math.max(20, Math.floor(totalDB * 0.1)), 50)
 
-// ===== QUERY CHÍNH =====
-let data = await col.find({
-    setup,
-    marketState: market,
-    side,
-    result: { $ne: "PENDING" }
-}).toArray()
+        // ===== QUERY CHÍNH =====
+        let data = await col.find({
+            setup,
+            marketState: market,
+            side,
+            result: { $ne: "PENDING" }
+        }).toArray()
 
-// ===== FILTER VOL =====
-let filtered = data.filter(t => !t.volatility || t.volatility === volatility)
+        // ===== FILTER VOL =====
+        let filtered = data.filter(t => !t.volatility || t.volatility === volatility)
 
-// ===== ƯU TIÊN VOL =====
-if(filtered.length >= minSample){
-    data = filtered
-}
+        // ===== ƯU TIÊN VOL =====
+        if(filtered.length >= minSample){
+            data = filtered
+        }
 
-// ===== FALLBACK 1 =====
-if(data.length < minSample){
-    data = await col.find({
-        setup,
-        side,
-        result: { $ne: "PENDING" }
-    }).toArray()
-}
+        // ===== FALLBACK 1 =====
+        if(data.length < minSample){
+            data = await col.find({
+                setup,
+                side,
+                result: { $ne: "PENDING" }
+            }).toArray()
+        }
 
-// ===== FALLBACK 2 =====
-if(data.length < minSample){
-    data = await col.find({
-        side,
-        result: { $ne: "PENDING" }
-    }).toArray()
-}
+        // ===== FALLBACK 2 =====
+        if(data.length < minSample){
+            data = await col.find({
+                side,
+                result: { $ne: "PENDING" }
+            }).toArray()
+        }
 
-// ===== FINAL =====
-if(data.length === 0){
-    return { winrate: 0.5, total: 0 }
-}
+        // ===== FINAL =====
+        if(data.length === 0){
+            return { winrate: 0.5, total: 0 }
+        }
+
         // ===== TIME DECAY AI =====
         let winScore = 0
         let lossScore = 0
 
         for(let t of data){
 
-            let ageHours = (Date.now() - t.time) / 3600000
+            let ageHours = t.time 
+                ? (Date.now() - t.time) / 3600000 
+                : 999
 
             // 🔥 decay 48h
             let weight = Math.exp(-ageHours / 48)
@@ -1234,24 +1249,31 @@ if(data.length === 0){
             }
         }
 
-        let rawWR = winScore / (winScore + lossScore)
+        // ===== TRÁNH CHIA 0 =====
+        let rawWR = (winScore + lossScore) > 0
+            ? winScore / (winScore + lossScore)
+            : 0.5
 
         // ===== CONFIDENCE =====
         let confidence = Math.min(data.length / 40, 1)
 
         let finalWR = 0.5 + (rawWR - 0.5) * confidence
-    if(DEBUG_AI){
-        console.log(
-            `🤖 AI ${setup}-${market}-${side}-${volatility} | WR:${finalWR.toFixed(2)} | N:${data.length}`
-        )
-    }   
-    if(DEBUG_AI){ 
-    console.log("📊 DB used:", data.length)
-    }
+
+        if(DEBUG_AI){
+            console.log(
+                `🤖 AI ${setup}-${market}-${side}-${volatility} | WR:${finalWR.toFixed(2)} | N:${data.length}`
+            )
+        }   
+
+        if(DEBUG_AI){ 
+            console.log("📊 DB used:", data.length)
+        }
+
         return {
             winrate: finalWR,
             total: data.length
-    }
+        }
+
     }catch(e){
         console.log("❌ DB ERROR:", e.message)
         return { winrate: 0.5, total: 0 }
