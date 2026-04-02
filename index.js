@@ -18,16 +18,17 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 100000 // 100000 hoặc  nếu rác
+const MIN_VOL_15M = 40000 // 100000 hoặc  nếu rác
 
 let lastUpdateId = 0
 let cachedSymbols = null
 let lastSymbolsUpdate = 0
 let lastSignalTime = {}
+let lastTradeTime = 0
 // ===== ACTIVE TRADES =====
 let activeTrades = []
 
@@ -166,7 +167,7 @@ async function getTopSymbols(){
                         )
                     //   .filter(c => Number(c.quoteVolume) > 30000000)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
-                .slice(0,30)
+                .slice(0,60)
                         .map(c => c.symbol)
                 }
 
@@ -191,7 +192,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.0025){ // 0.4 
+if(range < 0.003){ // 0.4 
     return null
 }
 
@@ -199,7 +200,7 @@ if(range < 0.0025){ // 0.4
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.5){ //0.007
+if(volNow < volAvg * 0.6){ //0.007
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
@@ -228,12 +229,18 @@ else{
 }
 
 // sideway yếu → bỏ luôn
-if(trendHTF < 0.002 && trendLTF < 0.0018){ // 0.0025 0.002
+if(trendHTF < 0.0015 && trendLTF < 0.0012){ // 0.0025 0.002
     return null
 }
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
+
+    let volatility = "LOW"
+
+if(atrVal / price > 0.0045){
+    volatility = "HIGH"
+}
     // ===== FILTER COIN RÁC (WICK) =====
 let lastHigh = highs.at(-1)
 let lastLow = lows.at(-1)
@@ -268,7 +275,7 @@ if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.006 // 0.0025 // 0.0035 // 0.5 nếu đu 
 // ===== PULLBACK PHẢI CÓ LỰC =====
-if(nearEma && volNow < volAvg * 0.5){ // nâng 0.8 nếu sideway
+if(nearEma && volNow < volAvg * 0.6){ // nâng 0.8 nếu sideway
     return null
 }
     // ===== STRUCTURE =====
@@ -392,18 +399,18 @@ if(trendShort && nearEma){
     if(volNow > volAvg) earlyScore+=5 // thêm
 }
 // DB AI
-let dbAI = await getDBStats(setupType, marketState)
+let dbAI = await getDBStats(setupType, marketState, side, volatility)
 
-// 🔥 tăng điểm kèo tốt
-if(dbAI.winrate > 0.65 && dbAI.total > 30){
-    score += 15
+// 🔥 dbai 
+let aiScore = (dbAI.winrate - 0.5) * 100
+score += aiScore
+if(dbAI.total > 30 && dbAI.winrate > 0.6){
+    score += 10
 }
 
-// 🔥 giảm điểm kèo xấu
-if(dbAI.winrate < 0.4 && dbAI.total > 30){
-    score -= 20
+if(dbAI.total > 30 && dbAI.winrate < 0.4){
+    score -= 15
 }
-  
 // ===== MARKET STATE =====
 let isTrending = trendStrength > 0.003 // 0.004 
 
@@ -472,6 +479,13 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
 // ===== INIT =====
 let sl = null
 let tp = null
+// ===== AI TP/SL =====
+let rrAI = await getBestTPSL(setupType, marketState, side)
+
+let rr = 1.5
+if(rrAI && rrAI.rr && rrAI.rr > 0){
+    rr = rrAI.rr
+}
     // TP SL THEO 
     let tpMult = 1
 let slMult = 1
@@ -536,7 +550,17 @@ if(sl >= price) sl = price - atrVal * 1.5
     let last3 = closes.slice(-3)
     let weak = last3[2] < last3[1] && last3[1] < last3[0]
 
-    if(weak && dist > atrVal * 2.5){
+    
+       // ===== AI RR (SAFE) =====
+if(sl && price){
+
+    let riskAI = Math.abs(price - sl)
+
+    if(riskAI > 0){
+        tp = price + riskAI * rr
+    }
+}
+if(weak && dist > atrVal * 2.5){
        tp = price + atrVal * 1.8 * tpMult
     }
 }
@@ -586,11 +610,19 @@ if(sl <= price) sl = price + atrVal * 1.5
     let last3 = closes.slice(-3)
     let weak = last3[2] > last3[1] && last3[1] > last3[0]
 
-    if(weak && dist > atrVal * 2.5){
+        // ===== AI RR (SAFE) =====
+if(sl && price){
+
+    let riskAI = Math.abs(sl - price)
+
+    if(riskAI > 0){
+        tp = price - riskAI * rr
+    }
+}
+if(weak && dist > atrVal * 2.5){
         tp = price - atrVal * 1.8 * tpMult
     }
 }
-
 // ===== VALIDATE SL + RECALC TP =====
 let minDistance = price * 0.002
 let maxDistance = price * 0.03
@@ -688,6 +720,7 @@ return {
     dynamicThreshold,
     setup: setupType,
     marketState,
+    volatility,
     momentumUp,
     momentumDown,
     earlySide,
@@ -774,7 +807,20 @@ async function scanner(){
     })
 }
         })
+// ===== AI RANKING =====
+for(let c of candidates){
 
+    let db = await getDBStats(
+        c.setup,
+        c.marketState,
+        c.side,
+        c.volatility
+    )
+
+    let weight = Math.min(db.total / 50, 1)
+
+    c.finalScore = c.score * 0.7 + (db.winrate * 100) * 0.3 * weight
+}
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
             console.log("❌ No signal")
@@ -785,12 +831,12 @@ async function scanner(){
       candidates.sort((a,b)=>{
     if(a.marketState === "TREND_STRONG" && b.marketState !== "TREND_STRONG") return -1
     if(b.marketState === "TREND_STRONG" && a.marketState !== "TREND_STRONG") return 1
-    return b.score - a.score
+  return (b.finalScore || b.score) - (a.finalScore || a.score)
 })
 
 let main = candidates.find(c => c.type === "MAIN")
 
-let best = main || candidates[0]
+let best = candidates[0]
 // ===== CHECK BEST CANDIDATE =====
         
         if(!best){
@@ -813,7 +859,7 @@ if(best.type === "EARLY"){
         return
     }
 
-    if(rr < 1.05){
+    if(rr < 1.1){
         return
     }
 }
@@ -857,7 +903,9 @@ if(lastSignalTime[signalKey]){
 
 
         // ===== RISK =====
-        let risk = ACCOUNT_BALANCE * RISK_PER_TRADE
+        let multiplier = 1
+
+let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
 
         if(best.type === "EARLY") risk *= 0.5
 // ===== CHECK SL TP TRƯỚC =====
@@ -879,6 +927,15 @@ if(!diff || diff === 0){
         let trailingSL = best.side === "LONG"
             ? best.price - best.atr
             : best.price + best.atr
+            if(dbAI.winrate > 0.6) multiplier = 1.5
+if(dbAI.winrate < 0.45) multiplier = 0.6
+            // ===== CHECK DB AI =====
+let dbAI = await getDBStats(
+    best.setup,
+    best.marketState,
+    best.side,
+    best.volatility
+)
 // ===== TÍNH RR =====
 let rr = best.side === "LONG"
     ? (best.tp - best.price) / (best.price - best.sl)
@@ -888,11 +945,19 @@ let rr = best.side === "LONG"
     // console.log("❌ RR thấp")
   //   return
 // }
-// ===== CHECK DB AI =====
-let dbAI = await getDBStats(best.setup, best.marketState)
+// ===== AI BLOCK =====
+let threshold = 0.48
 
-if(dbAI.total > 50 && dbAI.winrate < 0.35){
-    console.log("❌ DB chặn:", best.symbol)
+if(best.marketState === "TREND_STRONG"){
+    threshold = 0.44
+}
+
+if(best.marketState === "SIDEWAY"){
+    threshold = 0.52
+}
+
+if(dbAI.total > 20 && dbAI.winrate < threshold){
+    console.log(`❌ AI BLOCK ${best.symbol} WR:${dbAI.winrate.toFixed(2)}`)
     return
 }
         // ===== MESSAGE =====
@@ -910,10 +975,15 @@ Score: ${best.score}
 
         console.log(msg)
         // send tele
+        if(Date.now() - lastTradeTime < 10 * 60 * 1000){
+    console.log("⏳ Skip trade gần")
+    return
+}
         let ok = await sendTelegram(msg)
 
 if(ok !== false){
     lastSignalTime[signalKey] = Date.now()
+    lastTradeTime = Date.now()
 }
         // ===== SAVE TRADE =====
 let trade = {
@@ -924,6 +994,7 @@ let trade = {
     sl: best.sl,
     setup: best.setup,
     marketState: best.marketState,
+    volatility: best.volatility,
     atr: best.atr,
     time: Date.now(),
     result: "PENDING"
@@ -1016,10 +1087,6 @@ ${win ? "✅ WIN" : "❌ LOSS"}`
         }
     }
 } 
-// ================= LOOP =================
-setInterval(()=>scanner(),300000)
-setInterval(()=>checkCommand(),10000)
-setInterval(()=>checkTrades(),60000)
 
 async function start(){
     try{
@@ -1039,6 +1106,11 @@ async function start(){
         activeTrades = await trades.find({ result: "PENDING" }).toArray()
         console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
 
+        // ================= LOOP =================
+setInterval(()=>scanner(),300000)
+setInterval(()=>checkCommand(),10000)
+setInterval(()=>checkTrades(),60000)
+
         scanner()
 
     }catch(e){
@@ -1046,26 +1118,125 @@ async function start(){
     }
 }
 
-async function getDBStats(setup, market){
+async function getDBStats(setup, market, side, volatility){
 
-    let data = await trades.find({
-        setup: setup,
-        marketState: market,
-        result: { $in: ["WIN", "LOSS"] }
-    }).toArray()
-
-    let total = data.length
-    let win = data.filter(x => x.result === "WIN").length
-
-    if(total < 30){
-        return { winrate: 0.5, total }
+    if(!trades){
+        return { winrate: 0.5, total: 0 }
     }
 
-    return {
-        winrate: win / total,
-        total
+    try{
+
+        // ===== QUERY CHÍNH (THÊM VOL) =====
+        let data = await trades.find({
+            setup,
+            marketState: market,
+            side,
+            result: { $in: ["WIN", "LOSS", "TIMEOUT"] }
+        }).toArray()
+        // lọc volatility sau nếu có
+data = data.filter(t => !t.volatility || t.volatility === volatility)
+
+        // ===== FALLBACK =====
+        if(data.length < 20){
+            data = await trades.find({
+                setup,
+                side,
+                result: { $in: ["WIN", "LOSS", "TIMEOUT"] }
+            }).toArray()
+            // lọc volatility sau
+data = data.filter(t => !t.volatility || t.volatility === volatility)
+        }
+
+        if(data.length < 20){
+            data = await trades.find({
+                side,
+                result: { $in: ["WIN", "LOSS", "TIMEOUT"] }
+            }).toArray()
+        }
+
+        if(data.length === 0){
+            return { winrate: 0.5, total: 0 }
+        }
+
+        // ===== TIME DECAY AI =====
+        let winScore = 0
+        let lossScore = 0
+
+        for(let t of data){
+
+            let ageHours = (Date.now() - t.time) / 3600000
+
+            // 🔥 decay 48h
+            let weight = Math.exp(-ageHours / 48)
+
+            if(t.result === "WIN"){
+                winScore += weight
+            }
+            else if(t.result === "LOSS"){
+                lossScore += weight
+            }
+            else{
+                lossScore += weight * 0.5
+            }
+        }
+
+        let rawWR = winScore / (winScore + lossScore)
+
+        // ===== CONFIDENCE =====
+        let confidence = Math.min(data.length / 40, 1)
+
+        let finalWR = 0.5 + (rawWR - 0.5) * confidence
+
+        console.log(
+            `🤖 AI ${setup}-${market}-${side}-${volatility} | WR:${finalWR.toFixed(2)} | N:${data.length}`
+        )
+
+        return {
+            winrate: finalWR,
+            total: data.length
+        }
+
+    }catch(e){
+        console.log("❌ DB ERROR:", e.message)
+        return { winrate: 0.5, total: 0 }
     }
 }
+async function getBestTPSL(setup, market, side){
 
+    if(!trades) return null
+
+    let data = await trades.find({
+        setup,
+        marketState: market,
+        side,
+        result: { $in: ["WIN","LOSS","TIMEOUT"] }
+    }).toArray()
+
+    if(data.length < 30) return null
+
+    let rrArr = []
+
+    for(let t of data){
+
+        let risk = Math.abs(t.entry - t.sl)
+        if(!risk || risk === 0) continue
+
+        let rr = t.side === "LONG"
+            ? (t.tp - t.entry) / risk
+            : (t.entry - t.tp) / risk
+
+        if(rr > 0.5 && rr < 5){
+            rrArr.push(rr)
+        }
+    }
+
+    if(rrArr.length === 0) return null
+
+    rrArr.sort((a,b)=>a-b)
+
+    let best = rrArr[Math.floor(rrArr.length * 0.6)]
+
+    return { rr: best }
+}
             
 start()
