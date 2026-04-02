@@ -18,7 +18,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.25 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.4 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -194,7 +194,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.003){ // 0.4 
+if(range < 0.004){ // 0.4 
     return null
 }
 
@@ -450,8 +450,17 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
         let dist = side==="LONG"
             ? (c.price - price)
             : (price - c.price)
-    
-         if(rr >= RR_THRESHOLD && dist >= atrVal * 0.7 && dist <= atrVal * 3.5){ // if(rr >= 1.3 && dist >= atrVal * 0.8 && dist <= atrVal * 5) hoặc 4
+
+        // 🔥 FIX
+        if(side === "LONG" && c.price <= price) continue
+        if(side === "SHORT" && c.price >= price) continue
+
+        if(dist < risk * 1.1) continue
+        if(dist > risk * 3) continue
+
+        if(rr > 3) rr = 3
+
+        if(rr >= RR_THRESHOLD && dist >= atrVal * 1.0 && dist <= atrVal * 3.5){
             valid.push({...c, rr, dist})
         }
     }
@@ -459,9 +468,20 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
     if(valid.length === 0) return null
 
     valid.sort((a,b)=>{
-        if(isTrending) return b.rr - a.rr
-        return side==="LONG" ? a.price - b.price : b.price - a.price
+
+        let setupBoost = 0
+        if(setupType === "breakout") setupBoost = 0.2
+        if(setupType === "retest") setupBoost = 0.1
+
+        let scoreA = a.rr - (a.dist / (atrVal * 3)) + setupBoost
+        let scoreB = b.rr - (b.dist / (atrVal * 3)) + setupBoost
+
+        return scoreB - scoreA
     })
+
+    if(DEBUG_AI){
+        console.log("🎯 TP PICK:", valid.slice(0,3))
+    }
 
     return valid[0].price
 }
@@ -549,9 +569,16 @@ if(sl && price){
     if(riskAI > 0){
         let rrTP = price + riskAI * rr
 
-        if(!tp || rrTP < tp){
-            tp = rrTP
-        }
+       if(!tp){
+    tp = rrTP
+}else{
+    let distTP = Math.abs(tp - price)
+    let distAI = Math.abs(rrTP - price)
+
+    if(distAI < distTP){
+        tp = rrTP
+    }
+}
     }
 }
 if(weak && dist > atrVal * 2.5){
