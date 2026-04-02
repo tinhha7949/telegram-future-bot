@@ -713,7 +713,11 @@ if(side === "LONG" && lastClose < lastOpen && lastBody > atrVal * 0.8){
 if(side === "SHORT" && lastClose > lastOpen && lastBody > atrVal * 0.8){
     return null
 }
-    
+    // ===== FIX NULL SETUP =====
+if(!setupType){
+    console.log("❌ Skip vì setup = null")
+    return null
+}
 return {
     side,
     score,
@@ -837,6 +841,15 @@ for(let c of candidates){
 let main = candidates.find(c => c.type === "MAIN")
 
 let best = candidates[0]
+
+// ===== CHECK DB AI =====
+let dbAI = await getDBStats(
+    best.setup,
+    best.marketState,
+    best.side,
+    best.volatility
+)
+
 // ===== CHECK BEST CANDIDATE =====
         
         if(!best){
@@ -929,13 +942,7 @@ if(!diff || diff === 0){
             : best.price + best.atr
             if(dbAI.winrate > 0.6) multiplier = 1.5
 if(dbAI.winrate < 0.45) multiplier = 0.6
-            // ===== CHECK DB AI =====
-let dbAI = await getDBStats(
-    best.setup,
-    best.marketState,
-    best.side,
-    best.volatility
-)
+            
 // ===== TÍNH RR =====
 let rr = best.side === "LONG"
     ? (best.tp - best.price) / (best.price - best.sl)
@@ -1131,7 +1138,7 @@ async function getDBStats(setup, market, side, volatility){
             setup,
             marketState: market,
             side,
-            result: { $in: ["WIN", "LOSS", "TIMEOUT"] }
+            result: { $in: "PENDING" }
         }).toArray()
         // lọc volatility sau nếu có
 data = data.filter(t => !t.volatility || t.volatility === volatility)
