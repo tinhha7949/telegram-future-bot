@@ -30,7 +30,7 @@ let lastUpdateId = 0
 let cachedSymbols = null
 let lastSymbolsUpdate = 0
 let lastSignalTime = {}
-let lastTradeTime = 0
+let isScanning = false
 // ===== ACTIVE TRADES =====
 let activeTrades = []
 
@@ -754,6 +754,14 @@ async function scan(symbol){
 
 // ================= SCANNER =================
 async function scanner(){
+
+    if(isScanning){
+        console.log("⛔ Skip scan trùng")
+        return
+    }
+
+    isScanning = true
+
     try{
         console.log("🚀 SMART SCAN...")
 
@@ -790,6 +798,7 @@ async function scanner(){
 
         if(!signals || signals.length === 0){
             console.log("❌ No signal")
+            isScanning = false
             return
         }
 
@@ -905,13 +914,13 @@ if(best.type !== "EARLY"){
         // ===== BLOCK DUPLICATE SIGNAL =====
 let nowTime = Date.now()
 
-let signalKey = `${best.symbol}_${best.type}_${best.setup}_${best.side}`
+let symbolKey = best.symbol
 
-if(lastSignalTime[signalKey]){
-    let diff = Date.now() - lastSignalTime[signalKey]
+if(lastSignalTime[symbolKey]){
+    let diff = Date.now() - lastSignalTime[symbolKey]
 
     if(diff < 3600000){
-        console.log(`⛔ Skip duplicate: ${signalKey}`)
+        console.log(`⛔ Skip trùng coin: ${symbolKey}`)
         return
     }
 }
@@ -983,16 +992,10 @@ Score: ${best.score}
 `
 
         console.log(msg)
-        // send tele
-        if(Date.now() - lastTradeTime < 10 * 60 * 1000){
-    console.log("⏳ Skip trade gần")
-    return
-}
         let ok = await sendTelegram(msg)
 
 if(ok !== false){
-    lastSignalTime[signalKey] = Date.now()
-    lastTradeTime = Date.now()
+    lastSignalTime[symbolKey] = Date.now()
 }
         // ===== SAVE TRADE =====
 let trade = {
@@ -1017,6 +1020,8 @@ await trades.insertOne(trade)
     }catch(e){
     console.log("❌ Scanner error:")
     console.log(e)
+} finally {
+    isScanning = false   // ✅ THẢ LOCK
 }
 }
 ////////////////////
@@ -1137,6 +1142,13 @@ async function getDBStats(setup, market, side, volatility){
 
         const col = trades
 
+// ===== lấy dữ liệu db =====
+let totalDB = await col.countDocuments({
+    result: { $ne: "PENDING" }
+})
+
+let minSample = Math.min(Math.max(20, Math.floor(totalDB * 0.1)), 50)
+
 // ===== QUERY CHÍNH =====
 let data = await col.find({
     setup,
@@ -1145,41 +1157,25 @@ let data = await col.find({
     result: { $ne: "PENDING" }
 }).toArray()
 
-// ===== ƯU TIÊN volatility nếu có =====
+// ===== FILTER VOL =====
 let filtered = data.filter(t => !t.volatility || t.volatility === volatility)
 
-// nếu đủ data thì dùng luôn
-if(filtered.length >= 10){
+// ===== ƯU TIÊN VOL =====
+if(filtered.length >= minSample){
     data = filtered
 }
 
 // ===== FALLBACK 1 =====
-if(data.length < 10){
+if(data.length < minSample){
     data = await col.find({
         setup,
-        marketState: market,
         side,
         result: { $ne: "PENDING" }
     }).toArray()
-
-    let f = data.filter(t => !t.volatility || t.volatility === volatility)
-    if(f.length >= 5) data = f
 }
 
 // ===== FALLBACK 2 =====
-if(data.length < 20){
-    data = await col.find({
-        setup,
-        side,
-        result: { $ne: "PENDING" }
-    }).toArray()
-
-    let f = data.filter(t => !t.volatility || t.volatility === volatility)
-    if(f.length >= 5) data = f
-}
-
-// ===== FALLBACK 3 =====
-if(data.length < 20){
+if(data.length < minSample){
     data = await col.find({
         side,
         result: { $ne: "PENDING" }
@@ -1190,7 +1186,6 @@ if(data.length < 20){
 if(data.length === 0){
     return { winrate: 0.5, total: 0 }
 }
-
         // ===== TIME DECAY AI =====
         let winScore = 0
         let lossScore = 0
@@ -1223,13 +1218,14 @@ if(data.length === 0){
         console.log(
             `🤖 AI ${setup}-${market}-${side}-${volatility} | WR:${finalWR.toFixed(2)} | N:${data.length}`
         )
-    }    
+    }   
+    if(DEBUG_AI){ 
     console.log("📊 DB used:", data.length)
         return {
             winrate: finalWR,
             total: data.length
         }
-
+    }
     }catch(e){
         console.log("❌ DB ERROR:", e.message)
         return { winrate: 0.5, total: 0 }
