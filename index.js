@@ -1138,7 +1138,7 @@ async function getDBStats(setup, market, side, volatility){
             setup,
             marketState: market,
             side,
-            result: { $in: "PENDING" }
+            result: { $ne: "PENDING" }
         }).toArray()
         // lọc volatility sau nếu có
 data = data.filter(t => !t.volatility || t.volatility === volatility)
