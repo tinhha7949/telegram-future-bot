@@ -18,7 +18,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.25 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -194,7 +194,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.003){ // 0.4 
+if(range < 0.002){ // 0.4 
     return null
 }
 
@@ -202,7 +202,7 @@ if(range < 0.003){ // 0.4
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.6){ //0.007
+if(volNow < volAvg * 0.5){ // 0.06 0.07
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
@@ -231,7 +231,7 @@ else{
 }
 
 // sideway yếu → bỏ luôn
-if(trendHTF < 0.0018 && trendLTF < 0.0015){ // 0.0025 0.002
+if(trendHTF < 0.0015 && trendLTF < 0.0012){ // 0.0025 0.002
     return null
 }
 
@@ -706,7 +706,7 @@ let close = +data15.at(-1)[4]
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-if(rangeCandle === 0 || body / rangeCandle < 0.3){ // nếu muốn chắc hơn rõ nâng 0.4 
+if(rangeCandle === 0 || body / rangeCandle < 0.25){ // nếu muốn chắc hơn rõ nâng 0.4 
     return null
 }
 // ===== ANTI FOMO (FIX CHUẨN) tránh đu đỉnh đu đáy =====
