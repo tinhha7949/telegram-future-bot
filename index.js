@@ -18,11 +18,11 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.4 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 100000 // 100000 hoặc  nếu rác
+const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
 
 const DEBUG_AI = false
 
@@ -194,7 +194,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.004){ // 0.4 
+if(range < 0.003){ // 0.4 
     return null
 }
 
