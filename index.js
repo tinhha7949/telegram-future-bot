@@ -194,7 +194,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.0015){ // 0.4 
+if(marketState === "SIDEWAY" && range < 0.0015){ //0.003
     return null
 }
 
@@ -282,15 +282,38 @@ if(lastMove > 0.03 || lastMove < -0.03) return null // 0.02
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.008 // 0.07 // 0.006 // 0.5 nếu đu 
 // ===== PULLBACK PHẢI CÓ LỰC =====
-if(nearEma && volNow < volAvg * 0.6){ // nâng 0.8 nếu sideway
-    return null
+if(marketState === "SIDEWAY"){
+    if(nearEma && volNow < volAvg * 0.7){ //0.6
+        return null
+    }
 }
     // ===== STRUCTURE =====
+    // tránh vào giữa trend
+    let rangeHigh = Math.max(...highs.slice(-30))
+let rangeLow  = Math.min(...lows.slice(-30))
+
+let pos = (price - rangeLow) / (rangeHigh - rangeLow)
+
+// ❌ tránh giữa range
+if(pos > 0.4 && pos < 0.6){
+    return null
+}
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
 
     let bosUp = price > prevHigh
     let bosDown = price < prevLow
+    // bắt sớm trend xóa đi nếu kh ổn
+    let recentBreakUp = closes.at(-1) > prevHigh
+let recentBreakDown = closes.at(-1) < prevLow
+
+if(recentBreakUp){
+    score += 25
+}
+
+if(recentBreakDown){
+    score += 25
+}
 
     let prevHigh50 = Math.max(...highs.slice(-51,-1))
     let prevLow50  = Math.min(...lows.slice(-51,-1))
@@ -314,11 +337,29 @@ if(nearEma && volNow < volAvg * 0.6){ // nâng 0.8 nếu sideway
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(trendStrength < 0.002) return null // 0.0022
+    if(marketState === "TREND_STRONG" && trendStrength < 0.002){
+    return null
+}
+
+if(marketState !== "TREND_STRONG" && trendStrength < 0.0015){
+    return null
+}
     
     // ===== FILTER SIDEWAY =====
 if(marketState === "SIDEWAY"){
-    if(!sweepHigh && !sweepLow){
+
+    if(sweepHigh){
+        side = "SHORT"
+        score += 60
+    }
+
+    if(sweepLow){
+        side = "LONG"
+        score += 60
+    }
+
+    // ❌ cấm breakout trong sideway
+    if(bosUp || bosDown){
         return null
     }
 }
@@ -734,10 +775,11 @@ if(distance > atrVal * 1.7){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
 }
 
 // ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
-if(distance > atrVal * 3.2){ // cũ 3.5 // 3
-    return null
+if(marketState !== "TREND_STRONG"){
+    if(distance > atrVal * 3){
+        return null
+    }
 }
-
 // ===== 3. NẾN ĐẢO CHIỀU MẠNH =====
 if(side === "LONG" && lastClose < lastOpen && lastBody > atrVal * 0.8){
     return null
