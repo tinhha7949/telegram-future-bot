@@ -24,7 +24,7 @@ const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
 
-const DEBUG_AI = true //false
+const DEBUG_AI = false
 
 let lastUpdateId = 0
 let cachedSymbols = null
