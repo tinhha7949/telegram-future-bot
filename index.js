@@ -237,6 +237,11 @@ if(trendHTF < 0.0015 && trendLTF < 0.0012){ // 0.0025 0.002
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
+    // mới thêm
+    let recentMove = Math.abs(closes.at(-1) - closes.at(-5))
+if(recentMove > atrVal * 1.6){
+    return null
+}
 
     let volatility = "LOW"
 
