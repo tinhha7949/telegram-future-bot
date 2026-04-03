@@ -18,7 +18,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.15 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -194,7 +194,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(range < 0.002){ // 0.4 
+if(range < 0.0015){ // 0.4 
     return null
 }
 
@@ -202,7 +202,7 @@ if(range < 0.002){ // 0.4
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.5){ // 0.06 0.07
+if(volNow < volAvg * 0.4){ // 0.06 0.07
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
@@ -275,7 +275,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(lastMove > 0.03 || lastMove < -0.03) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.006 // 0.0025 // 0.0035 // 0.5 nếu đu 
+let nearEma = distEma < 0.008 // 0.07 // 0.006 // 0.5 nếu đu 
 // ===== PULLBACK PHẢI CÓ LỰC =====
 if(nearEma && volNow < volAvg * 0.6){ // nâng 0.8 nếu sideway
     return null
@@ -456,7 +456,7 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
         if(side === "SHORT" && c.price >= price) continue
 
         if(dist < risk * 1.1) continue
-        if(dist > risk * 3) continue
+        if(dist > risk * 4) continue
 
         if(rr > 3) rr = 3
 
@@ -470,7 +470,7 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
     valid.sort((a,b)=>{
 
         let setupBoost = 0
-        if(setupType === "breakout") setupBoost = 0.2
+        if(setupType === "BREAKOUT") setupBoost = 0.2
         if(setupType === "retest") setupBoost = 0.1
 
         let scoreA = a.rr - (a.dist / (atrVal * 3)) + setupBoost
@@ -492,9 +492,10 @@ let tp = null
 // ===== AI TP/SL =====
 let rrAI = await getBestTPSL(setupType, marketState, side)
 
-let rrAIValue = 1.5
+let rr = RR_THRESHOLD
+
 if(rrAI && rrAI.rr && rrAI.rr > 0){
-    rr = rrAI.rr
+    rr = Math.max(rrAI.rr, RR_THRESHOLD)
 }
     // TP SL THEO 
     let tpMult = 1
@@ -560,25 +561,24 @@ if(sl >= price) sl = price - atrVal * 1.5
     let last3 = closes.slice(-3)
     let weak = last3[2] < last3[1] && last3[1] < last3[0]
 
-    
-       // ===== AI RR (FIX) =====
+       // ===== APPLY AI RR FINAL =====
 if(sl && price){
 
     let riskAI = Math.abs(price - sl)
 
     if(riskAI > 0){
-        let rrTP = price + riskAI * rr
 
-       if(!tp){
-    tp = rrTP
-}else{
-    let distTP = Math.abs(tp - price)
-    let distAI = Math.abs(rrTP - price)
+        let rrTP = side === "LONG"
+            ? price + riskAI * rr
+            : price - riskAI * rr
 
-    if(distAI < distTP){
-        tp = rrTP
-    }
-}
+        let distAI = Math.abs(rrTP - price)
+        let distTP = Math.abs(tp - price)
+
+        // ✅ ƯU TIÊN TP XA HƠN (RR tốt hơn)
+        if(distAI > distTP){
+            tp = rrTP
+        }
     }
 }
 if(weak && dist > atrVal * 2.5){
@@ -630,16 +630,19 @@ if(sl <= price) sl = price + atrVal * 1.5
 
     let last3 = closes.slice(-3)
     let weak = last3[2] > last3[1] && last3[1] > last3[0]
-
-        // ===== AI RR (FIX) =====
+// ===== APPLY AI RR FINAL =====
 if(sl && price){
 
-    let riskAI = Math.abs(sl - price)
+    let riskAI = Math.abs(price - sl)
 
     if(riskAI > 0){
+
         let rrTP = price - riskAI * rr
 
-        if(!tp || rrTP > tp){
+        let distAI = Math.abs(rrTP - price)
+        let distTP = Math.abs(tp - price)
+
+        if(distAI > distTP){
             tp = rrTP
         }
     }
@@ -682,7 +685,7 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
         ? (tp - price) / risk
         : (price - tp) / risk
 
-   // if(rr < RR_THRESHOLD) return null // 1.5
+    if(rr < RR_THRESHOLD) return null // 1.5
 
     let newDist = Math.abs(tp - price)
 
@@ -726,7 +729,7 @@ if(distance > atrVal * 1.7){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
 }
 
 // ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
-if(distance > atrVal * 2.5){ // cũ 3.5 // 3
+if(distance > atrVal * 3.2){ // cũ 3.5 // 3
     return null
 }
 
