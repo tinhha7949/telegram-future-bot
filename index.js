@@ -1027,10 +1027,10 @@ if(best.marketState === "SIDEWAY"){
     threshold = 0.52
 }
 
-if(dbAI.total > 30 && dbAI.winrate < threshold){
-    console.log(`❌ AI BLOCK ${best.symbol} WR:${dbAI.winrate.toFixed(2)}`)
-    return
-}
+// if(dbAI.total > 30 && dbAI.winrate < threshold){
+    //console.log(`❌ AI BLOCK ${best.symbol} WR:${dbAI.winrate.toFixed(2)}`)
+    //return
+//}
         // ===== MESSAGE =====
        let msg = `🔥 BEST SIGNAL
 
