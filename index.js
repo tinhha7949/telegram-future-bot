@@ -18,7 +18,7 @@ const LIMIT_1H  = 200
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.15 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -272,7 +272,7 @@ let distEma = Math.abs(price - ema20) / price
 
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
+if(lastMove > 0.03 || lastMove < -0.03) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.006 // 0.0025 // 0.0035 // 0.5 nếu đu 
@@ -726,7 +726,7 @@ if(distance > atrVal * 1.7){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
 }
 
 // ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
-if(distance > atrVal * 3){ // cũ 3.5
+if(distance > atrVal * 2.5){ // cũ 3.5 // 3
     return null
 }
 
