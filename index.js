@@ -14,7 +14,7 @@ const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
 const AI_CHAT_ID = process.env.AI_CHAT_ID
 
 const LIMIT_15M = 200 //300
-const LIMIT_1H  = 100 //100
+const LIMIT_1H  = 300 //100
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
@@ -968,7 +968,22 @@ let dbAI = await getDBStats(
     best.side,
     best.volatility
 )
+// ===== AI MARKET ADAPTIVE =====
+if(dbAI.total > 20){
 
+    if(best.marketState === "SIDEWAY"){
+        if(dbAI.winrate < 0.48){
+            best.finalScore -= 15
+        }
+    }
+
+    if(best.marketState === "TREND_STRONG"){
+        if(dbAI.winrate > 0.55){
+            best.finalScore += 10
+        }
+    }
+
+}
 // ===== CHECK BEST CANDIDATE =====
        // ❌ check trước
 if(!best || !best.type){
@@ -1031,9 +1046,17 @@ if(lastSignalTime[symbolKey]){
 
         // ===== RISK =====
         let multiplier = 1
-        if(dbAI.winrate > 0.6) multiplier = 1.5
-        if(dbAI.winrate < 0.45) multiplier = 0.6
 
+if(dbAI.total > 20){
+
+    let edge = dbAI.winrate - 0.5
+
+    multiplier = 1 + edge * 2   // scale mềm
+
+    // clamp lại
+    if(multiplier > 1.5) multiplier = 1.5
+    if(multiplier < 0.5) multiplier = 0.5
+}
 let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
 
         if(best.type === "EARLY") risk *= 0.5
@@ -1062,10 +1085,35 @@ let rr = best.side === "LONG"
     ? (best.tp - best.price) / (best.price - best.sl)
     : (best.price - best.tp) / (best.sl - best.price)
 
-// if(rr < RR_THRESHOLD){
-    // console.log("❌ RR thấp")
-  //   return
-// }
+// ===== AI RR ADAPTIVE =====
+if(dbAI.total > 20){
+
+    if(dbAI.winrate > 0.6){
+        rr *= 0.9   // dễ vào hơn (TP gần hơn)
+    }
+
+    if(dbAI.winrate < 0.45){
+        rr *= 1.1   // khó hơn (đòi RR cao hơn)
+    }
+}
+        // === RR ====
+let rrThreshold = RR_THRESHOLD
+
+if(dbAI.total > 20){
+
+    if(dbAI.winrate > 0.6){
+        rrThreshold = 1.1   // dễ hơn
+    }
+
+    if(dbAI.winrate < 0.45){
+        rrThreshold = 1.35  // khó hơn
+    }
+}
+
+// check
+if(rr < rrThreshold){
+    return
+}
 // ===== AI BLOCK =====
 let threshold = 0.48
 
@@ -1077,10 +1125,23 @@ if(best.marketState === "SIDEWAY"){
     threshold = 0.52
 }
 
-// if(dbAI.total > 30 && dbAI.winrate < threshold){
-    //console.log(`❌ AI BLOCK ${best.symbol} WR:${dbAI.winrate.toFixed(2)}`)
-    //return
-//}
+let aiScoreAdjust = 0
+
+if(dbAI.total > 20){
+
+    let edge = dbAI.winrate - 0.5  // lợi thế
+
+    // scale nhẹ để không phá logic gốc
+    aiScoreAdjust = edge * 100   // ~ -10 → +10
+
+    // confidence theo sample
+    let confidence = Math.min(dbAI.total / 50, 1)
+
+    aiScoreAdjust *= confidence
+}
+
+// áp vào score
+best.finalScore = (best.finalScore || best.score) + aiScoreAdjust
         // ===== MESSAGE =====
        let msg = `🔥 BEST SIGNAL
 
