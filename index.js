@@ -231,7 +231,7 @@ else{
 }
 
 // sideway yếu → bỏ luôn
-if(trendHTF < 0.002 && trendLTF < 0.0018){ // 0.0025 0.002
+if(trendHTF < 0.0018 && trendLTF < 0.0015){ // 0.0025 0.002
     return null
 }
 
