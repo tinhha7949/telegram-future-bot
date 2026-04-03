@@ -13,8 +13,8 @@ const CHAT_ID = process.env.CHAT_ID
 const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
 const AI_CHAT_ID = process.env.AI_CHAT_ID
 
-const LIMIT_15M = 300
-const LIMIT_1H  = 200
+const LIMIT_15M = 200 //300
+const LIMIT_1H  = 100 //100
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
