@@ -196,11 +196,11 @@ async function coreLogic(data15, data1h){
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.5) // 0.06 0.07
+if(volNow < volAvg * 0.5){ // 0.06 0.07
     return null
-
-    if(volAvg < MIN_VOL_15M)
-        return null
+}
+    if(volAvg < MIN_VOL_15M) return null
+    
     // ===== EMA =====
     let ema20 = ema(closes.slice(-60),20)
     let ema50 = ema(closes.slice(-120),50)
@@ -225,17 +225,17 @@ else{
 }
 
 // sideway yếu → bỏ luôn
-if(trendHTF < 0.0012 && trendLTF < 0.001) // 0.002 0.0018
+if(trendHTF < 0.0012 && trendLTF < 0.001){ // 0.002 0.0018
     return null
-
+}
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
     // mới thêm
     let recentMove = Math.abs(closes.at(-1) - closes.at(-5))
-if(recentMove > atrVal * 1.6) //1.6
+if(recentMove > atrVal * 1.6){ //1.6
     return null
-
+}
     let volatility = "LOW"
 
 if(atrVal / price > 0.0045){
@@ -247,8 +247,9 @@ let lastLow = lows.at(-1)
 
 let wickSize = lastHigh - lastLow
 
-if(wickSize > atrVal * 2.5)
+if(wickSize > atrVal * 2.5){
     return null
+}
     // ===== MARKET REGIME =====
 let emaGap = Math.abs(ema20 - ema50) / price
 let atrRatio = atrVal / price
@@ -265,23 +266,24 @@ else if(emaGap > 0.0025){
 }
 let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-if(marketState === "SIDEWAY" && range < 0.0025) //0.003
+if(marketState === "SIDEWAY" && range < 0.0025){ //0.003
     return null
-
+}
 // còn lại là SIDEWAY
     // ===== ANTI CHASE + PULLBACK =====
 let distEma = Math.abs(price - ema20) / price
 
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-if(lastMove > 0.03 || lastMove < -0.03) // 0.02
-    return null 
+if(lastMove > 0.03 || lastMove < -0.03) return null  // 0.02
+
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.0065 // 0.003 hoặc 4 , 5 nếu đu giá
 // ===== PULLBACK PHẢI CÓ LỰC =====
 if(marketState === "SIDEWAY"){
-    if(nearEma && volNow < volAvg * 0.7) //0.6
+    if(nearEma && volNow < volAvg * 0.7){ //0.6
         return null
+    }
 }
     // ===== STRUCTURE =====
     // tránh vào giữa trend
@@ -289,13 +291,16 @@ if(marketState === "SIDEWAY"){
 let rangeLow  = Math.min(...lows.slice(-30))
 
 let pos = (price - rangeLow) / (rangeHigh - rangeLow)
+    if(rangeHigh === rangeLow){
+    return null
+}
 // score
 let side=null, score=0
     let setupType = null // breakout | pullback
 // ❌ tránh giữa range
-if(pos > 0.3 && pos < 0.7) // 0.4 và 0.6 gốc 0.35 và 0.65
+if(pos > 0.3 && pos < 0.7){ // 0.4 và 0.6 gốc 0.35 và 0.65
     return null
-    
+}
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
 
@@ -335,12 +340,12 @@ if(recentBreakDown){
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(marketState === "TREND_STRONG" && trendStrength < 0.002)
+    if(marketState === "TREND_STRONG" && trendStrength < 0.002){
     return null
-
-if(marketState !== "TREND_STRONG" && trendStrength < 0.002)
+    }
+if(marketState !== "TREND_STRONG" && trendStrength < 0.002){
     return null
-
+}
     
     // ===== FILTER SIDEWAY =====
 if(marketState === "SIDEWAY"){
@@ -362,14 +367,12 @@ if(marketState === "SIDEWAY"){
 }
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
-    if(candleMove > 0.03){ // 0.3 gốc // 0.4
-        return null
-    }
+    if(candleMove > 0.03) return null // 0.3 gốc // 0.4
+        
     let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.98
     let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.02
-    if(fakePump || fakeDump)
-        return null
-    
+    if(fakePump || fakeDump) return null
+        
     // ===== SCORE =====
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
@@ -415,8 +418,7 @@ if(side==="SHORT" && nearEma){
     if(side==="SHORT" && r>35 && r<50) score+=10
 
     if(atrVal/price > 0.004) score+=10
-    if(!side)
-        return null
+    if(!side) return null
     
     // ===== REQUIRE PULLBACK =====
 if(side === "LONG" && !nearEma){
@@ -459,12 +461,10 @@ let support = Math.min(...lows.slice(-30))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
-if(side === "LONG" && distToRes < 0.0025) // 0.0045 nếu mua đỉnh bán đáy
-    return null
-
-if(side === "SHORT" && distToSup < 0.0025)
-    return null
-
+if(side === "LONG" && distToRes < 0.0025)  return null // 0.0045 nếu mua đỉnh bán đáy
+   
+if(side === "SHORT" && distToSup < 0.0025) return null
+    
 // ===== LIQUIDITY =====
 function findLiquidityHigh(highs){
     let zone = highs.slice(-25)
@@ -607,8 +607,7 @@ if(sl >= price) sl = price - atrVal * 1.5
     }
 }
 
-    if(dist < atrVal * 0.8)
-        return null
+    if(dist < atrVal * 0.8) return null
     
     let last3 = closes.slice(-3)
     let weak = last3[2] < last3[1] && last3[1] < last3[0]
@@ -678,8 +677,7 @@ if(sl <= price) sl = price + atrVal * 1.5
     }
 }
 
-    if(dist < atrVal * 0.8)
-        return null
+    if(dist < atrVal * 0.8) return null
     
     let last3 = closes.slice(-3)
     let weak = last3[2] > last3[1] && last3[1] > last3[0]
@@ -738,9 +736,9 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
         ? (tp - price) / risk
         : (price - tp) / risk
 
-    if(rr < RR_THRESHOLD)
+    if(rr < RR_THRESHOLD){
         return null // 1.5
-    
+    }
     let newDist = Math.abs(tp - price)
 
     if(newDist > atrVal * 4){
@@ -749,8 +747,9 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
             : price - atrVal * 2.5 * tpMult
     }
 
-    if(newDist < atrVal * 0.8)
+    if(newDist < atrVal * 0.8){
         return null
+    }
 }
 
 // ===== ROUND =====
@@ -762,7 +761,7 @@ let close = +data15.at(-1)[4]
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-if(rangeCandle === 0 || body / rangeCandle < 0.2) // nếu muốn chắc hơn rõ nâng 0.4 
+if(rangeCandle === 0 || body / rangeCandle < 0.2){ // nếu muốn chắc hơn rõ nâng 0.4 
     return null
 }
 // ===== ANTI FOMO (FIX CHUẨN) tránh đu đỉnh đu đáy =====
@@ -783,15 +782,18 @@ if(distance > atrVal * 2.0){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
 
 // ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
 if(marketState !== "TREND_STRONG"){
-    if(distance > atrVal * 3)
+    if(distance > atrVal * 3){
         return null
+    }
 }
 // ===== 3. NẾN ĐẢO CHIỀU MẠNH =====
-if(side === "LONG" && lastClose < lastOpen && lastBody > atrVal * 0.8)
+if(side === "LONG" && lastClose < lastOpen && lastBody > atrVal * 0.8){
     return null
+}
     
-if(side === "SHORT" && lastClose > lastOpen && lastBody > atrVal * 0.8)
+if(side === "SHORT" && lastClose > lastOpen && lastBody > atrVal * 0.8){
     return null
+}
     // ===== FIX NULL SETUP =====
 if(!setupType){
     setupType = nearEma ? "PULLBACK" : "BREAKOUT"
