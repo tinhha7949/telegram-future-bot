@@ -6,6 +6,14 @@ const { MongoClient } = require("mongodb")
 const client = new MongoClient(process.env.MONGO_URI)
 
 let db, trades
+let logFlags = {
+    volFail: false,
+    minVolFail: false,
+    trendFail: false,
+    pumpFail: false,
+    candleFail: false,
+    otherFail: false
+}
 let stats = {
     volFail: 0,
     minVolFail: 0,
@@ -210,7 +218,7 @@ if(volNow < volAvg * 0.5){ // 0.06 0.07
     return null
 }
     if(volAvg < MIN_VOL_15M){
-        start.minVolFAID++
+        start.minVolFail++
         return null
     }
     // ===== EMA =====
@@ -263,7 +271,10 @@ let lastLow = lows.at(-1)
 let wickSize = lastHigh - lastLow
 
 if(wickSize > atrVal * 2.5){
-    console.log("❌ coin rác")
+    if(!logFlags.otherFail){
+        console.log("❌ coin rác")
+        logFlags.otherFail = true
+    }
     return null
 }
     // ===== MARKET REGIME =====
@@ -301,7 +312,10 @@ let nearEma = distEma < 0.01 // 0.07 // 0.006 // 0.5 nếu đu
 // ===== PULLBACK PHẢI CÓ LỰC =====
 if(marketState === "SIDEWAY"){
     if(nearEma && volNow < volAvg * 0.7){ //0.6
+        if(!logFlags.otherFail){
         console.log("❌ k có lực")
+        logFlags.pumpFail = true
+    }
         return null
     }
 }
@@ -316,7 +330,10 @@ let side=null, score=0
     let setupType = null // breakout | pullback
 // ❌ tránh giữa range
 if(pos > 0.4 && pos < 0.6){
-    console.log("❌ giữa trend")
+    if(!logFlags.otherFail){
+        console.log("❌ giữa trend")
+        logFlags.trendFail = true
+    }
     return null
 }
     let prevHigh = Math.max(...highs.slice(-25,-5))
@@ -359,12 +376,18 @@ if(recentBreakDown){
 
     let trendStrength = Math.abs(ema20-ema50)/price
     if(marketState === "TREND_STRONG" && trendStrength < 0.002){
+        if(!logFlags.otherFail){
         console.log("❌ trendStrength fail")
+        logFlags.otherFail = true
+    }
     return null
 }
 
 if(marketState !== "TREND_STRONG" && trendStrength < 0.0015){
-    console.log("❌ trendStrength fail 2")
+    if(!logFlags.otherFail){
+        console.log("❌ trendStrength fail 2")
+        logFlags.otherFail = true
+    }
     return null
 }
     
@@ -395,7 +418,10 @@ if(marketState === "SIDEWAY"){
     let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.98
     let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.02
     if(fakePump || fakeDump){
+        if(!logFlags.otherFail){
         console.log("❌ fake")
+        logFlags.candleFail = true
+    }
         return null
     }
     // ===== SCORE =====
@@ -444,7 +470,10 @@ if(side==="SHORT" && nearEma){
 
     if(atrVal/price > 0.004) score+=10
     if(!side){
-        console.log("❌ !side")
+        if(!logFlags.otherFail){
+         console.log("❌ !side")
+        logFlags.otherFail = true
+    }
         return null
     }
     // ===== REQUIRE PULLBACK =====
@@ -489,11 +518,17 @@ let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
 if(side === "LONG" && distToRes < 0.0025){ // 0.0045 nếu mua đỉnh bán đáy
-     console.log("❌ đỉnh")
+    if(!logFlags.otherFail){
+        console.log("❌ đỉnh")
+        logFlags.otherFail = true
+    }
     return null
 }
 if(side === "SHORT" && distToSup < 0.0025){
-    console.log("❌ đáy")
+    if(!logFlags.otherFail){
+        console.log("❌ đáy")
+        logFlags.otherFail = true
+    }
     return null
 }
 // ===== LIQUIDITY =====
@@ -546,7 +581,10 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
     }
 
     if(valid.length === 0){
+        if(!logFlags.otherFail){
         console.log("❌ valid.length fail")
+        logFlags.otherFail = true
+    }
         return null
     }
     valid.sort((a,b)=>{
@@ -640,7 +678,10 @@ if(sl >= price) sl = price - atrVal * 1.5
 }
 
     if(dist < atrVal * 0.8){
+        if(!logFlags.otherFail){
         console.log("❌ dist atrVal LONG")
+        logFlags.otherFail = true
+    }
         return null
     }
     let last3 = closes.slice(-3)
@@ -712,7 +753,10 @@ if(sl <= price) sl = price + atrVal * 1.5
 }
 
     if(dist < atrVal * 0.8){
+        if(!logFlags.otherFail){
         console.log("❌ dist atrVal SHORT")
+        logFlags.otherFail = true
+    }
         return null
     }
     let last3 = closes.slice(-3)
@@ -773,7 +817,10 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
         : (price - tp) / risk
 
     if(rr < RR_THRESHOLD){
+        if(!logFlags.otherFail){
         console.log("❌ VALIDATE")
+        logFlags.otherFail = true
+    }
         return null // 1.5
     }
     let newDist = Math.abs(tp - price)
@@ -785,7 +832,10 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
     }
 
     if(newDist < atrVal * 0.8){
+        if(!logFlags.otherFail){
         console.log("❌ RECALC TP")
+        logFlags.otherFail = true
+    }
         return null
     }
 }
@@ -800,7 +850,10 @@ let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
 if(rangeCandle === 0 || body / rangeCandle < 0.2){ // nếu muốn chắc hơn rõ nâng 0.4 
-    console.log("❌ rangeCandle fail")
+    if(!logFlags.otherFail){
+        console.log("❌ rangeCandle fail")
+        logFlags.otherFail = true
+    }
     return null
 }
 // ===== ANTI FOMO (FIX CHUẨN) tránh đu đỉnh đu đáy =====
@@ -822,20 +875,19 @@ if(distance > atrVal * 2.0){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
 // ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
 if(marketState !== "TREND_STRONG"){
     if(distance > atrVal * 3){
+        if(!logFlags.otherFail){
         console.log("❌ quá xa")
+        logFlags.otherFail = true
+    }
         return null
     }
 }
 // ===== 3. NẾN ĐẢO CHIỀU MẠNH =====
-if(side === "LONG" && lastClose < lastOpen && lastBody > atrVal * 0.8){
-    console.log("❌ nến đảo mạnh")
+if(side === "LONG" && lastClose < lastOpen && lastBody > atrVal * 0.8)
     return null
-}
-
-if(side === "SHORT" && lastClose > lastOpen && lastBody > atrVal * 0.8){
-     console.log("❌ nến đảo mạnh")
+    
+if(side === "SHORT" && lastClose > lastOpen && lastBody > atrVal * 0.8)
     return null
-}
     // ===== FIX NULL SETUP =====
 if(!setupType){
     setupType = nearEma ? "PULLBACK" : "BREAKOUT"
@@ -872,8 +924,18 @@ async function scan(symbol){
     return { symbol, ...r }
 }
 
-// ================= SCANNER =================
-let stats = {
+// ================= SCANNER ================
+async function scanner(){
+    
+    let logFlags = {
+    volFail: false,
+    minVolFail: false,
+    trendFail: false,
+    pumpFail: false,
+    candleFail: false,
+    otherFail: false
+}
+    let stats = {
     volFail: 0,
     minVolFail: 0,
     sidewayFail: 0,
@@ -882,7 +944,6 @@ let stats = {
     candleFail: 0,
     otherFail: 0
 }
-async function scanner(){
 
     if(isScanning){
         console.log("⛔ Skip scan trùng")
