@@ -497,7 +497,6 @@ let dbCache = {}
 
 for (let s of signals){
 
-    // ===== MAIN =====
     let keyMain = `${s.setup}-${s.marketState}-${s.side}-${s.volatility}`
 
     if(!dbCache[keyMain]){
@@ -509,7 +508,8 @@ for (let s of signals){
         )
     }
 
-    let dbMain = dbCache[keyMain]{
+    // ✅ FIX crash
+    let dbMain = dbCache[keyMain] || { total: 0, winrate: 0.5 }
 
     let weightMain = Math.min(dbMain.total / 50, 1)
     let aiMain = (dbMain.winrate - 0.5) * 200 * weightMain
@@ -525,13 +525,13 @@ for (let s of signals){
             type: "MAIN"
         })
     }
-    }
-        // ===== NO CANDIDATE =====
-        if(!candidates || candidates.length === 0){
-            console.log("❌ No signal")
-            return
-        }
+}
 
+// ✅ ĐÚNG CHỖ
+if(!candidates || candidates.length === 0){
+    console.log("❌ No signal")
+    return
+}
         // ===== SORT =====
       candidates.sort((a,b)=>{
 
