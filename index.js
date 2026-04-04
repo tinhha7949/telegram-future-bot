@@ -1,6 +1,3 @@
-// Lỗi tiềm ẩn có thể commen thử 
-// const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args))
-// DB 
 const { MongoClient } = require("mongodb")
 
 const client = new MongoClient(process.env.MONGO_URI)
@@ -512,7 +509,7 @@ for (let s of signals){
         )
     }
 
-    let dbMain = dbCache[keyMain]
+    let dbMain = dbCache[keyMain]{
 
     let weightMain = Math.min(dbMain.total / 50, 1)
     let aiMain = (dbMain.winrate - 0.5) * 200 * weightMain
@@ -527,6 +524,7 @@ for (let s of signals){
             finalScore: finalMain,
             type: "MAIN"
         })
+    }
     }
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
