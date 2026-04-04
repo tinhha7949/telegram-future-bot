@@ -196,7 +196,7 @@ async function coreLogic(data15, data1h){
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.5){ // 0.06 0.07
+if(volNow < volAvg * 0.4){ // 0.06 0.07
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
@@ -247,7 +247,7 @@ let lastLow = lows.at(-1)
 
 let wickSize = lastHigh - lastLow
 
-if(wickSize > atrVal * 2.5){
+if(wickSize > atrVal * 3.0){ // 2.5
     return null
 }
     // ===== MARKET REGIME =====
@@ -298,7 +298,7 @@ let pos = (price - rangeLow) / (rangeHigh - rangeLow)
 let side=null, score=0
     let setupType = null // breakout | pullback
 // ❌ tránh giữa range
-if(pos > 0.2 && pos < 0.8){ // 0.4 và 0.6 gốc 0.35 và 0.65
+if(pos > 0.25 && pos < 0.75){ // 0.2 và 0.
     return null
 }
     let prevHigh = Math.max(...highs.slice(-25,-5))
