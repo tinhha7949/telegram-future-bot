@@ -211,7 +211,7 @@ async function coreLogic(data15, data1h){
     let trendHTF = Math.abs(ema20_1h - ema50_1h) / price
     let trendLTF = Math.abs(ema20 - ema50) / price
 
-    if(trendHTF < 0.0012 && trendLTF < 0.001) return null
+   // if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
     let dynamicThreshold = 100
     if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 90
@@ -225,8 +225,8 @@ async function coreLogic(data15, data1h){
     if(atrVal / price > 0.0045) volatility = "HIGH"
 
     // ===== ANTI CHASE (GIỮ 1) =====
-    let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-    if(Math.abs(lastMove) > 0.03) return null
+   // let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+   // if(Math.abs(lastMove) > 0.05) return null
 
     // ===== WICK =====
     if((highs.at(-1) - lows.at(-1)) > atrVal * 3.0) return null
@@ -240,15 +240,15 @@ async function coreLogic(data15, data1h){
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.0025) return null
+    if(marketState === "SIDEWAY" && range < 0.002) return null // 0.
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
     let nearEma = distEma < 0.0065
 
-    if(marketState === "SIDEWAY"){
-        if(nearEma && volNow < volAvg * 0.7) return null
-    }
+   // if(marketState === "SIDEWAY"){
+       // if(nearEma && volNow < volAvg * 0.7) return null
+ //   }
 
     // ===== STRUCTURE =====
     let rangeHigh = Math.max(...highs.slice(-30))
@@ -256,7 +256,10 @@ async function coreLogic(data15, data1h){
     if(rangeHigh === rangeLow) return null
 
     let pos = (price - rangeLow) / (rangeHigh - rangeLow)
-    if(pos > 0.25 && pos < 0.75) return null
+   // if(pos > 0.25 && pos < 0.75) return null
+    if(marketState === "SIDEWAY" && pos > 0.3 && pos < 0.7){
+    return null
+}
 
     let side=null, score=0
     let setupType = null
@@ -348,6 +351,9 @@ if(fakePump || fakeDump) return null
     if(!side) return null
     
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
+     let resistance = Math.max(...highs.slice(-30))
+let support = Math.min(...lows.slice(-30))
+
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
@@ -370,9 +376,6 @@ if(side === "SHORT" && distToSup < 0.0025) return null
         : swingHigh + atrVal
 
     let risk = Math.abs(price - sl)
-
-    let resistance = Math.max(...highs.slice(-30))
-let support = Math.min(...lows.slice(-30))
 
 let tp
 
@@ -525,39 +528,6 @@ for (let s of signals){
             type: "MAIN"
         })
     }
-
-    // ===== EARLY =====
-    if(s.earlyScore >= EARLY_THRESHOLD && s.earlySide){
-
-        let keyEarly = `${s.setup}-${s.marketState}-${s.earlySide}-${s.volatility}`
-
-        if(!dbCache[keyEarly]){
-            dbCache[keyEarly] = await getDBStats(
-                s.setup,
-                s.marketState,
-                s.earlySide,
-                s.volatility
-            )
-        }
-
-        let dbEarly = dbCache[keyEarly]
-
-        let weightEarly = Math.min(dbEarly.total / 50, 1)
-        let aiEarly = (dbEarly.winrate - 0.5) * 200 * weightEarly
-
-        if(dbEarly.total < 15) aiEarly *= 0.5
-
-        let finalEarly = s.earlyScore + aiEarly * 0.7
-
-        candidates.push({
-            ...s,
-            side: s.earlySide,
-            score: s.earlyScore,
-            finalScore: finalEarly,
-            type: "EARLY"
-        })
-    }
-}
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
             console.log("❌ No signal")
@@ -576,6 +546,10 @@ for (let s of signals){
 // let main = candidates.find(c => c.type === "MAIN")
 
 let best = candidates[0]
+if(!best){
+    console.log("❌ No best candidate")
+    return
+}
 
 // ===== CHECK DB AI =====
 let dbAI = await getDBStats(
@@ -627,10 +601,10 @@ if(best.type !== "EARLY"){
 
     let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
 
-    if(rr < RR_THRESHOLD){
-        console.log("❌ RR MAIN fail")
-        return
-    }
+    //if(rr < RR_THRESHOLD){
+        //console.log("❌ RR MAIN fail")
+        //return
+    //}
 }
     // nếu là breakout thì yêu cầu momentum rõ
     if(best.setup === "BREAKOUT" && best.type !== "EARLY"){
@@ -653,7 +627,7 @@ let nowTime = Date.now()
 let symbolKey = `${best.symbol}-${best.side}`
 
 if(lastSignalTime[symbolKey]){
-    let diff = Date.now() - lastSignalTime[symbolKey]
+    let timediff = Date.now() - lastSignalTime[symbolKey]
 
     if(diff < 3600000){
         console.log(`⛔ Skip trùng coin: ${symbolKey}`)
@@ -751,7 +725,7 @@ if(dbAI.total > 20){
     let edge = dbAI.winrate - 0.5  // lợi thế
 
     // scale nhẹ để không phá logic gốc
-    aiScoreAdjust = edge * 100   // ~ -10 → +10
+    aiScoreAdjust = edge * 50 // cũ là 100   // ~ -10 → +10
 
     // confidence theo sample
     let confidence = Math.min(dbAI.total / 50, 1)
