@@ -286,9 +286,9 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(lastMove > 0.03 || lastMove < -0.03){ // 0.02
     console.log("❌ pump/dump mạnh")
     return null 
-
+}
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.001 // 0.07 // 0.006 // 0.5 nếu đu 
+let nearEma = distEma < 0.01 // 0.07 // 0.006 // 0.5 nếu đu 
 // ===== PULLBACK PHẢI CÓ LỰC =====
 if(marketState === "SIDEWAY"){
     if(nearEma && volNow < volAvg * 0.7){ //0.6
@@ -539,7 +539,7 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
     if(valid.length === 0){
         console.log("❌ valid.length fail")
         return null
-
+    }
     valid.sort((a,b)=>{
 
         let setupBoost = 0
@@ -566,6 +566,7 @@ let tp = null
 let rrAI = await getBestTPSL(setupType, marketState, side)
 
 let rrBase = RR_THRESHOLD
+let rr = RR_THRESHOLD // 🔥 THÊM    
 
 if(rrAI && rrAI.rr && rrAI.rr > 0){
     rr = Math.max(rrAI.rr, RR_THRESHOLD)
