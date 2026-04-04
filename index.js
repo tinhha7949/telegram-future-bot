@@ -627,7 +627,7 @@ let symbolKey = `${best.symbol}-${best.side}`
 if(lastSignalTime[symbolKey]){
     let timediff = Date.now() - lastSignalTime[symbolKey]
 
-    if(diff < 3600000){
+    if(timediff < 3600000){
         console.log(`⛔ Skip trùng coin: ${symbolKey}`)
         return
     }
