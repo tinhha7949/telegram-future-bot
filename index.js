@@ -169,7 +169,7 @@ async function getTopSymbols(){
                         )
                     //   .filter(c => Number(c.quoteVolume) > 30000000)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
-                .slice(0,30)
+                .slice(0,40)
                         .map(c => c.symbol)
                 }
 
@@ -196,11 +196,14 @@ async function coreLogic(data15, data1h){
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.6){ // 0.06 0.07
+if(volNow < volAvg * 0.5){ // 0.06 0.07
+    console.log("❌ vol fail")
     return null
 }
-    if(volAvg < MIN_VOL_15M) return null
-
+    if(volAvg < MIN_VOL_15M){
+        console.log("❌ MIN_VOL_15M")
+        return null
+    }
     // ===== EMA =====
     let ema20 = ema(closes.slice(-60),20)
     let ema50 = ema(closes.slice(-120),50)
@@ -225,7 +228,8 @@ else{
 }
 
 // sideway yếu → bỏ luôn
-if(trendHTF < 0.0015 && trendLTF < 0.0012){ // 0.0025 0.002
+if(trendHTF < 0.0012 && trendLTF < 0.001){ // 0.002 0.0018
+    console.log("❌ sideway → bỏ")
     return null
 }
 
@@ -233,7 +237,8 @@ if(trendHTF < 0.0015 && trendLTF < 0.0012){ // 0.0025 0.002
     let atrVal = atr(data15.slice(-100))
     // mới thêm
     let recentMove = Math.abs(closes.at(-1) - closes.at(-5))
-if(recentMove > atrVal * 1.6){
+if(recentMove > atrVal * 2.0){ //1.6
+    console.log("❌ pump fail")
     return null
 }
 
@@ -249,6 +254,7 @@ let lastLow = lows.at(-1)
 let wickSize = lastHigh - lastLow
 
 if(wickSize > atrVal * 2.5){
+    console.log("❌ coin rác")
     return null
 }
     // ===== MARKET REGIME =====
@@ -268,6 +274,7 @@ else if(emaGap > 0.0025){
 let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
 if(marketState === "SIDEWAY" && range < 0.0025){ //0.003
+    console.log("❌ Trend yếu")
     return null
 }
 // còn lại là SIDEWAY
@@ -276,13 +283,16 @@ let distEma = Math.abs(price - ema20) / price
 
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-if(lastMove > 0.03 || lastMove < -0.03) return null // 0.02
+if(lastMove > 0.03 || lastMove < -0.03){ // 0.02
+    console.log("❌ pump/dump mạnh")
+    return null 
 
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.008 // 0.07 // 0.006 // 0.5 nếu đu 
+let nearEma = distEma < 0.001 // 0.07 // 0.006 // 0.5 nếu đu 
 // ===== PULLBACK PHẢI CÓ LỰC =====
 if(marketState === "SIDEWAY"){
     if(nearEma && volNow < volAvg * 0.7){ //0.6
+        console.log("❌ k có lực")
         return null
     }
 }
@@ -297,6 +307,7 @@ let side=null, score=0
     let setupType = null // breakout | pullback
 // ❌ tránh giữa range
 if(pos > 0.4 && pos < 0.6){
+    console.log("❌ giữa trend")
     return null
 }
     let prevHigh = Math.max(...highs.slice(-25,-5))
@@ -339,10 +350,12 @@ if(recentBreakDown){
 
     let trendStrength = Math.abs(ema20-ema50)/price
     if(marketState === "TREND_STRONG" && trendStrength < 0.002){
+        console.log("❌ trendStrength fail")
     return null
 }
 
 if(marketState !== "TREND_STRONG" && trendStrength < 0.0015){
+    console.log("❌ trendStrength fail 2")
     return null
 }
     
@@ -366,12 +379,16 @@ if(marketState === "SIDEWAY"){
 }
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
-    if(candleMove > 0.03) return null
-
+    if(candleMove > 0.05){ // 0.3 gốc // 0.4
+        console.log("❌ candleMove fail")
+        return null 
+    }
     let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.98
     let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.02
-    if(fakePump || fakeDump) return null
-
+    if(fakePump || fakeDump){
+        console.log("❌ fake")
+        return null
+    }
     // ===== SCORE =====
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
@@ -417,7 +434,10 @@ if(side==="SHORT" && nearEma){
     if(side==="SHORT" && r>35 && r<50) score+=10
 
     if(atrVal/price > 0.004) score+=10
-    if(!side) return null
+    if(!side){
+        console.log("❌ !side")
+        return null
+    }
     // ===== REQUIRE PULLBACK =====
 if(side === "LONG" && !nearEma){
     score -= 10
@@ -459,9 +479,14 @@ let support = Math.min(...lows.slice(-30))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
-if(side === "LONG" && distToRes < 0.0035) return null // 0.0045 nếu mua đỉnh bán đáy
-if(side === "SHORT" && distToSup < 0.0035) return null
-
+if(side === "LONG" && distToRes < 0.0025){ // 0.0045 nếu mua đỉnh bán đáy
+     console.log("❌ đỉnh")
+    return null
+}
+if(side === "SHORT" && distToSup < 0.0025){
+    console.log("❌ đáy")
+    return null
+}
 // ===== LIQUIDITY =====
 function findLiquidityHigh(highs){
     let zone = highs.slice(-25)
@@ -502,6 +527,8 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
         if(dist < risk * 1.1) continue
         if(dist > risk * 4) continue
 
+        let rr = rrCalc
+
         if(rr > 3) rr = 3
 
         if(rr >= RR_THRESHOLD && dist >= atrVal * 1.0 && dist <= atrVal * 3.5){
@@ -509,7 +536,9 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
         }
     }
 
-    if(valid.length === 0) return null
+    if(valid.length === 0){
+        console.log("❌ valid.length fail")
+        return null
 
     valid.sort((a,b)=>{
 
@@ -600,8 +629,10 @@ if(sl >= price) sl = price - atrVal * 1.5
     }
 }
 
-    if(dist < atrVal * 0.8) return null
-
+    if(dist < atrVal * 0.8){
+        console.log("❌ dist atrVal LONG")
+        return null
+    }
     let last3 = closes.slice(-3)
     let weak = last3[2] < last3[1] && last3[1] < last3[0]
 
@@ -670,8 +701,10 @@ if(sl <= price) sl = price + atrVal * 1.5
     }
 }
 
-    if(dist < atrVal * 0.8) return null
-
+    if(dist < atrVal * 0.8){
+        console.log("❌ dist atrVal SHORT")
+        return null
+    }
     let last3 = closes.slice(-3)
     let weak = last3[2] > last3[1] && last3[1] > last3[0]
 // ===== APPLY AI RR FINAL =====
@@ -729,8 +762,10 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
         ? (tp - price) / risk
         : (price - tp) / risk
 
-    if(rr < RR_THRESHOLD) return null // 1.5
-
+    if(rr < RR_THRESHOLD){
+        console.log("❌ VALIDATE")
+        return null // 1.5
+    }
     let newDist = Math.abs(tp - price)
 
     if(newDist > atrVal * 4){
@@ -740,6 +775,7 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
     }
 
     if(newDist < atrVal * 0.8){
+        console.log("❌ RECALC TP")
         return null
     }
 }
@@ -753,7 +789,8 @@ let close = +data15.at(-1)[4]
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-if(rangeCandle === 0 || body / rangeCandle < 0.25){ // nếu muốn chắc hơn rõ nâng 0.4 
+if(rangeCandle === 0 || body / rangeCandle < 0.2){ // nếu muốn chắc hơn rõ nâng 0.4 
+    console.log("❌ rangeCandle fail")
     return null
 }
 // ===== ANTI FOMO (FIX CHUẨN) tránh đu đỉnh đu đáy =====
@@ -775,15 +812,18 @@ if(distance > atrVal * 2.0){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
 // ===== 2. CHẶN HOÀN TOÀN (quá xa) =====
 if(marketState !== "TREND_STRONG"){
     if(distance > atrVal * 3){
+        console.log("❌ quá xa")
         return null
     }
 }
 // ===== 3. NẾN ĐẢO CHIỀU MẠNH =====
 if(side === "LONG" && lastClose < lastOpen && lastBody > atrVal * 0.8){
+    console.log("❌ nến đảo mạnh")
     return null
 }
 
 if(side === "SHORT" && lastClose > lastOpen && lastBody > atrVal * 0.8){
+     console.log("❌ nến đảo mạnh")
     return null
 }
     // ===== FIX NULL SETUP =====
@@ -1009,12 +1049,14 @@ if(best.type !== "EARLY"){
     let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
 
     if(rr < RR_THRESHOLD){
+        console.log("❌ RR MAIN fail")
         return
     }
 }
     // nếu là breakout thì yêu cầu momentum rõ
     if(best.setup === "BREAKOUT" && best.type !== "EARLY"){
     if(!best.momentumUp && !best.momentumDown){
+         console.log("❌ momentum kh rõ")
         return
     }
 }
@@ -1108,7 +1150,8 @@ if(dbAI.total > 20){
 }
 
 // check
-if(rrCalc < rrThreshold){
+if(rr < rrThreshold){
+     console.log("❌ rr <rrThreshold")
     return
 }
 // ===== AI BLOCK =====
