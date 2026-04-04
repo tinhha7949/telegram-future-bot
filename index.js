@@ -18,7 +18,7 @@ const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -298,7 +298,7 @@ let pos = (price - rangeLow) / (rangeHigh - rangeLow)
 let side=null, score=0
     let setupType = null // breakout | pullback
 // ❌ tránh giữa range
-if(pos > 0.3 && pos < 0.7){ // 0.4 và 0.6 gốc 0.35 và 0.65
+if(pos > 0.2 && pos < 0.8){ // 0.4 và 0.6 gốc 0.35 và 0.65
     return null
 }
     let prevHigh = Math.max(...highs.slice(-25,-5))
@@ -377,6 +377,10 @@ if(marketState === "SIDEWAY"){
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
 
+    // ❌ CHẶN ĐU BREAKOUT
+if(setupType === "BREAKOUT" && !nearEma){
+    return null
+}
     // ===== BREAKOUT =====
 if(side==="LONG" && bosUp){
     score += marketState === "TREND_STRONG" ? 40 : 20
@@ -706,7 +710,11 @@ if(weak && dist > atrVal * 2.5){
 let minDistance = price * 0.002
 let maxDistance = price * 0.03
 
-if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
+if(
+   Math.abs(price - sl) < minDistance ||
+   Math.abs(price - sl) > maxDistance ||
+   Math.abs(price - sl) < atrVal * 1.2
+){
 
     sl = side==="LONG"
         ? price - atrVal * 1.5 * slMult
