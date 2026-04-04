@@ -35,7 +35,7 @@ const LIMIT_1H  = 300 //100
 
 const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -218,7 +218,7 @@ if(volNow < volAvg * 0.5){ // 0.06 0.07
     return null
 }
     if(volAvg < MIN_VOL_15M){
-        start.minVolFail++
+        stats.minVolFail++
         return null
     }
     // ===== EMA =====
@@ -254,7 +254,7 @@ if(trendHTF < 0.0012 && trendLTF < 0.001){ // 0.002 0.0018
     let atrVal = atr(data15.slice(-100))
     // mới thêm
     let recentMove = Math.abs(closes.at(-1) - closes.at(-5))
-if(recentMove > atrVal * 2.0){ //1.6
+if(recentMove > atrVal * 1.6){ //1.6
     stats.pumpFail++
     return null
 }
@@ -308,7 +308,7 @@ if(lastMove > 0.03 || lastMove < -0.03){ // 0.02
     return null 
 }
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.01 // 0.07 // 0.006 // 0.5 nếu đu 
+let nearEma = distEma < 0.0065 // 0.003 hoặc 4 , 5 nếu đu giá
 // ===== PULLBACK PHẢI CÓ LỰC =====
 if(marketState === "SIDEWAY"){
     if(nearEma && volNow < volAvg * 0.7){ //0.6
@@ -329,7 +329,7 @@ let pos = (price - rangeLow) / (rangeHigh - rangeLow)
 let side=null, score=0
     let setupType = null // breakout | pullback
 // ❌ tránh giữa range
-if(pos > 0.4 && pos < 0.6){
+if(pos > 0.3 && pos < 0.7){ // 0.4 và 0.6 gốc 0.35 và 0.65
     if(!logFlags.otherFail){
         console.log("❌ giữa trend")
         logFlags.trendFail = true
@@ -383,7 +383,7 @@ if(recentBreakDown){
     return null
 }
 
-if(marketState !== "TREND_STRONG" && trendStrength < 0.0015){
+if(marketState !== "TREND_STRONG" && trendStrength < 0.002){
     if(!logFlags.otherFail){
         console.log("❌ trendStrength fail 2")
         logFlags.otherFail = true
@@ -411,7 +411,7 @@ if(marketState === "SIDEWAY"){
 }
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
-    if(candleMove > 0.05){ // 0.3 gốc // 0.4
+    if(candleMove > 0.03){ // 0.3 gốc // 0.4
         stats.candleFail++
         return null 
     }
@@ -927,24 +927,6 @@ async function scan(symbol){
 // ================= SCANNER ================
 async function scanner(){
     
-    let logFlags = {
-    volFail: false,
-    minVolFail: false,
-    trendFail: false,
-    pumpFail: false,
-    candleFail: false,
-    otherFail: false
-}
-    let stats = {
-    volFail: 0,
-    minVolFail: 0,
-    sidewayFail: 0,
-    pumpFail: 0,
-    trendFail: 0,
-    candleFail: 0,
-    otherFail: 0
-}
-
     if(isScanning){
         console.log("⛔ Skip scan trùng")
         return
