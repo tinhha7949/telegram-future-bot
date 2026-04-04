@@ -192,17 +192,11 @@ async function coreLogic(data15, data1h){
     let closes1h = data1h.map(x=>+x[4])
 
     let price = closes.at(-1)
-    let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-
-if(marketState === "SIDEWAY" && range < 0.0015){ //0.003
-    return null
-}
-
-
+    
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-if(volNow < volAvg * 0.4){ // 0.06 0.07
+if(volNow < volAvg * 0.6){ // 0.06 0.07
     return null
 }
     if(volAvg < MIN_VOL_15M) return null
@@ -270,6 +264,11 @@ if(emaGap > 0.004 && atrRatio > 0.0045){
 // TREND YẾU
 else if(emaGap > 0.0025){
     marketState = "TREND_WEAK"
+}
+let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
+
+if(marketState === "SIDEWAY" && range < 0.0025){ //0.003
+    return null
 }
 // còn lại là SIDEWAY
     // ===== ANTI CHASE + PULLBACK =====
@@ -357,7 +356,7 @@ if(marketState === "SIDEWAY"){
         side = "LONG"
         score += 60
     }
-
+    if(!side) return null
     // ❌ cấm breakout trong sideway
     if(bosUp || bosDown){
         return null
@@ -489,7 +488,7 @@ function pickBestTP(candidates, price, risk, side, setupType, atrVal){
 
     for(let c of candidates){
 
-        let rr = side==="LONG"
+        let rrCalc = side==="LONG"
             ? (c.price - price) / risk
             : (price - c.price) / risk
 
@@ -538,7 +537,7 @@ let tp = null
 // ===== AI TP/SL =====
 let rrAI = await getBestTPSL(setupType, marketState, side)
 
-let rr = RR_THRESHOLD
+let rrBase = RR_THRESHOLD
 
 if(rrAI && rrAI.rr && rrAI.rr > 0){
     rr = Math.max(rrAI.rr, RR_THRESHOLD)
@@ -727,7 +726,7 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
             : price - atrVal * 2 * tpMult
     }
 
-    let rr = side==="LONG"
+    let rrCalc = side==="LONG"
         ? (tp - price) / risk
         : (price - tp) / risk
 
@@ -770,7 +769,7 @@ let lastBody = Math.abs(lastClose - lastOpen)
 let distance = Math.abs(price - ema20)
 
 // ===== 1. TRỪ ĐIỂM (xa EMA) =====
-if(distance > atrVal * 1.7){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
+if(distance > atrVal * 2.0){ // nếu quá ít lệnh fix 1.7 nếu rác 1.5
     score -= 25
 }
 
@@ -790,8 +789,7 @@ if(side === "SHORT" && lastClose > lastOpen && lastBody > atrVal * 0.8){
 }
     // ===== FIX NULL SETUP =====
 if(!setupType){
-    console.log("❌ Skip vì setup = null")
-    return null
+    setupType = nearEma ? "PULLBACK" : "BREAKOUT"
 }
 return {
     side,
