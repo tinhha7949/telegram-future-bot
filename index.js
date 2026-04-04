@@ -1108,7 +1108,7 @@ if(dbAI.total > 20){
 }
 
 // check
-if(rr < rrThreshold){
+if(rrCalc < rrThreshold){
     return
 }
 // ===== AI BLOCK =====
