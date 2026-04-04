@@ -362,8 +362,9 @@ if(marketState === "SIDEWAY"){
 }
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
-    if(candleMove > 0.03) // 0.3 gốc // 0.4
-
+    if(candleMove > 0.03){ // 0.3 gốc // 0.4
+        return null
+    }
     let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.98
     let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.02
     if(fakePump || fakeDump)
@@ -761,10 +762,9 @@ let close = +data15.at(-1)[4]
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-if(rangeCandle === 0 || body / rangeCandle < 0.2){ // nếu muốn chắc hơn rõ nâng 0.4 
-    if(!logFlags.otherFail)
+if(rangeCandle === 0 || body / rangeCandle < 0.2) // nếu muốn chắc hơn rõ nâng 0.4 
     return null
-
+}
 // ===== ANTI FOMO (FIX CHUẨN) tránh đu đỉnh đu đáy =====
 
 // dùng dữ liệu có sẵn
