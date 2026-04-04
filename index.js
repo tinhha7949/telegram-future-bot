@@ -6,6 +6,15 @@ const { MongoClient } = require("mongodb")
 const client = new MongoClient(process.env.MONGO_URI)
 
 let db, trades
+let stats = {
+    volFail: 0,
+    minVolFail: 0,
+    sidewayFail: 0,
+    pumpFail: 0,
+    trendFail: 0,
+    candleFail: 0,
+    otherFail: 0
+}
 // ================= CONFIG =================
 const BOT_TOKEN = process.env.BOT_TOKEN
 const CHAT_ID = process.env.CHAT_ID
@@ -197,11 +206,11 @@ async function coreLogic(data15, data1h){
     let volNow = volumes.at(-1)
 
 if(volNow < volAvg * 0.5){ // 0.06 0.07
-    console.log("❌ vol fail")
+    stats.volFail++
     return null
 }
     if(volAvg < MIN_VOL_15M){
-        console.log("❌ MIN_VOL_15M")
+        start.minVolFAID++
         return null
     }
     // ===== EMA =====
@@ -229,7 +238,7 @@ else{
 
 // sideway yếu → bỏ luôn
 if(trendHTF < 0.0012 && trendLTF < 0.001){ // 0.002 0.0018
-    console.log("❌ sideway → bỏ")
+    stats.sidewayFail++
     return null
 }
 
@@ -238,7 +247,7 @@ if(trendHTF < 0.0012 && trendLTF < 0.001){ // 0.002 0.0018
     // mới thêm
     let recentMove = Math.abs(closes.at(-1) - closes.at(-5))
 if(recentMove > atrVal * 2.0){ //1.6
-    console.log("❌ pump fail")
+    stats.pumpFail++
     return null
 }
 
@@ -274,7 +283,7 @@ else if(emaGap > 0.0025){
 let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
 if(marketState === "SIDEWAY" && range < 0.0025){ //0.003
-    console.log("❌ Trend yếu")
+    stats.trendFail++
     return null
 }
 // còn lại là SIDEWAY
@@ -284,7 +293,7 @@ let distEma = Math.abs(price - ema20) / price
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(lastMove > 0.03 || lastMove < -0.03){ // 0.02
-    console.log("❌ pump/dump mạnh")
+    stats.pumpFail++
     return null 
 }
 // chỉ vào khi giá gần EMA (pullback)
@@ -380,7 +389,7 @@ if(marketState === "SIDEWAY"){
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     if(candleMove > 0.05){ // 0.3 gốc // 0.4
-        console.log("❌ candleMove fail")
+        stats.candleFail++
         return null 
     }
     let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.98
@@ -864,6 +873,15 @@ async function scan(symbol){
 }
 
 // ================= SCANNER =================
+let stats = {
+    volFail: 0,
+    minVolFail: 0,
+    sidewayFail: 0,
+    pumpFail: 0,
+    trendFail: 0,
+    candleFail: 0,
+    otherFail: 0
+}
 async function scanner(){
 
     if(isScanning){
@@ -908,6 +926,15 @@ async function scanner(){
             .map(r => r.value)
 
         if(!signals || signals.length === 0){
+            console.log(
+        `📊 Scan ${symbols.length} coins | ` +
+        `Vol:${stats.volFail} | ` +
+        `MinVol:${stats.minVolFail} | ` +
+        `Sideway:${stats.sidewayFail} | ` +
+        `Pump:${stats.pumpFail} | ` +
+        `Trend:${stats.trendFail} | ` +
+        `Candle:${stats.candleFail}`
+    )
             console.log("❌ No signal")
             isScanning = false
             return
