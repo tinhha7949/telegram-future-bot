@@ -988,15 +988,16 @@ async function scanner(){
 
         if(!signals || signals.length === 0){
             console.log(
-        `📊 Scan ${symbols.length} coins | ` +
-        `Vol:${stats.volFail} | ` +
-        `MinVol:${stats.minVolFail} | ` +
-        `Sideway:${stats.sidewayFail} | ` +
-        `Pump:${stats.pumpFail} | ` +
-        `Trend:${stats.trendFail} | ` +
-        `Candle:${stats.candleFail}`
-    )
-            console.log("❌ No signal")
+`📊 Scan ${symbols.length} coins | ` +
+`Vol:${stats.volFail} | ` +
+`MinVol:${stats.minVolFail} | ` +
+`Sideway:${stats.sidewayFail} | ` +
+`Pump:${stats.pumpFail} | ` +
+`Trend:${stats.trendFail} | ` +
+`Candle:${stats.candleFail} 
+
+❌ No signal`
+)
             isScanning = false
             return
         }
