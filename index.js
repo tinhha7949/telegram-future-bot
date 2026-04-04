@@ -292,7 +292,9 @@ if(marketState === "SIDEWAY"){
 let rangeLow  = Math.min(...lows.slice(-30))
 
 let pos = (price - rangeLow) / (rangeHigh - rangeLow)
-
+// score
+let side=null, score=0
+    let setupType = null // breakout | pullback
 // ❌ tránh giữa range
 if(pos > 0.4 && pos < 0.6){
     return null
@@ -371,9 +373,6 @@ if(marketState === "SIDEWAY"){
     if(fakePump || fakeDump) return null
 
     // ===== SCORE =====
-    let side=null, score=0
-    let setupType = null // breakout | pullback
-
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
 
