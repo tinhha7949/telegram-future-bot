@@ -15,7 +15,7 @@ const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 85 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -208,7 +208,7 @@ async function coreLogic(data15, data1h){
     let trendHTF = Math.abs(ema20_1h - ema50_1h) / price
     let trendLTF = Math.abs(ema20 - ema50) / price
 
-    if(trendHTF < 0.0012 && trendLTF < 0.001) return null
+    //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
     let dynamicThreshold = 100
     if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 90
@@ -222,8 +222,8 @@ async function coreLogic(data15, data1h){
     if(atrVal / price > 0.0045) volatility = "HIGH"
 
     // ===== ANTI CHASE (GIỮ 1) =====
-    let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-    if(Math.abs(lastMove) > 0.03) return null
+   // let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+   // if(Math.abs(lastMove) > 0.03) return null
 
     // ===== WICK =====
     if((highs.at(-1) - lows.at(-1)) > atrVal * 3.0) return null
@@ -237,7 +237,7 @@ async function coreLogic(data15, data1h){
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.0025) return null
+    if(marketState === "SIDEWAY" && range < 0.002) return null
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
@@ -285,7 +285,9 @@ async function coreLogic(data15, data1h){
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(trendStrength < 0.002) return null
+    if(marketState !== "SIDEWAY" && trendStrength < 0.002){
+    return null
+}
 
     // ===== SIDEWAY =====
     if(marketState === "SIDEWAY"){
@@ -624,10 +626,10 @@ if(best.type !== "EARLY"){
 
     let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
 
-    if(rr < RR_THRESHOLD){
-        console.log("❌ RR MAIN fail")
-        return
-    }
+    //if(rr < RR_THRESHOLD){
+        //console.log("❌ RR MAIN fail")
+        //return
+    //}
 }
     // nếu là breakout thì yêu cầu momentum rõ
     if(best.setup === "BREAKOUT" && best.type !== "EARLY"){
