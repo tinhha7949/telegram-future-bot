@@ -211,9 +211,9 @@ async function coreLogic(data15, data1h){
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
     let dynamicThreshold = 100
-    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 90
-    else if(trendHTF > 0.0015) dynamicThreshold = 95
-    else dynamicThreshold = 105
+    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 85 //90
+    else if(trendHTF > 0.0015) dynamicThreshold = 90 // 95
+    else dynamicThreshold = 95 // 105
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
@@ -244,7 +244,7 @@ async function coreLogic(data15, data1h){
     let nearEma = distEma < 0.0065
 
     if(marketState === "SIDEWAY"){
-        if(nearEma && volNow < volAvg * 0.7) return null
+        if(nearEma && volNow < volAvg * 0.5) return null
     }
 
     // ===== STRUCTURE =====
@@ -253,7 +253,7 @@ async function coreLogic(data15, data1h){
     if(rangeHigh === rangeLow) return null
 
     let pos = (price - rangeLow) / (rangeHigh - rangeLow)
-    if(pos > 0.25 && pos < 0.75) return null
+    if(pos > 0.3 && pos < 0.7) return null // 0.25 /0.75
 
     let side=null, score=0
     let setupType = null
@@ -347,6 +347,8 @@ if(fakePump || fakeDump) return null
     if(!side) return null
     
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
+     let resistance = Math.max(...highs.slice(-30))
+let support = Math.min(...lows.slice(-30))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
@@ -356,7 +358,7 @@ if(side === "SHORT" && distToSup < 0.002) return null
     // ===== ANTI FOMO (GỌN - KHÔNG TRÙNG) =====
     let distance = Math.abs(price - ema20)
 
-    if(marketState !== "TREND_STRONG" && distance > atrVal * 3){
+    if(marketState !== "TREND_STRONG" && distance > atrVal * 4){
         return null
     }
 
@@ -369,9 +371,6 @@ if(side === "SHORT" && distToSup < 0.002) return null
         : swingHigh + atrVal
 
     let risk = Math.abs(price - sl)
-
-    let resistance = Math.max(...highs.slice(-30))
-let support = Math.min(...lows.slice(-30))
 
 let tp
 
@@ -745,7 +744,7 @@ if(best.marketState === "SIDEWAY"){
 
 let aiScoreAdjust = 0
 
-if(dbAI.total > 20){
+if(dbAI.total > 10){
 
     let edge = dbAI.winrate - 0.5  // lợi thế
 
