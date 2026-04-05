@@ -13,7 +13,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 90 // 110
+const SCORE_THRESHOLD = 85 // 110
 const EARLY_THRESHOLD = 55  // 60
 const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
 
@@ -287,7 +287,7 @@ if(!sr) return null
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.002) return null // 0.
+    if(marketState === "SIDEWAY" && range < 0.0015) return null // 0.
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
@@ -354,7 +354,7 @@ let trendShort =
     srTrend === -1
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(trendStrength < 0.002) return null
+    if(trendStrength < 0.0015) return null
 
     // ===== SIDEWAY =====
     if(marketState === "SIDEWAY"){
@@ -429,13 +429,13 @@ let support = Math.min(...lows.slice(-30))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
-if(side === "LONG" && distToRes < 0.0025) return null
-if(side === "SHORT" && distToSup < 0.0025) return null
+if(side === "LONG" && distToRes < 0.002) return null
+if(side === "SHORT" && distToSup < 0.002) return null
 
     // ===== ANTI FOMO (GỌN - KHÔNG TRÙNG) =====
     let distance = Math.abs(price - ema20)
 
-    if(marketState !== "TREND_STRONG" && distance > atrVal * 3){
+    if(marketState !== "TREND_STRONG" && distance > atrVal * 4){
         return null
     }
 
@@ -470,9 +470,9 @@ let close = +data15.at(-1)[4]
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-if(rangeCandle === 0 || body / rangeCandle < 0.2){
-    return null
-}
+//if(rangeCandle === 0 || body / rangeCandle < 0.2){
+    //return null
+//}
 
     function round(n){ return Number(n.toFixed(4)) }
 
