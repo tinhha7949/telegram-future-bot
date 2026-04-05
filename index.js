@@ -114,6 +114,44 @@ function atr(data,p=14){
     }
     return trs.slice(-p).reduce((a,b)=>a+b,0)/p
 }
+function calcSR(data){
+
+    let highs = data.map(x=>+x[2])
+    let lows  = data.map(x=>+x[3])
+
+    let hArr = []
+    let lArr = []
+
+    for(let i=5;i<data.length;i++){
+
+        let h = highs[i-5]<highs[i-4] &&
+                highs[i-4]<highs[i-3] &&
+                highs[i-3]>highs[i-2] &&
+                highs[i-2]>highs[i-1]
+
+        let l = lows[i-5]>lows[i-4] &&
+                lows[i-4]>lows[i-3] &&
+                lows[i-3]<lows[i-2] &&
+                lows[i-2]<lows[i-1]
+
+        if(h) hArr.push(highs[i-3])
+        if(l) lArr.push(lows[i-3])
+    }
+
+    if(hArr.length === 0 || lArr.length === 0) return null
+
+    let hAvg = hArr.reduce((a,b)=>a+b,0)/hArr.length
+    let lAvg = lArr.reduce((a,b)=>a+b,0)/lArr.length
+
+    let r = Math.abs(hAvg - lAvg)
+
+    return {
+        resistance: hAvg,
+        support: lAvg,
+        upperZone: hAvg - r,
+        lowerZone: lAvg + r
+    }
+}
 
 // ================= DATA (PRO) =================
 async function getData(symbol, interval, limit){
@@ -190,6 +228,15 @@ async function coreLogic(data15, data1h){
 
     let price = closes.at(-1)
     
+    let srTrend = 0
+
+if(price > sr.upperZone && price > sr.lowerZone){
+    srTrend = 1
+}
+else if(price < sr.upperZone && price < sr.lowerZone){
+    srTrend = -1
+}
+    
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
@@ -217,6 +264,9 @@ async function coreLogic(data15, data1h){
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
+    
+    let sr = calcSR(data15.slice(-150))
+if(!sr) return null
 
     let volatility = "LOW"
     if(atrVal / price > 0.0045) volatility = "HIGH"
@@ -254,6 +304,13 @@ async function coreLogic(data15, data1h){
 
     let pos = (price - rangeLow) / (rangeHigh - rangeLow)
    // if(pos > 0.25 && pos < 0.75) return null
+let inSRZone =
+    price < sr.resistance &&
+    price > sr.support
+
+if(inSRZone && marketState === "SIDEWAY"){
+    return null
+}
     if(marketState === "SIDEWAY" && pos > 0.3 && pos < 0.7){
     return null
 }
@@ -284,8 +341,17 @@ async function coreLogic(data15, data1h){
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
 
     // ===== TREND FILTER =====
-    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
-    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
+    let trendLong =
+    ema20>ema50 &&
+    ema50>ema200 &&
+    ema20_1h>ema50_1h &&
+    srTrend === 1
+
+let trendShort =
+    ema20<ema50 &&
+    ema50<ema200 &&
+    ema20_1h<ema50_1h &&
+    srTrend === -1
 
     let trendStrength = Math.abs(ema20-ema50)/price
     if(trendStrength < 0.002) return null
@@ -307,6 +373,15 @@ if(fakePump || fakeDump) return null
     if(!side){
     if(trendLong){ side="LONG"; score+=50 }
     else if(trendShort){ side="SHORT"; score+=50 }
+}
+if(side==="LONG" && price > sr.resistance){
+    score += 25
+    setupType = "SR_BREAKOUT"
+}
+
+if(side==="SHORT" && price < sr.support){
+    score += 25
+    setupType = "SR_BREAKOUT"
 }
 
     // ===== SETUP =====
@@ -377,10 +452,7 @@ if(side === "SHORT" && distToSup < 0.0025) return null
 let tp
 
 if(side === "LONG"){
-    tp = Math.min(
-        price + risk * RR_THRESHOLD,
-        resistance
-    )
+    tp = Math.min(price + risk * RR_THRESHOLD, resistance, sr.resistance)
 }else{
     tp = Math.max(
         price - risk * RR_THRESHOLD,
