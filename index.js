@@ -13,7 +13,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 95 // 110
+const SCORE_THRESHOLD = 90 // 110
 const EARLY_THRESHOLD = 55  // 60
 const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
 
@@ -308,7 +308,7 @@ let inSRZone =
     price < sr.resistance &&
     price > sr.support
 
-if(inSRZone && marketState === "SIDEWAY"){
+if(inSRZone && marketState === "SIDEWAY" && volatility === "LOW"){
     return null
 }
     if(marketState === "SIDEWAY" && pos > 0.3 && pos < 0.7){
