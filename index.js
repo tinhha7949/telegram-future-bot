@@ -411,8 +411,8 @@ if(side==="SHORT" && price < sr.support){
     if(volTrendUp) score+=20
     if(volNow > volAvg*1.5) score+=15 
 
-    if(side==="LONG" && momentumUp) score+=25
-    if(side==="SHORT" && momentumDown) score+=25
+    if(side==="LONG" && momentumUp) score+=10
+    if(side==="SHORT" && momentumDown) score+=10
 
     if(side==="LONG" && higherLow) score+=15
     if(side==="SHORT" && lowerHigh) score+=15
