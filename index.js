@@ -240,7 +240,7 @@ else if(price < sr.upperZone && price < sr.lowerZone){
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-    if(volNow < volAvg * 0.4) return null
+    if(volNow < volAvg * 0.3) return null
     if(volAvg < MIN_VOL_15M) return null
     
     // ===== EMA =====
