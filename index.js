@@ -764,7 +764,7 @@ best.finalScore = (best.finalScore || best.score) + aiScoreAdjust
 
 ${best.symbol} (${best.type} - ${best.setup})
 ${best.side} | ${best.marketState}
-Entry: ${best.price.toFixed(4)}
+Entry Zone: ${best.price.toFixed(4)}
 TP: ${best.tp.toFixed(4)}
 SL: ${best.sl.toFixed(4)}
 Trailing SL: ${trailingSL.toFixed(4)}
@@ -772,23 +772,33 @@ Size: ${size.toFixed(2)}
 Score: ${best.score}
 `
 
-        console.log(msg)
-        let ok = await sendTelegram(msg)
+       //onsole.log(msg)
+       //et ok = await sendTelegram(msg)
 
-if(ok !== false){
-    lastSignalTime[symbolKey] = Date.now()
-}
+//(ok !== false){
+   //astSignalTime[symbolKey] = Date.now()
+//}
         // ===== SAVE TRADE =====
 let trade = {
     symbol: best.symbol,
     side: best.side,
-    entry: best.price,
+
+    // ❌ chưa vào lệnh
+    entry: null,
+
+    // ✅ giá chờ
+    entryZone: best.price,
+
     tp: best.tp,
     sl: best.sl,
+
+    waitingEntry: true,   // 🔥 CHỜ 1M CONFIRM
+
     setup: best.setup,
     marketState: best.marketState,
     volatility: best.volatility,
     atr: best.atr,
+
     time: Date.now(),
     result: "PENDING"
 }
@@ -822,6 +832,71 @@ async function checkTrades(){
             if(!data) continue
 
             let price = +data.at(-1)[4]
+            // ================= ENTRY 1M CONFIRM =================
+if(t.waitingEntry){
+
+    let closes = data.map(x => +x[4])
+    let last = closes.at(-1)
+    let prev = closes.at(-2)
+
+    let confirm = false
+
+    // ===== LONG =====
+    if(t.side === "LONG"){
+        if(
+            last > t.entryZone &&
+            prev <= t.entryZone
+        ){
+            confirm = true
+        }
+    }
+
+    // ===== SHORT =====
+    if(t.side === "SHORT"){
+        if(
+            last < t.entryZone &&
+            prev >= t.entryZone
+        ){
+            confirm = true
+        }
+    }
+
+    // ===== VÀO LỆNH =====
+    if(confirm){
+    t.entry = price
+    t.waitingEntry = false
+
+    let trailingSL = t.side === "LONG"
+        ? t.entry - t.atr
+        : t.entry + t.atr
+
+    let size = (ACCOUNT_BALANCE * RISK_PER_TRADE) / Math.abs(t.entry - t.sl)
+
+    let msg = `🔥 BEST SIGNAL
+
+${t.symbol} (${t.setup})
+${t.side} | ${t.marketState}
+
+Entry: ${t.entry.toFixed(4)}
+
+TP: ${t.tp.toFixed(4)}
+
+SL: ${t.sl.toFixed(4)}
+
+Trailing SL: ${trailingSL.toFixed(4)}
+Size: ${size.toFixed(2)}
+Score: ${best.score}
+`
+
+    await sendTelegram(msg)
+
+    lastSignalTime[`${t.symbol}-${t.side}`] = Date.now()
+}
+
+    // ❌ chưa confirm thì bỏ qua
+    continue
+}
+if(!t.entry) continue
 
             let win = false
             let done = false
