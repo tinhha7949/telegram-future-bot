@@ -13,9 +13,9 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 85 // 110
+const SCORE_THRESHOLD = 95 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -114,44 +114,6 @@ function atr(data,p=14){
     }
     return trs.slice(-p).reduce((a,b)=>a+b,0)/p
 }
-function calcSR(data){
-
-    let highs = data.map(x=>+x[2])
-    let lows  = data.map(x=>+x[3])
-
-    let hArr = []
-    let lArr = []
-
-    for(let i=5;i<data.length;i++){
-
-        let h = highs[i-5]<highs[i-4] &&
-                highs[i-4]<highs[i-3] &&
-                highs[i-3]>highs[i-2] &&
-                highs[i-2]>highs[i-1]
-
-        let l = lows[i-5]>lows[i-4] &&
-                lows[i-4]>lows[i-3] &&
-                lows[i-3]<lows[i-2] &&
-                lows[i-2]<lows[i-1]
-
-        if(h) hArr.push(highs[i-3])
-        if(l) lArr.push(lows[i-3])
-    }
-
-    if(hArr.length === 0 || lArr.length === 0) return null
-
-    let hAvg = hArr.reduce((a,b)=>a+b,0)/hArr.length
-    let lAvg = lArr.reduce((a,b)=>a+b,0)/lArr.length
-
-    let r = Math.abs(hAvg - lAvg)
-
-    return {
-        resistance: hAvg,
-        support: lAvg,
-        upperZone: hAvg - r,
-        lowerZone: lAvg + r
-    }
-}
 
 // ================= DATA (PRO) =================
 async function getData(symbol, interval, limit){
@@ -228,19 +190,10 @@ async function coreLogic(data15, data1h){
 
     let price = closes.at(-1)
     
-    let srTrend = 0
-
-if(price > sr.upperZone && price > sr.lowerZone){
-    srTrend = 1
-}
-else if(price < sr.upperZone && price < sr.lowerZone){
-    srTrend = -1
-}
-    
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-    if(volNow < volAvg * 0.3) return null
+    if(volNow < volAvg * 0.4) return null
     if(volAvg < MIN_VOL_15M) return null
     
     // ===== EMA =====
@@ -255,7 +208,7 @@ else if(price < sr.upperZone && price < sr.lowerZone){
     let trendHTF = Math.abs(ema20_1h - ema50_1h) / price
     let trendLTF = Math.abs(ema20 - ema50) / price
 
-   // if(trendHTF < 0.0012 && trendLTF < 0.001) return null
+    if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
     let dynamicThreshold = 100
     if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 90
@@ -264,16 +217,13 @@ else if(price < sr.upperZone && price < sr.lowerZone){
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
-    
-    let sr = calcSR(data15.slice(-150))
-if(!sr) return null
 
     let volatility = "LOW"
     if(atrVal / price > 0.0045) volatility = "HIGH"
 
     // ===== ANTI CHASE (GIỮ 1) =====
-   // let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-   // if(Math.abs(lastMove) > 0.05) return null
+    let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+    if(Math.abs(lastMove) > 0.03) return null
 
     // ===== WICK =====
     if((highs.at(-1) - lows.at(-1)) > atrVal * 3.0) return null
@@ -287,15 +237,15 @@ if(!sr) return null
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.0015) return null // 0.
+    if(marketState === "SIDEWAY" && range < 0.0025) return null
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
     let nearEma = distEma < 0.0065
 
-   // if(marketState === "SIDEWAY"){
-       // if(nearEma && volNow < volAvg * 0.7) return null
- //   }
+    if(marketState === "SIDEWAY"){
+        if(nearEma && volNow < volAvg * 0.7) return null
+    }
 
     // ===== STRUCTURE =====
     let rangeHigh = Math.max(...highs.slice(-30))
@@ -303,17 +253,7 @@ if(!sr) return null
     if(rangeHigh === rangeLow) return null
 
     let pos = (price - rangeLow) / (rangeHigh - rangeLow)
-   // if(pos > 0.25 && pos < 0.75) return null
-let inSRZone =
-    price < sr.resistance &&
-    price > sr.support
-
-if(inSRZone && marketState === "SIDEWAY" && volatility === "LOW"){
-    return null
-}
-    if(marketState === "SIDEWAY" && pos > 0.3 && pos < 0.7){
-    return null
-}
+    if(pos > 0.25 && pos < 0.75) return null
 
     let side=null, score=0
     let setupType = null
@@ -341,20 +281,11 @@ if(inSRZone && marketState === "SIDEWAY" && volatility === "LOW"){
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
 
     // ===== TREND FILTER =====
-    let trendLong =
-    ema20>ema50 &&
-    ema50>ema200 &&
-    ema20_1h>ema50_1h &&
-    srTrend === 1
-
-let trendShort =
-    ema20<ema50 &&
-    ema50<ema200 &&
-    ema20_1h<ema50_1h &&
-    srTrend === -1
+    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
+    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(trendStrength < 0.0015) return null
+    if(trendStrength < 0.002) return null
 
     // ===== SIDEWAY =====
     if(marketState === "SIDEWAY"){
@@ -373,15 +304,6 @@ if(fakePump || fakeDump) return null
     if(!side){
     if(trendLong){ side="LONG"; score+=50 }
     else if(trendShort){ side="SHORT"; score+=50 }
-}
-if(side==="LONG" && price > sr.resistance){
-    score += 25
-    setupType = "SR_BREAKOUT"
-}
-
-if(side==="SHORT" && price < sr.support){
-    score += 25
-    setupType = "SR_BREAKOUT"
 }
 
     // ===== SETUP =====
@@ -423,9 +345,6 @@ if(side==="SHORT" && price < sr.support){
     if(!side) return null
     
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
-     let resistance = Math.max(...highs.slice(-30))
-let support = Math.min(...lows.slice(-30))
-
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
@@ -435,7 +354,7 @@ if(side === "SHORT" && distToSup < 0.002) return null
     // ===== ANTI FOMO (GỌN - KHÔNG TRÙNG) =====
     let distance = Math.abs(price - ema20)
 
-    if(marketState !== "TREND_STRONG" && distance > atrVal * 4){
+    if(marketState !== "TREND_STRONG" && distance > atrVal * 3){
         return null
     }
 
@@ -449,10 +368,16 @@ if(side === "SHORT" && distToSup < 0.002) return null
 
     let risk = Math.abs(price - sl)
 
+    let resistance = Math.max(...highs.slice(-30))
+let support = Math.min(...lows.slice(-30))
+
 let tp
 
 if(side === "LONG"){
-    tp = Math.min(price + risk * RR_THRESHOLD, resistance, sr.resistance)
+    tp = Math.min(
+        price + risk * RR_THRESHOLD,
+        resistance
+    )
 }else{
     tp = Math.max(
         price - risk * RR_THRESHOLD,
@@ -470,9 +395,9 @@ let close = +data15.at(-1)[4]
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-//if(rangeCandle === 0 || body / rangeCandle < 0.2){
-    //return null
-//}
+if(rangeCandle === 0 || body / rangeCandle < 0.2){
+    return null
+}
 
     function round(n){ return Number(n.toFixed(4)) }
 
@@ -569,6 +494,7 @@ let dbCache = {}
 
 for (let s of signals){
 
+    // ===== MAIN =====
     let keyMain = `${s.setup}-${s.marketState}-${s.side}-${s.volatility}`
 
     if(!dbCache[keyMain]){
@@ -580,8 +506,7 @@ for (let s of signals){
         )
     }
 
-    // ✅ FIX crash
-    let dbMain = dbCache[keyMain] || { total: 0, winrate: 0.5 }
+    let dbMain = dbCache[keyMain]
 
     let weightMain = Math.min(dbMain.total / 50, 1)
     let aiMain = (dbMain.winrate - 0.5) * 200 * weightMain
@@ -597,13 +522,45 @@ for (let s of signals){
             type: "MAIN"
         })
     }
-}
 
-// ✅ ĐÚNG CHỖ
-if(!candidates || candidates.length === 0){
-    console.log("❌ No signal")
-    return
+    // ===== EARLY =====
+    if(s.earlyScore >= EARLY_THRESHOLD && s.earlySide){
+
+        let keyEarly = `${s.setup}-${s.marketState}-${s.earlySide}-${s.volatility}`
+
+        if(!dbCache[keyEarly]){
+            dbCache[keyEarly] = await getDBStats(
+                s.setup,
+                s.marketState,
+                s.earlySide,
+                s.volatility
+            )
+        }
+
+        let dbEarly = dbCache[keyEarly]
+
+        let weightEarly = Math.min(dbEarly.total / 50, 1)
+        let aiEarly = (dbEarly.winrate - 0.5) * 200 * weightEarly
+
+        if(dbEarly.total < 15) aiEarly *= 0.5
+
+        let finalEarly = s.earlyScore + aiEarly * 0.7
+
+        candidates.push({
+            ...s,
+            side: s.earlySide,
+            score: s.earlyScore,
+            finalScore: finalEarly,
+            type: "EARLY"
+        })
+    }
 }
+        // ===== NO CANDIDATE =====
+        if(!candidates || candidates.length === 0){
+            console.log("❌ No signal")
+            return
+        }
+
         // ===== SORT =====
       candidates.sort((a,b)=>{
 
@@ -616,10 +573,6 @@ if(!candidates || candidates.length === 0){
 // let main = candidates.find(c => c.type === "MAIN")
 
 let best = candidates[0]
-if(!best){
-    console.log("❌ No best candidate")
-    return
-}
 
 // ===== CHECK DB AI =====
 let dbAI = await getDBStats(
@@ -671,10 +624,10 @@ if(best.type !== "EARLY"){
 
     let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
 
-    //if(rr < RR_THRESHOLD){
-        //console.log("❌ RR MAIN fail")
-        //return
-    //}
+    if(rr < RR_THRESHOLD){
+        console.log("❌ RR MAIN fail")
+        return
+    }
 }
     // nếu là breakout thì yêu cầu momentum rõ
     if(best.setup === "BREAKOUT" && best.type !== "EARLY"){
@@ -697,9 +650,9 @@ let nowTime = Date.now()
 let symbolKey = `${best.symbol}-${best.side}`
 
 if(lastSignalTime[symbolKey]){
-    let timediff = Date.now() - lastSignalTime[symbolKey]
+    let diff = Date.now() - lastSignalTime[symbolKey]
 
-    if(timediff < 3600000){
+    if(diff < 3600000){
         console.log(`⛔ Skip trùng coin: ${symbolKey}`)
         return
     }
@@ -795,7 +748,7 @@ if(dbAI.total > 20){
     let edge = dbAI.winrate - 0.5  // lợi thế
 
     // scale nhẹ để không phá logic gốc
-    aiScoreAdjust = edge * 50 // cũ là 100   // ~ -10 → +10
+    aiScoreAdjust = edge * 100   // ~ -10 → +10
 
     // confidence theo sample
     let confidence = Math.min(dbAI.total / 50, 1)
