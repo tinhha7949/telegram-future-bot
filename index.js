@@ -13,7 +13,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 85 // 110
+const SCORE_THRESHOLD = 90 // 110
 const EARLY_THRESHOLD = 55  // 60
 const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
 
@@ -211,9 +211,9 @@ async function coreLogic(data15, data1h){
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
     let dynamicThreshold = 100
-    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 85 //90
-    else if(trendHTF > 0.0015) dynamicThreshold = 90 // 95
-    else dynamicThreshold = 95 // 105
+    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 90 //90
+    else if(trendHTF > 0.0015) dynamicThreshold = 95 // 95
+    else dynamicThreshold = 105 // 105
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
