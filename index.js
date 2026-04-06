@@ -965,14 +965,6 @@ async function getDBStats(setup, market, side, volatility){
     if(!trades){
         return { winrate: 0.5, total: 0 }
     }
-
-    try{
-        // 🔥 CHECK DB (giảm spam)
-        if(Math.random() < 0.1){
-            await client.db("admin").command({ ping: 1 })
-            console.log("🟢 DB OK")
-        }
-
         const col = trades
 
         // ===== lấy dữ liệu db =====
