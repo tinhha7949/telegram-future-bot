@@ -965,6 +965,8 @@ async function getDBStats(setup, market, side, volatility){
     if(!trades){
         return { winrate: 0.5, total: 0 }
     }
+
+    try{
         const col = trades
 
         // ===== lấy dữ liệu db =====
