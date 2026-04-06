@@ -717,9 +717,14 @@ if(rr < rrThreshold){
 
     // ❌ không đủ đẹp → loại
     if(best.marketState !== "TREND_STRONG" && best.finalScore < 105){
+        console.log("❌ không đủ đẹp")
         return
     }
-
+    // 🔥 thêm dòng này
+    if(rr < 1.1 && best.marketState !== "TREND_STRONG"){
+        console.log("❌ RR hơi thấp")
+        return
+    }
     // ⚠️ còn lại → giảm điểm nhẹ
     best.finalScore -= 10
 }
