@@ -253,8 +253,9 @@ async function coreLogic(data15, data1h){
     if(rangeHigh === rangeLow) return null
 
     let pos = (price - rangeLow) / (rangeHigh - rangeLow)
-    if(pos > 0.3 && pos < 0.7) return null // 0.25 /0.75
-
+    if(marketState === "SIDEWAY"){
+    if(pos > 0.3 && pos < 0.7) return null
+}
     let side=null, score=0
     let setupType = null
 
@@ -523,38 +524,6 @@ for (let s of signals){
             type: "MAIN"
         })
     }
-
-    // ===== EARLY =====
-    if(s.earlyScore >= EARLY_THRESHOLD && s.earlySide){
-
-        let keyEarly = `${s.setup}-${s.marketState}-${s.earlySide}-${s.volatility}`
-
-        if(!dbCache[keyEarly]){
-            dbCache[keyEarly] = await getDBStats(
-                s.setup,
-                s.marketState,
-                s.earlySide,
-                s.volatility
-            )
-        }
-
-        let dbEarly = dbCache[keyEarly]
-
-        let weightEarly = Math.min(dbEarly.total / 50, 1)
-        let aiEarly = (dbEarly.winrate - 0.5) * 200 * weightEarly
-
-        if(dbEarly.total < 15) aiEarly *= 0.5
-
-        let finalEarly = s.earlyScore + aiEarly * 0.7
-
-        candidates.push({
-            ...s,
-            side: s.earlySide,
-            score: s.earlyScore,
-            finalScore: finalEarly,
-            type: "EARLY"
-        })
-    }
 }
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
@@ -769,7 +738,7 @@ TP: ${best.tp.toFixed(4)}
 SL: ${best.sl.toFixed(4)}
 Trailing SL: ${trailingSL.toFixed(4)}
 Size: ${size.toFixed(2)}
-Score: ${best.score}
+Score: ${t.score || 0}
 `
 
        //onsole.log(msg)
@@ -791,7 +760,7 @@ let trade = {
 
     tp: best.tp,
     sl: best.sl,
-
+    score: best.score,
     waitingEntry: true,   // 🔥 CHỜ 1M CONFIRM
 
     setup: best.setup,
@@ -843,23 +812,16 @@ if(t.waitingEntry){
 
     // ===== LONG =====
     if(t.side === "LONG"){
-        if(
-            last > t.entryZone &&
-            prev <= t.entryZone
-        ){
-            confirm = true
-        }
+    if(last >= t.entryZone){
+        confirm = true
     }
+}
 
-    // ===== SHORT =====
-    if(t.side === "SHORT"){
-        if(
-            last < t.entryZone &&
-            prev >= t.entryZone
-        ){
-            confirm = true
-        }
+if(t.side === "SHORT"){
+    if(last <= t.entryZone){
+        confirm = true
     }
+}
 
     // ===== VÀO LỆNH =====
     if(confirm){
