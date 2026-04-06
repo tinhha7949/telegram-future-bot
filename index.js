@@ -353,16 +353,18 @@ let support = Math.min(...lows.slice(-30))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
+if(setupType !== "BREAKOUT"){
 if(side === "LONG" && distToRes < 0.002) return null
 if(side === "SHORT" && distToSup < 0.002) return null
-
+}
     // ===== ANTI FOMO (GỌN - KHÔNG TRÙNG) =====
     let distance = Math.abs(price - ema20)
 
+    if(setupType !== "BREAKOUT"){
     if(marketState !== "TREND_STRONG" && distance > atrVal * 4){
         return null
     }
-
+    }
     // ===== SL TP (GIỮ NGUYÊN) =====
     let swingLow = Math.min(...lows.slice(-20))
     let swingHigh = Math.max(...highs.slice(-20))
@@ -839,12 +841,14 @@ if(t.waitingEntry && waitTime > 1800000){ // 30 phút
     // ===== LONG =====
     if(t.side === "LONG"){
     if(last <= t.entryZone * 1.001){
+        last > prev * 1.002
         confirm = true
     }
 }
 
 if(t.side === "SHORT"){
     if(last >= t.entryZone * 0.999){
+        last < prev * 0.998
         confirm = true
     }
 }
@@ -975,7 +979,7 @@ async function start(){
         console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
 
         // ================= LOOP =================
-setInterval(()=>scanner(),300000)
+setInterval(()=>scanner(),120000)
 setInterval(()=>checkCommand(),10000)
 setInterval(()=>checkTrades(),60000)
 
