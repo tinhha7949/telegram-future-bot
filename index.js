@@ -569,7 +569,7 @@ if(dbAI.total > 20){
 }
 // ===== CHECK BEST CANDIDATE =====
        // ❌ check trước
-if(!best || !best.type){
+if(!best){
     console.log("❌ Invalid best")
     return
 }
@@ -729,17 +729,17 @@ if(dbAI.total > 10){
 // áp vào score
 best.finalScore = (best.finalScore || best.score) + aiScoreAdjust
         // ===== MESSAGE =====
-       let msg = `🔥 BEST SIGNAL
+      // let msg = `🔥 BEST SIGNAL
 
-${best.symbol} (${best.type} - ${best.setup})
-${best.side} | ${best.marketState}
-Entry Zone: ${best.price.toFixed(4)}
-TP: ${best.tp.toFixed(4)}
-SL: ${best.sl.toFixed(4)}
-Trailing SL: ${trailingSL.toFixed(4)}
-Size: ${size.toFixed(2)}
-Score: ${t.score || 0}
-`
+//${best.symbol} (${best.type} - ${best.setup})
+//${best.side} | ${best.marketState}
+//Entry Zone: ${best.price.toFixed(4)}
+//TP: ${best.tp.toFixed(4)}
+//SL: ${best.sl.toFixed(4)}
+//Trailing SL: ${trailingSL.toFixed(4)}
+//Size: ${size.toFixed(2)}
+//Score: ${t.score || 0}
+//`
 
        //onsole.log(msg)
        //et ok = await sendTelegram(msg)
@@ -751,6 +751,7 @@ Score: ${t.score || 0}
 let trade = {
     symbol: best.symbol,
     side: best.side,
+    risk: risk,
 
     // ❌ chưa vào lệnh
     entry: null,
@@ -762,7 +763,8 @@ let trade = {
     sl: best.sl,
     score: best.score,
     waitingEntry: true,   // 🔥 CHỜ 1M CONFIRM
-
+    createdAt: Date.now(),
+    breakoutTriggered: false, // 🔥 BREAKOUT CHƯA TRIGGER
     setup: best.setup,
     marketState: best.marketState,
     volatility: best.volatility,
@@ -770,6 +772,11 @@ let trade = {
 
     time: Date.now(),
     result: "PENDING"
+}
+
+if(activeTrades.some(x => x.symbol === best.symbol)){
+    console.log("⛔ Đã có lệnh chờ coin này")
+    return
 }
 
 activeTrades.push(trade)
@@ -803,26 +810,45 @@ async function checkTrades(){
             let price = +data.at(-1)[4]
             // ================= ENTRY 1M CONFIRM =================
 if(t.waitingEntry){
+    // timeout 1h
+    if(Date.now() - t.createdAt > 60 * 60 * 1000){
+    console.log(`⛔ Timeout entry ${t.symbol}`)
+    t.closed = true
+    continue
+}
 
     let closes = data.map(x => +x[4])
     let last = closes.at(-1)
     let prev = closes.at(-2)
 
     let confirm = false
+    let waitTime = Date.now() - t.time
+
+if(t.waitingEntry && waitTime > 1800000){ // 30 phút
+    console.log(`❌ Hủy lệnh chờ: ${t.symbol}`)
+
+    await trades.updateOne(
+        { symbol: t.symbol, time: t.time },
+        { $set: { result: "CANCEL" } }
+    )
+
+    activeTrades.splice(i,1)
+    continue
+}
 
     // ===== LONG =====
     if(t.side === "LONG"){
-    if(last >= t.entryZone){
+    if(last <= t.entryZone * 1.001){
         confirm = true
     }
 }
 
 if(t.side === "SHORT"){
-    if(last <= t.entryZone){
+    if(last >= t.entryZone * 0.999){
         confirm = true
     }
 }
-
+activeTrades = activeTrades.filter(t => !t.closed)
     // ===== VÀO LỆNH =====
     if(confirm){
     t.entry = price
@@ -832,7 +858,7 @@ if(t.side === "SHORT"){
         ? t.entry - t.atr
         : t.entry + t.atr
 
-    let size = (ACCOUNT_BALANCE * RISK_PER_TRADE) / Math.abs(t.entry - t.sl)
+    let size = t.risk / Math.abs(t.entry - t.sl)
 
     let msg = `🔥 BEST SIGNAL
 
@@ -847,10 +873,10 @@ SL: ${t.sl.toFixed(4)}
 
 Trailing SL: ${trailingSL.toFixed(4)}
 Size: ${size.toFixed(2)}
-Score: ${best.score}
+Score: ${t.score || 0}
 `
-
-    await sendTelegram(msg)
+    console.log(msg)
+    let ok = await sendTelegram(msg)
 
     lastSignalTime[`${t.symbol}-${t.side}`] = Date.now()
 }
