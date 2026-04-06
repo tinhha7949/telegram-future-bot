@@ -15,11 +15,11 @@ const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 90 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 500000 // 100000 hoặc  nếu rác
+const MIN_VOL_15M = 300000 // 100000 hoặc  nếu rác
 
 const DEBUG_AI = false
 
