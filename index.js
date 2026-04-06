@@ -19,7 +19,7 @@ const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
-const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
+const MIN_VOL_15M = 4000000 // 100000 hoặc  nếu rác
 
 const DEBUG_AI = false
 
@@ -193,9 +193,12 @@ async function coreLogic(data15, data1h){
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
 
-    if(volNow < volAvg * 0.4) return null
-    if(volAvg < MIN_VOL_15M) return null
-    
+    let volAvgUSDT = volAvg * price
+    let volNowUSDT = volNow * price
+
+    if(volNowUSDT < volAvgUSDT * 1.1) return null //1.1
+    if(volAvgUSDT < MIN_VOL_15M) return null
+
     // ===== EMA =====
     let ema20 = ema(closes.slice(-60),20)
     let ema50 = ema(closes.slice(-120),50)
@@ -287,7 +290,7 @@ async function coreLogic(data15, data1h){
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(marketState !== "SIDEWAY" && trendStrength < 0.002){
+    if(marketState !== "SIDEWAY" && trendStrength < 0.0015){ //0.002
     return null
 }
 
@@ -716,12 +719,12 @@ if(rr < rrThreshold){
     }
 
     // ❌ không đủ đẹp → loại
-    if(best.marketState !== "TREND_STRONG" && best.finalScore < 105){
+    if(best.marketState !== "TREND_STRONG" && best.finalScore < 95){ // 105
         console.log("❌ không đủ đẹp")
         return
     }
     // 🔥 thêm dòng này
-    if(rr < 1.1 && best.marketState !== "TREND_STRONG"){
+    if(rr < 1.05 && best.marketState !== "TREND_STRONG"){ // 1.1
         console.log("❌ RR hơi thấp")
         return
     }
