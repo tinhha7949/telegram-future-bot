@@ -272,9 +272,10 @@ async function coreLogic(data15, data1h){
     let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
 
     // ===== MOMENTUM =====
-    let last4 = closes.slice(-4)
-    let momentumUp = last4[3]>last4[2] && last4[2]>last4[1]
-    let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
+    let momentumStrength = (closes.at(-1) - closes.at(-4)) / closes.at(-4)
+
+    let momentumUp = momentumStrength > 0.002
+    let momentumDown = momentumStrength < -0.002
 
     let higherLow = lows.at(-2) > lows.at(-5)
     let lowerHigh = highs.at(-2) < highs.at(-5)
@@ -602,11 +603,20 @@ if(best.type !== "EARLY"){
     //}
 }
     // nếu là breakout thì yêu cầu momentum rõ
-    if(best.setup === "BREAKOUT" && best.type !== "EARLY"){
-    if(!best.momentumUp && !best.momentumDown){
-         console.log("❌ momentum kh rõ")
-        return
+    if(best.setup === "BREAKOUT"){
+
+    let momentumStrength = (best.price - prevPrice) / prevPrice
+
+    if(best.momentumUp || best.momentumDown){
+        best.finalScore += 10
+    }else{
+        if(best.marketState === "SIDEWAY"){
+            console.log("❌ ,momentum kh rõ")
+            return
+        }
+        best.finalScore -= 5
     }
+
 }
 
     let weakMomentum =
@@ -699,9 +709,24 @@ if(dbAI.total > 20){
 
 // check
 if(rr < rrThreshold){
-     console.log("❌ rr <rrThreshold")
-    return
+
+    // ❌ RR quá xấu → loại luôn
+    if(rr < 1.0){
+        return
+    }
+
+    // ❌ không đủ đẹp → loại
+    if(best.marketState !== "TREND_STRONG" && best.finalScore < 105){
+        return
+    }
+
+    // ⚠️ còn lại → giảm điểm nhẹ
+    best.finalScore -= 10
 }
+//if(rr < rrThreshold){
+     //console.log("❌ rr <rrThreshold") bật lại nếu kèo rác
+   // return
+//}
 // ===== AI BLOCK =====
 let threshold = 0.48
 
