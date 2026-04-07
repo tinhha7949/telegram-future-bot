@@ -183,6 +183,7 @@ async function getTopSymbols(){
 async function coreLogic(data15, data1h){
 
     let closes = data15.map(x=>+x[4])
+    let opens = data15.map(x=>+x[1])
     let highs  = data15.map(x=>+x[2])
     let lows   = data15.map(x=>+x[3])
     let volumes= data15.map(x=>+x[5])
@@ -197,7 +198,7 @@ async function coreLogic(data15, data1h){
     let volAvgUSDT = volAvg * price
     let volNowUSDT = volNow * price
 
-    if(volNowUSDT < volAvgUSDT * 1.1) return null //1.1
+    if(volNowUSDT < volAvgUSDT * 1.03) return null //1.1
     if(volAvgUSDT < MIN_VOL_15M) return null
 
     // ===== EMA =====
@@ -258,7 +259,7 @@ async function coreLogic(data15, data1h){
 
     let pos = (price - rangeLow) / (rangeHigh - rangeLow)
     if(marketState === "SIDEWAY"){
-    if(pos > 0.3 && pos < 0.7) return null
+    if(pos > 0.4 && pos < 0.6) return null
 }
     let side=null, score=0
     let setupType = null
@@ -308,7 +309,7 @@ let low = lows.at(-1)
 let close = closes.at(-1)
 let open = opens.at(-1)
 
-let range = high - low
+let candleRange = high - low
 let upperWick = high - Math.max(open, close)
 let lowerWick = Math.min(open, close) - low
 
@@ -317,7 +318,9 @@ let fakePump = volNowUSDT > volAvgUSDT * 2
 
 let fakeDump = volNowUSDT > volAvgUSDT * 2
     && lowerWick / range > 0.5
-if(fakePump || fakeDump) return null
+if(fakePump || fakeDump){
+    score -= 20
+}
 
     // ===== SCORE =====
     if(!side){
@@ -886,13 +889,13 @@ if(t.waitingEntry && waitTime > 1800000){ // 30 phút
 
     // ===== LONG =====
     if(t.side === "LONG"){
-    if(last <= t.entryZone * 1.001 && last > t.prevPrice * 1.002){
+    if(last <= t.entryZone * 1.002){
         confirm = true
     }
 }
 
 if(t.side === "SHORT"){
-    if(last >= t.entryZone * 0.999 && last < t.prevPrice * 0.998){
+    if(last >= t.entryZone * 0.998){
         confirm = true
     }
 }
