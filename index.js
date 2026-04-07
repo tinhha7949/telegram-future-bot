@@ -189,6 +189,7 @@ async function coreLogic(data15, data1h){
     let closes1h = data1h.map(x=>+x[4])
 
     let price = closes.at(-1)
+    let prevPrice = closes.at(-2)
     
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
@@ -427,6 +428,7 @@ if(rangeCandle === 0 || body / rangeCandle < 0.2){
         momentumUp,
         momentumDown,
         price: round(price),
+        prevPrice: round(prevPrice),
         sl: round(sl),
         tp: round(tp),
         atr: round(atrVal)
@@ -608,7 +610,7 @@ if(best.type !== "EARLY"){
     // nếu là breakout thì yêu cầu momentum rõ
     if(best.setup === "BREAKOUT"){
 
-    let momentumStrength = (best.price - prevPrice) / prevPrice
+    let momentumStrength = (best.price - best.prevPrice) / best.prevPrice
 
     if(best.momentumUp || best.momentumDown){
         best.finalScore += 10
@@ -873,15 +875,13 @@ if(t.waitingEntry && waitTime > 1800000){ // 30 phút
 
     // ===== LONG =====
     if(t.side === "LONG"){
-    if(last <= t.entryZone * 1.001){
-        last > prev * 1.002
+    if(last <= t.entryZone * 1.001 && last > t.prevPrice * 1.002){
         confirm = true
     }
 }
 
 if(t.side === "SHORT"){
-    if(last >= t.entryZone * 0.999){
-        last < prev * 0.998
+    if(last >= t.entryZone * 0.999 && last < t.prevPrice * 0.998){
         confirm = true
     }
 }
