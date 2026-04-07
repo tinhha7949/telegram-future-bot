@@ -198,7 +198,7 @@ async function coreLogic(data15, data1h){
     let volAvgUSDT = volAvg * price
     let volNowUSDT = volNow * price
 
-    if(volNowUSDT < volAvgUSDT * 1.03) return null //1.1
+    if(volNowUSDT < volAvgUSDT * 0.9) return null //1.1
     if(volAvgUSDT < MIN_VOL_15M) return null
 
     // ===== EMA =====
@@ -306,18 +306,16 @@ async function coreLogic(data15, data1h){
     // Fake breakout
     let high = highs.at(-1)
 let low = lows.at(-1)
-let close = closes.at(-1)
-let open = opens.at(-1)
 
 let candleRange = high - low
 let upperWick = high - Math.max(open, close)
 let lowerWick = Math.min(open, close) - low
-
+    
 let fakePump = volNowUSDT > volAvgUSDT * 2
-    && upperWick / range > 0.5
+    && upperWick / candleRange > 0.5
 
 let fakeDump = volNowUSDT > volAvgUSDT * 2
-    && lowerWick / range > 0.5
+    && lowerWick / candleRange > 0.5
 if(fakePump || fakeDump){
     score -= 20
 }
@@ -412,9 +410,9 @@ if(Math.abs(tp - price) / price < 0.0015){
     return null
 }
         // candle có thân lớn so với toàn cây không (giữ nguyên)
-        let open = +data15.at(-1)[1]
-let close = +data15.at(-1)[4]
-
+    let open = opens.at(-1)
+let close = closes.at(-1)
+    
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
@@ -899,7 +897,6 @@ if(t.side === "SHORT"){
         confirm = true
     }
 }
-activeTrades = activeTrades.filter(t => !t.closed)
     // ===== VÀO LỆNH =====
     if(confirm){
     t.entry = price
