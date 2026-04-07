@@ -248,7 +248,7 @@ async function coreLogic(data15, data1h){
     let nearEma = distEma < 0.0065
 
     if(marketState === "SIDEWAY"){
-        if(nearEma && volNow < volAvg * 0.5) return null
+        if(nearEma && volNowUSDT < volAvgUSDT * 0.5) return null
     }
 
     // ===== STRUCTURE =====
@@ -303,9 +303,20 @@ async function coreLogic(data15, data1h){
         if(bosUp || bosDown) return null
     }
     // Fake breakout
-    let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.98
-let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.02
+    let high = highs.at(-1)
+let low = lows.at(-1)
+let close = closes.at(-1)
+let open = opens.at(-1)
 
+let range = high - low
+let upperWick = high - Math.max(open, close)
+let lowerWick = Math.min(open, close) - low
+
+let fakePump = volNowUSDT > volAvgUSDT * 2
+    && upperWick / range > 0.5
+
+let fakeDump = volNowUSDT > volAvgUSDT * 2
+    && lowerWick / range > 0.5
 if(fakePump || fakeDump) return null
 
     // ===== SCORE =====
@@ -339,7 +350,7 @@ if(fakePump || fakeDump) return null
     if(side==="SHORT" && sweepHigh) score+=35
 
     if(volTrendUp) score+=20
-    if(volNow > volAvg*1.5) score+=15 
+    if(volNowUSDT > volAvgUSDT *1.5) score+=15 
 
     if(side==="LONG" && momentumUp) score+=10
     if(side==="SHORT" && momentumDown) score+=10
