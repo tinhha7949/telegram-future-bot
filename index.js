@@ -198,7 +198,7 @@ async function coreLogic(data15, data1h){
     let volAvgUSDT = volAvg * price
     let volNowUSDT = volNow * price
 
-    if(volNowUSDT < volAvgUSDT * 0.9) return null //1.1
+    if(volNowUSDT < volAvgUSDT * 0.6) return null //1.1
     if(volAvgUSDT < MIN_VOL_15M) return null
 
     // ===== EMA =====
@@ -215,10 +215,10 @@ async function coreLogic(data15, data1h){
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
-    let dynamicThreshold = 100
-    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 90 //90
-    else if(trendHTF > 0.0015) dynamicThreshold = 95 // 95
-    else dynamicThreshold = 105 // 105
+    let dynamicThreshold = 85
+    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 80 //90
+    else if(trendHTF > 0.0015) dynamicThreshold = 85 // 95
+    else dynamicThreshold = 90 // 105
 
     let r = rsi(closes.slice(-50))
     let atrVal = atr(data15.slice(-100))
@@ -242,14 +242,14 @@ async function coreLogic(data15, data1h){
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.002) return null
+    if(marketState === "SIDEWAY" && range < 0.001) return null // 0.002
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
     let nearEma = distEma < 0.0065
 
     if(marketState === "SIDEWAY"){
-        if(nearEma && volNowUSDT < volAvgUSDT * 0.5) return null
+        if(nearEma && volNowUSDT < volAvgUSDT * 0.3) return null //0.5
     }
 
     // ===== STRUCTURE =====
@@ -306,6 +306,8 @@ async function coreLogic(data15, data1h){
     // Fake breakout
     let high = highs.at(-1)
 let low = lows.at(-1)
+    let open = opens.at(-1)
+let close = closes.at(-1)
 
 let candleRange = high - low
 let upperWick = high - Math.max(open, close)
@@ -378,7 +380,7 @@ if(side === "SHORT" && distToSup < 0.002) return null
     let distance = Math.abs(price - ema20)
 
     if(setupType !== "BREAKOUT"){
-    if(marketState !== "TREND_STRONG" && distance > atrVal * 4){
+    if(marketState !== "TREND_STRONG" && distance > atrVal * 2.5){ // *4
         return null
     }
     }
@@ -406,17 +408,14 @@ if(side === "LONG"){
     )
 }
 // kiểm tra khoảng cách giữa tp và price
-if(Math.abs(tp - price) / price < 0.0015){
+if(Math.abs(tp - price) / price < 0.001){ //0.0015
     return null
 }
         // candle có thân lớn so với toàn cây không (giữ nguyên)
-    let open = opens.at(-1)
-let close = closes.at(-1)
-    
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-if(rangeCandle === 0 || body / rangeCandle < 0.2){
+if(rangeCandle === 0 || body / rangeCandle < 0.1){ //0.2
     return null
 }
 
@@ -887,13 +886,13 @@ if(t.waitingEntry && waitTime > 1800000){ // 30 phút
 
     // ===== LONG =====
     if(t.side === "LONG"){
-    if(last <= t.entryZone * 1.002){
+    if(last <= t.entryZone * 1.005){ //2
         confirm = true
     }
 }
 
 if(t.side === "SHORT"){
-    if(last >= t.entryZone * 0.998){
+    if(last >= t.entryZone * 0.995){ //2
         confirm = true
     }
 }
