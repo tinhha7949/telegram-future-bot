@@ -166,7 +166,7 @@ async function getTopSymbols(){
                         )
                     //   .filter(c => Number(c.quoteVolume) > 30000000)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
-                .slice(0,40)
+                .slice(0,50)
                         .map(c => c.symbol)
                 }
 
@@ -198,7 +198,7 @@ async function coreLogic(data15, data1h){
     let volAvgUSDT = volAvg * price
     let volNowUSDT = volNow * price
 
-    if(volNowUSDT < volAvgUSDT * 0.3) return null //1.1
+    if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
     if(volAvgUSDT < MIN_VOL_15M) return null
 
     // ===== EMA =====
@@ -747,7 +747,7 @@ if(dbAI.total > 20){
 if(rr < rrThreshold){
 
     // ❌ RR quá xấu → loại luôn
-    if(rr < 0.95){
+    if(rr < 0.9){
         return
         best.finalScore -= 5
     }
@@ -879,26 +879,21 @@ async function checkTrades(){
             let price = +data.at(-1)[4]
             // ================= ENTRY 1M CONFIRM =================
 if(t.waitingEntry){
-    // timeout 1h
-    if(Date.now() - t.createdAt > 60 * 60 * 1000){
-    console.log(`⛔ Timeout entry ${t.symbol}`)
-    t.closed = true
-    continue
-}
-
-    let closes = data.map(x => +x[4])
-    let last = closes.at(-1)
-    let prev = closes.at(-2)
-
-    let confirm = false
+     // timeout 1h
     let waitTime = Date.now() - t.time
-
-if(t.waitingEntry && waitTime > 1800000){ // 30 phút
-    console.log(`❌ Hủy lệnh chờ: ${t.symbol}`)
+    
+    if(waitTime > 90 * 60 * 1000){
+    console.log(`⛔ Timeout entry ${t.symbol}`)
 
     await trades.updateOne(
         { symbol: t.symbol, time: t.time },
-        { $set: { result: "CANCEL" } }
+        { $set: { result: "CANCEL_ENTRY" } }
+    )
+
+    await sendTelegram2(
+`⛔ TIMEOUT ENTRY ${t.symbol}
+${t.side}
+❌ Không khớp entry `
     )
 
     activeTrades.splice(i,1)
