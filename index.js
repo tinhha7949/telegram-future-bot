@@ -389,7 +389,7 @@ if(!isBreakout){
 
    // if(setupType !== "BREAKOUT"){
     //if(marketState !== "TREND_STRONG" && distance > atrVal * 3.5){ // *4
-        return null
+        //return null
    // }
   //  }
     // ===== SL TP (GIỮ NGUYÊN) =====
@@ -910,13 +910,11 @@ if(t.waitingEntry && waitTime > 1800000){ // 30 phút
    // if(last <= t.entryZone * 1.005){ //2
         confirm = true
     }
-}
 
 if(t.side === "SHORT"){
    // if(last >= t.entryZone * 0.995){ //2
         confirm = true
     }
-}
     // ===== VÀO LỆNH =====
     if(confirm){
     t.entry = price
