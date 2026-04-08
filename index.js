@@ -15,7 +15,7 @@ const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 90 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -198,7 +198,7 @@ async function coreLogic(data15, data1h){
     let volAvgUSDT = volAvg * price
     let volNowUSDT = volNow * price
 
-    if(volNowUSDT < volAvgUSDT * 0.6) return null //1.1
+    if(volNowUSDT < volAvgUSDT * 0.3) return null //1.1
     if(volAvgUSDT < MIN_VOL_15M) return null
 
     // ===== EMA =====
@@ -242,7 +242,7 @@ async function coreLogic(data15, data1h){
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.001) return null // 0.002
+    if(marketState === "SIDEWAY" && range < 0.0025) return null // 0.002
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
@@ -292,7 +292,7 @@ async function coreLogic(data15, data1h){
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(marketState !== "SIDEWAY" && trendStrength < 0.0015){ //0.002
+    if(marketState === "SIDEWAY" && trendStrength < 0.0011){ //0.002
     return null
 }
 
@@ -301,7 +301,7 @@ async function coreLogic(data15, data1h){
         if(sweepHigh){ side="SHORT"; score+=60 }
         if(sweepLow){ side="LONG"; score+=60 }
         if(!side) return null
-        if(bosUp || bosDown) return null
+        //if(bosUp || bosDown) return null
     }
     // Fake breakout
     let high = highs.at(-1)
@@ -378,12 +378,20 @@ if(side === "SHORT" && distToSup < 0.002) return null
 }
     // ===== ANTI FOMO (GỌN - KHÔNG TRÙNG) =====
     let distance = Math.abs(price - ema20)
+    // ===== ANTI FOMO =====
+let isBreakout = setupType === "BREAKOUT"
 
-    if(setupType !== "BREAKOUT"){
-    if(marketState !== "TREND_STRONG" && distance > atrVal * 2.5){ // *4
+if(!isBreakout){
+    if(marketState !== "TREND_STRONG" && distance > atrVal * 3.5){
         return null
     }
-    }
+}
+
+   // if(setupType !== "BREAKOUT"){
+    //if(marketState !== "TREND_STRONG" && distance > atrVal * 3.5){ // *4
+        return null
+   // }
+  //  }
     // ===== SL TP (GIỮ NGUYÊN) =====
     let swingLow = Math.min(...lows.slice(-20))
     let swingHigh = Math.max(...highs.slice(-20))
@@ -394,18 +402,30 @@ if(side === "SHORT" && distToSup < 0.002) return null
 
     let risk = Math.abs(price - sl)
 
-let tp
+let rawTP = side === "LONG"
+    ? price + risk * RR_THRESHOLD
+    : price - risk * RR_THRESHOLD
 
-if(side === "LONG"){
-    tp = Math.min(
-        price + risk * RR_THRESHOLD,
-        resistance
-    )
+if(marketState === "SIDEWAY"){
+
+    if(side === "LONG"){
+        tp = Math.min(rawTP, resistance * 0.999)
+    }else{
+        tp = Math.max(rawTP, support * 1.001)
+    }
+
+}else if(marketState === "TREND_WEAK"){
+
+    // clamp nhẹ
+    if(side === "LONG"){
+        tp = rawTP > resistance ? resistance * 1.002 : rawTP
+    }else{
+        tp = rawTP < support ? support * 0.998 : rawTP
+    }
+
 }else{
-    tp = Math.max(
-        price - risk * RR_THRESHOLD,
-        support
-    )
+    // TREND_STRONG
+    tp = rawTP
 }
 // kiểm tra khoảng cách giữa tp và price
 if(Math.abs(tp - price) / price < 0.001){ //0.0015
@@ -727,15 +747,16 @@ if(dbAI.total > 20){
 if(rr < rrThreshold){
 
     // ❌ RR quá xấu → loại luôn
-    if(rr < 1.0){
+    if(rr < 0.95){
         return
+        best.finalScore -= 5
     }
 
     // ❌ không đủ đẹp → loại
-    if(best.marketState !== "TREND_STRONG" && best.finalScore < 95){ // 105
-        console.log("❌ không đủ đẹp")
-        return
-    }
+   // if(best.marketState !== "TREND_STRONG" && best.finalScore < 95){ // 105
+        //console.log("❌ không đủ đẹp")
+       // return
+  //  }
     // 🔥 thêm dòng này
    // if(rr < 1.05 && best.marketState !== "TREND_STRONG"){ // 1.1
        // console.log("❌ RR hơi thấp")
@@ -886,13 +907,13 @@ if(t.waitingEntry && waitTime > 1800000){ // 30 phút
 
     // ===== LONG =====
     if(t.side === "LONG"){
-    if(last <= t.entryZone * 1.005){ //2
+   // if(last <= t.entryZone * 1.005){ //2
         confirm = true
     }
 }
 
 if(t.side === "SHORT"){
-    if(last >= t.entryZone * 0.995){ //2
+   // if(last >= t.entryZone * 0.995){ //2
         confirm = true
     }
 }
