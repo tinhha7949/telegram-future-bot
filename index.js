@@ -737,10 +737,10 @@ if(rr < rrThreshold){
         return
     }
     // 🔥 thêm dòng này
-    if(rr < 1.05 && best.marketState !== "TREND_STRONG"){ // 1.1
-        console.log("❌ RR hơi thấp")
-        return
-    }
+   // if(rr < 1.05 && best.marketState !== "TREND_STRONG"){ // 1.1
+       // console.log("❌ RR hơi thấp")
+       // return
+    //}
     // ⚠️ còn lại → giảm điểm nhẹ
     best.finalScore -= 10
 }
