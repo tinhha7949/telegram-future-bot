@@ -178,7 +178,33 @@ async function getTopSymbols(){
 
     return null
 }
+// ============== dyminic minvol15m========
+function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
+    let base = MIN_VOL_15M
+
+    // coin giá thấp → cần vol cao hơn
+    if(price < 1){
+        base *= 1.5
+    }
+
+    // coin giá cao → giảm yêu cầu
+    if(price > 100){
+        base *= 0.7
+    }
+
+    // volatility cao → giảm yêu cầu
+    if(atrRatio > 0.005){
+        base *= 0.8
+    }
+
+    // volatility thấp → tăng yêu cầu
+    if(atrRatio < 0.002){
+        base *= 1.3
+    }
+
+    return base
+}
 // ================= CORE =================
 async function coreLogic(data15, data1h){
 
@@ -198,8 +224,31 @@ async function coreLogic(data15, data1h){
     let volAvgUSDT = volAvg * price
     let volNowUSDT = volNow * price
 
-    if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
-    if(volAvgUSDT < MIN_VOL_15M) return null
+    let atrVal = atr(data15.slice(-100))
+let atrRatio = atrVal / price
+    let volRatio = volNowUSDT / volAvgUSDT //cmt dòng này nếu bỏ dymic
+
+let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
+
+    // ===== DYNAMIC VOLUME FILTER =====
+if(atrRatio < 0.002){
+    // sideway → cần volume mạnh
+    if(volRatio < 0.8) return null
+}
+else if(atrRatio > 0.005){
+    // trend mạnh → nới lỏng
+    if(volRatio < 0.4) return null // cũ 0.5
+}
+else{
+    // bình thường
+    if(volRatio < 0.6) return null
+}
+//if(volNowUSDT < volAvgUSDT * 0.6) return null
+    // ===== FILTER VOLUME =====
+if(volAvgUSDT < dynamicMinVol) return null
+
+    //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
+    //if(volAvgUSDT < MIN_VOL_15M) return null
 
     // ===== EMA =====
     let ema20 = ema(closes.slice(-60),20)
@@ -221,7 +270,7 @@ async function coreLogic(data15, data1h){
     else dynamicThreshold = 90 // 105
 
     let r = rsi(closes.slice(-50))
-    let atrVal = atr(data15.slice(-100))
+   // let atrVal = atr(data15.slice(-100))
 
     let volatility = "LOW"
     if(atrVal / price > 0.0045) volatility = "HIGH"
