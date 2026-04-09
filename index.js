@@ -815,8 +815,9 @@ if(rr < rrThreshold){
 
     // ❌ RR quá xấu → loại luôn
     if(rr < 1.0){
-        return
+       // return
         best.finalScore -= 5
+          return
     }
 
     // ❌ không đủ đẹp → loại
@@ -981,8 +982,8 @@ ${t.side}
     // ===== LONG =====
     let confirm = false
 
-let Buffer = t.atr * 0.3   // cho vào theo volatility
-let maxChase    = t.atr * 2 // giới hạn kh đu
+let entryBuffer = t.atr * 0.3   // cho vào theo volatility
+let entrymaxChase    = t.atr * 2 // giới hạn kh đu
     
 if(t.side === "LONG"){
     if(price <= t.entryZone + entryBuffer){
@@ -1067,7 +1068,7 @@ if(!t.entry) continue
             }
         
 
-            // timeout 6h
+            // timeout 12h
 let isTimeout = Date.now() - t.time > 43200000
 
 // ===== TIMEOUT TRƯỚC =====
