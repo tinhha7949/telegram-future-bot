@@ -978,24 +978,27 @@ ${t.side}
     // ===== LONG =====
     let confirm = false
 
-let buffer = t.atr * 0.3   // 👈 độ lệch theo volatility
-
+let buffer = t.atr * 0.3   // cho vào theo volatility
+let maxChase    = t.atr * 2 // giới hạn kh đu
+    
 if(t.side === "LONG"){
-    if(price <= t.entryZone + buffer){
+    if(price <= t.entryZone + entrybuffer){
         confirm = true
     }
      // ❌ tránh đu đỉnh
-        if(price > t.entryZone * 1.03){
+          if(price > t.entryZone + maxChase){
+        //if(price > t.entryZone * 1.03){
             continue
         }
 }
 
 if(t.side === "SHORT"){
-    if(price >= t.entryZone - buffer){
+    if(price >= t.entryZone - entrybuffer){
         confirm = true
     }
      // ❌ tránh đu đáy
-        if(price < t.entryZone * 0.97){
+          if(price < t.entryZone - maxChase){
+        //if(price < t.entryZone * 0.97){
             continue
         }
 }
