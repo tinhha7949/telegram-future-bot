@@ -978,15 +978,37 @@ ${t.side}
     // ===== LONG =====
     let confirm = false
 
-    if(t.side === "LONG"){
-   // if(last <= t.entryZone * 1.005){ //2
+let buffer = t.atr * 0.3   // 👈 độ lệch theo volatility
+
+if(t.side === "LONG"){
+    if(price <= t.entryZone + buffer){
         confirm = true
     }
+     // ❌ tránh đu đỉnh
+        if(price > t.entryZone * 1.03){
+            continue
+        }
+}
 
 if(t.side === "SHORT"){
-   // if(last >= t.entryZone * 0.995){ //2
+    if(price >= t.entryZone - buffer){
         confirm = true
     }
+     // ❌ tránh đu đáy
+        if(price < t.entryZone * 0.97){
+            continue
+        }
+}
+
+   // if(t.side === "LONG"){
+   // if(last <= t.entryZone * 1.005){ //2
+       // confirm = true
+  //  }
+
+//if(t.side === "SHORT"){
+   // if(last >= t.entryZone * 0.995){ //2
+       // confirm = true
+  //  }
     // ===== VÀO LỆNH =====
     if(confirm){
     t.entry = price
