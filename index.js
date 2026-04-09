@@ -982,8 +982,16 @@ ${t.side}
     // ===== LONG =====
     let confirm = false
 
-let entryBuffer = t.atr * 0.3   // cho vào theo volatility
-let entrymaxChase    = t.atr * 2 // giới hạn kh đu
+let atrRatio = t.atr / price
+
+atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02)) // 🔥 giảm max
+
+let entryBuffer = t.atr * (0.4 + atrRatio * 15)
+let maxChase    = t.atr * (2 + atrRatio * 40)
+
+// 🔥 clamp thêm lần cuối
+entryBuffer = Math.min(entryBuffer, t.atr * 0.7)
+maxChase    = Math.min(maxChase, t.atr * 3)
     
 if(t.side === "LONG"){
     if(price <= t.entryZone + entryBuffer){
