@@ -974,15 +974,18 @@ ${t.side}
     activeTrades.splice(i,1)
     continue
 }
-
+    // ATR 
+    if(!t.atr || !t.entryZone){
+    continue
+}
     // ===== LONG =====
     let confirm = false
 
-let buffer = t.atr * 0.3   // cho vào theo volatility
+let Buffer = t.atr * 0.3   // cho vào theo volatility
 let maxChase    = t.atr * 2 // giới hạn kh đu
     
 if(t.side === "LONG"){
-    if(price <= t.entryZone + entrybuffer){
+    if(price <= t.entryZone + entryBuffer){
         confirm = true
     }
      // ❌ tránh đu đỉnh
@@ -993,7 +996,7 @@ if(t.side === "LONG"){
 }
 
 if(t.side === "SHORT"){
-    if(price >= t.entryZone - entrybuffer){
+    if(price >= t.entryZone - entryBuffer){
         confirm = true
     }
      // ❌ tránh đu đáy
