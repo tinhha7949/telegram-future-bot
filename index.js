@@ -284,7 +284,7 @@ if(volAvgUSDT < dynamicMinVol) return null
 
     // ===== MARKET =====
     let emaGap = Math.abs(ema20 - ema50) / price
-    let atrRatio = atrVal / price
+    //let atrRatio = atrVal / price
 
     let marketState = "SIDEWAY"
     if(emaGap > 0.004 && atrRatio > 0.0045) marketState = "TREND_STRONG"
@@ -976,6 +976,8 @@ ${t.side}
 }
 
     // ===== LONG =====
+    let confirm = false
+
     if(t.side === "LONG"){
    // if(last <= t.entryZone * 1.005){ //2
         confirm = true
