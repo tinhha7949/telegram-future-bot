@@ -15,7 +15,7 @@ const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 90 // 110
 const EARLY_THRESHOLD = 55  // 60
-const RR_THRESHOLD = 1.25 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -26,7 +26,7 @@ const DEBUG_AI = false
 let lastUpdateId = 0
 let cachedSymbols = null
 let lastSymbolsUpdate = 0
-let lastSignalTime = {}
+//let lastSignalTime = {}
 let isScanning = false
 // ===== ACTIVE TRADES =====
 let activeTrades = []
@@ -242,7 +242,7 @@ async function coreLogic(data15, data1h){
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.0025) return null // 0.002
+    if(marketState === "SIDEWAY" && range < 0.0035) return null // 0.002
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
@@ -329,15 +329,24 @@ if(fakePump || fakeDump){
 }
 
     // ===== SETUP =====
-    if(side==="LONG" && bosUp){
-        score += 40
-        setupType = "BREAKOUT"
-    }
+    if(side==="LONG" && bosUp && volNowUSDT > volAvgUSDT * 1.3){
+    score += 50
+    setupType = "BREAKOUT"
+}
 
-    if(side==="SHORT" && bosDown){
-        score += 40
-        setupType = "BREAKOUT"
-    }
+if(side==="SHORT" && bosDown && volNowUSDT > volAvgUSDT * 1.3){
+    score += 50
+    setupType = "BREAKOUT"
+}
+    //if(side==="LONG" && bosUp){
+       // score += 40
+       // setupType = "BREAKOUT"
+   // }
+
+   // if(side==="SHORT" && bosDown){
+      //  score += 40
+       // setupType = "BREAKOUT"
+    //}
 
     if(side==="LONG" && nearEma){
         score += 20
@@ -582,7 +591,16 @@ for (let s of signals){
 // let main = candidates.find(c => c.type === "MAIN")
 
 let best = candidates[0]
+// ===== BLOCK COIN NẾU CHƯA KẾT THÚC LỆNH =====
+let existing = await trades.findOne({
+    symbol: best.symbol,
+    result: "PENDING"
+})
 
+if(existing){
+    console.log(`⛔ ${best.symbol} đang có lệnh chưa kết thúc`)
+    return
+}
 // ===== CHECK DB AI =====
 let dbAI = await getDBStats(
     best.setup,
@@ -663,18 +681,18 @@ if(best.type !== "EARLY"){
     return
 }
         // ===== BLOCK DUPLICATE SIGNAL =====
-let nowTime = Date.now()
+//let nowTime = Date.now()
 
-let symbolKey = `${best.symbol}-${best.side}`
+//let symbolKey = `${best.symbol}-${best.side}`
 
-if(lastSignalTime[symbolKey]){
-    let diff = Date.now() - lastSignalTime[symbolKey]
+//if(lastSignalTime[symbolKey]){
+   // let diff = Date.now() - lastSignalTime[symbolKey]
 
-    if(diff < 3600000){
-        console.log(`⛔ Skip trùng coin: ${symbolKey}`)
-        return
-    }
-}
+   // if(diff < 3600000){
+       // console.log(`⛔ Skip trùng coin: ${symbolKey}`)
+        //return
+    //}
+//}
 
 
         // ===== RISK =====
@@ -747,7 +765,7 @@ if(dbAI.total > 20){
 if(rr < rrThreshold){
 
     // ❌ RR quá xấu → loại luôn
-    if(rr < 0.9){
+    if(rr < 1.0){
         return
         best.finalScore -= 5
     }
@@ -842,11 +860,19 @@ let trade = {
     time: Date.now(),
     result: "PENDING"
 }
+        
+let isActive = activeTrades.some(x => 
+    x.symbol === best.symbol && x.result === "PENDING"
+)
 
-if(activeTrades.some(x => x.symbol === best.symbol)){
-    console.log("⛔ Đã có lệnh chờ coin này")
+if(isActive){
+    console.log("⛔ RAM đang có lệnh:", best.symbol)
     return
 }
+//if(activeTrades.some(x => x.symbol === best.symbol)){
+   // console.log("⛔ Đã có lệnh chờ coin này")
+   // return
+//}
 
 activeTrades.push(trade)
 if(activeTrades.length > 50){
@@ -939,7 +965,7 @@ Score: ${t.score || 0}
     console.log(msg)
     let ok = await sendTelegram(msg)
 
-    lastSignalTime[`${t.symbol}-${t.side}`] = Date.now()
+   // lastSignalTime[`${t.symbol}-${t.side}`] = Date.now()
 }
 
     // ❌ chưa confirm thì bỏ qua
@@ -963,7 +989,7 @@ if(!t.entry) continue
         
 
             // timeout 6h
-let isTimeout = Date.now() - t.time > 21600000
+let isTimeout = Date.now() - t.time > 43200000
 
 // ===== TIMEOUT TRƯỚC =====
 if(isTimeout){
@@ -977,7 +1003,7 @@ if(isTimeout){
     await sendTelegram2(
 `⏳ TIMEOUT ${t.symbol}
 ${t.side}
-⛔ Không chạm TP/SL trong 6h`
+⛔ Không chạm TP/SL trong 12h`
     )
 
     activeTrades.splice(i,1)
