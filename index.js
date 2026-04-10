@@ -373,8 +373,8 @@ if(fakePump || fakeDump){
 
     // ===== SCORE =====
     if(!side){
-    if(trendLong){ side="LONG"; score+=25 } //side="LONG"; 
-    else if(trendShort){ side="SHORT"; score+=25 } //side="SHORT";
+    if(trendLong){ side="LONG"; score+=15 } //side="LONG"; 
+    else if(trendShort){ side="SHORT"; score+=15 } //side="SHORT";
 }
 if(trendLong && side==="LONG") score += 10
 if(trendShort && side==="SHORT") score += 10
