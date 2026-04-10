@@ -341,7 +341,7 @@ if(volAvgUSDT < dynamicMinVol) return null
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(marketState === "SIDEWAY" && trendStrength < 0.0011){ //0.002
+    if(marketState === "SIDEWAY" && trendStrength < 0.0008){ //0.0011
     return null
 }
 
@@ -373,9 +373,12 @@ if(fakePump || fakeDump){
 
     // ===== SCORE =====
     if(!side){
-    if(trendLong){ side="LONG"; score+=50 }
-    else if(trendShort){ side="SHORT"; score+=50 }
+    if(trendLong){ side="LONG"; score+=25 } //side="LONG"; 
+    else if(trendShort){ side="SHORT"; score+=25 } //side="SHORT";
 }
+if(trendLong && side==="LONG") score += 10
+if(trendShort && side==="SHORT") score += 10
+if(!side) return null
 
     // ===== SETUP =====
     if(side==="LONG" && bosUp && volNowUSDT > volAvgUSDT * 1.3){
