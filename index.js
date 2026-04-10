@@ -376,8 +376,8 @@ if(fakePump || fakeDump){
     if(trendLong){ side="LONG"; score+=15 } //side="LONG"; 
     else if(trendShort){ side="SHORT"; score+=15 } //side="SHORT";
 }
-if(trendLong && side==="LONG") score += 10
-if(trendShort && side==="SHORT") score += 10
+if(trendLong && side==="LONG") score += 5
+if(trendShort && side==="SHORT") score += 5
 if(!side) return null
 
     // ===== SETUP =====
@@ -817,7 +817,7 @@ if(dbAI.total > 20){
 if(rr < rrThreshold){
 
     // ❌ RR quá xấu → loại luôn
-    if(rr < 1.0){
+    if(rr < 1.1){
        // return
         best.finalScore -= 5
           return
