@@ -295,7 +295,7 @@ if(volAvgUSDT < dynamicMinVol) return null
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
-    let nearEma = distEma < 0.0065
+    let nearEma = distEma < 0.0055
 
     if(marketState === "SIDEWAY"){
         if(nearEma && volNowUSDT < volAvgUSDT * 0.3) return null //0.5
@@ -335,6 +335,15 @@ if(volAvgUSDT < dynamicMinVol) return null
     let lowerHigh = highs.at(-2) < highs.at(-5)
 
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
+    
+    //========= Anti Chase======
+    let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+
+// ❌ CẤM SHORT nếu vừa dump mạnh
+if(lastMove < -0.025 && side === "SHORT") return null
+
+// ❌ CẤM LONG nếu vừa pump mạnh
+if(lastMove > 0.025 && side === "LONG") return null
 
     // ===== TREND FILTER =====
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
@@ -409,6 +418,16 @@ if(side==="SHORT" && bosDown && volNowUSDT > volAvgUSDT * 1.3){
         score += 20
         if(!setupType) setupType = "PULLBACK"
     }
+    // ❌ không có hồi → không short
+if(side === "SHORT"){
+    let pulledBack = highs.at(-2) > highs.at(-4)
+    if(!pulledBack) return null
+}
+
+if(side === "LONG"){
+    let pulledBack = lows.at(-2) < lows.at(-4)
+    if(!pulledBack) return null
+}
 
     if(side==="LONG" && sweepLow) score+=35
     if(side==="SHORT" && sweepHigh) score+=35
