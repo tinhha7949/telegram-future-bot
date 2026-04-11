@@ -677,7 +677,7 @@ let dbAI = await getDBStats(
     best.volatility
 )
 // ===== AI MARKET ADAPTIVE =====
-if(dbAI.total > 20){
+if(dbAI.total > 40){
 
     if(best.marketState === "SIDEWAY"){
         if(dbAI.winrate < 0.48){
