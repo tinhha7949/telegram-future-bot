@@ -13,11 +13,15 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
+const SCORE_THRESHOLD = 90 // 110
+const EARLY_THRESHOLD = 55  // 60
 const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
+
+const DEBUG_AI = false
 
 let lastUpdateId = 0
 let cachedSymbols = null
@@ -201,81 +205,6 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
     return base
 }
-// ================= GPT =================
-const OpenAI = require("openai")
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-
-async function askGPT(signal){
-
-   let prompt = `
-You are a professional crypto trader.
-
-Only take HIGH probability trades.
-
-Reject:
-- weak trend
-- low volume
-- fake breakout
-- bad RR
-
-Signal:
-
-Symbol: ${signal.symbol}
-Side: ${signal.side}
-Setup: ${signal.setup}
-Market: ${signal.marketState}
-
-RSI: ${signal.rsi}
-TrendStrength: ${signal.trendStrength}
-VolumeRatio: ${signal.volRatio}
-
-Entry: ${signal.price}
-SL: ${signal.sl}
-TP: ${signal.tp}
-
-Task:
-1. Decide TAKE or SKIP
-2. Adjust Entry / SL / TP SLIGHTLY to improve RR
-
-Rules:
-- Do NOT change more than 3%
-- Keep RR >= 1.3
-- Avoid chasing price
-
-Return JSON:
-{
-  "action": "TAKE" | "SKIP",
-  "score": number (0-10),
-  "confidence": number (0-1),
-  "entry": number,
-  "sl": number,
-  "tp": number,
-  "reason": "short"
-}
-`
-
-    try{
-        let res = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-                { role: "system", content: "Always return valid JSON" },
-                { role: "user", content: prompt }
-            ],
-            temperature: 0.2
-        })
-
-       try{
-    return JSON.parse(res.choices[0].message.content)
-}catch(e){
-    console.log("❌ GPT JSON lỗi")
-    return null
-}
-
-    }catch(e){
-        console.log("❌ GPT:", e.message)
-        return null
-    }
-}
 // ================= CORE =================
 async function coreLogic(data15, data1h){
 
@@ -329,6 +258,17 @@ if(volAvgUSDT < dynamicMinVol) return null
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
 
+    // ===== TREND =====
+    let trendHTF = Math.abs(ema20_1h - ema50_1h) / price
+    let trendLTF = Math.abs(ema20 - ema50) / price
+
+    //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
+
+    let dynamicThreshold = 85
+    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 80 //90
+    else if(trendHTF > 0.0015) dynamicThreshold = 85 // 95
+    else dynamicThreshold = 90 // 105
+
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
 
@@ -369,14 +309,6 @@ if(volAvgUSDT < dynamicMinVol) return null
     let pos = (price - rangeLow) / (rangeHigh - rangeLow)
     if(marketState === "SIDEWAY"){
     if(pos > 0.4 && pos < 0.6) return null
-    //========= Anti Chase======
-    let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-
-// ❌ CẤM SHORT nếu vừa dump mạnh
-if(lastMove < -0.025 && side === "SHORT") return null
-
-// ❌ CẤM LONG nếu vừa pump mạnh
-if(lastMove > 0.025 && side === "LONG") return null
 }
     let side=null, score=0
     let setupType = null
@@ -404,6 +336,15 @@ if(lastMove > 0.025 && side === "LONG") return null
 
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
     
+    //========= Anti Chase======
+    let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+
+// ❌ CẤM SHORT nếu vừa dump mạnh
+if(lastMove < -0.025 && side === "SHORT") return null
+
+// ❌ CẤM LONG nếu vừa pump mạnh
+if(lastMove > 0.025 && side === "LONG") return null
+
     // ===== TREND FILTER =====
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
@@ -547,7 +488,6 @@ let rawTP = side === "LONG"
 
 if(marketState === "SIDEWAY"){
 
-    let tp
     if(side === "LONG"){
         tp = Math.min(rawTP, resistance * 0.999)
     }else{
@@ -592,14 +532,12 @@ if(rangeCandle === 0 || body / rangeCandle < 0.1){ //0.2
     return {
         side,
         score,
+        dynamicThreshold,
         setup: setupType,
         marketState,
         volatility,
         momentumUp,
         momentumDown,
-        rsi: r,
-        trendStrength: trendStrength,
-        volRatio: volRatio,
         price: round(price),
         prevPrice: round(prevPrice),
         sl: round(sl),
@@ -671,66 +609,40 @@ async function scanner(){
             return
         }
 
-        // ===== GPT AI =====
-let filtered = signals.filter(s => s.score >= 50)
-filtered = filtered
-    .sort((a,b)=>b.score - a.score)
-    .slice(0,5)
-
-let aiResults = await Promise.all(
-    filtered.map(s => askGPT(s))
-)
-
+        // ===== BUILD CANDIDATES + AI =====
 let candidates = []
+let dbCache = {}
 
-for(let i = 0; i < filtered.length; i++){
+for (let s of signals){
 
-    let s = filtered[i]
-    let ai = aiResults[i]
+    // ===== MAIN =====
+    let keyMain = `${s.setup}-${s.marketState}-${s.side}-${s.volatility}`
 
-    if(!ai) continue
-    if(ai.action !== "TAKE") continue
+    if(!dbCache[keyMain]){
+        dbCache[keyMain] = await getDBStats(
+            s.setup,
+            s.marketState,
+            s.side,
+            s.volatility
+        )
+    }
 
-    function clamp(val, min, max){
-    return Math.max(min, Math.min(val, max))
-}
+    let dbMain = dbCache[keyMain]
 
-let baseEntry = s.price
-let baseSL = s.sl
-let baseTP = s.tp
+    let weightMain = Math.min(dbMain.total / 50, 1)
+    let aiMain = (dbMain.winrate - 0.5) * 200 * weightMain
 
-let finalEntry = baseEntry
-let finalSL = baseSL
-let finalTP = baseTP
+    if(dbMain.total < 15) aiMain *= 0.5
 
-if(
-    typeof ai.entry === "number" &&
-    typeof ai.sl === "number" &&
-    typeof ai.tp === "number"
-){
+    let finalMain = s.score + aiMain
 
-    finalEntry = clamp(ai.entry, baseEntry * 0.98, baseEntry * 1.02)
-    finalSL    = clamp(ai.sl, baseSL * 0.95, baseSL * 1.05)
-    finalTP    = clamp(ai.tp, baseTP * 0.9, baseTP * 1.1)
-}
-let newRR = Math.abs(finalTP - finalEntry) / Math.abs(finalEntry - finalSL)
-
-if(newRR < 1.2){
-    continue
-}
-
-let finalScore = s.score + ai.score * 10
-
-candidates.push({
-    ...s,
-    price: finalEntry,
-    sl: finalSL,
-    tp: finalTP,
-    finalScore,
-    aiScore: ai.score,
-    aiConfidence: ai.confidence,
-    aiReason: ai.reason
-})
+    if(finalMain >= s.dynamicThreshold){
+        candidates.push({
+            ...s,
+            finalScore: finalMain,
+            type: "MAIN"
+        })
+    }
 }
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
@@ -760,6 +672,29 @@ if(existing){
     console.log(`⛔ ${best.symbol} đang có lệnh chưa kết thúc`)
     return
 }
+// ===== CHECK DB AI =====
+let dbAI = await getDBStats(
+    best.setup,
+    best.marketState,
+    best.side,
+    best.volatility
+)
+// ===== AI MARKET ADAPTIVE =====
+if(dbAI.total > 20){
+
+    if(best.marketState === "SIDEWAY"){
+        if(dbAI.winrate < 0.48){
+            best.finalScore -= 15
+        }
+    }
+
+    if(best.marketState === "TREND_STRONG"){
+        if(dbAI.winrate > 0.55){
+            best.finalScore += 10
+        }
+    }
+
+}
 // ===== CHECK BEST CANDIDATE =====
        // ❌ check trước
 if(!best){
@@ -767,6 +702,31 @@ if(!best){
     return
 }
 
+// ===== EARLY =====
+//if(best.type === "EARLY"){
+
+   // let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
+
+    //if(best.score < EARLY_THRESHOLD){
+       // console.log("❌ Early score thấp")
+        //return
+    //}
+
+    //if(rr < 1.1){
+        //return
+   // }
+//}
+
+// ===== MAIN =====
+if(best.type !== "EARLY"){
+
+    let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
+
+    //if(rr < RR_THRESHOLD){
+        //console.log("❌ RR MAIN fail")
+        //return
+    //}
+}
     // nếu là breakout thì yêu cầu momentum rõ
     if(best.setup === "BREAKOUT"){
 
@@ -788,7 +748,7 @@ if(!best){
     Math.abs(best.price - best.sl)/best.price < 0.0015 &&
     !best.momentumUp && !best.momentumDown
     
-    if(best.setup === "PULLBACK" && weakMomentum){
+    if(best.setup === "PULLBACK" && weakMomentum && best.type !== "EARLY"){
     return
 }
         // ===== BLOCK DUPLICATE SIGNAL =====
@@ -809,8 +769,19 @@ if(!best){
         // ===== RISK =====
         let multiplier = 1
 
+if(dbAI.total > 20){
+
+    let edge = dbAI.winrate - 0.5
+
+    multiplier = 1 + edge * 2   // scale mềm
+
+    // clamp lại
+    if(multiplier > 1.5) multiplier = 1.5
+    if(multiplier < 0.5) multiplier = 0.5
+}
 let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
 
+        if(best.type === "EARLY") risk *= 0.5
 // ===== CHECK SL TP TRƯỚC =====
 if(!best.sl || !best.tp){
     console.log("❌ Missing SL TP")
@@ -836,15 +807,40 @@ let rr = best.side === "LONG"
     ? (best.tp - best.price) / (best.price - best.sl)
     : (best.price - best.tp) / (best.sl - best.price)
 
+// ===== AI RR ADAPTIVE =====
+if(dbAI.total > 20){
+
+    if(dbAI.winrate > 0.6){
+        rr *= 0.9   // dễ vào hơn (TP gần hơn)
+    }
+
+    if(dbAI.winrate < 0.45){
+        rr *= 1.1   // khó hơn (đòi RR cao hơn)
+    }
+}
+        // === RR ====
+let rrThreshold = RR_THRESHOLD
+
+if(dbAI.total > 20){
+
+    if(dbAI.winrate > 0.6){
+        rrThreshold = 1.1   // dễ hơn
+    }
+
+    if(dbAI.winrate < 0.45){
+        rrThreshold = 1.35  // khó hơn
+    }
+}
 
 // check
-if(rr < RR_THRESHOLD){
+if(rr < rrThreshold){
 
     // ❌ RR quá xấu → loại luôn
-    if(rr < 1.2) return
-if(rr < RR_THRESHOLD){
-    best.finalScore -= 10
-}
+    if(rr < 1.05){
+       // return
+        best.finalScore -= 5
+          return
+    }
 
     // ❌ không đủ đẹp → loại
    // if(best.marketState !== "TREND_STRONG" && best.finalScore < 95){ // 105
@@ -863,6 +859,34 @@ if(rr < RR_THRESHOLD){
      //console.log("❌ rr <rrThreshold") bật lại nếu kèo rác
    // return
 //}
+// ===== AI BLOCK =====
+let threshold = 0.48
+
+if(best.marketState === "TREND_STRONG"){
+    threshold = 0.44
+}
+
+if(best.marketState === "SIDEWAY"){
+    threshold = 0.52
+}
+
+let aiScoreAdjust = 0
+
+if(dbAI.total > 10){
+
+    let edge = dbAI.winrate - 0.5  // lợi thế
+
+    // scale nhẹ để không phá logic gốc
+    aiScoreAdjust = edge * 100   // ~ -10 → +10
+
+    // confidence theo sample
+    let confidence = Math.min(dbAI.total / 50, 1)
+
+    aiScoreAdjust *= confidence
+}
+
+// áp vào score
+best.finalScore = (best.finalScore || best.score) + aiScoreAdjust
         // ===== MESSAGE =====
       // let msg = `🔥 BEST SIGNAL
 
@@ -887,9 +911,6 @@ let trade = {
     symbol: best.symbol,
     side: best.side,
     risk: risk,
-    aiScore: best.aiScore,
-    aiConfidence: best.aiConfidence,
-    aiReason: best.aiReason,
 
     // ❌ chưa vào lệnh
     entry: null,
@@ -999,10 +1020,10 @@ if(t.side === "LONG"){
         confirm = true
     }
      // ❌ tránh đu đỉnh
-         if(price > t.entryZone + maxChase){
-    activeTrades.splice(i,1)
-    continue
-}
+          if(price > t.entryZone + maxChase){
+        //if(price > t.entryZone * 1.03){
+            continue
+        }
 }
 
 if(t.side === "SHORT"){
@@ -1047,9 +1068,9 @@ TP: ${t.tp.toFixed(4)}
 
 SL: ${t.sl.toFixed(4)}
 
-🤖 AI Score: ${t.aiScore || "N/A"}
-🎯 Confidence: ${t.aiConfidence || "N/A"}
-🧠 ${t.aiReason || ""}
+Trailing SL: ${trailingSL.toFixed(4)}
+Size: ${size.toFixed(2)}
+Score: ${t.score || 0}
 `
     console.log(msg)
     let ok = await sendTelegram(msg)
@@ -1160,6 +1181,152 @@ setInterval(()=>checkTrades(),60000)
     }catch(e){
         console.log("❌ Start error:", e.message)
     }
+}
+
+async function getDBStats(setup, market, side, volatility){
+
+    if(!trades){
+        return { winrate: 0.5, total: 0 }
+    }
+
+    try{
+        const col = trades
+
+        // ===== lấy dữ liệu db =====
+        let totalDB = await col.countDocuments({
+            result: { $ne: "PENDING" }
+        })
+
+        let minSample = Math.min(Math.max(20, Math.floor(totalDB * 0.1)), 50)
+
+        // ===== QUERY CHÍNH =====
+        let data = await col.find({
+            setup,
+            marketState: market,
+            side,
+            result: { $ne: "PENDING" }
+        }).toArray()
+
+        // ===== FILTER VOL =====
+        let filtered = data.filter(t => !t.volatility || t.volatility === volatility)
+
+        // ===== ƯU TIÊN VOL =====
+        if(filtered.length >= minSample){
+            data = filtered
+        }
+
+        // ===== FALLBACK 1 =====
+        if(data.length < minSample){
+            data = await col.find({
+                setup,
+                side,
+                result: { $ne: "PENDING" }
+            }).toArray()
+        }
+
+        // ===== FALLBACK 2 =====
+        if(data.length < minSample){
+            data = await col.find({
+                side,
+                result: { $ne: "PENDING" }
+            }).toArray()
+        }
+
+        // ===== FINAL =====
+        if(data.length === 0){
+            return { winrate: 0.5, total: 0 }
+        }
+
+        // ===== TIME DECAY AI =====
+        let winScore = 0
+        let lossScore = 0
+
+        for(let t of data){
+
+            let ageHours = t.time 
+                ? (Date.now() - t.time) / 3600000 
+                : 999
+
+            // 🔥 decay 48h
+            let weight = Math.exp(-ageHours / 48)
+
+            if(t.result === "WIN"){
+                winScore += weight
+            }
+            else if(t.result === "LOSS"){
+                lossScore += weight
+            }
+            else{
+                lossScore += weight * 0.5
+            }
+        }
+
+        // ===== TRÁNH CHIA 0 =====
+        let rawWR = (winScore + lossScore) > 0
+            ? winScore / (winScore + lossScore)
+            : 0.5
+
+        // ===== CONFIDENCE =====
+        let confidence = Math.min(data.length / 40, 1)
+
+        let finalWR = 0.5 + (rawWR - 0.5) * confidence
+
+        if(DEBUG_AI){
+            console.log(
+                `🤖 AI ${setup}-${market}-${side}-${volatility} | WR:${finalWR.toFixed(2)} | N:${data.length}`
+            )
+        }   
+
+        if(DEBUG_AI){ 
+            console.log("📊 DB used:", data.length)
+        }
+
+        return {
+            winrate: finalWR,
+            total: data.length
+        }
+
+    }catch(e){
+        console.log("❌ DB ERROR:", e.message)
+        return { winrate: 0.5, total: 0 }
+    }
+}
+async function getBestTPSL(setup, market, side){
+
+    if(!trades) return null
+
+    let data = await trades.find({
+        setup,
+        marketState: market,
+        side,
+        result: { $in: ["WIN","LOSS","TIMEOUT"] }
+    }).toArray()
+
+    if(data.length < 30) return null
+
+    let rrArr = []
+
+    for(let t of data){
+
+        let risk = Math.abs(t.entry - t.sl)
+        if(!risk || risk === 0) continue
+
+        let rr = t.side === "LONG"
+            ? (t.tp - t.entry) / risk
+            : (t.entry - t.tp) / risk
+
+        if(rr > 0.5 && rr < 5){
+            rrArr.push(rr)
+        }
+    }
+
+    if(rrArr.length === 0) return null
+
+    rrArr.sort((a,b)=>a-b)
+
+    let best = rrArr[Math.floor(rrArr.length * 0.6)]
+
+    return { rr: best }
 }
             
 start()
