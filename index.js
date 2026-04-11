@@ -687,6 +687,10 @@ for(let c of filtered){
 }
 
 filtered = unique
+if(filtered.length === 0){
+    console.log("❌ No filtered signal")
+    return
+}
 let picks = filtered.slice(0, 3)
 for (let best of picks){
 
@@ -878,7 +882,7 @@ if(t.side === "SHORT"){
         confirm = true
     }
      // ❌ tránh đu đáy
-          if(price > t.entryZone - maxChase){
+          if(price < t.entryZone - maxChase){
     activeTrades.splice(i,1)
 
     await trades.updateOne(
