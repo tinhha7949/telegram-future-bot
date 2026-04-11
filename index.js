@@ -218,35 +218,58 @@ Reject:
 - fake breakout
 - bad RR
 
-Analyze:
+Signal:
 
 Symbol: ${signal.symbol}
 Side: ${signal.side}
 Setup: ${signal.setup}
 Market: ${signal.marketState}
-Volatility: ${signal.volatility}
 
 RSI: ${signal.rsi}
 TrendStrength: ${signal.trendStrength}
 VolumeRatio: ${signal.volRatio}
 
+Entry: ${signal.price}
+SL: ${signal.sl}
+TP: ${signal.tp}
+
+Task:
+1. Decide TAKE or SKIP
+2. Adjust Entry / SL / TP SLIGHTLY to improve RR
+
+Rules:
+- Do NOT change more than 3%
+- Keep RR >= 1.3
+- Avoid chasing price
+
 Return JSON:
 {
-  "score": number (0-10),
   "action": "TAKE" | "SKIP",
+  "score": number (0-10),
   "confidence": number (0-1),
+  "entry": number,
+  "sl": number,
+  "tp": number,
   "reason": "short"
 }
 `
 
     try{
         let res = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [{ role: "user", content: prompt }],
+            model: "gpt-4o-mini",
+            messages: [
+                { role: "system", content: "Always return valid JSON" },
+                { role: "user", content: prompt }
+            ],
             temperature: 0.2
         })
 
-        return JSON.parse(res.choices[0].message.content)
+       try{
+    return JSON.parse(res.choices[0].message.content)
+}catch(e){
+    console.log("❌ GPT JSON lỗi")
+    return null
+}
 
     }catch(e){
         console.log("❌ GPT:", e.message)
@@ -346,8 +369,6 @@ if(volAvgUSDT < dynamicMinVol) return null
     let pos = (price - rangeLow) / (rangeHigh - rangeLow)
     if(marketState === "SIDEWAY"){
     if(pos > 0.4 && pos < 0.6) return null
-}
-    let side=null, score=0
     //========= Anti Chase======
     let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
@@ -356,7 +377,8 @@ if(lastMove < -0.025 && side === "SHORT") return null
 
 // ❌ CẤM LONG nếu vừa pump mạnh
 if(lastMove > 0.025 && side === "LONG") return null
-
+}
+    let side=null, score=0
     let setupType = null
 
     let prevHigh = Math.max(...highs.slice(-25,-5))
@@ -525,6 +547,7 @@ let rawTP = side === "LONG"
 
 if(marketState === "SIDEWAY"){
 
+    let tp
     if(side === "LONG"){
         tp = Math.min(rawTP, resistance * 0.999)
     }else{
@@ -649,7 +672,10 @@ async function scanner(){
         }
 
         // ===== GPT AI =====
-let filtered = signals.filter(s => s.score >= 60)
+let filtered = signals.filter(s => s.score >= 50)
+filtered = filtered
+    .sort((a,b)=>b.score - a.score)
+    .slice(0,5)
 
 let aiResults = await Promise.all(
     filtered.map(s => askGPT(s))
@@ -665,15 +691,46 @@ for(let i = 0; i < filtered.length; i++){
     if(!ai) continue
     if(ai.action !== "TAKE") continue
 
-    let finalScore = s.score + ai.score * 10
+    function clamp(val, min, max){
+    return Math.max(min, Math.min(val, max))
+}
 
-    candidates.push({
-        ...s,
-        finalScore,
-        aiScore: ai.score,
-        aiConfidence: ai.confidence,
-        aiReason: ai.reason
-    })
+let baseEntry = s.price
+let baseSL = s.sl
+let baseTP = s.tp
+
+let finalEntry = baseEntry
+let finalSL = baseSL
+let finalTP = baseTP
+
+if(
+    typeof ai.entry === "number" &&
+    typeof ai.sl === "number" &&
+    typeof ai.tp === "number"
+){
+
+    finalEntry = clamp(ai.entry, baseEntry * 0.98, baseEntry * 1.02)
+    finalSL    = clamp(ai.sl, baseSL * 0.95, baseSL * 1.05)
+    finalTP    = clamp(ai.tp, baseTP * 0.9, baseTP * 1.1)
+}
+let newRR = Math.abs(finalTP - finalEntry) / Math.abs(finalEntry - finalSL)
+
+if(newRR < 1.2){
+    continue
+}
+
+let finalScore = s.score + ai.score * 10
+
+candidates.push({
+    ...s,
+    price: finalEntry,
+    sl: finalSL,
+    tp: finalTP,
+    finalScore,
+    aiScore: ai.score,
+    aiConfidence: ai.confidence,
+    aiReason: ai.reason
+})
 }
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
@@ -781,14 +838,13 @@ let rr = best.side === "LONG"
 
 
 // check
-if(rr < RR_Threshold){
+if(rr < RR_THRESHOLD){
 
     // ❌ RR quá xấu → loại luôn
-    if(rr < 1.05){
-       // return
-        best.finalScore -= 5
-          return
-    }
+    if(rr < 1.2) return
+if(rr < RR_THRESHOLD){
+    best.finalScore -= 10
+}
 
     // ❌ không đủ đẹp → loại
    // if(best.marketState !== "TREND_STRONG" && best.finalScore < 95){ // 105
@@ -943,10 +999,10 @@ if(t.side === "LONG"){
         confirm = true
     }
      // ❌ tránh đu đỉnh
-          if(price > t.entryZone + maxChase){
-        //if(price > t.entryZone * 1.03){
-            continue
-        }
+         if(price > t.entryZone + maxChase){
+    activeTrades.splice(i,1)
+    continue
+}
 }
 
 if(t.side === "SHORT"){
