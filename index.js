@@ -13,8 +13,8 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 90 // 110
-const EARLY_THRESHOLD = 55  // 60
+const SCORE_THRESHOLD = 75 // 110
+const EARLY_THRESHOLD = 50  // 60
 const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
@@ -217,6 +217,13 @@ async function coreLogic(data15, data1h){
 
     let price = closes.at(-1)
     let prevPrice = closes.at(-2)
+    // ===== ANTI CHASE (ĐÚNG CHỖ) =====
+let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+
+// nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
+if(Math.abs(lastMove) > 0.035){
+    return null
+}
     
     let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
     let volNow = volumes.at(-1)
@@ -233,15 +240,15 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
     // ===== DYNAMIC VOLUME FILTER =====
 if(atrRatio < 0.002){
     // sideway → cần volume mạnh
-    if(volRatio < 0.8) return null
+    if(volRatio < 0.6) return null
 }
 else if(atrRatio > 0.005){
     // trend mạnh → nới lỏng
-    if(volRatio < 0.4) return null // cũ 0.5
+    if(volRatio < 0.35) return null // cũ 0.5
 }
 else{
     // bình thường
-    if(volRatio < 0.6) return null
+    if(volRatio < 0.5) return null
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
@@ -291,7 +298,7 @@ if(volAvgUSDT < dynamicMinVol) return null
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.0035) return null // 0.002
+    if(marketState === "SIDEWAY" && range < 0.002) return null // 0.002
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
@@ -336,15 +343,6 @@ if(volAvgUSDT < dynamicMinVol) return null
 
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
     
-    //========= Anti Chase======
-    let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-
-// ❌ CẤM SHORT nếu vừa dump mạnh
-if(lastMove < -0.025 && side === "SHORT") return null
-
-// ❌ CẤM LONG nếu vừa pump mạnh
-if(lastMove > 0.025 && side === "LONG") return null
-
     // ===== TREND FILTER =====
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
@@ -421,12 +419,12 @@ if(side==="SHORT" && bosDown && volNowUSDT > volAvgUSDT * 1.3){
     // ❌ không có hồi → không short
 if(side === "SHORT"){
     let pulledBack = highs.at(-2) > highs.at(-4)
-    if(!pulledBack) return null
+    if(!pulledBack) score -= 10
 }
 
 if(side === "LONG"){
     let pulledBack = lows.at(-2) < lows.at(-4)
-    if(!pulledBack) return null
+    if(!pulledBack) score -= 10
 }
 
     if(side==="LONG" && sweepLow) score+=35
@@ -445,7 +443,6 @@ if(side === "LONG"){
     if(side==="SHORT" && r>35 && r<50) score+=10
 
     if(!side) return null
-    
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
      let resistance = Math.max(...highs.slice(-30))
 let support = Math.min(...lows.slice(-30))
@@ -838,7 +835,7 @@ if(rr < rrThreshold){
     // ❌ RR quá xấu → loại luôn
     if(rr < 1.05){
        // return
-        best.finalScore -= 5
+        best.finalScore -= 10
           return
     }
 
@@ -1020,10 +1017,16 @@ if(t.side === "LONG"){
         confirm = true
     }
      // ❌ tránh đu đỉnh
-          if(price > t.entryZone + maxChase){
-        //if(price > t.entryZone * 1.03){
-            continue
-        }
+        if(price > t.entryZone + maxChase){
+    activeTrades.splice(i,1)
+
+    await trades.updateOne(
+        { symbol: t.symbol, time: t.time },
+        { $set: { result: "CANCEL_CHASE" } }
+    )
+
+    continue
+}
 }
 
 if(t.side === "SHORT"){
@@ -1031,10 +1034,16 @@ if(t.side === "SHORT"){
         confirm = true
     }
      // ❌ tránh đu đáy
-          if(price < t.entryZone - maxChase){
-        //if(price < t.entryZone * 0.97){
-            continue
-        }
+          if(price > t.entryZone - maxChase){
+    activeTrades.splice(i,1)
+
+    await trades.updateOne(
+        { symbol: t.symbol, time: t.time },
+        { $set: { result: "CANCEL_CHASE" } }
+    )
+
+    continue
+}
 }
 
    // if(t.side === "LONG"){
