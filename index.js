@@ -241,7 +241,7 @@ Return JSON:
 
     try{
         let res = await openai.chat.completions.create({
-            model: "gpt-5.3",
+            model: "gpt-4o",
             messages: [{ role: "user", content: prompt }],
             temperature: 0.2
         })
