@@ -602,7 +602,6 @@ async function scanner(){
 
         if(!signals || signals.length === 0){
             console.log("❌ No signal")
-            isScanning = false
             return
         }
 
@@ -633,13 +632,13 @@ for (let s of signals){
 
     let finalMain = s.score + aiMain
 
-    if(finalMain >= s.dynamicThreshold){
+    //if(finalMain >= s.dynamicThreshold){
         candidates.push({
             ...s,
             finalScore: finalMain,
             type: "MAIN"
         })
-    }
+   // }
 }
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
@@ -655,301 +654,146 @@ for (let s of signals){
 
     return (b.finalScore || b.score) - (a.finalScore || a.score)
 })
+// ===== LỌC TẦNG 2 =====
+let filtered = candidates.filter(c => {
 
-// let main = candidates.find(c => c.type === "MAIN")
+    let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
-let best = candidates[0]
-// ===== BLOCK COIN NẾU CHƯA KẾT THÚC LỆNH =====
-let existing = await trades.findOne({
-    symbol: best.symbol,
-    result: "PENDING"
+    // ❌ loại kèo quá xấu
+    if(rr < 1.05) return false
+
+    // ❌ score quá thấp
+    if(c.score < 60) return false
+
+    // ❌ sideway mà yếu
+    if(c.marketState === "SIDEWAY" && c.score < 70) return false
+
+    return true
 })
+// ===== SORT LẠI =====
+filtered = filtered
+    .sort((a,b)=>b.finalScore - a.finalScore)
+    .slice(0, 15)
 
-if(existing){
-    console.log(`⛔ ${best.symbol} đang có lệnh chưa kết thúc`)
-    return
+// ===== UNIQUE COIN =====
+let unique = []
+let used = new Set()
+
+for(let c of filtered){
+    if(!used.has(c.symbol)){
+        unique.push(c)
+        used.add(c.symbol)
+    }
 }
-// ===== CHECK DB AI =====
-let dbAI = await getDBStats(
-    best.setup,
-    best.marketState,
-    best.side,
-    best.volatility
-)
-// ===== AI MARKET ADAPTIVE =====
-if(dbAI.total > 40){
 
-    if(best.marketState === "SIDEWAY"){
-        if(dbAI.winrate < 0.48){
-            best.finalScore -= 15
-        }
+filtered = unique
+let picks = filtered.slice(0, 3)
+for (let best of picks){
+
+    // ===== BLOCK COIN =====
+    let existing = await trades.findOne({
+        symbol: best.symbol,
+        result: "PENDING"
+    })
+
+    if(existing){
+        console.log(`⛔ ${best.symbol} đang có lệnh`)
+        continue
     }
 
-    if(best.marketState === "TREND_STRONG"){
-        if(dbAI.winrate > 0.55){
-            best.finalScore += 10
-        }
-    }
+    // ===== DB AI =====
+    let dbAI = await getDBStats(
+        best.setup,
+        best.marketState,
+        best.side,
+        best.volatility
+    )
 
-}
-// ===== CHECK BEST CANDIDATE =====
-       // ❌ check trước
-if(!best){
-    console.log("❌ Invalid best")
-    return
-}
-
-// ===== EARLY =====
-//if(best.type === "EARLY"){
-
-   // let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
-
-    //if(best.score < EARLY_THRESHOLD){
-       // console.log("❌ Early score thấp")
-        //return
-    //}
-
-    //if(rr < 1.1){
-        //return
-   // }
-//}
-
-// ===== MAIN =====
-if(best.type !== "EARLY"){
-
-    let rr = Math.abs(best.tp - best.price) / Math.abs(best.price - best.sl)
-
-    //if(rr < RR_THRESHOLD){
-        //console.log("❌ RR MAIN fail")
-        //return
-    //}
-}
-    // nếu là breakout thì yêu cầu momentum rõ
+    // ===== MOMENTUM FILTER =====
     if(best.setup === "BREAKOUT"){
 
-    let momentumStrength = (best.price - best.prevPrice) / best.prevPrice
-
-    if(best.momentumUp || best.momentumDown){
-        best.finalScore += 10
-    }else{
-        if(best.marketState === "SIDEWAY"){
-            console.log("❌ ,momentum kh rõ")
-            return
+        if(best.momentumUp || best.momentumDown){
+            best.finalScore += 10
+        }else{
+            if(best.marketState === "SIDEWAY"){
+                continue
+            }
+            best.finalScore -= 5
         }
-        best.finalScore -= 5
     }
-
-}
 
     let weakMomentum =
-    Math.abs(best.price - best.sl)/best.price < 0.0015 &&
-    !best.momentumUp && !best.momentumDown
+        Math.abs(best.price - best.sl)/best.price < 0.0015 &&
+        !best.momentumUp && !best.momentumDown
     
-    if(best.setup === "PULLBACK" && weakMomentum && best.type !== "EARLY"){
-    return
-}
-        // ===== BLOCK DUPLICATE SIGNAL =====
-//let nowTime = Date.now()
-
-//let symbolKey = `${best.symbol}-${best.side}`
-
-//if(lastSignalTime[symbolKey]){
-   // let diff = Date.now() - lastSignalTime[symbolKey]
-
-   // if(diff < 3600000){
-       // console.log(`⛔ Skip trùng coin: ${symbolKey}`)
-        //return
-    //}
-//}
-
-
-        // ===== RISK =====
-        let multiplier = 1
-
-if(dbAI.total > 20){
-
-    let edge = dbAI.winrate - 0.5
-
-    multiplier = 1 + edge * 2   // scale mềm
-
-    // clamp lại
-    if(multiplier > 1.5) multiplier = 1.5
-    if(multiplier < 0.5) multiplier = 0.5
-}
-let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
-
-        if(best.type === "EARLY") risk *= 0.5
-// ===== CHECK SL TP TRƯỚC =====
-if(!best.sl || !best.tp){
-    console.log("❌ Missing SL TP")
-    return
-}
-
-// ===== TÍNH DIFF SAU =====
-let diff = Math.abs(best.price - best.sl)
-
-if(!diff || diff === 0){
-    console.log("❌ Invalid SL distance")
-    return
-}
-
-        let size = risk / diff
-       
-        let trailingSL = best.side === "LONG"
-            ? best.price - best.atr
-            : best.price + best.atr
-            
-// ===== TÍNH RR =====
-let rr = best.side === "LONG"
-    ? (best.tp - best.price) / (best.price - best.sl)
-    : (best.price - best.tp) / (best.sl - best.price)
-
-// ===== AI RR ADAPTIVE =====
-if(dbAI.total > 20){
-
-    if(dbAI.winrate > 0.6){
-        rr *= 0.9   // dễ vào hơn (TP gần hơn)
+    if(best.setup === "PULLBACK" && weakMomentum){
+        continue
     }
 
-    if(dbAI.winrate < 0.45){
-        rr *= 1.1   // khó hơn (đòi RR cao hơn)
-    }
-}
-        // === RR ====
-let rrThreshold = RR_THRESHOLD
+    // ===== RR =====
+    let rr = best.side === "LONG"
+        ? (best.tp - best.price) / (best.price - best.sl)
+        : (best.price - best.tp) / (best.sl - best.price)
 
-if(dbAI.total > 20){
-
-    if(dbAI.winrate > 0.6){
-        rrThreshold = 1.1   // dễ hơn
-    }
-
-    if(dbAI.winrate < 0.45){
-        rrThreshold = 1.35  // khó hơn
-    }
-}
-
-// check
-if(rr < rrThreshold){
-
-    // ❌ RR quá xấu → loại luôn
     if(rr < 1.05){
-       // return
-        best.finalScore -= 10
-          return
+        continue
     }
 
-    // ❌ không đủ đẹp → loại
-   // if(best.marketState !== "TREND_STRONG" && best.finalScore < 95){ // 105
-        //console.log("❌ không đủ đẹp")
-       // return
-  //  }
-    // 🔥 thêm dòng này
-   // if(rr < 1.05 && best.marketState !== "TREND_STRONG"){ // 1.1
-       // console.log("❌ RR hơi thấp")
-       // return
-    //}
-    // ⚠️ còn lại → giảm điểm nhẹ
-    best.finalScore -= 10
+    // ===== RISK =====
+    let multiplier = 1
+
+    if(dbAI.total > 20){
+        let edge = dbAI.winrate - 0.5
+        multiplier = 1 + edge * 2
+
+        if(multiplier > 1.5) multiplier = 1.5
+        if(multiplier < 0.5) multiplier = 0.5
+    }
+
+    let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
+
+    let diff = Math.abs(best.price - best.sl)
+    if(!diff) continue
+
+    let trade = {
+        symbol: best.symbol,
+        side: best.side,
+        risk,
+        entry: null,
+        entryZone: best.price,
+        tp: best.tp,
+        sl: best.sl,
+        score: best.score,
+        waitingEntry: true,
+        createdAt: Date.now(),
+        breakoutTriggered: false,
+        setup: best.setup,
+        marketState: best.marketState,
+        volatility: best.volatility,
+        atr: best.atr,
+        time: Date.now(),
+        result: "PENDING"
+    }
+
+    // ===== RAM CHECK =====
+    let isActive = activeTrades.some(x =>
+        x.symbol === best.symbol && x.result === "PENDING"
+    )
+
+    if(isActive){
+        continue
+    }
+
+    activeTrades.push(trade)
+
+    if(activeTrades.length > 50){
+        activeTrades.shift()
+    }
+
+    await trades.insertOne(trade)
+
+    console.log(`✅ ADD: ${best.symbol} | Score: ${best.finalScore.toFixed(1)}`)
 }
-//if(rr < rrThreshold){
-     //console.log("❌ rr <rrThreshold") bật lại nếu kèo rác
-   // return
-//}
-// ===== AI BLOCK =====
-let threshold = 0.48
-
-if(best.marketState === "TREND_STRONG"){
-    threshold = 0.44
-}
-
-if(best.marketState === "SIDEWAY"){
-    threshold = 0.52
-}
-
-let aiScoreAdjust = 0
-
-if(dbAI.total > 10){
-
-    let edge = dbAI.winrate - 0.5  // lợi thế
-
-    // scale nhẹ để không phá logic gốc
-    aiScoreAdjust = edge * 100   // ~ -10 → +10
-
-    // confidence theo sample
-    let confidence = Math.min(dbAI.total / 50, 1)
-
-    aiScoreAdjust *= confidence
-}
-
-// áp vào score
-best.finalScore = (best.finalScore || best.score) + aiScoreAdjust
-        // ===== MESSAGE =====
-      // let msg = `🔥 BEST SIGNAL
-
-//${best.symbol} (${best.type} - ${best.setup})
-//${best.side} | ${best.marketState}
-//Entry Zone: ${best.price.toFixed(4)}
-//TP: ${best.tp.toFixed(4)}
-//SL: ${best.sl.toFixed(4)}
-//Trailing SL: ${trailingSL.toFixed(4)}
-//Size: ${size.toFixed(2)}
-//Score: ${t.score || 0}
-//`
-
-       //onsole.log(msg)
-       //et ok = await sendTelegram(msg)
-
-//(ok !== false){
-   //astSignalTime[symbolKey] = Date.now()
-//}
-        // ===== SAVE TRADE =====
-let trade = {
-    symbol: best.symbol,
-    side: best.side,
-    risk: risk,
-
-    // ❌ chưa vào lệnh
-    entry: null,
-
-    // ✅ giá chờ
-    entryZone: best.price,
-
-    tp: best.tp,
-    sl: best.sl,
-    score: best.score,
-    waitingEntry: true,   // 🔥 CHỜ 1M CONFIRM
-    createdAt: Date.now(),
-    breakoutTriggered: false, // 🔥 BREAKOUT CHƯA TRIGGER
-    setup: best.setup,
-    marketState: best.marketState,
-    volatility: best.volatility,
-    atr: best.atr,
-
-    time: Date.now(),
-    result: "PENDING"
-}
-        
-let isActive = activeTrades.some(x => 
-    x.symbol === best.symbol && x.result === "PENDING"
-)
-
-if(isActive){
-    console.log("⛔ RAM đang có lệnh:", best.symbol)
-    return
-}
-//if(activeTrades.some(x => x.symbol === best.symbol)){
-   // console.log("⛔ Đã có lệnh chờ coin này")
-   // return
-//}
-
-activeTrades.push(trade)
-if(activeTrades.length > 50){
-    activeTrades.shift()
-}
-
-// 🔥 THÊM DÒNG NÀY (lưu DB)
-await trades.insertOne(trade)
 
     }catch(e){
     console.log("❌ Scanner error:")
