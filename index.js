@@ -13,8 +13,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 75 // 110
-const EARLY_THRESHOLD = 50  // 60
+const SCORE_THRESHOLD = 60 // 110
 const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
@@ -663,10 +662,13 @@ let filtered = candidates.filter(c => {
     if(rr < 1.05) return false
 
     // ❌ score quá thấp
-    if(c.score < 60) return false
+    let threshold = SCORE_THRESHOLD
 
-    // ❌ sideway mà yếu
-    if(c.marketState === "SIDEWAY" && c.score < 70) return false
+if(c.marketState === "SIDEWAY"){
+    threshold += 10
+}
+
+if(c.score < threshold) return false
 
     return true
 })
