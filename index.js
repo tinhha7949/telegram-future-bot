@@ -89,22 +89,32 @@ async function checkCommand(){
 }
 
 // ================= INDICATORS =================
-function ema(arr,p){
-    let k=2/(p+1), e=arr[0]
-    for(let i=1;i<arr.length;i++) e=arr[i]*k+e*(1-k)
+function ema(arr, p){
+    let k = 2 / (p + 1)
+    let e = arr[0]
+
+    for(let i = 1; i < arr.length; i++){
+        e = arr[i] * k + e * (1 - k)
+    }
+
     return e
 }
 
-function rsi(arr,p=14){
-    let g=0,l=0
-    for(let i=arr.length-p;i<arr.length;i++){
-        let d=arr[i]-arr[i-1]
-        if(d>=0) g+=d
-        else l-=d
+function rsi(arr, p = 14){
+    if(arr.length < p + 1) return 50
+
+    let g = 0, l = 0
+
+    for(let i = arr.length - p; i < arr.length; i++){
+        let d = arr[i] - arr[i - 1]
+        if(d >= 0) g += d
+        else l -= d
     }
-    let rs=g/(l||1)
-    return 100-(100/(1+rs))
+
+    let rs = g / (l || 1)
+    return 100 - (100 / (1 + rs))
 }
+
 
 function atr(data,p=14){
     let trs=[]
@@ -112,7 +122,8 @@ function atr(data,p=14){
         let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
         trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
     }
-    return trs.slice(-p).reduce((a,b)=>a+b,0)/p
+    let slice = trs.slice(-p)
+return slice.reduce((a,b)=>a+b,0) / slice.length
 }
 
 // ================= DATA (PRO) =================
@@ -217,6 +228,8 @@ async function coreLogic(data15, data1h){
 
     let price = closes.at(-1)
     let prevPrice = closes.at(-2)
+    let side=null, score=0
+    let setupType = null
     // ===== ANTI CHASE (ĐÚNG CHỖ) =====
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
@@ -225,13 +238,17 @@ if(Math.abs(lastMove) > 0.06){
     return null
 }
     
-    let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
+   let last30 = volumes.slice(-30)
+if(last30.length < 20) return null
+
+let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
     let volNow = volumes.at(-1)
 
     let volAvgUSDT = volAvg * price
     let volNowUSDT = volNow * price
 
     let atrVal = atr(data15.slice(-100))
+    if(!atrVal || atrVal <= 0) return null
 let atrRatio = atrVal / price
     let volRatio = volNowUSDT / volAvgUSDT //cmt dòng này nếu bỏ dymic
 
@@ -258,9 +275,9 @@ if(volAvgUSDT < dynamicMinVol) return null
     //if(volAvgUSDT < MIN_VOL_15M) return null
 
     // ===== EMA =====
-    let ema20 = ema(closes.slice(-60),20)
-    let ema50 = ema(closes.slice(-120),50)
-    let ema200= ema(closes.slice(-250),200)
+    let ema20 = ema(closes.slice(-100), 20)
+    let ema50 = ema(closes.slice(-200), 50)
+    let ema200 = ema(closes.slice(-500), 200)
 
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
@@ -311,19 +328,30 @@ if(volAvgUSDT < dynamicMinVol) return null
     }
 
     // ===== STRUCTURE =====
-    let rangeHigh = Math.max(...highs.slice(-30))
-    let rangeLow  = Math.min(...lows.slice(-30))
-    if(rangeHigh === rangeLow) return null
+    // ===== STRUCTURE (FIXED) =====
+let hArr = highs.slice(-30)
+let lArr = lows.slice(-30)
+
+// guard chống thiếu data
+if(hArr.length < 20 || lArr.length < 20) return null
+
+let rangeHigh = Math.max(...hArr)
+let rangeLow  = Math.min(...lArr)
+
+// tránh divide by zero
+if(!rangeHigh || !rangeLow || rangeHigh <= rangeLow) return null
     // ===== AVOID TOP =====
 let nearHigh = (rangeHigh - price) / price < 0.01
 let nearLow  = (price - rangeLow) / price < 0.01
 
-    let pos = (price - rangeLow) / (rangeHigh - rangeLow)
-    if(marketState === "SIDEWAY"){
-    if(pos > 0.4 && pos < 0.6) return null
+    let rangeSize = rangeHigh - rangeLow
+if(rangeSize <= 0) return null
+
+let pos = (price - rangeLow) / rangeSize
+
+if(marketState === "SIDEWAY"){
+    if(pos > 0.45 && pos < 0.55 && score < 70) return null
 }
-    let side=null, score=0
-    let setupType = null
 
     let prevHigh = Math.max(...highs.slice(-25,-5))
     let prevLow  = Math.min(...lows.slice(-25,-5))
@@ -541,8 +569,8 @@ if(side === "LONG"){
 
     if(!side) return null
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
-     let resistance = Math.max(...highs.slice(-30))
-let support = Math.min(...lows.slice(-30))
+    let resistance = rangeHigh
+let support = rangeLow
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
@@ -973,7 +1001,7 @@ if(t.side === "LONG"){
             confirm = true
         }
     }else{
-        if(price <= t.entryZone + entryBuffer){
+        if(price <= t.entryZone - entryBuffer){
             confirm = true
         }
     }
@@ -996,7 +1024,7 @@ if(t.side === "SHORT"){
             confirm = true
         }
     }else{
-        if(price >= t.entryZone - entryBuffer){
+        if(price >= t.entryZone + entryBuffer){
             confirm = true
         }
     }
@@ -1029,7 +1057,9 @@ if(t.side === "SHORT"){
         ? t.entry - t.atr
         : t.entry + t.atr
 
-    let size = t.risk / Math.abs(t.entry - t.sl)
+    let diff = Math.abs(t.entry - t.sl)
+if(diff === 0) continue
+let size = t.risk / diff
 
     let msg = `🔥 BEST SIGNAL
 
