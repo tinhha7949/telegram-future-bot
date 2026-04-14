@@ -14,7 +14,7 @@ const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 60 // 110
-const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.4 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
