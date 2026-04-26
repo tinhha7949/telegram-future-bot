@@ -234,7 +234,7 @@ async function coreLogic(data15, data1h){
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(Math.abs(lastMove) > 0.06){
+if(Math.abs(lastMove) > 0.08){
     return null
 }
     
@@ -257,15 +257,15 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
     // ===== DYNAMIC VOLUME FILTER =====
 if(atrRatio < 0.002){
     // sideway → cần volume mạnh
-    if(volRatio < 0.6) return null
+    if(volRatio < 0.5) return null
 }
 else if(atrRatio > 0.005){
     // trend mạnh → nới lỏng
-    if(volRatio < 0.35) return null // cũ 0.5
+    if(volRatio < 0.3) return null // cũ 0.5
 }
 else{
     // bình thường
-    if(volRatio < 0.5) return null
+    if(volRatio < 0.45) return null
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
@@ -796,7 +796,7 @@ if(c.marketState === "SIDEWAY"){
     threshold += 10
 }
 
-if(c.score < threshold) return false
+if((c.finalScore || c.score) < threshold) return false
 
     return true
 })
@@ -986,7 +986,7 @@ let atrRatio = t.atr / price
 
 atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02)) // 🔥 giảm max
 
-let entryBuffer = t.atr * (0.4 + atrRatio * 15)
+let entryBuffer = t.atr * (0.3 + atrRatio * 10)
 let maxChase    = t.atr * (2 + atrRatio * 40)
 
 // 🔥 clamp thêm lần cuối
