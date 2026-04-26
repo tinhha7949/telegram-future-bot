@@ -230,20 +230,11 @@ async function coreLogic(data15, data1h){
     if(closes.length < 5) return null
 
     let price = closes.at(-1)
-    let prevPrice = closes.at(-2)
+    let prevPrice = closes.length >= 2 ? closes.at(-2) : price
 
     let atrVal = atr(data15)
     if(!atrVal || atrVal <= 0 || isNaN(atrVal)) return null
     let atrRatio = atrVal / price
-    // ===== ANTI CHASE (ĐÚNG CHỖ) =====
-let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-
-// nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(marketState !== "TREND_STRONG"){
-    if(Math.abs(lastMove) > Math.max(atrRatio * 25, 0.02)){
-        return null
-    }
-}
     
    let last30 = volumes.slice(-30)
 if(last30.length < 20) return null
@@ -254,8 +245,9 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
     let volAvgUSDT = volAvg * price
     let volNowUSDT = volNow * price
 
+    if(!volAvgUSDT || volAvgUSDT === 0) return null
     let volRatio = volNowUSDT / volAvgUSDT //cmt dòng này nếu bỏ dymic
-
+    
 let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
@@ -297,12 +289,25 @@ else{
 
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
+   // ===== MARKET =====
+    let emaGap = Math.abs(ema20 - ema50) / price
+    //let atrRatio = atrVal / price
+
+    let marketState = "SIDEWAY"
+    if(emaGap > 0.004 && atrRatio > 0.0045) marketState = "TREND_STRONG"
+    else if(emaGap > 0.0025) marketState = "TREND_WEAK"
    // ===== RSI HARD FILTER =====
     let longValidRSI = true
     let shortValidRSI = true
 
-    if(r > 78 && marketState !== "TREND_STRONG") longValidRSI = false
-    if(r < 22 && marketState !== "TREND_STRONG") shortValidRSI = false
+    if(r > 75) longValidRSI = false
+if(r < 25) shortValidRSI = false
+
+// riêng TREND_STRONG thì nới nhẹ
+if(marketState === "TREND_STRONG"){
+    if(r > 82) longValidRSI = false
+    if(r < 18) shortValidRSI = false
+}
 
     let volatility = "LOW"
     if(atrVal / price > 0.0045) volatility = "HIGH"
@@ -310,13 +315,17 @@ else{
     // ===== WICK =====
     if((highs.at(-1) - lows.at(-1)) > atrVal * 3.0) return null
 
-    // ===== MARKET =====
-    let emaGap = Math.abs(ema20 - ema50) / price
-    //let atrRatio = atrVal / price
+    // ===== ANTI CHASE (ĐÚNG CHỖ) =====
+let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
-    let marketState = "SIDEWAY"
-    if(emaGap > 0.004 && atrRatio > 0.0045) marketState = "TREND_STRONG"
-    else if(emaGap > 0.0025) marketState = "TREND_WEAK"
+// nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
+if(marketState !== "TREND_STRONG"){
+    let antiChaseLimit = Math.min(Math.max(atrRatio * 15, 0.02), 0.08)
+
+if(Math.abs(lastMove) > antiChaseLimit){
+    return null
+}
+}
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
     if(marketState === "SIDEWAY" && range < 0.002) return null // 0.002
@@ -556,7 +565,7 @@ let rawTP = side === "LONG"
 if(marketState === "SIDEWAY"){
     
     if(side === "LONG"){
-        tp = Math.min(rawTP, resistance * 0.999)
+        tp = Math.min(rawTP, resistance * 0.997)
     }else{
         tp = Math.max(rawTP, support * 1.001)
     }
