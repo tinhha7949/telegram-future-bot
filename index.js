@@ -14,7 +14,7 @@ const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 60 // 110
-const RR_THRESHOLD = 1.4 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.6 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -258,16 +258,13 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
 if(atrRatio < 0.002){
-    // sideway → cần volume mạnh
-    if(volRatio < 0.35) return null
+    if(volRatio < 0.3) return null
 }
 else if(atrRatio > 0.005){
-    // trend mạnh → nới lỏng
-    if(volRatio < 0.25) return null // cũ 0.5
+    if(volRatio < 0.2) return null
 }
 else{
-    // bình thường
-    if(volRatio < 0.45) return null
+    if(volRatio < 0.35) return null
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
@@ -297,16 +294,14 @@ if(volAvgUSDT < dynamicMinVol) return null
     else if(trendHTF > 0.0015) dynamicThreshold = 85 // 95
     else dynamicThreshold = 90 // 105
 
-    let threshold = Math.max(SCORE_THRESHOLD, dynamicThreshold)
-
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
    // ===== RSI HARD FILTER =====
     let longValidRSI = true
     let shortValidRSI = true
 
-    if(r > 68) longValidRSI = false     // ❌ quá mua → cấm LONG
-    if(r < 32) shortValidRSI = false    // ❌ quá bán → cấm SHORT
+    if(r > 72) longValidRSI = false     // ❌ quá mua → cấm LONG
+    if(r < 28) shortValidRSI = false    // ❌ quá bán → cấm SHORT
 
     let volatility = "LOW"
     if(atrVal / price > 0.0045) volatility = "HIGH"
@@ -480,13 +475,13 @@ if(Math.abs(longScore - shortScore) < 10){
     return null
 }
     // ===== SPIKE FILTER =====
-let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
+//let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
 
-let validBreakout = true
+//let validBreakout = true
 
-if(spikeCandle > 0.035){
-    validBreakout = false
-}
+//if(spikeCandle > 0.035){
+   // validBreakout = false
+//}
 
     let prevHigh50 = Math.max(...highs.slice(-51,-1))
     let prevLow50  = Math.min(...lows.slice(-51,-1))
@@ -519,11 +514,11 @@ let lowerWickRatio = lowerWick / candleRange
 if(upperWickRatio > 0.6 && side === "LONG") return null
 if(lowerWickRatio > 0.6 && side === "SHORT") return null
     
-let fakePump = volNowUSDT > volAvgUSDT * 2
-    && upperWick / candleRange > 0.5
+//let fakePump = volNowUSDT > volAvgUSDT * 2
+   // && upperWick / candleRange > 0.5
 
-let fakeDump = volNowUSDT > volAvgUSDT * 2
-    && lowerWick / candleRange > 0.5
+//let fakeDump = volNowUSDT > volAvgUSDT * 2
+   // && lowerWick / candleRange > 0.5
 
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
     let resistance = rangeHigh
@@ -701,9 +696,9 @@ for (let s of signals){
     let dbMain = dbCache[keyMain]
 
     let weightMain = Math.min(dbMain.total / 50, 1)
-    let aiMain = (dbMain.winrate - 0.5) * 200 * weightMain
+    let aiMain = (dbMain.winrate - 0.5) * 120 * weightMain
 
-    if(dbMain.total < 15) aiMain *= 0.5
+    if(dbMain.total < 25) aiMain *= 0.5
 
     let finalMain = s.score + aiMain
 
@@ -738,10 +733,10 @@ let filtered = candidates.filter(c => {
     //if(rr < 1.1) return false
 
     // ❌ score quá thấp
-    let threshold = c.dynamicThreshold || SCORE_THRESHOLD
+   let threshold = c.dynamicThreshold
 
 if(c.marketState === "SIDEWAY"){
-    threshold += 10
+    threshold += 5
 }
 
 if((c.finalScore || c.score) < threshold) return false
@@ -817,7 +812,7 @@ for (let best of picks){
         ? (best.tp - best.price) / (best.price - best.sl)
         : (best.price - best.tp) / (best.sl - best.price)
 
-    if(rr < 1.1){
+    if(rr < 1.25){
         continue
     }
 
@@ -936,8 +931,8 @@ atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02)) // 🔥 giảm max
 
 //let entryBuffer = t.atr * (0.3 + atrRatio * 10)
 //let maxChase    = t.atr * (2 + atrRatio * 40)
-let entryBuffer = t.atr * 0.6
-let maxChase    = t.atr * 3
+let entryBuffer = t.atr * 0.4
+let maxChase    = t.atr * 2.5
 
 // 🔥 clamp thêm lần cuối
 entryBuffer = Math.min(entryBuffer, t.atr * 1.2)
@@ -954,7 +949,7 @@ if(t.side === "LONG"){
         let prev = +data.at(-2)[4]
 
     if(t.setup === "BREAKOUT"){
-    if(price >= t.entryZone + entryBuffer){
+    if(price >= t.entryZone + entryBuffer * 0.7){
         confirm = true
     }
 }else{
