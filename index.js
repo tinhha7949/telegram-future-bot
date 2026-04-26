@@ -239,7 +239,7 @@ async function coreLogic(data15, data1h){
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(Math.abs(lastMove) > Math.max(atrRatio * 25, 0.01)){
+if(Math.abs(lastMove) > Math.max(atrRatio * 20, 0.015)){
     return null
 }
     
@@ -268,7 +268,7 @@ else{
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
-if(volAvgUSDT < dynamicMinVol) return null
+//if(volAvgUSDT < dynamicMinVol) return null
 
     //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
     //if(volAvgUSDT < MIN_VOL_15M) return null
@@ -390,9 +390,6 @@ let shortValid = false
 if(trendLong && longValidRSI){
 
     longValid = true
-    // ❌ KHÔNG LONG khi RSI quá cao (đu đỉnh)
-    if(r > 72) longValid = false
-
     // ❌ không đu giá
     if(distFromEma > 0.02) longValid = false
 
@@ -424,9 +421,6 @@ if(trendLong && longValidRSI){
 if(trendShort && shortValidRSI){
 
     shortValid = true
-    // ❌ KHÔNG SHORT khi RSI quá thấp (đu đáy)
-    if(r < 28) shortValid = false
-
     // ❌ không đu giá
     if(distFromEma < -0.02) shortValid = false
 
@@ -475,13 +469,13 @@ if(Math.abs(longScore - shortScore) < 10){
     return null
 }
     // ===== SPIKE FILTER =====
-//let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
+let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
 
-//let validBreakout = true
+let validBreakout = true
 
-//if(spikeCandle > 0.035){
-   // validBreakout = false
-//}
+if(spikeCandle > 0.035){
+    validBreakout = false
+}
 
     let prevHigh50 = Math.max(...highs.slice(-51,-1))
     let prevLow50  = Math.min(...lows.slice(-51,-1))
@@ -491,8 +485,15 @@ if(Math.abs(longScore - shortScore) < 10){
 
     // ===== SIDEWAY =====
     if(marketState === "SIDEWAY"){
-        if(sweepHigh){ side="SHORT"; score+=60 }
-        if(sweepLow){ side="LONG"; score+=60 }
+        if(sweepHigh && !sweepLow){
+    side="SHORT"; score+=60
+}
+else if(sweepLow && !sweepHigh){
+    side="LONG"; score+=60
+}
+else{
+    return null
+}
         if(!side) return null
         //if(bosUp || bosDown) return null
     }
@@ -696,7 +697,7 @@ for (let s of signals){
     let dbMain = dbCache[keyMain]
 
     let weightMain = Math.min(dbMain.total / 50, 1)
-    let aiMain = (dbMain.winrate - 0.5) * 120 * weightMain
+    let aiMain = (dbMain.winrate - 0.5) * 80 * weightMain
 
     if(dbMain.total < 25) aiMain *= 0.5
 
@@ -931,8 +932,8 @@ atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02)) // 🔥 giảm max
 
 //let entryBuffer = t.atr * (0.3 + atrRatio * 10)
 //let maxChase    = t.atr * (2 + atrRatio * 40)
-let entryBuffer = t.atr * 0.4
-let maxChase    = t.atr * 2.5
+let entryBuffer = t.atr * (0.3 + atrRatio * 10)
+let maxChase    = t.atr * (2 + atrRatio * 30)
 
 // 🔥 clamp thêm lần cuối
 entryBuffer = Math.min(entryBuffer, t.atr * 1.2)
