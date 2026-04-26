@@ -239,8 +239,10 @@ async function coreLogic(data15, data1h){
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(Math.abs(lastMove) > Math.max(atrRatio * 20, 0.015)){
-    return null
+if(marketState !== "TREND_STRONG"){
+    if(Math.abs(lastMove) > Math.max(atrRatio * 20, 0.015)){
+        return null
+    }
 }
     
    let last30 = volumes.slice(-30)
@@ -266,9 +268,8 @@ else if(atrRatio > 0.005){
 else{
     if(volRatio < 0.35) return null
 }
-//if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
-//if(volAvgUSDT < dynamicMinVol) return null
+//if(volAvgUSDT < dynamicMinVol * 0.7) return null
 
     //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
     //if(volAvgUSDT < MIN_VOL_15M) return null
@@ -300,8 +301,8 @@ else{
     let longValidRSI = true
     let shortValidRSI = true
 
-    if(r > 72) longValidRSI = false     // ❌ quá mua → cấm LONG
-    if(r < 28) shortValidRSI = false    // ❌ quá bán → cấm SHORT
+    if(r > 78 && marketState !== "TREND_STRONG") longValidRSI = false
+    if(r < 22 && marketState !== "TREND_STRONG") shortValidRSI = false
 
     let volatility = "LOW"
     if(atrVal / price > 0.0045) volatility = "HIGH"
@@ -368,7 +369,7 @@ if(marketState === "SIDEWAY"){
     let lowerHigh = highs.at(-2) < highs.at(-5)
 
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
-    let volTrendDown = volNowUSDT > volAvgUSDT * 1.2
+    let volTrendDown = volumes.slice(-5).every((v,i,a)=> i===0 || v<=a[i-1])
     
     // ===== TREND FILTER =====
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
@@ -813,7 +814,7 @@ for (let best of picks){
         ? (best.tp - best.price) / (best.price - best.sl)
         : (best.price - best.tp) / (best.sl - best.price)
 
-    if(rr < 1.25){
+    if(rr < 1.15){
         continue
     }
 
