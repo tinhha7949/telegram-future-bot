@@ -14,8 +14,8 @@ const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 60 // 110
-const RR_THRESHOLD = 1.6 // 1.3 hoặc 1.4 nếu muốn 
-
+const RR_THRESHOLD = 1.5 // 1.3 hoặc 1.4 nếu muốn 
+    
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
@@ -240,7 +240,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
 if(marketState !== "TREND_STRONG"){
-    if(Math.abs(lastMove) > Math.max(atrRatio * 20, 0.015)){
+    if(Math.abs(lastMove) > Math.max(atrRatio * 25, 0.02)){
         return null
     }
 }
@@ -260,13 +260,13 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
 if(atrRatio < 0.002){
-    if(volRatio < 0.3) return null
+    if(volRatio < 0.25) return null
 }
 else if(atrRatio > 0.005){
-    if(volRatio < 0.2) return null
+    if(volRatio < 0.18) return null
 }
 else{
-    if(volRatio < 0.35) return null
+    if(volRatio < 0.28) return null
 }
     // ===== FILTER VOLUME =====
 //if(volAvgUSDT < dynamicMinVol * 0.7) return null
@@ -290,10 +290,10 @@ else{
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
-    let dynamicThreshold = 85
-    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 80 //90
-    else if(trendHTF > 0.0015) dynamicThreshold = 85 // 95
-    else dynamicThreshold = 90 // 105
+    let dynamicThreshold = 80
+    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 75 //90
+    else if(trendHTF > 0.0015) dynamicThreshold = 80 // 95
+    else dynamicThreshold = 85 // 105
 
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
@@ -376,10 +376,10 @@ if(marketState === "SIDEWAY"){
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(marketState === "SIDEWAY" && trendStrength < 0.0008){ //0.0011
+    if(marketState === "SIDEWAY" && trendStrength < 0.0006){ //0.0011
     return null
 }
-    // ======== mới =======
+    // ===== mới =======
     // ===== LONG / SHORT TÁCH RIÊNG =====
 
 let longScore = 0
