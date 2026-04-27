@@ -252,13 +252,13 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
 if(atrRatio < 0.002){
-    if(volRatio < 0.25) return null
+    if(volRatio < 0.15) return null // 0.25
 }
 else if(atrRatio > 0.005){
-    if(volRatio < 0.18) return null
+    if(volRatio < 0.12) return null // 0.15
 }
 else{
-    if(volRatio < 0.28) return null
+    if(volRatio < 0.18) return null // 0.28
 }
     // ===== FILTER VOLUME =====
 //if(volAvgUSDT < dynamicMinVol * 0.7) return null
@@ -282,10 +282,10 @@ else{
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
-    let dynamicThreshold = 80
-    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 75 //90
-    else if(trendHTF > 0.0015) dynamicThreshold = 80 // 95
-    else dynamicThreshold = 85 // 105
+    let dynamicThreshold = 65
+    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 60 //90
+    else if(trendHTF > 0.0015) dynamicThreshold = 65 // 95
+    else dynamicThreshold = 70 // 105
 
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
@@ -320,7 +320,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
 if(marketState !== "TREND_STRONG"){
-    let antiChaseLimit = Math.min(Math.max(atrRatio * 15, 0.02), 0.08)
+    let antiChaseLimit = Math.min(Math.max(atrRatio * 25, 0.03), 0.12)
 
 if(Math.abs(lastMove) > antiChaseLimit){
     return null
@@ -385,7 +385,7 @@ if(marketState === "SIDEWAY"){
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(marketState === "SIDEWAY" && trendStrength < 0.0006){ //0.0011
+    if(marketState === "SIDEWAY" && trendStrength < 0.0003){ //0.0011
     return null
 }
     // ===== mới =======
@@ -475,7 +475,7 @@ else{
 }
 
 // ❌ kèo không rõ → bỏ
-if(Math.abs(longScore - shortScore) < 10){
+if(Math.abs(longScore - shortScore) < 5){
     return null
 }
     // ===== SPIKE FILTER =====
@@ -988,11 +988,18 @@ if(t.side === "SHORT"){
             confirm = true
         }
     }else{
+        let prev = +data.at(-2)[4]
+
+    if(t.setup === "BREAKOUT"){
+    if(price <= t.entryZone - entryBuffer * 0.7){
+        confirm = true
+    }
+}else{
         if(price >= t.entryZone + entryBuffer){
             confirm = true
         }
     }
-
+    }
     if(price < t.entryZone - maxChase){
         activeTrades.splice(i,1)
         await trades.updateOne(
