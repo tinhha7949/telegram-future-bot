@@ -197,22 +197,22 @@ async function getTopSymbols(){
 
     // coin giá thấp → cần vol cao hơn
     //if(price < 1){
-        base *= 1.5
+        //base *= 1.5
    // }
 
     // coin giá cao → giảm yêu cầu
     //if(price > 100){
-        base *= 0.7
+       // base *= 0.7
     //}
 
     // volatility cao → giảm yêu cầu
     //if(atrRatio > 0.005){
-        base *= 0.8
+        //base *= 0.8
     //}
 
     // volatility thấp → tăng yêu cầu
    // if(atrRatio < 0.002){
-        base *= 1.3
+        //base *= 1.3
     //}
 
    // return base
@@ -473,9 +473,6 @@ let score = 0
 
 // ===== SIDEWAY ƯU TIÊN RIÊNG =====
 if(marketState === "SIDEWAY"){
-
-    logStep("SIDEWAY_MODE")
-
     //if(volNowUSDT < volAvgUSDT * 0.6){
     //return null
 //}
