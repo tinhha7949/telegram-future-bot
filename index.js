@@ -191,32 +191,32 @@ async function getTopSymbols(){
     return null
 }
 // ============== dyminic minvol15m========
-function getDynamicMinVol(volAvgUSDT, price, atrRatio){
+//function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
-    let base = MIN_VOL_15M
+   // let base = MIN_VOL_15M
 
     // coin giá thấp → cần vol cao hơn
-    if(price < 1){
+    //if(price < 1){
         base *= 1.5
-    }
+   // }
 
     // coin giá cao → giảm yêu cầu
-    if(price > 100){
+    //if(price > 100){
         base *= 0.7
-    }
+    //}
 
     // volatility cao → giảm yêu cầu
-    if(atrRatio > 0.005){
+    //if(atrRatio > 0.005){
         base *= 0.8
-    }
+    //}
 
     // volatility thấp → tăng yêu cầu
-    if(atrRatio < 0.002){
+   // if(atrRatio < 0.002){
         base *= 1.3
-    }
+    //}
 
-    return base
-}
+   // return base
+//}
 // ================= CORE =================
 async function coreLogic(data15, data1h){
 
@@ -248,7 +248,7 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
     if(!volAvgUSDT || volAvgUSDT === 0) return null
     let volRatio = volNowUSDT / volAvgUSDT //cmt dòng này nếu bỏ dymic
     
-let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
+//let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
 let volThreshold = 0.18 - atrRatio * 2
@@ -273,7 +273,7 @@ if(volRatio < volThreshold) return null
 
     // ===== TREND =====
     let trendHTF = Math.abs(ema20_1h - ema50_1h) / price
-    let trendLTF = Math.abs(ema20 - ema50) / price
+    //let trendLTF = Math.abs(ema20 - ema50) / price
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
@@ -327,8 +327,8 @@ if(Math.abs(lastMove) > antiChaseLimit * 1.5){
     }
 }
 
-    let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.002) return null // 0.002
+    //let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
+    //if(marketState === "SIDEWAY" && range < 0.002) return null // 0.002
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
@@ -379,7 +379,7 @@ if(marketState === "SIDEWAY"){
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
-    let trendStrength = Math.abs(ema20-ema50)/price
+    //let trendStrength = Math.abs(ema20-ema50)/price
     //if(marketState === "SIDEWAY" && trendStrength < 0.0003){ //0.0011
    // return null
 //}
@@ -515,15 +515,15 @@ else{
     }
 }
     // ===== SPIKE FILTER =====
-let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
+//let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
 
-let validBreakout = true
+//let validBreakout = true
 
-if(spikeCandle > 0.06){
-    validBreakout = false
-}
+//if(spikeCandle > 0.06){
+    //validBreakout = false
+//}
 
-        if(!side) return null
+       // if(!side) return null
         //if(bosUp || bosDown) return null
     // Fake breakout
     let high = highs.at(-1)
@@ -552,10 +552,6 @@ if(lowerWickRatio > 0.6 && side === "SHORT") return null
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
     let resistance = rangeHigh
 let support = rangeLow
-let distToRes = (resistance - price) / price
-let distToSup = (price - support) / price
-    // ===== ANTI FOMO (GỌN - KHÔNG TRÙNG) =====
-    let distance = Math.abs(price - ema20)
     // ===== SL TP (GIỮ NGUYÊN) =====
     let swingLow = Math.min(...lows.slice(-20))
     let swingHigh = Math.max(...highs.slice(-20))
@@ -969,7 +965,7 @@ let prev = +data.at(-2)[4]
 entryBuffer = Math.min(entryBuffer, t.atr * 1.2)
 maxChase    = Math.min(maxChase, t.atr * 4)
     
-if(Math.abs(price - t.entryZone) > maxChase){
+if(Math.abs(price - t.entryZone) > maxChase * 1.5){
     activeTrades.splice(i,1)
     await trades.updateOne(
         { symbol: t.symbol, time: t.time },
