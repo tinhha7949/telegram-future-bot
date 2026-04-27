@@ -3,6 +3,35 @@ const { MongoClient } = require("mongodb")
 const client = new MongoClient(process.env.MONGO_URI)
 
 let db, trades
+// ========= log ==========
+const LOG = {
+    flow: [],
+    errors: [],
+    lastStep: "",
+    count: {},
+    time: Date.now()
+}
+
+function logStep(step){
+    LOG.lastStep = step
+
+    LOG.flow.push({
+        step,
+        time: Date.now()
+    })
+
+    LOG.count[step] = (LOG.count[step] || 0) + 1
+}
+
+function logError(where, err){
+    LOG.errors.push({
+        where,
+        msg: err.message,
+        time: Date.now()
+    })
+
+    console.log(`❌ ${where}:`, err.message)
+}
 // ================= CONFIG =================
 const BOT_TOKEN = process.env.BOT_TOKEN
 const CHAT_ID = process.env.CHAT_ID
@@ -14,7 +43,7 @@ const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 60 // 110
-const RR_THRESHOLD = 1.5 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
     
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -232,7 +261,7 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let prevPrice = closes.length >= 2 ? closes.at(-2) : price
 
-    let atrVal = atr(data15)
+    let atrVal = atr(data15.slice(-100))
     if(!atrVal || atrVal <= 0 || isNaN(atrVal)) return null
     let atrRatio = atrVal / price
     
@@ -251,15 +280,10 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
 let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
-if(atrRatio < 0.002){
-    if(volRatio < 0.15) return null // 0.25
-}
-else if(atrRatio > 0.005){
-    if(volRatio < 0.12) return null // 0.15
-}
-else{
-    if(volRatio < 0.18) return null // 0.28
-}
+let volThreshold = 0.18 - atrRatio * 2
+volThreshold = Math.max(0.08, Math.min(volThreshold, 0.25))
+
+if(volRatio < volThreshold) return null
     // ===== FILTER VOLUME =====
 //if(volAvgUSDT < dynamicMinVol * 0.7) return null
 
@@ -269,7 +293,7 @@ else{
     // ===== EMA =====
     let ema20 = ema(closes.slice(-100), 20)
     let ema50 = ema(closes.slice(-200), 50)
-    let ema200 = ema(closes, 200)
+    let ema200 = ema(closes.slice(-500), 200)
 
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
@@ -316,15 +340,20 @@ if(marketState === "TREND_STRONG"){
     if((highs.at(-1) - lows.at(-1)) > atrVal * 3.0) return null
 
     // ===== ANTI CHASE (ĐÚNG CHỖ) =====
+    let prevHigh = Math.max(...highs.slice(-25,-5))
+    let prevLow  = Math.min(...lows.slice(-25,-5))
+
+    let bosUp = price > prevHigh
+    let bosDown = price < prevLow
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
 if(marketState !== "TREND_STRONG"){
-    let antiChaseLimit = Math.min(Math.max(atrRatio * 25, 0.03), 0.12)
+    let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
 
 if(Math.abs(lastMove) > antiChaseLimit){
-    return null
-}
+        return null
+    }
 }
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
@@ -363,11 +392,6 @@ let pos = (price - rangeLow) / rangeSize
 if(marketState === "SIDEWAY"){
 }
 
-    let prevHigh = Math.max(...highs.slice(-25,-5))
-    let prevLow  = Math.min(...lows.slice(-25,-5))
-
-    let bosUp = price > prevHigh
-    let bosDown = price < prevLow
      // ===== MOMENTUM =====
     let momentumStrength = (closes.at(-1) - closes.at(-4)) / closes.at(-4)
 
@@ -405,7 +429,7 @@ if(trendLong && longValidRSI){
 
     // breakout
     if(bosUp && momentumUp && volNowUSDT > volAvgUSDT * 1.3){
-        longScore += 40
+        longScore += 30
     }
 
     // pullback + bật lên
@@ -421,7 +445,9 @@ if(trendLong && longValidRSI){
     if(r > 50 && r < 75) longScore += 10
 
     // volume
-    if(volTrendUp) longScore += 15
+    if(volTrendUp && volNowUSDT > volAvgUSDT * 1.2){
+    longScore += 10
+}
 
     // tránh đỉnh
     if(nearHigh) longScore -= 20
@@ -436,7 +462,7 @@ if(trendShort && shortValidRSI){
 
     // breakdown
     if(bosDown && momentumDown && volNowUSDT > volAvgUSDT * 1.3){
-        shortScore += 40
+        shortScore += 30
     }
 
     // pullback + bị đạp xuống
@@ -452,31 +478,68 @@ if(trendShort && shortValidRSI){
     if(r > 25 && r < 50) shortScore += 10
 
     // volume
-   if(volTrendDown) shortScore += 15
+   if(volTrendDown && volNowUSDT > volAvgUSDT * 1.2){
+    shortScore += 10
+}
 
     // tránh đáy
     if(nearLow) shortScore -= 20
 }
 
 // ===== CHỌN SIDE =====
+let prevHigh50 = Math.max(...highs.slice(-51,-1))
+    let prevLow50  = Math.min(...lows.slice(-51,-1))
+
+    let sweepHigh = highs.at(-2) > prevHigh50 && closes.at(-2) < prevHigh50
+    let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
 let side = null
 let score = 0
 
-if(longValid && longScore > shortScore){
-    side = "LONG"
-    score = longScore
-}
-else if(shortValid && shortScore > longScore){
-    side = "SHORT"
-    score = shortScore
-}
-else{
+// ===== SIDEWAY ƯU TIÊN RIÊNG =====
+if(marketState === "SIDEWAY"){
+
+    logStep("SIDEWAY_MODE")
+
+    if(volNowUSDT < volAvgUSDT * 0.6){
     return null
 }
 
-// ❌ kèo không rõ → bỏ
-if(Math.abs(longScore - shortScore) < 5){
-    return null
+    if(sweepHigh && !sweepLow){
+        if(!momentumDown) return null
+        side = "SHORT"
+        score = 25
+        dynamicThreshold += 10
+    }
+    else if(sweepLow && !sweepHigh){
+        if(!momentumUp) return null
+        side = "LONG"
+        score = 25
+        dynamicThreshold += 10
+    }
+    else{
+        return null
+    }
+
+    if(side === "LONG" && nearHigh) return null
+    if(side === "SHORT" && nearLow) return null
+}
+else{
+    // ===== TREND MODE =====
+    if(longValid && longScore > shortScore){
+        side = "LONG"
+        score = longScore
+    }
+    else if(shortValid && shortScore > longScore){
+        side = "SHORT"
+        score = shortScore
+    }
+    else{
+        return null
+    }
+
+    if(Math.abs(longScore - shortScore) < 5){
+        return null
+    }
 }
     // ===== SPIKE FILTER =====
 let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
@@ -487,26 +550,8 @@ if(spikeCandle > 0.035){
     validBreakout = false
 }
 
-    let prevHigh50 = Math.max(...highs.slice(-51,-1))
-    let prevLow50  = Math.min(...lows.slice(-51,-1))
-
-    let sweepHigh = highs.at(-2) > prevHigh50 && closes.at(-2) < prevHigh50
-    let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
-
-    // ===== SIDEWAY =====
-    if(marketState === "SIDEWAY"){
-        if(sweepHigh && !sweepLow){
-    side="SHORT"; score+=60
-}
-else if(sweepLow && !sweepHigh){
-    side="LONG"; score+=60
-}
-else{
-    return null
-}
         if(!side) return null
         //if(bosUp || bosDown) return null
-    }
     // Fake breakout
     let high = highs.at(-1)
 let low = lows.at(-1)
@@ -683,6 +728,7 @@ async function scanner(){
 
         if(!signals || signals.length === 0){
             console.log("❌ No signal")
+            isScanning = false
             return
         }
 
@@ -719,7 +765,7 @@ for (let s of signals){
             finalScore: finalMain,
             type: "MAIN"
         })
-   // }
+    //}
 }
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
@@ -749,8 +795,8 @@ let filtered = candidates.filter(c => {
 if(c.marketState === "SIDEWAY"){
     threshold += 5
 }
-
 if((c.finalScore || c.score) < threshold) return false
+if(rr < RR_THRESHOLD) return false
 
     return true
 })
@@ -942,83 +988,54 @@ atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02)) // 🔥 giảm max
 
 //let entryBuffer = t.atr * (0.3 + atrRatio * 10)
 //let maxChase    = t.atr * (2 + atrRatio * 40)
-let entryBuffer = t.atr * (0.3 + atrRatio * 10)
-let maxChase    = t.atr * (2 + atrRatio * 30)
+let entryBuffer = t.atr * (0.25 + atrRatio * 8) // 0.3 10
+let maxChase = Math.min(t.atr * 3, t.entryZone * 0.015)
+let prev = +data.at(-2)[4]
 
 // 🔥 clamp thêm lần cuối
 entryBuffer = Math.min(entryBuffer, t.atr * 1.2)
 maxChase    = Math.min(maxChase, t.atr * 4)
     
+if(Math.abs(price - t.entryZone) > maxChase){
+    activeTrades.splice(i,1)
+    await trades.updateOne(
+        { symbol: t.symbol, time: t.time },
+        { $set: { result: "CANCEL_CHASE" } }
+    )
+    continue
+}
+
+// ===== MOMENTUM =====
+let momentum1m = price - prev
+if(t.side === "LONG" && momentum1m <= 0) continue
+if(t.side === "SHORT" && momentum1m >= 0) continue
+
+// ===== ENTRY =====
 if(t.side === "LONG"){
 
-    // 🔥 reversal đáy → phải bật lên mới vào
-    if(t.setup === "REVERSAL_BOTTOM"){
-        if(price > t.entryZone + t.atr * 0.3){
+    if(t.setup === "BREAKOUT"){
+        if(prev <= t.entryZone && price > t.entryZone){
             confirm = true
         }
     }else{
-        let prev = +data.at(-2)[4]
-
-    if(t.setup === "BREAKOUT"){
-    if(price >= t.entryZone + entryBuffer * 0.7){
-        confirm = true
-    }
-}else{
-    if(price <= t.entryZone - entryBuffer){
-        confirm = true
-    }
-}
-    }
-
-    if(price > t.entryZone + maxChase){
-        activeTrades.splice(i,1)
-        await trades.updateOne(
-            { symbol: t.symbol, time: t.time },
-            { $set: { result: "CANCEL_CHASE" } }
-        )
-        continue
+        if(prev < t.entryZone && price > t.entryZone){
+            confirm = true
+        }
     }
 }
 
 if(t.side === "SHORT"){
 
-    // 🔥 reversal đỉnh → phải giảm mới vào
-    if(t.setup === "REVERSAL_TOP"){
-        if(price < t.entryZone - t.atr * 0.3){
+    if(t.setup === "BREAKOUT"){
+        if(prev >= t.entryZone && price < t.entryZone){
             confirm = true
         }
     }else{
-        let prev = +data.at(-2)[4]
-
-    if(t.setup === "BREAKOUT"){
-    if(price <= t.entryZone - entryBuffer * 0.7){
-        confirm = true
-    }
-}else{
-        if(price >= t.entryZone + entryBuffer){
+        if(prev > t.entryZone && price < t.entryZone){
             confirm = true
         }
     }
-    }
-    if(price < t.entryZone - maxChase){
-        activeTrades.splice(i,1)
-        await trades.updateOne(
-            { symbol: t.symbol, time: t.time },
-            { $set: { result: "CANCEL_CHASE" } }
-        )
-        continue
-    }
 }
-
-   // if(t.side === "LONG"){
-   // if(last <= t.entryZone * 1.005){ //2
-       // confirm = true
-  //  }
-
-//if(t.side === "SHORT"){
-   // if(last >= t.entryZone * 0.995){ //2
-       // confirm = true
-  //  }
     // ===== VÀO LỆNH =====
     if(confirm){
     t.entry = price
