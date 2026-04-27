@@ -278,9 +278,12 @@ if(volRatio < volThreshold) return null
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
     let dynamicThreshold = 65
-    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 60 //90
-    else if(trendHTF > 0.0015) dynamicThreshold = 65 // 95
-    else dynamicThreshold = 70 // 105
+    if(trendHTF > 0.003) dynamicThreshold = 60
+    else if(trendHTF > 0.0015) dynamicThreshold = 65
+    else dynamicThreshold = 70
+    //if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 60 //90
+    //else if(trendHTF > 0.0015) dynamicThreshold = 65 // 95
+   // else dynamicThreshold = 70 // 105
 
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
@@ -614,7 +617,7 @@ if(rangeCandle === 0 || body / rangeCandle < 0.1){ //0.2
     let setupType = null
 
     if(!setupType){
-    if((bosUp || bosDown) && validBreakout){
+    if(bosUp || bosDown){
         setupType = "BREAKOUT"
     }else{
         setupType = "PULLBACK"
