@@ -3,35 +3,6 @@ const { MongoClient } = require("mongodb")
 const client = new MongoClient(process.env.MONGO_URI)
 
 let db, trades
-// ========= log ==========
-const LOG = {
-    flow: [],
-    errors: [],
-    lastStep: "",
-    count: {},
-    time: Date.now()
-}
-
-function logStep(step){
-    LOG.lastStep = step
-
-    LOG.flow.push({
-        step,
-        time: Date.now()
-    })
-
-    LOG.count[step] = (LOG.count[step] || 0) + 1
-}
-
-function logError(where, err){
-    LOG.errors.push({
-        where,
-        msg: err.message,
-        time: Date.now()
-    })
-
-    console.log(`❌ ${where}:`, err.message)
-}
 // ================= CONFIG =================
 const BOT_TOKEN = process.env.BOT_TOKEN
 const CHAT_ID = process.env.CHAT_ID
@@ -351,7 +322,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(marketState !== "TREND_STRONG"){
     let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
 
-if(Math.abs(lastMove) > antiChaseLimit){
+if(Math.abs(lastMove) > antiChaseLimit * 1.5){
         return null
     }
 }
@@ -361,11 +332,11 @@ if(Math.abs(lastMove) > antiChaseLimit){
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
-    let nearEma = distEma < 0.0055
+    //let nearEma = distEma < 0.0055
 
-    if(marketState === "SIDEWAY"){
-        if(nearEma && volNowUSDT < volAvgUSDT * 0.2) return null
-    }
+   // if(marketState === "SIDEWAY"){
+       // if(nearEma && volNowUSDT < volAvgUSDT * 0.2) return null
+   // }
 
     // ===== STRUCTURE =====
     // ===== STRUCTURE (FIXED) =====
@@ -409,9 +380,9 @@ if(marketState === "SIDEWAY"){
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(marketState === "SIDEWAY" && trendStrength < 0.0003){ //0.0011
-    return null
-}
+    //if(marketState === "SIDEWAY" && trendStrength < 0.0003){ //0.0011
+   // return null
+//}
     // ===== mới =======
     // ===== LONG / SHORT TÁCH RIÊNG =====
 
@@ -442,7 +413,8 @@ if(trendLong && longValidRSI){
     if(higherLow) longScore += 15
 
     // RSI đẹp
-    if(r > 50 && r < 75) longScore += 10
+    //if(r > 50 && r < 75) longScore += 10
+    if(r > 45) longScore += 5
 
     // volume
     if(volTrendUp && volNowUSDT > volAvgUSDT * 1.2){
@@ -475,7 +447,8 @@ if(trendShort && shortValidRSI){
     if(lowerHigh) shortScore += 15
 
     // RSI đẹp
-    if(r > 25 && r < 50) shortScore += 10
+    //if(r > 25 && r < 50) shortScore += 10
+    if(r < 55) shortScore += 5
 
     // volume
    if(volTrendDown && volNowUSDT > volAvgUSDT * 1.2){
@@ -500,9 +473,9 @@ if(marketState === "SIDEWAY"){
 
     logStep("SIDEWAY_MODE")
 
-    if(volNowUSDT < volAvgUSDT * 0.6){
-    return null
-}
+    //if(volNowUSDT < volAvgUSDT * 0.6){
+    //return null
+//}
 
     if(sweepHigh && !sweepLow){
         if(!momentumDown) return null
@@ -546,7 +519,7 @@ let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
 
 let validBreakout = true
 
-if(spikeCandle > 0.035){
+if(spikeCandle > 0.06){
     validBreakout = false
 }
 
@@ -821,7 +794,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 3)
+let picks = filtered.slice(0, 1)
 for (let best of picks){
 
     // ===== BLOCK COIN =====
@@ -869,9 +842,9 @@ for (let best of picks){
         ? (best.tp - best.price) / (best.price - best.sl)
         : (best.price - best.tp) / (best.sl - best.price)
 
-    if(rr < 1.15){
-        continue
-    }
+    //if(rr < 1.15){
+        //continue
+    //}
 
     // ===== RISK =====
     let multiplier = 1
@@ -1007,8 +980,10 @@ if(Math.abs(price - t.entryZone) > maxChase){
 
 // ===== MOMENTUM =====
 let momentum1m = price - prev
-if(t.side === "LONG" && momentum1m <= 0) continue
-if(t.side === "SHORT" && momentum1m >= 0) continue
+if(t.side === "LONG" && momentum1m < -t.atr * 0.05) continue
+if(t.side === "SHORT" && momentum1m >  t.atr * 0.05) continue
+//if(t.side === "LONG" && momentum1m <= 0) continue
+//if(t.side === "SHORT" && momentum1m >= 0) continue
 
 // ===== ENTRY =====
 if(t.side === "LONG"){
