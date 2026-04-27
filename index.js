@@ -189,33 +189,6 @@ async function getTopSymbols(){
 
     return null
 }
-// ============== dyminic minvol15m========
-function getDynamicMinVol(volAvgUSDT, price, atrRatio){
-
-    let base = MIN_VOL_15M
-
-    // coin giá thấp → cần vol cao hơn
-    if(price < 1){
-        base *= 1.5
-    }
-
-    // coin giá cao → giảm yêu cầu
-    if(price > 100){
-        base *= 0.7
-    }
-
-    // volatility cao → giảm yêu cầu
-    if(atrRatio > 0.005){
-        base *= 0.8
-    }
-
-    // volatility thấp → tăng yêu cầu
-    if(atrRatio < 0.002){
-        base *= 1.3
-    }
-
-    return base
-}
 // ================= CORE =================
 async function coreLogic(data15, data1h){
 
@@ -267,12 +240,6 @@ else if(atrRatio > 0.005){
 else{
     if(volRatio < 0.35) return null
 }
-    // ===== FILTER VOLUME =====
-//if(volAvgUSDT < dynamicMinVol * 0.7) return null
-
-    //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
-    //if(volAvgUSDT < MIN_VOL_15M) return null
-
     // ===== EMA =====
     let ema20 = ema(closes.slice(-100), 20)
     let ema50 = ema(closes.slice(-200), 50)
