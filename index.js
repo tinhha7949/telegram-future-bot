@@ -251,8 +251,8 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
 //let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
-let volThreshold = 0.18 - atrRatio * 2
-volThreshold = Math.max(0.08, Math.min(volThreshold, 0.25))
+let volThreshold = 0.05 - atrRatio * 1.2 // 0.18 2
+volThreshold = Math.max(0.03, Math.min(volThreshold, 0.15))
 
 if(volRatio < volThreshold) return null
     // ===== FILTER VOLUME =====
@@ -277,10 +277,10 @@ if(volRatio < volThreshold) return null
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
-    let dynamicThreshold = 65
-    if(trendHTF > 0.003) dynamicThreshold = 60
-    else if(trendHTF > 0.0015) dynamicThreshold = 65
-    else dynamicThreshold = 70
+    let dynamicThreshold = 55
+    if(trendHTF > 0.003) dynamicThreshold = 50
+    else if(trendHTF > 0.0015) dynamicThreshold = 55
+    else dynamicThreshold = 60
     //if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 60 //90
     //else if(trendHTF > 0.0015) dynamicThreshold = 65 // 95
    // else dynamicThreshold = 70 // 105
@@ -298,8 +298,8 @@ if(volRatio < volThreshold) return null
     let longValidRSI = true
     let shortValidRSI = true
 
-    if(r > 75) longValidRSI = false
-if(r < 25) shortValidRSI = false
+    if(r > 80) longValidRSI = false //80
+if(r < 20) shortValidRSI = false // 25
 
 // riêng TREND_STRONG thì nới nhẹ
 if(marketState === "TREND_STRONG"){
@@ -325,7 +325,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(marketState !== "TREND_STRONG"){
     let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
 
-if(Math.abs(lastMove) > antiChaseLimit * 1.5){
+if(Math.abs(lastMove) > antiChaseLimit * 2.5){
         return null
     }
 }
@@ -540,8 +540,8 @@ if(candleRange === 0) return null
 let upperWickRatio = upperWick / candleRange
 let lowerWickRatio = lowerWick / candleRange
 // ===== REJECTION FILTER =====
-if(upperWickRatio > 0.6 && side === "LONG") return null
-if(lowerWickRatio > 0.6 && side === "SHORT") return null
+if(upperWickRatio > 0.7 && side === "LONG") return null
+if(lowerWickRatio > 0.7 && side === "SHORT") return null
     
 //let fakePump = volNowUSDT > volAvgUSDT * 2
    // && upperWick / candleRange > 0.5
@@ -605,7 +605,7 @@ if(Math.abs(tp - price) / price < 0.001){ //0.0015
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-if(rangeCandle === 0 || body / rangeCandle < 0.1){ //0.2
+if(rangeCandle === 0 || body / rangeCandle < 0.05){ //0.2
     return null
 }
 
