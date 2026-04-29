@@ -13,7 +13,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 60 // 110
+const SCORE_THRESHOLD = 55 // 110
 const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn 
     
 const RISK_PER_TRADE = 0.01
@@ -251,8 +251,8 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
 //let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
-let volThreshold = 0.2 - atrRatio * 5 // 0.18 2
-volThreshold = Math.max(0.1, Math.min(volThreshold, 0.5))
+let volThreshold = 0.1 - atrRatio * 3 // 0.18 2
+volThreshold = Math.max(0.05, Math.min(volThreshold, 0.3))
 
 if(volRatio < volThreshold) return null
     // ===== FILTER VOLUME =====
@@ -277,10 +277,10 @@ if(volRatio < volThreshold) return null
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
-    let dynamicThreshold = 55
-    if(trendHTF > 0.003) dynamicThreshold = 50
-    else if(trendHTF > 0.0015) dynamicThreshold = 55
-    else dynamicThreshold = 60
+    let dynamicThreshold = 50
+    if(trendHTF > 0.003) dynamicThreshold = 45
+    else if(trendHTF > 0.0015) dynamicThreshold = 50
+    else dynamicThreshold = 55
     //if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 60 //90
     //else if(trendHTF > 0.0015) dynamicThreshold = 65 // 95
    // else dynamicThreshold = 70 // 105
@@ -298,8 +298,8 @@ if(volRatio < volThreshold) return null
     let longValidRSI = true
     let shortValidRSI = true
 
-    if(r > 80) longValidRSI = false //80
-if(r < 20) shortValidRSI = false // 25
+    if(r > 85) longValidRSI = false //80
+if(r < 15) shortValidRSI = false // 25
 
 // riêng TREND_STRONG thì nới nhẹ
 if(marketState === "TREND_STRONG"){
@@ -325,7 +325,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(marketState !== "TREND_STRONG"){
     let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
 
-if(Math.abs(lastMove) > antiChaseLimit * 3.5){
+if(Math.abs(lastMove) > antiChaseLimit * 5){
         return null
     }
 }
@@ -532,16 +532,16 @@ let low = lows.at(-1)
 let close = closes.at(-1)
 
 let candleRange = high - low
-let upperWick = high - Math.max(open, close)
+let Wick = high - Math.max(open, close)
 let lowerWick = Math.min(open, close) - low
 
 if(candleRange === 0) return null
 
-let upperWickRatio = upperWick / candleRange
+let WickRatio = Wick / candleRange
 let lowerWickRatio = lowerWick / candleRange
 // ===== REJECTION FILTER =====
-if(upperWickRatio > 0.7 && side === "LONG") return null
-if(lowerWickRatio > 0.7 && side === "SHORT") return null
+if(upperWickRatio > 0.85 && side === "LONG") return null
+if(lowerWickRatio > 0.85 && side === "SHORT") return null
     
 //let fakePump = volNowUSDT > volAvgUSDT * 2
    // && upperWick / candleRange > 0.5
@@ -849,7 +849,7 @@ for (let best of picks){
         let edge = dbAI.winrate - 0.5
         multiplier = 1 + edge * 2
 
-        if(multiplier > 1.5) multiplier = 1.5
+        if(multiplie 1.5) multiplier = 1.5
         if(multiplier < 0.5) multiplier = 0.5
     }
 
@@ -1285,7 +1285,7 @@ async function getBestTPSL(setup, market, side){
             ? (t.tp - t.entry) / risk
             : (t.entry - t.tp) / risk
 
-        if(rr > 0.5 && rr < 5){
+        if(r 0.5 && rr < 5){
             rrArr.push(rr)
         }
     }
