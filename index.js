@@ -532,16 +532,20 @@ let low = lows.at(-1)
 let close = closes.at(-1)
 
 let candleRange = high - low
-let Wick = high - Math.max(open, close)
+let upperWick = high - Math.max(open, close)
 let lowerWick = Math.min(open, close) - low
 
 if(candleRange === 0) return null
 
-let WickRatio = Wick / candleRange
+let upperWickRatio = Wick / candleRange
 let lowerWickRatio = lowerWick / candleRange
 // ===== REJECTION FILTER =====
-if(upperWickRatio > 0.85 && side === "LONG") return null
-if(lowerWickRatio > 0.85 && side === "SHORT") return null
+    let wickLimit = marketState === "TREND_STRONG" ? 0.9 : 0.8
+
+if(upperWickRatio > wickLimit && side === "LONG") return null
+if(lowerWickRatio > wickLimit && side === "SHORT") return null
+//if(upperWickRatio > 0.85 && side === "LONG") return null
+//if(lowerWickRatio > 0.85 && side === "SHORT") return null
     
 //let fakePump = volNowUSDT > volAvgUSDT * 2
    // && upperWick / candleRange > 0.5
@@ -849,7 +853,7 @@ for (let best of picks){
         let edge = dbAI.winrate - 0.5
         multiplier = 1 + edge * 2
 
-        if(multiplie 1.5) multiplier = 1.5
+        if(multiplie > 1.5) multiplier = 1.5
         if(multiplier < 0.5) multiplier = 0.5
     }
 
@@ -1285,7 +1289,7 @@ async function getBestTPSL(setup, market, side){
             ? (t.tp - t.entry) / risk
             : (t.entry - t.tp) / risk
 
-        if(r 0.5 && rr < 5){
+        if(r > 0.5 && rr < 5){
             rrArr.push(rr)
         }
     }
