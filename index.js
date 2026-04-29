@@ -251,8 +251,8 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
 //let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
-let volThreshold = 0.05 - atrRatio * 1.2 // 0.18 2
-volThreshold = Math.max(0.03, Math.min(volThreshold, 0.15))
+let volThreshold = 0.2 - atrRatio * 5 // 0.18 2
+volThreshold = Math.max(0.1, Math.min(volThreshold, 0.5))
 
 if(volRatio < volThreshold) return null
     // ===== FILTER VOLUME =====
@@ -325,7 +325,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(marketState !== "TREND_STRONG"){
     let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
 
-if(Math.abs(lastMove) > antiChaseLimit * 2.5){
+if(Math.abs(lastMove) > antiChaseLimit * 3.5){
         return null
     }
 }
@@ -402,7 +402,7 @@ if(trendLong && longValidRSI){
     if(distFromEma > 0.02) longValid = false
 
     // breakout
-    if(bosUp && momentumUp && volNowUSDT > volAvgUSDT * 1.3){
+    if(bosUp && momentumUp && volNowUSDT > volAvgUSDT * 1.2){
         longScore += 30
     }
 
@@ -598,7 +598,7 @@ if(marketState === "SIDEWAY"){
     tp = rawTP
 }
 // kiểm tra khoảng cách giữa tp và price
-if(Math.abs(tp - price) / price < 0.001){ //0.0015
+if(Math.abs(tp - price) / price < 0.0007){ //0.0015
     return null
 }
         // candle có thân lớn so với toàn cây không (giữ nguyên)
