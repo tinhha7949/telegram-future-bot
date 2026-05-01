@@ -322,6 +322,8 @@ if(marketState === "TREND_STRONG"){
 //let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
     let lastMove = (Math.max(...highs.slice(-3)) - Math.min(...lows.slice(-3))) / price
 let antiChaseMult = 3
+     let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
+
 
 if(marketState === "TREND_STRONG") antiChaseMult = 5
 if(marketState === "SIDEWAY") antiChaseMult = 2.5
@@ -331,8 +333,6 @@ if(Math.abs(lastMove) > antiChaseLimit * antiChaseMult){
 }
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
 //if(marketState !== "TREND_STRONG"){
-  //  let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
-
 //if(Math.abs(lastMove) > antiChaseLimit * 6){
      //   return null
    // }
@@ -987,9 +987,10 @@ if(Math.abs(price - t.entryZone) > maxChase * 1.5){
 }
 
 // ===== MOMENTUM =====
-let momentum1m = price - prev
-if(t.side === "LONG" && momentum1m < -t.atr * 0.1) continue
-if(t.side === "SHORT" && momentum1m >  t.atr * 0.1) continue
+let momentum1m = (price - prev) / prev
+
+if(t.side === "LONG" && momentum1m < -0.0008) continue
+if(t.side === "SHORT" && momentum1m >  0.0008) continue
 //if(t.side === "LONG" && momentum1m <= 0) continue
 //if(t.side === "SHORT" && momentum1m >= 0) continue
 // ===== ENTRY =====
@@ -999,12 +1000,12 @@ let entryHigh = t.entryZone + tolerance
 
 if(t.side === "LONG"){
 
-    // pullback entry
-    if(price >= entryLow && price <= entryHigh && momentum1m >= -t.atr * 0.1){
+    if(t.side === "LONG"){
+
+    if(price >= entryLow && price <= entryHigh){
         confirm = true
     }
 
-    // breakout phải có lực
     if(t.setup === "BREAKOUT"){
         if(prev <= t.entryZone && price > t.entryZone){
             confirm = true
@@ -1014,7 +1015,7 @@ if(t.side === "LONG"){
 
 if(t.side === "SHORT"){
 
-    if(price >= entryLow && price <= entryHigh && momentum1m <= t.atr * 0.1){
+    if(price >= entryLow && price <= entryHigh){
         confirm = true
     }
 
