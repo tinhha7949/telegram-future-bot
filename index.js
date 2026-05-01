@@ -121,11 +121,19 @@ function atr(data,p=14){
         let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
         trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
     }
-    if(trs.length < p) return 0
-
-    let slice = trs.slice(-p)
-    return slice.reduce((a,b)=>a+b,0) / slice.length
+    return trs.slice(-p).reduce((a,b)=>a+b,0)/p
 }
+//function atr(data,p=14){
+   // let trs=[]
+   // for(let i=1;i<data.length;i++){
+      //  let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
+       // trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
+  //  }
+    //if(trs.length < p) return 0
+
+    //let slice = trs.slice(-p)
+    //return slice.reduce((a,b)=>a+b,0) / slice.length
+//}
 
 // ================= DATA (PRO) =================
 async function getData(symbol, interval, limit){
@@ -999,8 +1007,6 @@ let entryLow  = t.entryZone - tolerance
 let entryHigh = t.entryZone + tolerance
 
 if(t.side === "LONG"){
-
-    if(t.side === "LONG"){
 
     if(price >= entryLow && price <= entryHigh){
         confirm = true
