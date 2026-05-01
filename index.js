@@ -13,7 +13,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 55 // 110
+const SCORE_THRESHOLD = 50 // 110
 const RR_THRESHOLD = 1.0 // 1.3 hoặc 1.4 nếu muốn 
     
 const RISK_PER_TRADE = 0.01
@@ -992,16 +992,23 @@ if(t.side === "LONG" && momentum1m < -t.atr * 0.1) continue
 if(t.side === "SHORT" && momentum1m >  t.atr * 0.1) continue
 //if(t.side === "LONG" && momentum1m <= 0) continue
 //if(t.side === "SHORT" && momentum1m >= 0) continue
-
 // ===== ENTRY =====
+let tolerance = t.atr * 0.25   // nới nhẹ
+let entryLow  = t.entryZone - tolerance
+let entryHigh = t.entryZone + tolerance
+
+let momentum1m = price - prev
+
 if(t.side === "LONG"){
 
+    // pullback entry
+    if(price >= entryLow && price <= entryHigh && momentum1m >= -t.atr * 0.1){
+        confirm = true
+    }
+
+    // breakout phải có lực
     if(t.setup === "BREAKOUT"){
         if(prev <= t.entryZone && price > t.entryZone){
-            confirm = true
-        }
-    }else{
-        if(prev < t.entryZone && price > t.entryZone){
             confirm = true
         }
     }
@@ -1009,12 +1016,12 @@ if(t.side === "LONG"){
 
 if(t.side === "SHORT"){
 
+    if(price >= entryLow && price <= entryHigh && momentum1m <= t.atr * 0.1){
+        confirm = true
+    }
+
     if(t.setup === "BREAKOUT"){
         if(prev >= t.entryZone && price < t.entryZone){
-            confirm = true
-        }
-    }else{
-        if(prev > t.entryZone && price < t.entryZone){
             confirm = true
         }
     }
