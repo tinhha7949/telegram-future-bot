@@ -319,16 +319,24 @@ if(marketState === "TREND_STRONG"){
 
     let bosUp = price > prevHigh
     let bosDown = price < prevLow
-let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+//let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+    let lastMove = (Math.max(...highs.slice(-3)) - Math.min(...lows.slice(-3))) / price
+let antiChaseMult = 3
 
-// nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(marketState !== "TREND_STRONG"){
-    let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
+if(marketState === "TREND_STRONG") antiChaseMult = 5
+if(marketState === "SIDEWAY") antiChaseMult = 2.5
 
-if(Math.abs(lastMove) > antiChaseLimit * 8){
-        return null
-    }
+if(Math.abs(lastMove) > antiChaseLimit * antiChaseMult){
+    return null
 }
+// nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
+//if(marketState !== "TREND_STRONG"){
+  //  let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
+
+//if(Math.abs(lastMove) > antiChaseLimit * 6){
+     //   return null
+   // }
+//}
 
     //let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
     //if(marketState === "SIDEWAY" && range < 0.002) return null // 0.002
@@ -980,8 +988,8 @@ if(Math.abs(price - t.entryZone) > maxChase * 1.5){
 
 // ===== MOMENTUM =====
 let momentum1m = price - prev
-if(t.side === "LONG" && momentum1m < -t.atr * 0.05) continue
-if(t.side === "SHORT" && momentum1m >  t.atr * 0.05) continue
+if(t.side === "LONG" && momentum1m < -t.atr * 0.1) continue
+if(t.side === "SHORT" && momentum1m >  t.atr * 0.1) continue
 //if(t.side === "LONG" && momentum1m <= 0) continue
 //if(t.side === "SHORT" && momentum1m >= 0) continue
 
