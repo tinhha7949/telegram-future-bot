@@ -306,8 +306,8 @@ if(volRatio < volThreshold) return null
     let longValidRSI = true
     let shortValidRSI = true
 
-    if(r > 85) longValidRSI = false //80
-if(r < 15) shortValidRSI = false // 25
+    if(r > 88) longValidRSI = false //80
+if(r < 12) shortValidRSI = false // 25
 
 // riêng TREND_STRONG thì nới nhẹ
 if(marketState === "TREND_STRONG"){
@@ -330,7 +330,9 @@ if(marketState === "TREND_STRONG"){
 //let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
     let lastMove = (Math.max(...highs.slice(-3)) - Math.min(...lows.slice(-3))) / price
 let antiChaseMult = 3
-     let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
+     //let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
+    let antiChaseLimit = atrRatio * 15
+antiChaseLimit = Math.max(0.01, Math.min(antiChaseLimit, 0.06))
 
 
 if(marketState === "TREND_STRONG") antiChaseMult = 5
@@ -415,7 +417,7 @@ if(trendLong && longValidRSI){
 
     longValid = true
     // ❌ không đu giá
-    if(distFromEma > 0.02) longValid = false
+    if(distFromEma > 0.35) longValid = false
 
     // breakout
     if(bosUp && momentumUp && volNowUSDT > volAvgUSDT * 1.2){
@@ -449,7 +451,7 @@ if(trendShort && shortValidRSI){
 
     shortValid = true
     // ❌ không đu giá
-    if(distFromEma < -0.02) shortValid = false
+    if(distFromEma < -0.35) shortValid = false
 
     // breakdown
     if(bosDown && momentumDown && volNowUSDT > volAvgUSDT * 1.3){
@@ -618,7 +620,7 @@ if(marketState === "SIDEWAY"){
     tp = rawTP
 }
 // kiểm tra khoảng cách giữa tp và price
-if(Math.abs(tp - price) / price < 0.0007){ //0.0015
+if(Math.abs(tp - price) / price < 0.0004){ //0.0015
     return null
 }
         // candle có thân lớn so với toàn cây không (giữ nguyên)
@@ -784,7 +786,7 @@ let filtered = candidates.filter(c => {
 if(c.marketState === "SIDEWAY"){
     threshold += 5
 }
-if((c.finalScore || c.score) < threshold - 5) return false
+if((c.finalScore || c.score) < threshold - 10) return false
 if(rr < RR_THRESHOLD) return false
 
     return true
@@ -947,7 +949,7 @@ if(t.waitingEntry){
      // timeout 1h
     let waitTime = Date.now() - t.time
     
-    if(waitTime > 3 * 60 * 60 * 1000){
+    if(waitTime > 6 * 60 * 60 * 1000){
     console.log(`⛔ Timeout entry ${t.symbol}`)
 
     await trades.updateOne(
@@ -978,7 +980,7 @@ atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02)) // 🔥 giảm max
 //let entryBuffer = t.atr * (0.3 + atrRatio * 10)
 //let maxChase    = t.atr * (2 + atrRatio * 40)
 let entryBuffer = t.atr * (0.25 + atrRatio * 8) // 0.3 10
-let maxChase = Math.min(t.atr * 3, t.entryZone * 0.015)
+let maxChase = Math.min(t.atr * 4, t.entryZone * 0.025)
 let prev = +data.at(-2)[4]
 
 // 🔥 clamp thêm lần cuối
@@ -997,12 +999,12 @@ if(Math.abs(price - t.entryZone) > maxChase * 1.5){
 // ===== MOMENTUM =====
 let momentum1m = (price - prev) / prev
 
-if(t.side === "LONG" && momentum1m < -0.0008) continue
-if(t.side === "SHORT" && momentum1m >  0.0008) continue
+if(t.side === "LONG" && momentum1m < -0.002) continue
+if(t.side === "SHORT" && momentum1m >  0.002) continue
 //if(t.side === "LONG" && momentum1m <= 0) continue
 //if(t.side === "SHORT" && momentum1m >= 0) continue
 // ===== ENTRY =====
-let tolerance = t.atr * 0.25   // nới nhẹ
+let tolerance = t.atr * 0.4   // nới nhẹ
 let entryLow  = t.entryZone - tolerance
 let entryHigh = t.entryZone + tolerance
 
