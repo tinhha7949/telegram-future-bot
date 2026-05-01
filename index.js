@@ -251,8 +251,8 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
 //let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
-let volThreshold = 0.1 - atrRatio * 3 // 0.18 2
-volThreshold = Math.max(0.05, Math.min(volThreshold, 0.3))
+let volThreshold = 0.03 - atrRatio * 2 // 0.18 2
+volThreshold = Math.max(0.02, Math.min(volThreshold, 0.08))
 
 if(volRatio < volThreshold) return null
     // ===== FILTER VOLUME =====
@@ -335,7 +335,7 @@ if(Math.abs(lastMove) > antiChaseLimit * 5){
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
-    //let nearEma = distEma < 0.0055
+    let nearEma = distEma < 0.0055
 
    // if(marketState === "SIDEWAY"){
        // if(nearEma && volNowUSDT < volAvgUSDT * 0.2) return null
@@ -537,7 +537,7 @@ let lowerWick = Math.min(open, close) - low
 
 if(candleRange === 0) return null
 
-let upperWickRatio = Wick / candleRange
+let upperWickRatio = upperWick / candleRange
 let lowerWickRatio = lowerWick / candleRange
 // ===== REJECTION FILTER =====
     let wickLimit = marketState === "TREND_STRONG" ? 0.9 : 0.8
@@ -853,7 +853,7 @@ for (let best of picks){
         let edge = dbAI.winrate - 0.5
         multiplier = 1 + edge * 2
 
-        if(multiplie > 1.5) multiplier = 1.5
+        if(multiplier > 1.5) multiplier = 1.5
         if(multiplier < 0.5) multiplier = 0.5
     }
 
@@ -1289,7 +1289,7 @@ async function getBestTPSL(setup, market, side){
             ? (t.tp - t.entry) / risk
             : (t.entry - t.tp) / risk
 
-        if(r > 0.5 && rr < 5){
+        if(rr > 0.5 && rr < 5){
             rrArr.push(rr)
         }
     }
