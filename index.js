@@ -997,8 +997,6 @@ let tolerance = t.atr * 0.25   // nới nhẹ
 let entryLow  = t.entryZone - tolerance
 let entryHigh = t.entryZone + tolerance
 
-let momentum1m = price - prev
-
 if(t.side === "LONG"){
 
     // pullback entry
