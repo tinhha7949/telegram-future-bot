@@ -14,7 +14,7 @@ const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 55 // 110
-const RR_THRESHOLD = 1.1 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.0 // 1.3 hoặc 1.4 nếu muốn 
     
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -325,7 +325,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(marketState !== "TREND_STRONG"){
     let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
 
-if(Math.abs(lastMove) > antiChaseLimit * 5){
+if(Math.abs(lastMove) > antiChaseLimit * 8){
         return null
     }
 }
@@ -761,14 +761,14 @@ let filtered = candidates.filter(c => {
 
     // ❌ loại kèo quá xấu
     //if(rr < 1.1) return false
-
+    
     // ❌ score quá thấp
    let threshold = c.dynamicThreshold
 
 if(c.marketState === "SIDEWAY"){
     threshold += 5
 }
-if((c.finalScore || c.score) < threshold) return false
+if((c.finalScore || c.score) < threshold - 5) return false
 if(rr < RR_THRESHOLD) return false
 
     return true
@@ -794,7 +794,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 1)
+let picks = filtered.slice(0, 3)
 for (let best of picks){
 
     // ===== BLOCK COIN =====
