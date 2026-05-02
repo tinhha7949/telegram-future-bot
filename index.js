@@ -13,9 +13,9 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 50 // 110
-const RR_THRESHOLD = 1.0 // 1.3 hoặc 1.4 nếu muốn 
-    
+const SCORE_THRESHOLD = 60 // 110
+const RR_THRESHOLD = 1.4 // 1.3 hoặc 1.4 nếu muốn 
+
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
@@ -115,25 +115,16 @@ function rsi(arr, p = 14){
     return 100 - (100 / (1 + rs))
 }
 
+
 function atr(data,p=14){
     let trs=[]
     for(let i=1;i<data.length;i++){
         let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
         trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
     }
-    return trs.slice(-p).reduce((a,b)=>a+b,0)/p
+    let slice = trs.slice(-p)
+return slice.reduce((a,b)=>a+b,0) / slice.length
 }
-//function atr(data,p=14){
-   // let trs=[]
-   // for(let i=1;i<data.length;i++){
-      //  let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
-       // trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
-  //  }
-    //if(trs.length < p) return 0
-
-    //let slice = trs.slice(-p)
-    //return slice.reduce((a,b)=>a+b,0) / slice.length
-//}
 
 // ================= DATA (PRO) =================
 async function getData(symbol, interval, limit){
@@ -199,32 +190,32 @@ async function getTopSymbols(){
     return null
 }
 // ============== dyminic minvol15m========
-//function getDynamicMinVol(volAvgUSDT, price, atrRatio){
+function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
-   // let base = MIN_VOL_15M
+    let base = MIN_VOL_15M
 
     // coin giá thấp → cần vol cao hơn
-    //if(price < 1){
-        //base *= 1.5
-   // }
+    if(price < 1){
+        base *= 1.5
+    }
 
     // coin giá cao → giảm yêu cầu
-    //if(price > 100){
-       // base *= 0.7
-    //}
+    if(price > 100){
+        base *= 0.7
+    }
 
     // volatility cao → giảm yêu cầu
-    //if(atrRatio > 0.005){
-        //base *= 0.8
-    //}
+    if(atrRatio > 0.005){
+        base *= 0.8
+    }
 
     // volatility thấp → tăng yêu cầu
-   // if(atrRatio < 0.002){
-        //base *= 1.3
-    //}
+    if(atrRatio < 0.002){
+        base *= 1.3
+    }
 
-   // return base
-//}
+    return base
+}
 // ================= CORE =================
 async function coreLogic(data15, data1h){
 
@@ -235,14 +226,17 @@ async function coreLogic(data15, data1h){
     let volumes= data15.map(x=>+x[5])
     let closes1h = data1h.map(x=>+x[4])
 
-    if(closes.length < 5) return null
-
     let price = closes.at(-1)
-    let prevPrice = closes.length >= 2 ? closes.at(-2) : price
+    let prevPrice = closes.at(-2)
+    let side=null, score=0
+    let setupType = null
+    // ===== ANTI CHASE (ĐÚNG CHỖ) =====
+let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
-    let atrVal = atr(data15.slice(-100))
-    if(!atrVal || atrVal <= 0 || isNaN(atrVal)) return null
-    let atrRatio = atrVal / price
+// nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
+if(Math.abs(lastMove) > 0.08){
+    return null
+}
     
    let last30 = volumes.slice(-30)
 if(last30.length < 20) return null
@@ -253,18 +247,29 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
     let volAvgUSDT = volAvg * price
     let volNowUSDT = volNow * price
 
-    if(!volAvgUSDT || volAvgUSDT === 0) return null
+    let atrVal = atr(data15.slice(-100))
+    if(!atrVal || atrVal <= 0) return null
+let atrRatio = atrVal / price
     let volRatio = volNowUSDT / volAvgUSDT //cmt dòng này nếu bỏ dymic
-    
-//let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
+
+let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
-let volThreshold = 0.03 - atrRatio * 2 // 0.18 2
-volThreshold = Math.max(0.02, Math.min(volThreshold, 0.08))
-
-if(volRatio < volThreshold) return null
+if(atrRatio < 0.002){
+    // sideway → cần volume mạnh
+    if(volRatio < 0.5) return null
+}
+else if(atrRatio > 0.005){
+    // trend mạnh → nới lỏng
+    if(volRatio < 0.3) return null // cũ 0.5
+}
+else{
+    // bình thường
+    if(volRatio < 0.45) return null
+}
+//if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
-//if(volAvgUSDT < dynamicMinVol * 0.7) return null
+if(volAvgUSDT < dynamicMinVol) return null
 
     //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
     //if(volAvgUSDT < MIN_VOL_15M) return null
@@ -281,83 +286,46 @@ if(volRatio < volThreshold) return null
 
     // ===== TREND =====
     let trendHTF = Math.abs(ema20_1h - ema50_1h) / price
-    //let trendLTF = Math.abs(ema20 - ema50) / price
+    let trendLTF = Math.abs(ema20 - ema50) / price
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
-    let dynamicThreshold = 50
-    if(trendHTF > 0.003) dynamicThreshold = 45
-    else if(trendHTF > 0.0015) dynamicThreshold = 50
-    else dynamicThreshold = 55
-    //if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 60 //90
-    //else if(trendHTF > 0.0015) dynamicThreshold = 65 // 95
-   // else dynamicThreshold = 70 // 105
+    let dynamicThreshold = 85
+    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 80 //90
+    else if(trendHTF > 0.0015) dynamicThreshold = 85 // 95
+    else dynamicThreshold = 90 // 105
 
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
-   // ===== MARKET =====
+
+    let volatility = "LOW"
+    if(atrVal / price > 0.0045) volatility = "HIGH"
+
+    // ===== ANTI CHASE (GIỮ 1) =====
+   // let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+   // if(Math.abs(lastMove) > 0.03) return null
+
+    // ===== WICK =====
+    if((highs.at(-1) - lows.at(-1)) > atrVal * 3.0) return null
+
+    // ===== MARKET =====
     let emaGap = Math.abs(ema20 - ema50) / price
     //let atrRatio = atrVal / price
 
     let marketState = "SIDEWAY"
     if(emaGap > 0.004 && atrRatio > 0.0045) marketState = "TREND_STRONG"
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
-   // ===== RSI HARD FILTER =====
-    let longValidRSI = true
-    let shortValidRSI = true
 
-    if(r > 88) longValidRSI = false //80
-if(r < 12) shortValidRSI = false // 25
-
-// riêng TREND_STRONG thì nới nhẹ
-if(marketState === "TREND_STRONG"){
-    if(r > 82) longValidRSI = false
-    if(r < 18) shortValidRSI = false
-}
-
-    let volatility = "LOW"
-    if(atrVal / price > 0.0045) volatility = "HIGH"
-
-    // ===== WICK =====
-    if((highs.at(-1) - lows.at(-1)) > atrVal * 3.0) return null
-
-    // ===== ANTI CHASE (ĐÚNG CHỖ) =====
-    let prevHigh = Math.max(...highs.slice(-25,-5))
-    let prevLow  = Math.min(...lows.slice(-25,-5))
-
-    let bosUp = price > prevHigh
-    let bosDown = price < prevLow
-//let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-    let lastMove = (Math.max(...highs.slice(-3)) - Math.min(...lows.slice(-3))) / price
-let antiChaseMult = 3
-     //let antiChaseLimit = Math.max(0.02, Math.min(atrRatio * 20, 0.08))
-    let antiChaseLimit = atrRatio * 15
-antiChaseLimit = Math.max(0.01, Math.min(antiChaseLimit, 0.06))
-
-
-if(marketState === "TREND_STRONG") antiChaseMult = 5
-if(marketState === "SIDEWAY") antiChaseMult = 2.5
-
-if(Math.abs(lastMove) > antiChaseLimit * antiChaseMult){
-    return null
-}
-// nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-//if(marketState !== "TREND_STRONG"){
-//if(Math.abs(lastMove) > antiChaseLimit * 6){
-     //   return null
-   // }
-//}
-
-    //let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    //if(marketState === "SIDEWAY" && range < 0.002) return null // 0.002
+    let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
+    if(marketState === "SIDEWAY" && range < 0.002) return null // 0.002
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
     let nearEma = distEma < 0.0055
 
-   // if(marketState === "SIDEWAY"){
-       // if(nearEma && volNowUSDT < volAvgUSDT * 0.2) return null
-   // }
+    if(marketState === "SIDEWAY"){
+        if(nearEma && volNowUSDT < volAvgUSDT * 0.3) return null //0.5
+    }
 
     // ===== STRUCTURE =====
     // ===== STRUCTURE (FIXED) =====
@@ -373,8 +341,8 @@ let rangeLow  = Math.min(...lArr)
 // tránh divide by zero
 if(!rangeHigh || !rangeLow || rangeHigh <= rangeLow) return null
     // ===== AVOID TOP =====
-let nearHigh = (rangeHigh - price) / rangeHigh < 0.01
-let nearLow  = (price - rangeLow) / rangeLow < 0.01
+let nearHigh = (rangeHigh - price) / price < 0.01
+let nearLow  = (price - rangeLow) / price < 0.01
 
     let rangeSize = rangeHigh - rangeLow
 if(rangeSize <= 0) return null
@@ -382,9 +350,29 @@ if(rangeSize <= 0) return null
 let pos = (price - rangeLow) / rangeSize
 
 if(marketState === "SIDEWAY"){
+    if(pos > 0.45 && pos < 0.55 && score < 70) return null
 }
 
-     // ===== MOMENTUM =====
+    let prevHigh = Math.max(...highs.slice(-25,-5))
+    let prevLow  = Math.min(...lows.slice(-25,-5))
+
+    let bosUp = price > prevHigh
+    let bosDown = price < prevLow
+    // ===== SPIKE FILTER =====
+let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
+
+if(spikeCandle > 0.035){ // nến trước >3.5%
+    bosUp = false
+    bosDown = false
+}
+
+    let prevHigh50 = Math.max(...highs.slice(-51,-1))
+    let prevLow50  = Math.min(...lows.slice(-51,-1))
+
+    let sweepHigh = highs.at(-2) > prevHigh50 && closes.at(-2) < prevHigh50
+    let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
+
+    // ===== MOMENTUM =====
     let momentumStrength = (closes.at(-1) - closes.at(-4)) / closes.at(-4)
 
     let momentumUp = momentumStrength > 0.002
@@ -394,155 +382,30 @@ if(marketState === "SIDEWAY"){
     let lowerHigh = highs.at(-2) < highs.at(-5)
 
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
-    let volTrendDown = volumes.slice(-5).every((v,i,a)=> i===0 || v<=a[i-1])
     
     // ===== TREND FILTER =====
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
-    //let trendStrength = Math.abs(ema20-ema50)/price
-    //if(marketState === "SIDEWAY" && trendStrength < 0.0003){ //0.0011
-   // return null
-//}
-    // ===== mới =======
-    // ===== LONG / SHORT TÁCH RIÊNG =====
-
-let longScore = 0
-let shortScore = 0
-let longValid = false
-let shortValid = false
-
-// ===== LONG =====
-if(trendLong && longValidRSI){
-
-    longValid = true
-    // ❌ không đu giá
-    if(distFromEma > 0.35) longValid = false
-
-    // breakout
-    if(bosUp && momentumUp && volNowUSDT > volAvgUSDT * 1.2){
-        longScore += 30
-    }
-
-    // pullback + bật lên
-    let bounce = closes.at(-1) > closes.at(-2)
-    if(nearEma && bounce){
-        longScore += 35
-    }
-
-    // structure
-    if(higherLow) longScore += 15
-
-    // RSI đẹp
-    //if(r > 50 && r < 75) longScore += 10
-    if(r > 45) longScore += 5
-
-    // volume
-    if(volTrendUp && volNowUSDT > volAvgUSDT * 1.2){
-    longScore += 10
+    let trendStrength = Math.abs(ema20-ema50)/price
+    if(marketState === "SIDEWAY" && trendStrength < 0.0008){ //0.0011
+    return null
 }
 
-    // tránh đỉnh
-    if(nearHigh) longScore -= 20
-}
-
-// ===== SHORT =====
-if(trendShort && shortValidRSI){
-
-    shortValid = true
-    // ❌ không đu giá
-    if(distFromEma < -0.35) shortValid = false
-
-    // breakdown
-    if(bosDown && momentumDown && volNowUSDT > volAvgUSDT * 1.3){
-        shortScore += 30
-    }
-
-    // pullback + bị đạp xuống
-    let reject = closes.at(-1) < closes.at(-2)
-    if(nearEma && reject){
-        shortScore += 35
-    }
-
-    // structure
-    if(lowerHigh) shortScore += 15
-
-    // RSI đẹp
-    //if(r > 25 && r < 50) shortScore += 10
-    if(r < 55) shortScore += 5
-
-    // volume
-   if(volTrendDown && volNowUSDT > volAvgUSDT * 1.2){
-    shortScore += 10
-}
-
-    // tránh đáy
-    if(nearLow) shortScore -= 20
-}
-
-// ===== CHỌN SIDE =====
-let prevHigh50 = Math.max(...highs.slice(-51,-1))
-    let prevLow50  = Math.min(...lows.slice(-51,-1))
-
-    let sweepHigh = highs.at(-2) > prevHigh50 && closes.at(-2) < prevHigh50
-    let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
-let side = null
-let score = 0
-
-// ===== SIDEWAY ƯU TIÊN RIÊNG =====
-if(marketState === "SIDEWAY"){
-    //if(volNowUSDT < volAvgUSDT * 0.6){
-    //return null
-//}
-
-    if(sweepHigh && !sweepLow){
-        if(!momentumDown) return null
-        side = "SHORT"
-        score = 25
-        dynamicThreshold += 10
-    }
-    else if(sweepLow && !sweepHigh){
-        if(!momentumUp) return null
-        side = "LONG"
-        score = 25
-        dynamicThreshold += 10
-    }
-    else{
-        return null
-    }
-
-    if(side === "LONG" && nearHigh) return null
-    if(side === "SHORT" && nearLow) return null
-}
-else{
-    // ===== TREND MODE =====
-    if(longValid && longScore > shortScore){
-        side = "LONG"
-        score = longScore
-    }
-    else if(shortValid && shortScore > longScore){
-        side = "SHORT"
-        score = shortScore
-    }
-    else{
-        return null
-    }
-
-    if(Math.abs(longScore - shortScore) < 5){
-        return null
-    }
-}
-    // ===== SPIKE FILTER =====
-//let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
-
-//let validBreakout = true
-
-//if(spikeCandle > 0.06){
-    //validBreakout = false
-//}
-
-       // if(!side) return null
+    // ===== SIDEWAY =====
+    if(marketState === "SIDEWAY"){
+        if(sweepHigh){ side="SHORT"; score+=60 }
+        if(sweepLow){ side="LONG"; score+=60 }
+        if(!side) return null
         //if(bosUp || bosDown) return null
+    }
+    if(side === "LONG" && nearHigh){
+    score -= 20
+}
+
+if(side === "SHORT" && nearLow){
+    score -= 20
+}
     // Fake breakout
     let high = highs.at(-1)
 let low = lows.at(-1)
@@ -552,43 +415,192 @@ let close = closes.at(-1)
 let candleRange = high - low
 let upperWick = high - Math.max(open, close)
 let lowerWick = Math.min(open, close) - low
+// ===== REVERSAL DETECTION (TOP + BOTTOM) =====
 
-if(candleRange === 0) return null
+let strongUpperWick = candleRange > 0 && (upperWick / candleRange > 0.5)
+let strongLowerWick = candleRange > 0 && (lowerWick / candleRange > 0.5)
 
-let upperWickRatio = upperWick / candleRange
-let lowerWickRatio = lowerWick / candleRange
+let bearishClose = close < open
+let bullishClose = close > open
+
+// ===== ĐỈNH =====
+let isTop =
+    distFromEma > 0.03 &&
+    r > 68 &&
+    strongUpperWick &&
+    bearishClose &&
+    nearHigh   // 🔥 thêm
+// ===== ĐÁY =====
+let isBottom =
+    distFromEma < -0.03 &&
+    r < 32 &&
+    strongLowerWick &&
+    bullishClose &&
+    nearLow
+
+let reversalShortSignal = ENABLE_REVERSAL && isTop
+let reversalLongSignal  = ENABLE_REVERSAL && isBottom
+// 🔥 nếu giá quá xa EMA → bỏ (đu đỉnh)
+if(distFromEma > 0.025 && !reversalShortSignal && !reversalLongSignal){
+    return null
+}
 // ===== REJECTION FILTER =====
-    let wickLimit = marketState === "TREND_STRONG" ? 0.9 : 0.8
+if(candleRange > 0){
+    let upperWickRatio = upperWick / candleRange
+    let lowerWickRatio = lowerWick / candleRange
 
-if(upperWickRatio > wickLimit && side === "LONG") return null
-if(lowerWickRatio > wickLimit && side === "SHORT") return null
-//if(upperWickRatio > 0.85 && side === "LONG") return null
-//if(lowerWickRatio > 0.85 && side === "SHORT") return null
+    // ❌ bị đạp xuống → không long
+    if(upperWickRatio > 0.4){
+        if(side === "LONG") return null
+    }
+
+    // ❌ bị đẩy lên → không short
+    if(lowerWickRatio > 0.4){
+        if(side === "SHORT") return null
+    }
+}
     
-//let fakePump = volNowUSDT > volAvgUSDT * 2
-   // && upperWick / candleRange > 0.5
+let fakePump = volNowUSDT > volAvgUSDT * 2
+    && upperWick / candleRange > 0.5
 
-//let fakeDump = volNowUSDT > volAvgUSDT * 2
-   // && lowerWick / candleRange > 0.5
+let fakeDump = volNowUSDT > volAvgUSDT * 2
+    && lowerWick / candleRange > 0.5
+if(fakePump || fakeDump){
+    score -= 20
+}
 
+    // ===== SCORE =====
+    if(!side){
+
+    // ❌ không long ở đỉnh
+    if(trendLong && !reversalShortSignal){
+        side="LONG"
+        score+=15
+    }
+
+    // ❌ không short ở đáy
+    else if(trendShort && !reversalLongSignal){
+        side="SHORT"
+        score+=15
+    }
+}
+// ===== FORCE REVERSAL =====
+if(reversalShortSignal){
+    side = "SHORT"
+    score += 70
+    setupType = "REVERSAL_TOP"
+}
+
+if(reversalLongSignal){
+    side = "LONG"
+    score += 70
+    setupType = "REVERSAL_BOTTOM"
+}
+if(trendLong && side==="LONG" && !reversalLongSignal) score += 10
+if(trendShort && side==="SHORT" && !reversalShortSignal) score += 10
+if(!side) return null
+
+    // ===== SETUP =====
+   if(
+    side==="LONG" &&
+    bosUp &&
+    volNowUSDT > volAvgUSDT * 1.5 &&
+    momentumUp &&
+    distFromEma < 0.12 
+){
+    score += 50
+    setupType = "BREAKOUT"
+}
+
+if(
+    side==="SHORT" &&
+    bosDown &&
+    volNowUSDT > volAvgUSDT * 1.5 &&
+    momentumDown &&
+    distFromEma > -0.02
+){
+    score += 50
+    setupType = "BREAKOUT"
+}
+    //if(side==="LONG" && bosUp){
+       // score += 40
+       // setupType = "BREAKOUT"
+   // }
+
+   // if(side==="SHORT" && bosDown){
+      //  score += 40
+       // setupType = "BREAKOUT"
+    //}
+
+    if(side==="LONG" && nearEma){
+        score += 20
+        if(!setupType) setupType = "PULLBACK"
+    }
+
+    if(side==="SHORT" && nearEma){
+        score += 20
+        if(!setupType) setupType = "PULLBACK"
+    }
+    // ❌ không có hồi → không short
+if(side === "SHORT"){
+    let pulledBack = highs.at(-2) > highs.at(-4)
+    if(!pulledBack) score -= 10
+}
+
+if(side === "LONG"){
+    let pulledBack = lows.at(-2) < lows.at(-4)
+    if(!pulledBack) score -= 10
+}
+
+    if(side==="LONG" && sweepLow) score+=35
+    if(side==="SHORT" && sweepHigh) score+=35
+
+    if(volTrendUp) score+=20
+    if(volNowUSDT > volAvgUSDT *1.5) score+=15 
+
+    if(side==="LONG" && momentumUp) score+=10
+    if(side==="SHORT" && momentumDown) score+=10
+
+    if(side==="LONG" && higherLow) score+=15
+    if(side==="SHORT" && lowerHigh) score+=15
+   
+    if(side==="LONG" && r>50 && r<65) score+=10
+    if(side==="SHORT" && r>35 && r<50) score+=10
+
+    if(!side) return null
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
     let resistance = rangeHigh
 let support = rangeLow
+let distToRes = (resistance - price) / price
+let distToSup = (price - support) / price
+
+if(setupType !== "BREAKOUT"){
+if(side === "LONG" && distToRes < 0.002) return null
+if(side === "SHORT" && distToSup < 0.002) return null
+}
+    // ===== ANTI FOMO (GỌN - KHÔNG TRÙNG) =====
+    let distance = Math.abs(price - ema20)
+    // ===== ANTI FOMO =====
+let isBreakout = setupType === "BREAKOUT"
+
+if(!isBreakout){
+    if(marketState !== "TREND_STRONG" && distance > atrVal * 3.5){
+        return null
+    }
+}
+
+   // if(setupType !== "BREAKOUT"){
+    //if(marketState !== "TREND_STRONG" && distance > atrVal * 3.5){ // *4
+        //return null
+   // }
+  //  }
     // ===== SL TP (GIỮ NGUYÊN) =====
     let swingLow = Math.min(...lows.slice(-20))
     let swingHigh = Math.max(...highs.slice(-20))
 
     let sl = side==="LONG"
-    ? swingLow - atrVal
-    : swingHigh + atrVal
-
-let maxSL = atrVal * (2 + atrRatio * 20)
-
-if(Math.abs(price - sl) > maxSL){
-    sl = side==="LONG"
-        ? price - maxSL
-        : price + maxSL
-}
+        ? swingLow - atrVal
+        : swingHigh + atrVal
 
     let risk = Math.abs(price - sl)
 
@@ -601,7 +613,7 @@ let rawTP = side === "LONG"
 if(marketState === "SIDEWAY"){
     
     if(side === "LONG"){
-        tp = Math.min(rawTP, resistance * 0.997)
+        tp = Math.min(rawTP, resistance * 0.999)
     }else{
         tp = Math.max(rawTP, support * 1.001)
     }
@@ -620,20 +632,18 @@ if(marketState === "SIDEWAY"){
     tp = rawTP
 }
 // kiểm tra khoảng cách giữa tp và price
-if(Math.abs(tp - price) / price < 0.0004){ //0.0015
+if(Math.abs(tp - price) / price < 0.001){ //0.0015
     return null
 }
         // candle có thân lớn so với toàn cây không (giữ nguyên)
 let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
-if(rangeCandle === 0 || body / rangeCandle < 0.05){ //0.2
+if(rangeCandle === 0 || body / rangeCandle < 0.1){ //0.2
     return null
 }
 
     function round(n){ return Number(n.toFixed(4)) }
-
-    let setupType = null
 
     if(!setupType){
     if(bosUp || bosDown){
@@ -719,7 +729,6 @@ async function scanner(){
 
         if(!signals || signals.length === 0){
             console.log("❌ No signal")
-            isScanning = false
             return
         }
 
@@ -744,9 +753,9 @@ for (let s of signals){
     let dbMain = dbCache[keyMain]
 
     let weightMain = Math.min(dbMain.total / 50, 1)
-    let aiMain = (dbMain.winrate - 0.5) * 80 * weightMain
+    let aiMain = (dbMain.winrate - 0.5) * 200 * weightMain
 
-    if(dbMain.total < 25) aiMain *= 0.5
+    if(dbMain.total < 15) aiMain *= 0.5
 
     let finalMain = s.score + aiMain
 
@@ -756,7 +765,7 @@ for (let s of signals){
             finalScore: finalMain,
             type: "MAIN"
         })
-    //}
+   // }
 }
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
@@ -778,16 +787,16 @@ let filtered = candidates.filter(c => {
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
     // ❌ loại kèo quá xấu
-    //if(rr < 1.1) return false
-    
+    if(rr < 1.1) return false
+
     // ❌ score quá thấp
-   let threshold = c.dynamicThreshold
+    let threshold = SCORE_THRESHOLD
 
 if(c.marketState === "SIDEWAY"){
-    threshold += 5
+    threshold += 10
 }
-if((c.finalScore || c.score) < threshold - 10) return false
-if(rr < RR_THRESHOLD) return false
+
+if((c.finalScore || c.score) < threshold) return false
 
     return true
 })
@@ -860,9 +869,9 @@ for (let best of picks){
         ? (best.tp - best.price) / (best.price - best.sl)
         : (best.price - best.tp) / (best.sl - best.price)
 
-    //if(rr < 1.15){
-        //continue
-    //}
+    if(rr < 1.1){
+        continue
+    }
 
     // ===== RISK =====
     let multiplier = 1
@@ -949,7 +958,7 @@ if(t.waitingEntry){
      // timeout 1h
     let waitTime = Date.now() - t.time
     
-    if(waitTime > 6 * 60 * 60 * 1000){
+    if(waitTime > 3 * 60 * 60 * 1000){
     console.log(`⛔ Timeout entry ${t.symbol}`)
 
     await trades.updateOne(
@@ -973,66 +982,72 @@ ${t.side}
     // ===== LONG =====
     let confirm = false
 
-let atrRatio = t.atr / t.entryZone
+let atrRatio = t.atr / price
 
 atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02)) // 🔥 giảm max
 
-//let entryBuffer = t.atr * (0.3 + atrRatio * 10)
-//let maxChase    = t.atr * (2 + atrRatio * 40)
-let entryBuffer = t.atr * (0.25 + atrRatio * 8) // 0.3 10
-let maxChase = Math.min(t.atr * 4, t.entryZone * 0.025)
-let prev = +data.at(-2)[4]
+let entryBuffer = t.atr * (0.3 + atrRatio * 10)
+let maxChase    = t.atr * (2 + atrRatio * 40)
 
 // 🔥 clamp thêm lần cuối
 entryBuffer = Math.min(entryBuffer, t.atr * 1.2)
 maxChase    = Math.min(maxChase, t.atr * 4)
     
-if(Math.abs(price - t.entryZone) > maxChase * 1.5){
-    activeTrades.splice(i,1)
-    await trades.updateOne(
-        { symbol: t.symbol, time: t.time },
-        { $set: { result: "CANCEL_CHASE" } }
-    )
-    continue
-}
-
-// ===== MOMENTUM =====
-let momentum1m = (price - prev) / prev
-
-if(t.side === "LONG" && momentum1m < -0.002) continue
-if(t.side === "SHORT" && momentum1m >  0.002) continue
-//if(t.side === "LONG" && momentum1m <= 0) continue
-//if(t.side === "SHORT" && momentum1m >= 0) continue
-// ===== ENTRY =====
-let tolerance = t.atr * 0.4   // nới nhẹ
-let entryLow  = t.entryZone - tolerance
-let entryHigh = t.entryZone + tolerance
-
 if(t.side === "LONG"){
 
-    if(price >= entryLow && price <= entryHigh){
-        confirm = true
-    }
-
-    if(t.setup === "BREAKOUT"){
-        if(prev <= t.entryZone && price > t.entryZone){
+    // 🔥 reversal đáy → phải bật lên mới vào
+    if(t.setup === "REVERSAL_BOTTOM"){
+        if(price > t.entryZone + t.atr * 0.3){
             confirm = true
         }
+    }else{
+        if(price <= t.entryZone - entryBuffer){
+            confirm = true
+        }
+    }
+
+    if(price > t.entryZone + maxChase){
+        activeTrades.splice(i,1)
+        await trades.updateOne(
+            { symbol: t.symbol, time: t.time },
+            { $set: { result: "CANCEL_CHASE" } }
+        )
+        continue
     }
 }
 
 if(t.side === "SHORT"){
 
-    if(price >= entryLow && price <= entryHigh){
-        confirm = true
-    }
-
-    if(t.setup === "BREAKOUT"){
-        if(prev >= t.entryZone && price < t.entryZone){
+    // 🔥 reversal đỉnh → phải giảm mới vào
+    if(t.setup === "REVERSAL_TOP"){
+        if(price < t.entryZone - t.atr * 0.3){
+            confirm = true
+        }
+    }else{
+        if(price >= t.entryZone + entryBuffer){
             confirm = true
         }
     }
+
+    if(price < t.entryZone - maxChase){
+        activeTrades.splice(i,1)
+        await trades.updateOne(
+            { symbol: t.symbol, time: t.time },
+            { $set: { result: "CANCEL_CHASE" } }
+        )
+        continue
+    }
 }
+
+   // if(t.side === "LONG"){
+   // if(last <= t.entryZone * 1.005){ //2
+       // confirm = true
+  //  }
+
+//if(t.side === "SHORT"){
+   // if(last >= t.entryZone * 0.995){ //2
+       // confirm = true
+  //  }
     // ===== VÀO LỆNH =====
     if(confirm){
     t.entry = price
@@ -1062,11 +1077,7 @@ Size: ${size.toFixed(2)}
 Score: ${t.score || 0}
 `
     console.log(msg)
-    let ok = false
-for(let i=0;i<2;i++){
-    ok = await sendTelegram(msg)
-    if(ok) break
-}
+    let ok = await sendTelegram(msg)
 
    // lastSignalTime[`${t.symbol}-${t.side}`] = Date.now()
 }
@@ -1162,9 +1173,6 @@ async function start(){
 
         // 🔥 LOAD LẠI LỆNH
         activeTrades = await trades.find({ result: "PENDING" }).toArray()
-
-// lọc lại tránh rác
-        activeTrades = activeTrades.filter(t => t && t.symbol)
         console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
 
         // ================= LOOP =================
