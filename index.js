@@ -234,7 +234,7 @@ async function coreLogic(data15, data1h){
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(Math.abs(lastMove) > 0.08){
+if(Math.abs(lastMove) > 0.12){
     return null
 }
     
@@ -269,7 +269,7 @@ else{
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
-if(volAvgUSDT < dynamicMinVol) return null
+//if(volAvgUSDT < dynamicMinVol) return null
 
     //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
     //if(volAvgUSDT < MIN_VOL_15M) return null
@@ -759,13 +759,13 @@ for (let s of signals){
 
     let finalMain = s.score + aiMain
 
-    //if(finalMain >= s.dynamicThreshold){
+    if(finalMain >= s.dynamicThreshold){
         candidates.push({
             ...s,
             finalScore: finalMain,
             type: "MAIN"
         })
-   // }
+    }
 }
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
