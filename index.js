@@ -805,7 +805,7 @@ let filtered = candidates.filter(c => {
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
     // ❌ loại kèo quá xấu
-    if(rr < 1.1) return false
+    if(rr < RR_THRESHOLD) return false
 
     // ❌ score quá thấp
     let threshold = SCORE_THRESHOLD
@@ -887,7 +887,7 @@ for (let best of picks){
         ? (best.tp - best.price) / (best.price - best.sl)
         : (best.price - best.tp) / (best.sl - best.price)
 
-    if(rr < 1.1){
+    if(rr < RR_THRESHOLD){
         continue
     }
 
