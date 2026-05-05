@@ -14,7 +14,7 @@ const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 60 // 110
-const RR_THRESHOLD = 1.4 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
 const ACCOUNT_BALANCE = 1000
@@ -42,7 +42,11 @@ async function sendTelegram(msg){
         })
 
         let data = await res.json()
-        return data.ok   // 👈 QUAN TRỌNG
+        for(let i=0;i<2;i++){
+   ...
+   if(data.ok) return true
+}
+return false   // 👈 QUAN TRỌNG
 
     }catch(e){
         console.log("❌ TELE:", e.message)
@@ -59,7 +63,11 @@ async function sendTelegram2(msg){
             body: JSON.stringify({ chat_id: AI_CHAT_ID, text: msg })
         })
         let data = await res.json()
-        return data.ok
+        for(let i=0;i<2;i++){
+   ...
+   if(data.ok) return true
+}
+return false
 
     }catch(e){
         console.log("❌ TELE 2:", e.message)
@@ -234,7 +242,7 @@ async function coreLogic(data15, data1h){
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(Math.abs(lastMove) > 0.12){
+if(Math.abs(lastMove) > 0.06){
     return null
 }
     
@@ -257,15 +265,15 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
     // ===== DYNAMIC VOLUME FILTER =====
 if(atrRatio < 0.002){
     // sideway → cần volume mạnh
-    if(volRatio < 0.5) return null
+    if(volRatio < 0.35) return null
 }
 else if(atrRatio > 0.005){
     // trend mạnh → nới lỏng
-    if(volRatio < 0.3) return null // cũ 0.5
+    if(volRatio < 0.25) return null // cũ 0.5
 }
 else{
     // bình thường
-    if(volRatio < 0.45) return null
+    if(volRatio < 0.35) return null
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
@@ -317,7 +325,7 @@ else{
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.002) return null // 0.002
+    if(marketState === "SIDEWAY" && range < 0.0015) return null // 0.002
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
@@ -349,7 +357,7 @@ if(rangeSize <= 0) return null
 
 let pos = (price - rangeLow) / rangeSize
 
-if(marketState === "SIDEWAY"){
+if(marketState === "SIDEWAY" && side){
     if(pos > 0.45 && pos < 0.55 && score < 70) return null
 }
 
@@ -416,9 +424,19 @@ let candleRange = high - low
 let upperWick = high - Math.max(open, close)
 let lowerWick = Math.min(open, close) - low
 // ===== REVERSAL DETECTION (TOP + BOTTOM) =====
+let body = Math.abs(close - open)
 
-let strongUpperWick = candleRange > 0 && (upperWick / candleRange > 0.5)
-let strongLowerWick = candleRange > 0 && (lowerWick / candleRange > 0.5)
+let strongUpperWick =
+    candleRange > atrVal * 0.5 &&
+    (upperWick / candleRange > 0.55) &&
+    (body / candleRange < 0.35)
+
+let strongLowerWick =
+    candleRange > atrVal * 0.5 &&
+    (lowerWick / candleRange > 0.55) &&
+    (body / candleRange < 0.35)
+//let strongUpperWick = candleRange > 0 && (upperWick / candleRange > 0.5)
+//let strongLowerWick = candleRange > 0 && (lowerWick / candleRange > 0.5)
 
 let bearishClose = close < open
 let bullishClose = close > open
@@ -584,7 +602,7 @@ if(side === "SHORT" && distToSup < 0.002) return null
 let isBreakout = setupType === "BREAKOUT"
 
 if(!isBreakout){
-    if(marketState !== "TREND_STRONG" && distance > atrVal * 3.5){
+    if(marketState !== "TREND_STRONG" && distance > atrVal * 4.5){
         return null
     }
 }
@@ -636,7 +654,7 @@ if(Math.abs(tp - price) / price < 0.001){ //0.0015
     return null
 }
         // candle có thân lớn so với toàn cây không (giữ nguyên)
-let body = Math.abs(close - open)
+//let body = Math.abs(close - open)
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
 if(rangeCandle === 0 || body / rangeCandle < 0.1){ //0.2
@@ -890,7 +908,7 @@ for (let best of picks){
 }
 
     let diff = Math.abs(best.price - best.sl)
-    if(!diff) continue
+    if(!diff || isNaN(diff)) continue
 
     let trade = {
         symbol: best.symbol,
@@ -934,7 +952,7 @@ for (let best of picks){
 
     }catch(e){
     console.log("❌ Scanner error:")
-    console.log(e)
+    console.log(e.stack)
 } finally {
     isScanning = false   // ✅ THẢ LOCK
 }
