@@ -33,6 +33,7 @@ let activeTrades = []
 
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
+    for(let i=0;i<2;i++){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
         let res = await fetch(url,{
@@ -42,19 +43,17 @@ async function sendTelegram(msg){
         })
 
         let data = await res.json()
-        for(let i=0;i<2;i++){
-   ...
    if(data.ok) return true
-}
-return false   // 👈 QUAN TRỌNG
 
     }catch(e){
         console.log("❌ TELE:", e.message)
-        return false
     }
+}
+    return false
 }
 // Telegram phụ
 async function sendTelegram2(msg){
+    for(let i=0;i<2;i++){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN_2}/sendMessage`
         let res = await fetch(url,{
@@ -63,16 +62,13 @@ async function sendTelegram2(msg){
             body: JSON.stringify({ chat_id: AI_CHAT_ID, text: msg })
         })
         let data = await res.json()
-        for(let i=0;i<2;i++){
-   ...
    if(data.ok) return true
-}
-return false
 
     }catch(e){
         console.log("❌ TELE 2:", e.message)
-        return false
     }
+}
+    return false
 }
 
 // ================= COMMAND =================
