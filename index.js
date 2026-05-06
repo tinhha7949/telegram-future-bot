@@ -13,7 +13,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 60 // 110
+const SCORE_THRESHOLD = 55 // 110
 const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
@@ -238,7 +238,7 @@ async function coreLogic(data15, data1h){
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(Math.abs(lastMove) > 0.06){
+if(Math.abs(lastMove) > 0.08){
     return null
 }
     
@@ -265,7 +265,7 @@ if(atrRatio < 0.002){
 }
 else if(atrRatio > 0.005){
     // trend mạnh → nới lỏng
-    if(volRatio < 0.25) return null // cũ 0.5
+    if(volRatio < 0.2) return null // cũ 0.5
 }
 else{
     // bình thường
@@ -294,10 +294,10 @@ else{
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
-    let dynamicThreshold = 85
-    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 80 //90
-    else if(trendHTF > 0.0015) dynamicThreshold = 85 // 95
-    else dynamicThreshold = 90 // 105
+    let dynamicThreshold = 80
+    if(trendHTF > 0.003 && trendLTF > 0.002) dynamicThreshold = 75 //90
+    else if(trendHTF > 0.0015) dynamicThreshold = 80 // 95
+    else dynamicThreshold = 85 // 105
 
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
@@ -455,7 +455,7 @@ let isBottom =
 let reversalShortSignal = ENABLE_REVERSAL && isTop
 let reversalLongSignal  = ENABLE_REVERSAL && isBottom
 // 🔥 nếu giá quá xa EMA → bỏ (đu đỉnh)
-if(distFromEma > 0.025 && !reversalShortSignal && !reversalLongSignal){
+if(distFromEma > 0.04 && !reversalShortSignal && !reversalLongSignal){
     return null
 }
 // ===== REJECTION FILTER =====
