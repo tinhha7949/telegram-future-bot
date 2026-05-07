@@ -958,7 +958,7 @@ if(t.waitingEntry){
      // timeout 1h
     let waitTime = Date.now() - t.time
     
-    if(waitTime > 3 * 60 * 60 * 1000){
+    if(waitTime > 60 * 60 * 1000){
     console.log(`⛔ Timeout entry ${t.symbol}`)
 
     await trades.updateOne(
