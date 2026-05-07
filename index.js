@@ -221,6 +221,7 @@ async function getData(symbol, interval, limit){
             }catch(e){
                 // retry im lặng
                 await new Promise(r => setTimeout(r, 400))
+                console.log("❌ DATA FAIL:", symbol)
             }
         }
     }
