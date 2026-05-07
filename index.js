@@ -140,7 +140,6 @@ async function checkCommand(){
         for(let u of data.result){
             lastUpdateId = u.update_id
             if(!u.message?.text) continue
-
             if(u.message.text === "/status"){
                 await sendTelegram("🤖 BOT đang chạy OK")
             }
@@ -187,8 +186,6 @@ function atr(data,p=14){
     let slice = trs.slice(-p)
 return slice.reduce((a,b)=>a+b,0) / slice.length
 }
-
-// ================= DATA (PRO) =================
 async function getData(symbol, interval, limit){
 
     const urls = [
@@ -198,21 +195,38 @@ async function getData(symbol, interval, limit){
     ]
 
     for(let url of urls){
-        for(let attempt=0; attempt<2; attempt++){
+
+        for(let attempt=0; attempt<5; attempt++){
+
             try{
-                let res = await fetch(url, { headers:{"User-Agent":"Mozilla/5.0"} })
+
+                const controller = new AbortController()
+                const timeout = setTimeout(() => controller.abort(), 8000)
+
+                let res = await fetch(url, {
+                    headers: { "User-Agent": "Mozilla/5.0" },
+                    signal: controller.signal
+                })
+
+                clearTimeout(timeout)
+
                 if(!res.ok) continue
+
                 let data = await res.json()
-                if(Array.isArray(data) && data.length>0) return data
+
+                if(Array.isArray(data) && data.length > 0){
+                    return data
+                }
+
             }catch(e){
-                if(attempt===1) console.log("❌ DATA FAIL:", symbol)
+                // retry im lặng
+                await new Promise(r => setTimeout(r, 400))
             }
         }
     }
 
     return null
 }
-
 // ================= SYMBOL (PRO) =================
 async function getTopSymbols(){
 
