@@ -261,15 +261,15 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
     // ===== DYNAMIC VOLUME FILTER =====
 if(atrRatio < 0.002){
     // sideway → cần volume mạnh
-    if(volRatio < 0.35) return null
+    if(volRatio < 0.18) return null
 }
 else if(atrRatio > 0.005){
     // trend mạnh → nới lỏng
-    if(volRatio < 0.2) return null // cũ 0.5
+    if(volRatio < 0.12) return null // cũ 0.5
 }
 else{
     // bình thường
-    if(volRatio < 0.35) return null
+    if(volRatio < 0.15) return null
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
