@@ -1,4 +1,3 @@
-
 const { MongoClient } = require("mongodb")
 
 const client = new MongoClient(process.env.MONGO_URI)
@@ -14,7 +13,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 50 // 110
+const SCORE_THRESHOLD = 40 // 110
 const RR_THRESHOLD = 1.4 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
@@ -235,12 +234,12 @@ async function coreLogic(data15, data1h){
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(Math.abs(lastMove) > 0.08){
-    score -= 25
+if(Math.abs(lastMove) > 0.12){
+    score -= 20
 }
     
    let last30 = volumes.slice(-30)
-if(last30.length < 20) return null
+if(last30.length < 15) return null
 
 let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
     let volNow = volumes.at(-1)
@@ -249,7 +248,9 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
     let volNowUSDT = volNow * price
 
     let atrVal = atr(data15.slice(-100))
-    if(!atrVal || atrVal <= 0) return null
+    if(!atrVal || atrVal <= 0){
+    atrVal = price * 0.003 // fallback ATR giả
+}
 let atrRatio = atrVal / price
     let volRatio = volNowUSDT / volAvgUSDT //cmt dòng này nếu bỏ dymic
 
@@ -270,8 +271,8 @@ else{
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
-if(volAvgUSDT < dynamicMinVol){
-    score -= 30
+if(volAvgUSDT < dynamicMinVol * 0.7){
+    score -= 15
 }
 
     //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
@@ -377,7 +378,7 @@ let pos = (price - rangeLow) / rangeSize
 
 if(marketState === "SIDEWAY"){
     if(pos > 0.45 && pos < 0.55){
-        score -= 20
+        score -= 10
     }
 }
 
