@@ -1,7 +1,26 @@
+require("dotenv").config()
 const { MongoClient } = require("mongodb")
 
 const client = new MongoClient(process.env.MONGO_URI)
+const { UMFutures } = require('@binance/connector')
+const binance = new UMFutures(
+    process.env.BINANCE_KEY,
+    process.env.BINANCE_SECRET
+)
+async function getBalance(){
 
+    try{
+        let res = await binance.balance()
+
+        let usdt = res.data.find(x => x.asset === "USDT")
+
+        return Number(usdt.availableBalance)
+
+    }catch(e){
+        console.log("❌ BAL ERROR:", e.message)
+        return 0
+    }
+}
 let db, trades
 // ================= CONFIG =================
 const BOT_TOKEN = process.env.BOT_TOKEN
@@ -17,7 +36,7 @@ const SCORE_THRESHOLD = 40 // 110
 const RR_THRESHOLD = 1.4 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
-const ACCOUNT_BALANCE = 1000
+let ACCOUNT_BALANCE = 0
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
 
 const DEBUG_AI = false
@@ -66,7 +85,50 @@ async function sendTelegram2(msg){
         return false
     }
 }
+async function openPosition(symbol, side, qty){
 
+    try{
+
+        let orderSide = side === "LONG" ? "BUY" : "SELL"
+
+        let res = await binance.newOrder(symbol, {
+            side: orderSide,
+            type: "MARKET",
+            quantity: qty
+        })
+
+        return res.data
+
+    }catch(e){
+        console.log("❌ OPEN ORDER FAIL:", e.message)
+        return null
+    }
+}
+function normalizeQty(qty){
+    return Number(qty.toFixed(3)) // tùy coin
+}
+async function setTPSL(symbol, side, tp, sl){
+
+    try{
+
+        await binance.newOrder(symbol, {
+            side: side === "LONG" ? "SELL" : "BUY",
+            type: "TAKE_PROFIT_MARKET",
+            stopPrice: tp,
+            closePosition: true
+        })
+
+        await binance.newOrder(symbol, {
+            side: side === "LONG" ? "SELL" : "BUY",
+            type: "STOP_MARKET",
+            stopPrice: sl,
+            closePosition: true
+        })
+
+    }catch(e){
+        console.log("❌ TPSL FAIL:", e.message)
+    }
+}
 // ================= COMMAND =================
 async function checkCommand(){
     try{
@@ -913,7 +975,15 @@ for (let best of picks){
         if(multiplier < 0.5) multiplier = 0.5
     }
 
-    let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
+    let balance = ACCOUNT_BALANCE
+
+let riskPercent = RISK_PER_TRADE
+
+if(best.setup === "REVERSAL_TOP" || best.setup === "REVERSAL_BOTTOM"){
+    riskPercent *= 0.5
+}
+
+let risk = balance * riskPercent * multiplier
     if(best.setup === "REVERSAL_TOP" || best.setup === "REVERSAL_BOTTOM"){
     risk *= 0.5
 }
@@ -937,7 +1007,6 @@ for (let best of picks){
         marketState: best.marketState,
         volatility: best.volatility,
         atr: best.atr,
-        time: Date.now(),
         result: "PENDING"
     }
 
@@ -985,13 +1054,13 @@ async function checkTrades(){
             // ================= ENTRY 1M CONFIRM =================
 if(t.waitingEntry){
      // timeout 1h
-    let waitTime = Date.now() - t.time
+    let waitTime = Date.now() - t.createdAt
     
     if(waitTime > 5 * 60 * 60 * 1000){
     console.log(`⛔ Timeout entry ${t.symbol}`)
 
     await trades.updateOne(
-        { symbol: t.symbol, time: t.time },
+        { symbol: t.symbol, createdAt: t.createdAt },
         { $set: { result: "CANCEL_ENTRY" } }
     )
 
@@ -1040,7 +1109,7 @@ if(t.side === "LONG"){
     if(price > t.entryZone + maxChase){
         activeTrades.splice(i,1)
         await trades.updateOne(
-            { symbol: t.symbol, time: t.time },
+            { symbol: t.symbol, createdAt: t.createdAt },
             { $set: { result: "CANCEL_CHASE" } }
         )
         continue
@@ -1063,7 +1132,7 @@ if(t.side === "SHORT"){
     if(price < t.entryZone - maxChase){
         activeTrades.splice(i,1)
         await trades.updateOne(
-            { symbol: t.symbol, time: t.time },
+            { symbol: t.symbol, createdAt: t.createdAt },
             { $set: { result: "CANCEL_CHASE" } }
         )
         continue
@@ -1082,15 +1151,36 @@ if(t.side === "SHORT"){
     // ===== VÀO LỆNH =====
     if(confirm){
     t.entry = price
-    t.waitingEntry = false
+t.waitingEntry = false
 
-    let trailingSL = t.side === "LONG"
-        ? t.entry - t.atr
-        : t.entry + t.atr
-
-    let diff = Math.abs(t.entry - t.sl)
+// ===== SIZE =====
+let diff = Math.abs(t.entry - t.sl)
 if(diff === 0) continue
-let size = t.risk / diff
+
+let risk = t.risk || 10
+
+let qty = normalizeQty(risk / diff)
+if(qty <= 0){
+    console.log("❌ INVALID QTY")
+    continue
+}
+
+if(risk > ACCOUNT_BALANCE * 0.05){
+    console.log("❌ RISK TOO HIGH")
+    continue
+}
+
+// ===== OPEN ORDER =====
+let order = await openPosition(t.symbol, t.side, qty)
+
+if(!order){
+    console.log("❌ SKIP ORDER")
+    continue
+}
+
+// ===== SET SL TP =====
+await setTPSL(t.symbol, t.side, t.tp, t.sl)
+
 
     let msg = `🔥 BEST SIGNAL
 
@@ -1103,8 +1193,7 @@ TP: ${t.tp.toFixed(4)}
 
 SL: ${t.sl.toFixed(4)}
 
-Trailing SL: ${trailingSL.toFixed(4)}
-Size: ${size.toFixed(2)}
+Size: ${qty.toFixed(2)}
 Score: ${t.score || 0}
 `
     console.log(msg)
@@ -1134,13 +1223,13 @@ if(!t.entry) continue
         
 
             // timeout 12h
-let isTimeout = Date.now() - t.time > 43200000
+let isTimeout = Date.now() - t.createdAt > 43200000
 
 // ===== TIMEOUT TRƯỚC =====
 if(isTimeout){
     
     await trades.updateOne(
-    { symbol: t.symbol, time: t.time },
+    { symbol: t.symbol, createdAt: t.createdAt },
     { $set: { result: "TIMEOUT" } }
 )
     console.log(`⏳ Timeout: ${t.symbol}`)
@@ -1159,7 +1248,7 @@ ${t.side}
 if(done){
         // 🔥 UPDATE DB
     await trades.updateOne(
-        { symbol: t.symbol, time: t.time },
+        { symbol: t.symbol, createdAt: t.createdAt },
         { $set: { result: win ? "WIN" : "LOSS" } }
     )
 
@@ -1189,6 +1278,8 @@ async function start(){
         }
 
         await client.connect()
+        ACCOUNT_BALANCE = await getBalance()
+console.log("💰 BALANCE:", ACCOUNT_BALANCE)
 
         try{
     await client.db("admin").command({ ping: 1 })
@@ -1207,6 +1298,9 @@ async function start(){
         console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
 
         // ================= LOOP =================
+        setInterval(async ()=>{
+    ACCOUNT_BALANCE = await getBalance()
+}, 60000)
 setInterval(()=>scanner(),120000)
 setInterval(()=>checkCommand(),10000)
 setInterval(()=>checkTrades(),60000)
@@ -1278,8 +1372,8 @@ async function getDBStats(setup, market, side, volatility){
 
         for(let t of data){
 
-            let ageHours = t.time 
-                ? (Date.now() - t.time) / 3600000 
+            let ageHours = t.createdAt
+                ? (Date.now() - t.createdAt) / 3600000
                 : 999
 
             // 🔥 decay 48h
