@@ -71,7 +71,17 @@ let lastSymbolsUpdate = 0
 let isScanning = false
 // ===== ACTIVE TRADES =====
 let activeTrades = []
+let exchangeInfoCache = null
 
+async function getSymbolInfo(symbol){
+
+    if(!exchangeInfoCache){
+        let res = await fetch("https://fapi.binance.com/fapi/v1/exchangeInfo")
+        exchangeInfoCache = await res.json()
+    }
+
+    return exchangeInfoCache.symbols.find(s => s.symbol === symbol)
+}
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
     try{
@@ -1210,11 +1220,28 @@ t.waitingEntry = false
 
 // ===== SIZE =====
 let diff = Math.abs(t.entry - t.sl)
-if(diff === 0) continue
+
+// ❌ FIX NULL / ZERO / NaN
+if(!diff || diff < 1e-8){
+    console.log("❌ INVALID DIFF")
+    continue
+}
 
 let risk = t.risk || 10
 
+// ❌ FIX risk rác
+if(!risk || risk <= 0){
+    console.log("❌ INVALID RISK")
+    continue
+}
+
 let qty = normalizeQty(risk / diff)
+
+// ❌ FINAL SAFETY CHECK
+if(!qty || !isFinite(qty) || qty <= 0){
+    console.log("❌ INVALID QTY")
+    continue
+}
 
 // 🔥 clamp max qty theo coin rẻ
 let maxQty = 10000
@@ -1235,12 +1262,38 @@ if(risk > ACCOUNT_BALANCE * 0.05){
 
 // ===== OPEN ORDER =====
 let order = await openPosition(t.symbol, t.side, qty)
+// ===== GET BINANCE FILTER =====
+let info = await getSymbolInfo(t.symbol)
 
+let lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE")
+let priceFilter = info.filters.find(f => f.filterType === "PRICE_FILTER")
+
+let stepSize = parseFloat(lotFilter.stepSize)
+let tickSize = parseFloat(priceFilter.tickSize)
+
+// ===== FIX PRECISION =====
+qty = Math.floor(qty / stepSize) * stepSize
+t.tp = Math.floor(t.tp / tickSize) * tickSize
+t.sl = Math.floor(t.sl / tickSize) * tickSize
 if(!order){
-    console.log("❌ SKIP ORDER")
+    console.log("❌ ORDER FAIL")
     continue
 }
 
+// 🔥 CHỜ POSITION FILL
+await new Promise(r => setTimeout(r, 1500))
+
+// 🔥 CHECK POSITION THẬT SỰ TỒN TẠI
+let positions = await binance.futuresPositionRisk()
+
+let opened = positions.find(p =>
+    p.symbol === t.symbol && Math.abs(p.positionAmt) > 0
+)
+
+if(!opened){
+    console.log("❌ NO POSITION → SKIP TPSL")
+    continue
+}
 // ===== SET SL TP =====
 await setTPSL(t.symbol, t.side, t.tp, t.sl)
 
