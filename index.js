@@ -1,6 +1,51 @@
+const https = require("https")
+
+const agent = new https.Agent({
+    keepAlive: true,
+    maxSockets: 50
+})
+async function safeFetch(url, options = {}, retries = 3){
+
+    for(let i=0;i<retries;i++){
+
+        try{
+
+            const controller = new AbortController()
+
+            const timeout = setTimeout(() => {
+                controller.abort()
+            }, 10000)
+
+            let res = await fetch(url,{
+                ...options,
+                agent,
+                signal: controller.signal,
+                headers:{
+                    "User-Agent":"Mozilla/5.0",
+                    ...(options.headers || {})
+                }
+            })
+
+            clearTimeout(timeout)
+
+            if(res.ok){
+                return res
+            }
+
+        }catch(e){
+
+            if(i === retries-1){
+                console.log("❌ FETCH FAIL:", url)
+            }
+
+            await new Promise(r=>setTimeout(r,500))
+        }
+    }
+
+    return null
+}
 require("dotenv").config()
 const { MongoClient } = require("mongodb")
-
 const client = new MongoClient(process.env.MONGO_URI)
 const Binance = require('binance-api-node').default
 
@@ -26,7 +71,7 @@ async function getBalance(){
 
         const url = `${baseUrl}${path}?${query}&signature=${signature}`
 
-        let res = await fetch(url, {
+        let res = await safe, {
             headers: {
                 "X-MBX-APIKEY": process.env.BINANCE_KEY
             }
@@ -75,18 +120,41 @@ let exchangeInfoCache = null
 
 async function getSymbolInfo(symbol){
 
-    if(!exchangeInfoCache){
-        let res = await fetch("https://fapi.binance.com/fapi/v1/exchangeInfo")
-        exchangeInfoCache = await res.json()
-    }
+    try{
 
-    return exchangeInfoCache.symbols.find(s => s.symbol === symbol)
+        if(
+            !exchangeInfoCache ||
+            !exchangeInfoCache.symbols
+        ){
+
+            let res = await safeFetch(
+                "https://fapi.binance.com/fapi/v1/exchangeInfo"
+            )
+
+            if(!res) return null
+
+            let data = await res.json()
+
+            if(!data.symbols){
+                return null
+            }
+
+            exchangeInfoCache = data
+        }
+
+        return exchangeInfoCache.symbols.find(
+            s => s.symbol === symbol
+        )
+
+    }catch(e){
+        return null
+    }
 }
 // ================= TELEGRAM =================
 async function sendTelegram(msg){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
-        let res = await fetch(url,{
+        let res = await safeFetch(url,{
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body: JSON.stringify({ chat_id: CHAT_ID, text: msg })
@@ -104,7 +172,7 @@ async function sendTelegram(msg){
 async function sendTelegram2(msg){
     try{
         let url = `https://api.telegram.org/bot${BOT_TOKEN_2}/sendMessage`
-        let res = await fetch(url,{
+        let res = await safeFetch(url,{
             method:"POST",
             headers:{"Content-Type":"application/json"},
             body: JSON.stringify({ chat_id: AI_CHAT_ID, text: msg })
@@ -135,7 +203,7 @@ async function openPosition(symbol, side, qty){
 
         const url = `${baseUrl}${path}?${query}&signature=${signature}`
 
-        let res = await fetch(url, {
+        let res = await safeFetch(url, {
             method: "POST",
             headers: {
                 "X-MBX-APIKEY": process.env.BINANCE_KEY
@@ -183,22 +251,57 @@ async function setTPSL(symbol, side, tp, sl){
     }
 }
 // ================= COMMAND =================
+let checkingCmd = false
+
 async function checkCommand(){
+
+    if(checkingCmd) return
+    checkingCmd = true
+
     try{
+
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 5000)
+
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`
-        let res = await fetch(url)
+
+        let res = await safeFetch(url,{
+            signal: controller.signal
+        })
+
+        clearTimeout(timeout)
+
+        if(!res.ok){
+            checkingCmd = false
+            return
+        }
+
         let data = await res.json()
-        if(!data.result) return
+
+        if(!data.result){
+            checkingCmd = false
+            return
+        }
 
         for(let u of data.result){
+
             lastUpdateId = u.update_id
+
             if(!u.message?.text) continue
+
             if(u.message.text === "/status"){
                 await sendTelegram("🤖 BOT đang chạy OK")
             }
         }
+
     }catch(e){
-        console.log("⚠️ CMD:", e.message)
+
+        if(e.name !== "AbortError"){
+            console.log("⚠️ CMD:", e.message)
+        }
+
+    }finally{
+        checkingCmd = false
     }
 }
 
@@ -256,7 +359,7 @@ async function getData(symbol, interval, limit){
                 const controller = new AbortController()
                 const timeout = setTimeout(() => controller.abort(), 8000)
 
-                let res = await fetch(url, {
+                let res = await safeFetch(url, {
                     headers: { "User-Agent": "Mozilla/5.0" },
                     signal: controller.signal
                 })
@@ -292,7 +395,7 @@ async function getTopSymbols(){
     for(let url of urls){
         for(let attempt=0; attempt<2; attempt++){
             try{
-                let res = await fetch(url, { headers:{"User-Agent":"Mozilla/5.0"} })
+                let res = await safeFetch(url, { headers:{"User-Agent":"Mozilla/5.0"} })
                 if(!res.ok) continue
 
                 let data = await res.json()
@@ -307,7 +410,7 @@ async function getTopSymbols(){
                         )
                     //   .filter(c => Number(c.quoteVolume) > 30000000)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
-                .slice(0,50)
+                .slice(0,30)
                         .map(c => c.symbol)
                 }
 
@@ -880,7 +983,20 @@ async function scanner(){
         }
 
         // ===== SCAN =====
-        let results = await Promise.allSettled(symbols.map(scan))
+        let results = []
+
+for(let i=0;i<symbols.length;i+=5){
+
+    let chunk = symbols.slice(i,i+5)
+
+    let r = await Promise.allSettled(
+        chunk.map(scan)
+    )
+
+    results.push(...r)
+
+    await new Promise(r=>setTimeout(r,300))
+}
 
         let signals = results
             .filter(r => r.status === "fulfilled" && r.value)
@@ -1416,7 +1532,11 @@ async function start(){
         }
 
         await client.connect()
-        ACCOUNT_BALANCE = await getBalance()
+        let newBalance = await getBalance()
+
+if(newBalance > 0){
+    ACCOUNT_BALANCE = newBalance
+}
 console.log("💰 BALANCE:", ACCOUNT_BALANCE)
 
         try{
@@ -1439,7 +1559,13 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         setInterval(async ()=>{
     ACCOUNT_BALANCE = await getBalance()
 }, 60000)
-setInterval(()=>scanner(),30000)
+setInterval(async()=>{
+
+    if(!isScanning){
+        await scanner()
+    }
+
+},60000)
 setInterval(()=>checkCommand(),10000)
 setInterval(()=>checkTrades(),60000)
 
