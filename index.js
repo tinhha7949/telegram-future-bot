@@ -49,7 +49,7 @@ async function safeFetch(url, options = {}, retry = 3){
 
         await new Promise(r=>setTimeout(r,1500))
     }
-
+    }
     return null
 }
 require("dotenv").config()
