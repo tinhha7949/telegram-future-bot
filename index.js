@@ -32,8 +32,8 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 40 // 110
-const RR_THRESHOLD = 1.4 // 1.3 hoặc 1.4 nếu muốn 
+const SCORE_THRESHOLD = 30 // 110
+const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.03
 let ACCOUNT_BALANCE = 0
@@ -254,7 +254,7 @@ async function getTopSymbols(){
                         )
                     //   .filter(c => Number(c.quoteVolume) > 30000000)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
-                .slice(0,30)
+                .slice(0,50)
                         .map(c => c.symbol)
                 }
 
@@ -344,7 +344,7 @@ else if(atrRatio > 0.005){
 }
 else{
     // bình thường
-    if(volRatio < 0.04) return null
+    if(volRatio < 0.02) return null
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
@@ -421,14 +421,14 @@ if(atrRatio < 0.002){
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.002) return null // 0.002
+    if(marketState === "SIDEWAY" && range < 0.0012) return null // 0.002
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
     let nearEma = distEma < 0.0055
 
     if(marketState === "SIDEWAY"){
-        if(nearEma && volNowUSDT < volAvgUSDT * 0.3) return null //0.5
+        if(nearEma && volNowUSDT < volAvgUSDT * 0.2) return null //0.5
     }
 
     // ===== STRUCTURE =====
@@ -865,7 +865,7 @@ for (let s of signals){
 
     let finalMain = s.score + aiMain
 
-    if(finalMain >= s.dynamicThreshold){
+    if(finalMain >= s.dynamicThreshold - 5){
         candidates.push({
             ...s,
             finalScore: finalMain,
@@ -1316,7 +1316,7 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         setInterval(async ()=>{
     ACCOUNT_BALANCE = await getBalance()
 }, 60000)
-setInterval(()=>scanner(),120000)
+setInterval(()=>scanner(),30000)
 setInterval(()=>checkCommand(),10000)
 setInterval(()=>checkTrades(),60000)
 
