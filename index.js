@@ -15,17 +15,20 @@ async function safeFetch(url, options = {}, retry = 3){
 
     for(let i=0;i<retry;i++){
 
+        let timeout
+
         try{
 
             const controller = new AbortController()
 
-            const timeout = setTimeout(() => {
+            timeout = setTimeout(() => {
                 controller.abort()
             }, 10000)
 
             let res = await fetch(url,{
                 ...options,
-                signal: controller.signal
+                signal: controller.signal,
+                agent
             })
 
             clearTimeout(timeout)
@@ -37,6 +40,8 @@ async function safeFetch(url, options = {}, retry = 3){
             console.log(`❌ FETCH STATUS: ${res?.status} ${url}`)
 
         }catch(e){
+
+            clearTimeout(timeout)
 
             console.log(`❌ FETCH FAIL: ${url}`)
         }
@@ -78,9 +83,10 @@ async function getBalance(){
                 "X-MBX-APIKEY": process.env.BINANCE_KEY
             }
         })
+        if(!res) return 0
 
         let data = await res.json()
-        if(!res) return 0
+        
         let usdt = data.find(x => x.asset === "USDT")
 
         return Number(usdt?.balance || 0)
@@ -119,6 +125,7 @@ let isScanning = false
 // ===== ACTIVE TRADES =====
 let activeTrades = []
 let exchangeInfoCache = null
+let validFuturesSymbols = new Set()
 
 async function getSymbolInfo(symbol){
 
@@ -209,7 +216,7 @@ async function openPosition(symbol, side, qty){
 
         const url = `${baseUrl}${path}?${query}&signature=${signature}`
 
-        let res = await fetchSafe(url, {
+        let res = await safeFetch(url, {
     method: "POST",
     headers: {
         "X-MBX-APIKEY": process.env.BINANCE_KEY
@@ -224,7 +231,10 @@ if(!res){
 let data = await res.json()
 
 if(data.code){
-    console.log("❌ BINANCE ORDER:", data.msg)
+
+    console.log("❌ BINANCE ORDER ERROR")
+    console.log(data)
+
     return null
 }
 
@@ -234,10 +244,6 @@ return data
         console.log("❌ OPEN ORDER FAIL:", e.message)
         return null
     }
-}
-function normalizeQty(qty){
-    if(!qty || !isFinite(qty)) return 0
-    return Number(qty.toFixed(3))
 }
 async function setTPSL(symbol, side, tp, sl){
 
@@ -434,7 +440,8 @@ async function getTopSymbols(){
                     //   .filter(c => Number(c.quoteVolume) > 30000000)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
                 .slice(0,30)
-                        .map(c => c.symbol)
+                       .map(c => c.symbol)
+.filter(s => validFuturesSymbols.has(s))
                 }
 
             }catch(e){
@@ -444,6 +451,37 @@ async function getTopSymbols(){
     }
 
     return null
+}
+async function loadValidFuturesSymbols(){
+
+    try{
+
+        let res = await safeFetch(
+            "https://fapi.binance.com/fapi/v1/exchangeInfo"
+        )
+
+        if(!res) return
+
+        let data = await res.json()
+
+        if(!data.symbols) return
+
+        validFuturesSymbols = new Set(
+
+            data.symbols
+                .filter(s =>
+                    s.status === "TRADING" &&
+                    s.contractType === "PERPETUAL"
+                )
+                .map(s => s.symbol)
+        )
+
+        console.log(`✅ Futures symbols: ${validFuturesSymbols.size}`)
+
+    }catch(e){
+
+        console.log("❌ LOAD FUTURES SYMBOL:", e.message)
+    }
 }
 // ============== dyminic minvol15m========
 function getDynamicMinVol(volAvgUSDT, price, atrRatio){
@@ -1384,7 +1422,7 @@ if(!rawQty || !isFinite(rawQty) || rawQty <= 0){
     continue
 }
 
-let qty = normalizeQty(rawQty)
+let qty = rawQty
 
 // ❌ FINAL SAFETY CHECK
 if(!qty || !isFinite(qty) || qty <= 0){
@@ -1412,25 +1450,79 @@ if(risk > ACCOUNT_BALANCE * 0.05){
 // ===== GET BINANCE FILTER =====
 let info = await getSymbolInfo(t.symbol)
 
+if(!info || !info.filters){
+
+    console.log(`❌ NO SYMBOL INFO ${t.symbol}`)
+    continue
+}
+
 let lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE")
 let priceFilter = info.filters.find(f => f.filterType === "PRICE_FILTER")
+let minNotionalFilter = info.filters.find(f => f.filterType === "MIN_NOTIONAL")
 
 let stepSize = parseFloat(lotFilter.stepSize)
+let minQty = parseFloat(lotFilter.minQty)
+
 let tickSize = parseFloat(priceFilter.tickSize)
 
-// ===== FIX PRECISION =====
-      function roundStep(value, step){
+let minNotional = minNotionalFilter
+    ? parseFloat(minNotionalFilter.notional)
+    : 5
+
+function roundStep(value, step){
     return Math.floor(value / step) * step
 }
+
+// ===== ROUND =====
 qty = roundStep(qty, stepSize)
-t.tp = roundStep(t.tp, tickSize)
-t.sl = roundStep(t.sl, tickSize)
-if(!order){
-    console.log("❌ ORDER FAIL")
+function roundPrice(price, tickSize, side){
+
+    if(side === "LONG"){
+        return Math.floor(price / tickSize) * tickSize
+    }
+
+    return Math.ceil(price / tickSize) * tickSize
+}
+
+t.tp = roundPrice(t.tp, tickSize, t.side)
+t.sl = roundPrice(t.sl, tickSize, t.side)
+// ===== FIX FLOAT =====
+qty = Number(qty.toFixed(8))
+t.tp = Number(t.tp.toFixed(8))
+t.sl = Number(t.sl.toFixed(8))
+
+// ===== MIN QTY =====
+if(qty < minQty){
+
+    console.log(`❌ QTY < MIN_QTY ${t.symbol}`)
+    console.log(`qty=${qty} | minQty=${minQty}`)
+
+    continue
+}
+
+// ===== MIN NOTIONAL =====
+let notional = qty * t.entry
+
+if(notional < minNotional){
+
+    console.log(`❌ NOTIONAL TOO SMALL ${t.symbol}`)
+    console.log(`notional=${notional} | min=${minNotional}`)
+
+    continue
+}
+
+// ===== FINAL SAFETY =====
+if(!qty || !isFinite(qty) || qty <= 0){
+
+    console.log(`❌ INVALID FINAL QTY ${t.symbol}`)
     continue
 }
 // ===== OPEN ORDER =====
 let order = await openPosition(t.symbol, t.side, qty)
+        if(!order){
+    console.log("❌ ORDER FAIL")
+    continue
+}
 // 🔥 CHỜ POSITION FILL
 await new Promise(r => setTimeout(r, 1500))
 
@@ -1590,7 +1682,7 @@ setInterval(async()=>{
 },60000)
 setInterval(()=>checkCommand(),10000)
 setInterval(()=>checkTrades(),60000)
-
+await loadValidFuturesSymbols()
         scanner()
 
     }catch(e){
