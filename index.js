@@ -147,16 +147,14 @@ async function setTPSL(symbol, side, tp, sl){
 
     try{
 
-        // 🔥 CHỜ POSITION MỞ HẲN
-        await new Promise(r => setTimeout(r, 1500))
+        await new Promise(r => setTimeout(r, 1200))
 
         await binance.futuresOrder({
             symbol,
             side: side === "LONG" ? "SELL" : "BUY",
             type: "TAKE_PROFIT_MARKET",
             stopPrice: tp,
-            closePosition: true,
-            timeInForce: "GTE"   // ❌ bỏ nếu gây lỗi
+            closePosition: true
         })
 
         await binance.futuresOrder({
@@ -1217,8 +1215,16 @@ if(diff === 0) continue
 let risk = t.risk || 10
 
 let qty = normalizeQty(risk / diff)
-if(qty <= 0){
-    console.log("❌ INVALID QTY")
+
+// 🔥 clamp max qty theo coin rẻ
+let maxQty = 10000
+
+if(t.symbol.includes("PENGU") || t.symbol.includes("SHIB")){
+    maxQty = 100000
+}
+
+if(qty > maxQty){
+    console.log("❌ QTY TOO BIG:", qty)
     continue
 }
 
