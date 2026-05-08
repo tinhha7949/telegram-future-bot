@@ -71,7 +71,7 @@ async function getBalance(){
 
         const url = `${baseUrl}${path}?${query}&signature=${signature}`
 
-        let res = await safe, {
+        let res = await safeFetch(url, {
             headers: {
                 "X-MBX-APIKEY": process.env.BINANCE_KEY
             }
