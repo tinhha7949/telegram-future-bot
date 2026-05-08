@@ -147,12 +147,16 @@ async function setTPSL(symbol, side, tp, sl){
 
     try{
 
+        // 🔥 CHỜ POSITION MỞ HẲN
+        await new Promise(r => setTimeout(r, 1500))
+
         await binance.futuresOrder({
             symbol,
             side: side === "LONG" ? "SELL" : "BUY",
             type: "TAKE_PROFIT_MARKET",
             stopPrice: tp,
-            closePosition: true
+            closePosition: true,
+            timeInForce: "GTE"   // ❌ bỏ nếu gây lỗi
         })
 
         await binance.futuresOrder({
@@ -931,7 +935,7 @@ let filtered = candidates.filter(c => {
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
     // ❌ loại kèo quá xấu
-    if(rr < 1.1) return false
+    if(rr < SCORE_THRESHOLD) return false
 
     // ❌ score quá thấp
     let threshold = SCORE_THRESHOLD
@@ -1013,7 +1017,7 @@ for (let best of picks){
         ? (best.tp - best.price) / (best.price - best.sl)
         : (best.price - best.tp) / (best.sl - best.price)
 
-    if(rr < 1.1){
+    if(rr < SCORE_THRESHOLD){
         continue
     }
 
