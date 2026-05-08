@@ -147,14 +147,16 @@ async function setTPSL(symbol, side, tp, sl){
 
     try{
 
-        await binance.newOrder(symbol, {
+        await binance.futuresOrder({
+            symbol,
             side: side === "LONG" ? "SELL" : "BUY",
             type: "TAKE_PROFIT_MARKET",
             stopPrice: tp,
             closePosition: true
         })
 
-        await binance.newOrder(symbol, {
+        await binance.futuresOrder({
+            symbol,
             side: side === "LONG" ? "SELL" : "BUY",
             type: "STOP_MARKET",
             stopPrice: sl,
