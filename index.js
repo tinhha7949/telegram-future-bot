@@ -21,15 +21,21 @@ async function safeFetch(url, options = {}, retry = 3){
 
         try{
 
-            const controller = new AbortController()
+            const controller = options.signal
+    ? null
+    : new AbortController()
 
-            timeout = setTimeout(() => {
-                controller.abort()
-            }, 10000)
+const signal = options.signal || controller.signal
 
-            let res = await fetch(url,{
+timeout = controller
+    ? setTimeout(() => {
+        controller.abort()
+    }, 10000)
+    : null
+
+let res = await fetch(url,{
     ...options,
-    signal: controller.signal,
+    signal,
     ...(url.includes("telegram.org") ? {} : { agent })
 })
 
@@ -38,6 +44,11 @@ async function safeFetch(url, options = {}, retry = 3){
             if(res && res.ok){
                 return res
             }
+            if(res.status === 429 || res.status === 418){
+
+    await new Promise(r=>setTimeout(r,3000))
+    continue
+}
 
             console.log(`❌ FETCH STATUS: ${res?.status} ${url}`)
 
@@ -126,7 +137,7 @@ let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
 // ===== ACTIVE TRADES =====
-let exchangeInfoTime = 0
+let exchangeInfoTime = 
 let checkingTrades = false
 let activeTrades = []
 let exchangeInfoCache = null
@@ -155,6 +166,7 @@ async function getSymbolInfo(symbol){
             }
 
             exchangeInfoCache = data
+exchangeInfoTime = Date.now()
         }
 
         return exchangeInfoCache.symbols.find(
@@ -257,28 +269,38 @@ async function setTPSL(symbol, side, tp, sl, qty){
 
         await new Promise(r => setTimeout(r, 1200))
 
-        await binance.futuresOrder({
-    symbol,
-    side: side === "LONG" ? "SELL" : "BUY",
-    type: "TAKE_PROFIT_MARKET",
-    stopPrice: tp,
-    quantity: qty,
-    reduceOnly: true,
-    workingType: "MARK_PRICE"
-})
+        let tpOrder = await binance.futuresOrder({
+            symbol,
+            side: side === "LONG" ? "SELL" : "BUY",
+            type: "TAKE_PROFIT_MARKET",
+            stopPrice: tp,
+            closePosition: true,
+            workingType: "MARK_PRICE"
+        })
 
-       await binance.futuresOrder({
-    symbol,
-    side: side === "LONG" ? "SELL" : "BUY",
-    type: "STOP_MARKET",
-    stopPrice: sl,
-    quantity: qty,
-    reduceOnly: true,
-    workingType: "MARK_PRICE"
-})
+        let slOrder = await binance.futuresOrder({
+            symbol,
+            side: side === "LONG" ? "SELL" : "BUY",
+            type: "STOP_MARKET",
+            stopPrice: sl,
+            closePosition: true,
+            workingType: "MARK_PRICE"
+        })
+
+        return {
+            ok: true,
+            tpOrder,
+            slOrder
+        }
 
     }catch(e){
+
         console.log("❌ TPSL FAIL:", e.message)
+
+        return {
+            ok: false,
+            error: e.message
+        }
     }
 }
 // ================= COMMAND =================
@@ -1310,41 +1332,17 @@ async function checkTrades(){
 
             try{
 
-                let data = await getData(t.symbol,"1m",2)
+                let data = await Promise.race([
+    getData(t.symbol,"1m",2),
+    new Promise(resolve =>
+        setTimeout(()=>resolve(null),10000)
+    )
+])
 
                 if(!data) continue
 
                 let price = +data.at(-1)[4]
-
-                // ================= ENTRY 1M CONFIRM =================
-
-                if(t.waitingEntry){
-
-                    // code entry ở đây
-
-                    continue
-                }
-
-                if(!t.entry) continue
-
-                // code TP SL ở đây
-
-            }catch(e){
-
-                console.log(`❌ checkTrades ${t.symbol}:`, e.message)
-            }
-        }
-
-    }catch(e){
-
-        console.log("❌ checkTrades global:", e.message)
-
-    }finally{
-
-        checkingTrades = false
-    }
-}
-            // ================= ENTRY 1M CONFIRM =================
+                  // ================= ENTRY 1M CONFIRM =================
 if(t.waitingEntry){
      // timeout 1h
     let waitTime = Date.now() - t.createdAt
@@ -1520,10 +1518,23 @@ let minNotional = minNotionalFilter
 function roundStep(value, step){
     return Math.floor(value / step) * step
 }
+//////////
+        function precisionFromStep(step){
 
+    return Math.max(
+        0,
+        (step.toString().split(".")[1] || "")
+            .replace(/0+$/,"")
+            .length
+    )
+}
 // ===== ROUND =====
 qty = roundStep(qty, stepSize)
-        qty = Number(qty.toFixed(8))
+      qty = Number(
+    qty.toFixed(
+        precisionFromStep(stepSize)
+    )
+)
 function roundPrice(price, tickSize, side){
 
     if(side === "LONG"){
@@ -1588,10 +1599,59 @@ if(!qty || !isFinite(qty) || qty <= 0){
     console.log(`❌ INVALID FINAL QTY ${t.symbol}`)
     continue
 }
+        ///////////
+        let lock = await trades.findOneAndUpdate(
+    {
+        symbol: t.symbol,
+        createdAt: t.createdAt,
+        opening: { $ne: true }
+    },
+    {
+        $set: {
+            opening: true
+        }
+    }
+)
+
+if(!lock.value){
+
+    console.log(`⛔ LOCKED ${t.symbol}`)
+
+    continue
+}
 // ===== OPEN ORDER =====
+        let positions = await binance.futuresPositionRisk()
+
+let hasPos = positions.find(p =>
+    p.symbol === t.symbol &&
+    Math.abs(Number(p.positionAmt)) > 0
+)
+
+if(hasPos){
+
+    console.log(`⛔ POSITION EXISTS ${t.symbol}`)
+
+    await trades.updateOne(
+        { symbol: t.symbol, createdAt: t.createdAt },
+        { $set: { result: "POSITION_EXISTS" } }
+    )
+
+    activeTrades.splice(i,1)
+
+    continue
+}
 let order = await openPosition(t.symbol, t.side, qty)
         if(!order){
+
     console.log("❌ ORDER FAIL")
+
+    await trades.updateOne(
+        { symbol: t.symbol, createdAt: t.createdAt },
+        { $set: { result: "ORDER_FAIL" } }
+    )
+
+    activeTrades.splice(i,1)
+
     continue
 }
 // ===== WAIT ORDER FILLED =====
@@ -1613,17 +1673,15 @@ if(!realQty || realQty <= 0){
 
 let pos = positions.find(p => p.symbol === t.symbol)
 
+let positionAmt = 0
+
 if(pos){
-
-    let positionAmt = Math.abs(Number(pos.positionAmt || 0))
-
-    if(positionAmt > 0){
-        realQty = positionAmt
-    }
+    positionAmt = Math.abs(Number(pos.positionAmt || 0))
 }
-        if(positionAmt > 0){
-            realQty = positionAmt
-        }
+
+if(positionAmt > 0){
+    realQty = positionAmt
+}
 
     }catch(e){
         console.log("❌ POSITION CHECK FAIL:", e.message)
@@ -1637,7 +1695,17 @@ if(!realQty || realQty <= 0){
     continue
 }
 // ===== SET SL TP =====
-await setTPSL(t.symbol, t.side, t.tp, t.sl, realQty)
+const tpsl = await setTPSL(t.symbol, t.side, t.tp, t.sl, realQty)
+        if(!tpsl.ok){
+
+    await sendTelegram2(
+`❌ TPSL FAIL ${t.symbol}
+${t.side}
+
+TP/SL không đặt được
+${tpsl.error}`
+    )
+}
 
 
     let msg = `🔥 BEST SIGNAL
@@ -1728,6 +1796,22 @@ ${win ? "✅ WIN" : "❌ LOSS"}`
     }
 } 
 
+            }catch(e){
+
+                console.log(`❌ checkTrades ${t.symbol}:`, e.message)
+            }
+        }
+
+    }catch(e){
+
+        console.log("❌ checkTrades global:", e.message)
+
+    }finally{
+
+        checkingTrades = false
+    }
+}
+
 async function start(){
     try{
 
@@ -1754,6 +1838,20 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         trades = db.collection("trades")
 
         console.log("✅ MongoDB connected")
+/////////////////
+        await trades.updateMany(
+    {
+        result: "PENDING",
+        createdAt: {
+            $lt: Date.now() - 12 * 60 * 60 * 1000
+        }
+    },
+    {
+        $set: {
+            result: "EXPIRED"
+        }
+    }
+)
 
         // 🔥 LOAD LẠI LỆNH
         activeTrades = await trades.find({ result: "PENDING" }).toArray()
@@ -1763,17 +1861,30 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         setInterval(async ()=>{
     ACCOUNT_BALANCE = await getBalance()
 }, 60000)
-setInterval(async()=>{
+async function scanLoop(){
 
-    if(!isScanning){
-        await scanner()
+    while(true){
+
+        try{
+
+            await scanner()
+
+        }catch(e){
+
+            console.log("❌ scanLoop:", e.message)
+        }
+
+        await new Promise(r =>
+            setTimeout(r,60000)
+        )
     }
+}
 
 },60000)
 setInterval(()=>checkCommand(),35000)
 setInterval(()=>checkTrades(),60000)
 await loadValidFuturesSymbols()
-        scanner()
+        scanLoop()
 
     }catch(e){
         console.log("❌ Start error:", e.message)
