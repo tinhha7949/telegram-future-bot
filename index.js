@@ -1542,31 +1542,19 @@ let order = await openPosition(t.symbol, t.side, qty)
     console.log("❌ ORDER FAIL")
     continue
 }
-// 🔥 CHỜ POSITION FILL
-await new Promise(r => setTimeout(r, 1500))
+// ===== WAIT ORDER FILLED =====
+await new Promise(r => setTimeout(r, 2500))
 
-// 🔥 CHECK POSITION THẬT SỰ TỒN TẠI
-let opened = null
+let realQty = Math.abs(Number(order.executedQty || qty))
 
-for(let i=0;i<6;i++){
+if(!realQty || realQty <= 0){
 
-    let positions = await binance.futuresPositionRisk()
+    console.log("❌ ORDER NOT FILLED")
 
-    opened = positions.find(p =>
-        p.symbol === t.symbol && Math.abs(p.positionAmt) > 0
-    )
-
-    if(opened) break
-
-    await new Promise(r => setTimeout(r, 800))
-}
-
-if(!opened){
-    console.log("❌ NO POSITION → SKIP TPSL")
     continue
 }
 // ===== SET SL TP =====
-await setTPSL(t.symbol, t.side, t.tp, t.sl, qty)
+await setTPSL(t.symbol, t.side, t.tp, t.sl, realQty)
 
 
     let msg = `🔥 BEST SIGNAL
