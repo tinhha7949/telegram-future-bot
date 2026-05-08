@@ -4,9 +4,9 @@ const agent = new https.Agent({
     keepAlive: true,
     maxSockets: 50
 })
-async function safeFetch(url, options = {}, retries = 3){
+async function fetchSafe(url, options = {}, retry = 3){
 
-    for(let i=0;i<retries;i++){
+    for(let i=0;i<retry;i++){
 
         try{
 
@@ -18,28 +18,23 @@ async function safeFetch(url, options = {}, retries = 3){
 
             let res = await fetch(url,{
                 ...options,
-                agent,
-                signal: controller.signal,
-                headers:{
-                    "User-Agent":"Mozilla/5.0",
-                    ...(options.headers || {})
-                }
+                signal: controller.signal
             })
 
             clearTimeout(timeout)
 
-            if(res.ok){
+            if(res && res.ok){
                 return res
             }
 
+            console.log(`❌ FETCH STATUS: ${res?.status} ${url}`)
+
         }catch(e){
 
-            if(i === retries-1){
-                console.log("❌ FETCH FAIL:", url)
-            }
-
-            await new Promise(r=>setTimeout(r,500))
+            console.log(`❌ FETCH FAIL: ${url}`)
         }
+
+        await new Promise(r=>setTimeout(r,1500))
     }
 
     return null
@@ -203,15 +198,26 @@ async function openPosition(symbol, side, qty){
 
         const url = `${baseUrl}${path}?${query}&signature=${signature}`
 
-        let res = await safeFetch(url, {
-            method: "POST",
-            headers: {
-                "X-MBX-APIKEY": process.env.BINANCE_KEY
-            }
-        })
+        let res = await fetchSafe(url, {
+    method: "POST",
+    headers: {
+        "X-MBX-APIKEY": process.env.BINANCE_KEY
+    }
+})
 
-        let data = await res.json()
-        return data
+if(!res){
+    console.log("❌ OPEN ORDER FETCH NULL")
+    return null
+}
+
+let data = await res.json()
+
+if(data.code){
+    console.log("❌ BINANCE ORDER:", data.msg)
+    return null
+}
+
+return data
 
     }catch(e){
         console.log("❌ OPEN ORDER FAIL:", e.message)
