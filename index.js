@@ -245,7 +245,7 @@ return data
         return null
     }
 }
-async function setTPSL(symbol, side, tp, sl){
+async function setTPSL(symbol, side, tp, sl, qty){
 
     try{
 
@@ -256,6 +256,7 @@ async function setTPSL(symbol, side, tp, sl){
     side: side === "LONG" ? "SELL" : "BUY",
     type: "TAKE_PROFIT_MARKET",
     stopPrice: tp,
+    quantity: qty,
     reduceOnly: true,
     workingType: "MARK_PRICE"
 })
@@ -265,6 +266,7 @@ async function setTPSL(symbol, side, tp, sl){
     side: side === "LONG" ? "SELL" : "BUY",
     type: "STOP_MARKET",
     stopPrice: sl,
+    quantity: qty,
     reduceOnly: true,
     workingType: "MARK_PRICE"
 })
@@ -1475,6 +1477,7 @@ function roundStep(value, step){
 
 // ===== ROUND =====
 qty = roundStep(qty, stepSize)
+        qty = Number(qty.toFixed(8))
 function roundPrice(price, tickSize, side){
 
     if(side === "LONG"){
@@ -1547,7 +1550,7 @@ if(!opened){
     continue
 }
 // ===== SET SL TP =====
-await setTPSL(t.symbol, t.side, t.tp, t.sl)
+await setTPSL(t.symbol, t.side, t.tp, t.sl, qty)
 
 
     let msg = `🔥 BEST SIGNAL
