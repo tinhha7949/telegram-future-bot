@@ -1231,6 +1231,8 @@ if(best.setup === "REVERSAL_TOP" || best.setup === "REVERSAL_BOTTOM"){
 }
 
 let risk = balance * riskPercent * multiplier
+    // 🔥 minimum risk để đủ notional
+risk = Math.max(risk, 5)
     if(best.setup === "REVERSAL_TOP" || best.setup === "REVERSAL_BOTTOM"){
     risk *= 0.5
 }
@@ -1506,6 +1508,20 @@ if(qty < minQty){
 // ===== MIN NOTIONAL =====
 let notional = qty * t.entry
 
+// ===== AUTO FIX MIN NOTIONAL =====
+if(notional < minNotional){
+
+    qty = Math.ceil((minNotional / t.entry) / stepSize) * stepSize
+
+    qty = Number(qty.toFixed(8))
+
+    notional = qty * t.entry
+
+    console.log(`⚡ AUTO FIX NOTIONAL ${t.symbol}`)
+    console.log(`NEW QTY=${qty}`)
+}
+
+// ===== FINAL CHECK =====
 if(notional < minNotional){
 
     console.log(`❌ NOTIONAL TOO SMALL ${t.symbol}`)
