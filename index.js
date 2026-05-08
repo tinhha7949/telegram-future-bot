@@ -9,13 +9,12 @@ const binance = Binance({
   apiSecret: process.env.BINANCE_SECRET
 })
 async function getBalance(){
-
     try{
         let res = await binance.balance()
 
         let usdt = res.data.find(x => x.asset === "USDT")
 
-        return Number(usdt.availableBalance)
+        return Number(usdt.availableBalance || usdt.balance || 0)
 
     }catch(e){
         console.log("❌ BAL ERROR:", e.message)
