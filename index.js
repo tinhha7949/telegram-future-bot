@@ -403,11 +403,17 @@ async function getTopSymbols(){
                 if(Array.isArray(data) && data.length>0){
                     return data
                         .filter(c =>
-                            c.symbol.endsWith("USDT") &&
-                            !c.symbol.includes("UP") &&
-                            !c.symbol.includes("DOWN") &&
-                            !c.symbol.includes("BUSD")
-                        )
+    c.symbol.endsWith("USDT") &&
+    !c.symbol.includes("UP") &&
+    !c.symbol.includes("DOWN") &&
+    !c.symbol.includes("BUSD") &&
+    !c.symbol.includes("USD1") &&
+    !c.symbol.includes("FDUSD") &&
+    !c.symbol.includes("USDC") &&
+    !c.symbol.includes("EUR") &&
+    !c.symbol.includes("TRY") &&
+    !c.symbol.includes("RLUSD")
+)
                     //   .filter(c => Number(c.quoteVolume) > 30000000)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
                 .slice(0,30)
