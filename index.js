@@ -1316,18 +1316,18 @@ async function checkTrades(){
 
                 let price = +data.at(-1)[4]
 
-                // ===== ENTRY CONFIRM =====
+                // ================= ENTRY 1M CONFIRM =================
+
                 if(t.waitingEntry){
 
-                    // toàn bộ code entry ở đây
+                    // code entry ở đây
 
                     continue
                 }
 
-                // ===== CHECK TP SL =====
                 if(!t.entry) continue
 
-                // toàn bộ code TP SL ở đây
+                // code TP SL ở đây
 
             }catch(e){
 
