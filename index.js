@@ -26,10 +26,10 @@ async function safeFetch(url, options = {}, retry = 3){
             }, 10000)
 
             let res = await fetch(url,{
-                ...options,
-                signal: controller.signal,
-                agent
-            })
+    ...options,
+    signal: controller.signal,
+    ...(url.includes("telegram.org") ? {} : { agent })
+})
 
             clearTimeout(timeout)
 
@@ -43,8 +43,9 @@ async function safeFetch(url, options = {}, retry = 3){
 
             clearTimeout(timeout)
 
-            console.log(`❌ FETCH FAIL: ${url}`)
-        }
+            if(!url.includes("telegram.org")){
+    console.log(`❌ FETCH FAIL: ${url}`)
+}
 
         await new Promise(r=>setTimeout(r,1500))
     }
@@ -288,7 +289,7 @@ async function checkCommand(){
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 5000)
 
-        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}`
+        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=30`
 
         let res = await safeFetch(url,{
             signal: controller.signal
@@ -1687,7 +1688,7 @@ setInterval(async()=>{
     }
 
 },60000)
-setInterval(()=>checkCommand(),10000)
+setInterval(()=>checkCommand(),35000)
 setInterval(()=>checkTrades(),60000)
 await loadValidFuturesSymbols()
         scanner()
