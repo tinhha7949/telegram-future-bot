@@ -111,15 +111,29 @@ async function openPosition(symbol, side, qty){
 
     try{
 
-        let orderSide = side === "LONG" ? "BUY" : "SELL"
+        const baseUrl = "https://fapi.binance.com"
+        const path = "/fapi/v1/order"
 
-        let res = await binance.newOrder(symbol, {
-            side: orderSide,
-            type: "MARKET",
-            quantity: qty
+        const timestamp = Date.now()
+
+        const query = `symbol=${symbol}&side=${side === "LONG" ? "BUY" : "SELL"}&type=MARKET&quantity=${qty}&timestamp=${timestamp}`
+
+        const signature = crypto
+            .createHmac("sha256", process.env.BINANCE_SECRET)
+            .update(query)
+            .digest("hex")
+
+        const url = `${baseUrl}${path}?${query}&signature=${signature}`
+
+        let res = await fetch(url, {
+            method: "POST",
+            headers: {
+                "X-MBX-APIKEY": process.env.BINANCE_KEY
+            }
         })
 
-        return res.data
+        let data = await res.json()
+        return data
 
     }catch(e){
         console.log("❌ OPEN ORDER FAIL:", e.message)
