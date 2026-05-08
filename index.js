@@ -2,12 +2,12 @@ require("dotenv").config()
 const { MongoClient } = require("mongodb")
 
 const client = new MongoClient(process.env.MONGO_URI)
-const { UMFuturesClient } = require('@binance/futures-connector')
+const { USDMClient } = require('@binance/futures-connector')
 
-const binance = new UMFuturesClient(
-    process.env.BINANCE_KEY,
-    process.env.BINANCE_SECRET
-)
+const binance = new USDMClient({
+  api_key: process.env.BINANCE_KEY,
+  api_secret: process.env.BINANCE_SECRET
+})
 async function getBalance(){
 
     try{
