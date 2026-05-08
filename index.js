@@ -9,7 +9,9 @@ const https = require("https")
 
 const agent = new https.Agent({
     keepAlive: true,
-    maxSockets: 50
+    maxSockets: 15,
+    maxFreeSockets: 5,
+    timeout: 15000
 })
 async function safeFetch(url, options = {}, retry = 3){
 
@@ -124,6 +126,8 @@ let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
 // ===== ACTIVE TRADES =====
+let exchangeInfoTime = 0
+let checkingTrades = false
 let activeTrades = []
 let exchangeInfoCache = null
 let validFuturesSymbols = new Set()
@@ -133,9 +137,10 @@ async function getSymbolInfo(symbol){
     try{
 
         if(
-            !exchangeInfoCache ||
-            !exchangeInfoCache.symbols
-        ){
+    !exchangeInfoCache ||
+    !exchangeInfoCache.symbols ||
+    Date.now() - exchangeInfoTime > 3600000
+){
 
             let res = await safeFetch(
                 "https://fapi.binance.com/fapi/v1/exchangeInfo"
@@ -1287,20 +1292,58 @@ risk = Math.max(risk, 5)
     isScanning = false   // ✅ THẢ LOCK
 }
 }
-////////////////////
+///////////////////
 async function checkTrades(){
 
-    if(activeTrades.length === 0) return
+    if(checkingTrades) return
+    checkingTrades = true
 
-    for(let i = activeTrades.length - 1; i >= 0; i--){
+    try{
 
-        let t = activeTrades[i]
+        if(activeTrades.length === 0){
+            return
+        }
 
-        try{
-            let data = await getData(t.symbol,"1m",2)
-            if(!data) continue
+        for(let i = activeTrades.length - 1; i >= 0; i--){
 
-            let price = +data.at(-1)[4]
+            let t = activeTrades[i]
+
+            try{
+
+                let data = await getData(t.symbol,"1m",2)
+
+                if(!data) continue
+
+                let price = +data.at(-1)[4]
+
+                // ===== ENTRY CONFIRM =====
+                if(t.waitingEntry){
+
+                    // toàn bộ code entry ở đây
+
+                    continue
+                }
+
+                // ===== CHECK TP SL =====
+                if(!t.entry) continue
+
+                // toàn bộ code TP SL ở đây
+
+            }catch(e){
+
+                console.log(`❌ checkTrades ${t.symbol}:`, e.message)
+            }
+        }
+
+    }catch(e){
+
+        console.log("❌ checkTrades global:", e.message)
+
+    }finally{
+
+        checkingTrades = false
+    }
+}
             // ================= ENTRY 1M CONFIRM =================
 if(t.waitingEntry){
      // timeout 1h
@@ -1493,9 +1536,17 @@ function roundPrice(price, tickSize, side){
 t.tp = roundPrice(t.tp, tickSize, t.side)
 t.sl = roundPrice(t.sl, tickSize, t.side)
 // ===== FIX FLOAT =====
-qty = Number(qty.toFixed(8))
-t.tp = Number(t.tp.toFixed(8))
-t.sl = Number(t.sl.toFixed(8))
+        function countDecimals(value){
+
+    if(!value || Math.floor(value) === value) return 0
+
+    return value.toString().split(".")[1]?.length || 0
+}
+let pricePrecision = countDecimals(tickSize)
+
+t.tp = Number(t.tp.toFixed(pricePrecision))
+t.sl = Number(t.sl.toFixed(pricePrecision))
+qty = Number(qty.toFixed(countDecimals(stepSize)))
 
 // ===== MIN QTY =====
 if(qty < minQty){
@@ -1513,7 +1564,7 @@ let notional = qty * t.entry
 if(notional < minNotional){
 
     qty = Math.ceil((minNotional / t.entry) / stepSize) * stepSize
-
+    qty = Math.round(qty / stepSize) * stepSize
     qty = Number(qty.toFixed(8))
 
     notional = qty * t.entry
@@ -1544,13 +1595,44 @@ let order = await openPosition(t.symbol, t.side, qty)
     continue
 }
 // ===== WAIT ORDER FILLED =====
-await new Promise(r => setTimeout(r, 2500))
+await new Promise(r => setTimeout(r, 1500))
 
-let realQty = Math.abs(Number(order.executedQty || qty))
+let realQty = Math.abs(Number(order.executedQty))
+
+// fallback nếu MARKET order đã FILLED nhưng executedQty lỗi
+if((!realQty || realQty <= 0) && order.status === "FILLED"){
+    realQty = qty
+}
+
+// nếu vẫn chưa fill -> query lại position
+if(!realQty || realQty <= 0){
+
+    try{
+
+        let positions = await binance.futuresPositionRisk()
+
+let pos = positions.find(p => p.symbol === t.symbol)
+
+if(pos){
+
+    let positionAmt = Math.abs(Number(pos.positionAmt || 0))
+
+    if(positionAmt > 0){
+        realQty = positionAmt
+    }
+}
+        if(positionAmt > 0){
+            realQty = positionAmt
+        }
+
+    }catch(e){
+        console.log("❌ POSITION CHECK FAIL:", e.message)
+    }
+}
 
 if(!realQty || realQty <= 0){
 
-    console.log("❌ ORDER NOT FILLED")
+    console.log(`❌ ORDER NOT FILLED ${t.symbol}`)
 
     continue
 }
