@@ -2,8 +2,8 @@ require("dotenv").config()
 const { MongoClient } = require("mongodb")
 
 const client = new MongoClient(process.env.MONGO_URI)
-const { UMFutures } = require('@binance/connector')
-const binance = new UMFutures(
+const Binance = require('@binance/connector')
+const binance = new Binance.UMFutures(
     process.env.BINANCE_KEY,
     process.env.BINANCE_SECRET
 )
