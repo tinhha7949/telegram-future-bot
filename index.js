@@ -137,7 +137,7 @@ let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
 // ===== ACTIVE TRADES =====
-let exchangeInfoTime = 
+let exchangeInfoTime = 0
 let checkingTrades = false
 let activeTrades = []
 let exchangeInfoCache = null
@@ -1880,7 +1880,6 @@ async function scanLoop(){
     }
 }
 
-},60000)
 setInterval(()=>checkCommand(),35000)
 setInterval(()=>checkTrades(),60000)
 await loadValidFuturesSymbols()
