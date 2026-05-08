@@ -1789,13 +1789,6 @@ ${win ? "✅ WIN" : "❌ LOSS"}`
     activeTrades.splice(i,1)
     continue
 }
-
-        }catch(e){
-            console.log("❌ checkTrades:", e.message)
-        }
-    }
-} 
-
             }catch(e){
 
                 console.log(`❌ checkTrades ${t.symbol}:`, e.message)
