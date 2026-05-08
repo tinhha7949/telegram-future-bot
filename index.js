@@ -1876,7 +1876,7 @@ async function scanLoop(){
 setInterval(()=>checkCommand(),35000)
 setInterval(()=>checkTrades(),60000)
 await loadValidFuturesSymbols()
-        scanLoop()
+       await scanLoop()
 
     }catch(e){
         console.log("❌ Start error:", e.message)
