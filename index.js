@@ -8,13 +8,35 @@ const binance = Binance({
   apiKey: process.env.BINANCE_KEY,
   apiSecret: process.env.BINANCE_SECRET
 })
+const crypto = require("crypto")
+
 async function getBalance(){
     try{
-        let res = await binance.balance()
+        const baseUrl = "https://fapi.binance.com"
+        const path = "/fapi/v2/balance"
 
-        let usdt = res.data.find(x => x.asset === "USDT")
+        const timestamp = Date.now()
 
-        return Number(usdt.availableBalance || usdt.balance || 0)
+        const query = `timestamp=${timestamp}`
+
+        const signature = crypto
+            .createHmac("sha256", process.env.BINANCE_SECRET)
+            .update(query)
+            .digest("hex")
+
+        const url = `${baseUrl}${path}?${query}&signature=${signature}`
+
+        let res = await fetch(url, {
+            headers: {
+                "X-MBX-APIKEY": process.env.BINANCE_KEY
+            }
+        })
+
+        let data = await res.json()
+
+        let usdt = data.find(x => x.asset === "USDT")
+
+        return Number(usdt?.balance || 0)
 
     }catch(e){
         console.log("❌ BAL ERROR:", e.message)
