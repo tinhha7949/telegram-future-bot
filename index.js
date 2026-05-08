@@ -151,7 +151,8 @@ async function openPosition(symbol, side, qty){
     }
 }
 function normalizeQty(qty){
-    return Number(qty.toFixed(3)) // tùy coin
+    if(!qty || !isFinite(qty)) return 0
+    return Number(qty.toFixed(3))
 }
 async function setTPSL(symbol, side, tp, sl){
 
@@ -160,20 +161,22 @@ async function setTPSL(symbol, side, tp, sl){
         await new Promise(r => setTimeout(r, 1200))
 
         await binance.futuresOrder({
-            symbol,
-            side: side === "LONG" ? "SELL" : "BUY",
-            type: "TAKE_PROFIT_MARKET",
-            stopPrice: tp,
-            closePosition: true
-        })
+    symbol,
+    side: side === "LONG" ? "SELL" : "BUY",
+    type: "TAKE_PROFIT_MARKET",
+    stopPrice: tp,
+    reduceOnly: true,
+    workingType: "MARK_PRICE"
+})
 
-        await binance.futuresOrder({
-            symbol,
-            side: side === "LONG" ? "SELL" : "BUY",
-            type: "STOP_MARKET",
-            stopPrice: sl,
-            closePosition: true
-        })
+       await binance.futuresOrder({
+    symbol,
+    side: side === "LONG" ? "SELL" : "BUY",
+    type: "STOP_MARKET",
+    stopPrice: sl,
+    reduceOnly: true,
+    workingType: "MARK_PRICE"
+})
 
     }catch(e){
         console.log("❌ TPSL FAIL:", e.message)
@@ -1221,8 +1224,8 @@ t.waitingEntry = false
 // ===== SIZE =====
 let diff = Math.abs(t.entry - t.sl)
 
-// ❌ FIX NULL / ZERO / NaN
-if(!diff || diff < 1e-8){
+// ✅ FIX NULL / NaN / ZERO
+if(!diff || !isFinite(diff) || diff < 1e-8){
     console.log("❌ INVALID DIFF")
     continue
 }
@@ -1235,7 +1238,14 @@ if(!risk || risk <= 0){
     continue
 }
 
-let qty = normalizeQty(risk / diff)
+let rawQty = risk / diff
+
+if(!rawQty || !isFinite(rawQty) || rawQty <= 0){
+    console.log("❌ INVALID QTY (RAW)")
+    continue
+}
+
+let qty = normalizeQty(rawQty)
 
 // ❌ FINAL SAFETY CHECK
 if(!qty || !isFinite(qty) || qty <= 0){
@@ -1272,9 +1282,12 @@ let stepSize = parseFloat(lotFilter.stepSize)
 let tickSize = parseFloat(priceFilter.tickSize)
 
 // ===== FIX PRECISION =====
-qty = Math.floor(qty / stepSize) * stepSize
-t.tp = Math.floor(t.tp / tickSize) * tickSize
-t.sl = Math.floor(t.sl / tickSize) * tickSize
+      function roundStep(value, step){
+    return Math.floor(value / step) * step
+}
+qty = roundStep(qty, stepSize)
+t.tp = roundStep(t.tp, tickSize)
+t.sl = roundStep(t.sl, tickSize)
 if(!order){
     console.log("❌ ORDER FAIL")
     continue
@@ -1284,11 +1297,20 @@ if(!order){
 await new Promise(r => setTimeout(r, 1500))
 
 // 🔥 CHECK POSITION THẬT SỰ TỒN TẠI
-let positions = await binance.futuresPositionRisk()
+let opened = null
 
-let opened = positions.find(p =>
-    p.symbol === t.symbol && Math.abs(p.positionAmt) > 0
-)
+for(let i=0;i<6;i++){
+
+    let positions = await binance.futuresPositionRisk()
+
+    opened = positions.find(p =>
+        p.symbol === t.symbol && Math.abs(p.positionAmt) > 0
+    )
+
+    if(opened) break
+
+    await new Promise(r => setTimeout(r, 800))
+}
 
 if(!opened){
     console.log("❌ NO POSITION → SKIP TPSL")
