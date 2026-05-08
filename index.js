@@ -1,10 +1,17 @@
+process.on("unhandledRejection", err => {
+    console.log("UNHANDLED:", err)
+})
+
+process.on("uncaughtException", err => {
+    console.log("UNCAUGHT:", err)
+})
 const https = require("https")
 
 const agent = new https.Agent({
     keepAlive: true,
     maxSockets: 50
 })
-async function fetchSafe(url, options = {}, retry = 3){
+async function safeFetch(url, options = {}, retry = 3){
 
     for(let i=0;i<retry;i++){
 
@@ -73,7 +80,7 @@ async function getBalance(){
         })
 
         let data = await res.json()
-
+        if(!res) return 0
         let usdt = data.find(x => x.asset === "USDT")
 
         return Number(usdt?.balance || 0)
@@ -155,7 +162,9 @@ async function sendTelegram(msg){
             body: JSON.stringify({ chat_id: CHAT_ID, text: msg })
         })
 
-        let data = await res.json()
+       if(!res) return false
+
+let data = await res.json()
         return data.ok   // 👈 QUAN TRỌNG
 
     }catch(e){
@@ -172,7 +181,9 @@ async function sendTelegram2(msg){
             headers:{"Content-Type":"application/json"},
             body: JSON.stringify({ chat_id: AI_CHAT_ID, text: msg })
         })
-        let data = await res.json()
+        if(!res) return false
+
+let data = await res.json()
         return data.ok
 
     }catch(e){
@@ -277,10 +288,10 @@ async function checkCommand(){
 
         clearTimeout(timeout)
 
-        if(!res.ok){
-            checkingCmd = false
-            return
-        }
+        if(!res || !res.ok){
+    checkingCmd = false
+    return
+}
 
         let data = await res.json()
 
@@ -372,7 +383,7 @@ async function getData(symbol, interval, limit){
 
                 clearTimeout(timeout)
 
-                if(!res.ok) continue
+                if(!res || !res.ok) continue
 
                 let data = await res.json()
 
@@ -402,7 +413,7 @@ async function getTopSymbols(){
         for(let attempt=0; attempt<2; attempt++){
             try{
                 let res = await safeFetch(url, { headers:{"User-Agent":"Mozilla/5.0"} })
-                if(!res.ok) continue
+                if(!res || !res.ok) continue
 
                 let data = await res.json()
 
@@ -1074,7 +1085,7 @@ let filtered = candidates.filter(c => {
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
     // ❌ loại kèo quá xấu
-    if(rr < SCORE_THRESHOLD) return false
+    if(rr < RR_THRESHOLD) return false
 
     // ❌ score quá thấp
     let threshold = SCORE_THRESHOLD
@@ -1156,7 +1167,7 @@ for (let best of picks){
         ? (best.tp - best.price) / (best.price - best.sl)
         : (best.price - best.tp) / (best.sl - best.price)
 
-    if(rr < SCORE_THRESHOLD){
+    if(rr < RR_THRESHOLD){
         continue
     }
 
@@ -1398,8 +1409,6 @@ if(risk > ACCOUNT_BALANCE * 0.05){
     continue
 }
 
-// ===== OPEN ORDER =====
-let order = await openPosition(t.symbol, t.side, qty)
 // ===== GET BINANCE FILTER =====
 let info = await getSymbolInfo(t.symbol)
 
@@ -1420,7 +1429,8 @@ if(!order){
     console.log("❌ ORDER FAIL")
     continue
 }
-
+// ===== OPEN ORDER =====
+let order = await openPosition(t.symbol, t.side, qty)
 // 🔥 CHỜ POSITION FILL
 await new Promise(r => setTimeout(r, 1500))
 
