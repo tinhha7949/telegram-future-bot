@@ -1,17 +1,19 @@
-const fs = require("fs")
+function cleanup(){
+    try{
+        if(fs.existsSync(LOCK_FILE)){
+            const pid = parseInt(fs.readFileSync(LOCK_FILE, "utf8"))
 
-const LOCK_FILE = "/tmp/bot.lock"
-
-if (fs.existsSync(LOCK_FILE)) {
-    console.log("❌ BOT đang chạy rồi")
-    process.exit(1)
+            if(pid === process.pid){
+                fs.unlinkSync(LOCK_FILE)
+            }
+        }
+    }catch(e){}
 }
 
-fs.writeFileSync(LOCK_FILE, process.pid.toString())
-
-process.on("exit", () => {
-    fs.unlinkSync(LOCK_FILE)
-})
+process.on("exit", cleanup)
+process.on("SIGINT", () => { cleanup(); process.exit() })
+process.on("SIGTERM", () => { cleanup(); process.exit() })
+//
 process.on("unhandledRejection", err => {
     console.log("UNHANDLED:", err)
 })
