@@ -953,6 +953,9 @@ if(!isBreakout){
         : swingHigh + atrVal
 
     let risk = Math.abs(price - sl)
+    if(risk / price < 0.002){
+    return null
+}
 
 let rawTP = side === "LONG"
     ? price + risk * RR_THRESHOLD
@@ -1368,7 +1371,6 @@ ${t.side}
     if(!t.atr || !t.entryZone){
     continue
 }
-}
 
     // ===== LONG =====
     let confirm = false
@@ -1436,11 +1438,27 @@ if(t.side === "SHORT"){
     t.waitingEntry = false
 
     let diff = Math.abs(t.entry - t.sl)
+    
 
     if(!diff || !isFinite(diff) || diff < 1e-8){
         console.log("❌ INVALID DIFF")
         continue
     }
+    let minDiff = t.entry * 0.002
+
+if(diff < minDiff){
+
+    console.log(`❌ SL TOO CLOSE ${t.symbol}`)
+
+    await trades.updateOne(
+        { symbol:t.symbol, createdAt:t.createdAt },
+        { $set:{ result:"SL_TOO_CLOSE" } }
+    )
+
+    activeTrades.splice(i,1)
+
+    continue
+}
 
     let risk = t.risk || 10
 
@@ -1463,16 +1481,21 @@ if(t.side === "SHORT"){
         continue
     }
 
-    let maxQty = 10000
+    let maxNotional = ACCOUNT_BALANCE * 5
 
-    if(t.symbol.includes("PENGU") || t.symbol.includes("SHIB")){
-        maxQty = 100000
-    }
+if(qty * t.entry > maxNotional){
 
-    if(qty > maxQty){
-        console.log("❌ QTY TOO BIG:", qty)
-        continue
-    }
+    console.log(`❌ POSITION TOO BIG ${t.symbol}`)
+
+    await trades.updateOne(
+        { symbol:t.symbol, createdAt:t.createdAt },
+        { $set:{ result:"POSITION_TOO_BIG" } }
+    )
+
+    activeTrades.splice(i,1)
+
+    continue
+}
 
     if(risk > ACCOUNT_BALANCE * 0.05){
         console.log("❌ RISK TOO HIGH")
@@ -1515,15 +1538,20 @@ if(t.side === "SHORT"){
     qty = roundStep(qty, stepSize)
     qty = Number(qty.toFixed(precisionFromStep(stepSize)))
 
-    function roundPrice(price, tickSize, side){
-        if(side === "LONG"){
-            return Math.floor(price / tickSize) * tickSize
-        }
-        return Math.ceil(price / tickSize) * tickSize
+    function roundToTick(price, tickSize, mode="down"){
+    if(mode === "down"){
+        return Math.floor(price / tickSize) * tickSize
     }
+    return Math.ceil(price / tickSize) * tickSize
+}
 
-    t.tp = roundPrice(t.tp, tickSize, t.side)
-    t.sl = roundPrice(t.sl, tickSize, t.side)
+if(t.side === "LONG"){
+    t.tp = roundToTick(t.tp, tickSize, "down")
+    t.sl = roundToTick(t.sl, tickSize, "down")
+}else{
+    t.tp = roundToTick(t.tp, tickSize, "up")
+    t.sl = roundToTick(t.sl, tickSize, "up")
+}
 
     function countDecimals(value){
         if(!value || Math.floor(value) === value) return 0
@@ -1559,20 +1587,23 @@ if(t.side === "SHORT"){
     }
 
     let lock = await trades.findOneAndUpdate(
-        {
-            symbol: t.symbol,
-            createdAt: t.createdAt,
-            opening: { $ne: true }
-        },
-        {
-            $set: { opening: true }
-        }
-    )
-
-    if(!lock || !lock.value){   // 🔥 FIX CRASH
-        console.log(`⛔ LOCKED ${t.symbol}`)
-        continue
+    {
+        symbol: t.symbol,
+        createdAt: t.createdAt,
+        opening: { $ne: true }
+    },
+    {
+        $set: { opening: true }
+    },
+    {
+        returnDocument: "before"
     }
+)
+
+if(!lock){
+    console.log(`⛔ LOCKED ${t.symbol}`)
+    continue
+}
 
     let positions = await binance.futuresPositionRisk()
 
@@ -1655,7 +1686,7 @@ Score: ${t.score || 0}
 } else {
     continue
 }
-
+}
 // ===== RESULT CHECK =====
 if(!t.entry) continue
 
@@ -1672,7 +1703,10 @@ if(t.side === "SHORT"){
     if(price >= t.sl){ done = true }
 }
 
-let isTimeout = Date.now() - t.createdAt > 43200000
+t.enteredAt = Date.now()
+let isTimeout =
+    t.enteredAt &&
+    Date.now() - t.enteredAt > 43200000 // 12h
 
 if(isTimeout){
 
@@ -1706,7 +1740,6 @@ ${win ? "WIN" : "LOSS"}`
     activeTrades.splice(i,1)
     continue
 }
-
             }catch(e){
                 console.log(`❌ checkTrades ${t.symbol}:`, e.message)
             }
