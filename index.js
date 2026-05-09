@@ -21,15 +21,12 @@ async function safeFetch(url, options = {}, retry = 3){
            let isTelegramGetUpdates = url.includes("api.telegram.org") && url.includes("getUpdates")
 
 let controller = new AbortController()
-let signal = controller.signal
 
-if(options.signal){
-    signal = options.signal
-    controller = null
-}
+let signal = options.signal || controller.signal
 
-let timeout
-if(controller){
+let timeout = null
+
+if(!options.signal){
     timeout = setTimeout(() => {
         controller.abort()
     }, 10000)
@@ -387,12 +384,15 @@ async function checkCommand(){
 
     try{
         
-       let controller = null
-let signal = undefined
+       let controller = new AbortController()
 
-        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=30`
+let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=30`
 
-        let res = await safeFetch(url,{
+let timeout = setTimeout(() => {
+    controller.abort()
+}, 30000)
+
+let res = await safeFetch(url, {
     signal: controller.signal
 })
 
