@@ -14,55 +14,52 @@ const agent = new https.Agent({
     timeout: 15000
 })
 async function safeFetch(url, options = {}, retry = 3){
-
-    for(let i=0;i<retry;i++){
-
+    for(let i = 0; i < retry; i++){
         let timeout
 
         try{
-
             const controller = options.signal
-    ? null
-    : new AbortController()
+                ? null
+                : new AbortController()
 
-const signal = options.signal || controller.signal
+            const signal = options.signal || controller.signal
 
-timeout = controller
-    ? setTimeout(() => {
-        controller.abort()
-    }, 10000)
-    : null
+            if(controller){
+                timeout = setTimeout(() => {
+                    controller.abort()
+                }, 10000)
+            }
 
-let res = await fetch(url,{
-    ...options,
-    signal,
-    ...(url.includes("telegram.org") ? {} : { agent })
-})
+            let res = await fetch(url, {
+                ...options,
+                signal,
+                ...(url.includes("telegram.org") ? {} : { agent })
+            })
 
-            clearTimeout(timeout)
+            if(timeout) clearTimeout(timeout)
 
             if(res && res.ok){
                 return res
             }
-            if(res.status === 429 || res.status === 418){
 
-    await new Promise(r=>setTimeout(r,3000))
-    continue
-}
+            if(res && (res.status === 429 || res.status === 418)){
+                await new Promise(r => setTimeout(r, 3000))
+                continue
+            }
 
             console.log(`❌ FETCH STATUS: ${res?.status} ${url}`)
 
         }catch(e){
-
-            clearTimeout(timeout)
+            if(timeout) clearTimeout(timeout)
 
             if(!url.includes("telegram.org")){
-    console.log(`❌ FETCH FAIL: ${url}`)
-}
+                console.log(`❌ FETCH FAIL: ${url}`)
+            }
 
-        await new Promise(r=>setTimeout(r,1500))
+            await new Promise(r => setTimeout(r, 1500))
+        }
     }
-    }
+
     return null
 }
 require("dotenv").config()
