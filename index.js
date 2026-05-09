@@ -1452,42 +1452,46 @@ ${t.side}
     continue
 }
 
-    // ===== LONG =====
-    let confirm = false
+    // ===== ENTRY LOGIC =====
+let confirm = false
 
-    // 🔥 FIX PRICE ZERO
-    if(!price || price <= 0) continue
+if(!price || price <= 0) continue
 
-    let atrRatio = t.atr / price
-    atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02))
+let atrRatio = t.atr / price
+atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02))
 
-    let entryBuffer = t.atr * (0.25 + atrRatio * 3)
-    let maxChase    = t.atr * (2 + atrRatio * 10)
+let zoneLow  = t.entryZoneLow
+let zoneHigh = t.entryZoneHigh
 
-    entryBuffer = Math.min(entryBuffer, t.atr * 2.5)
-    maxChase    = Math.min(maxChase, t.atr * 8)
+let buffer = t.atr * (0.2 + atrRatio * 2)
+buffer = Math.min(buffer, t.atr * 1.5)
 
+let breakoutBuffer = t.atr * 0.3
+let chaseLimit = t.atr * 2
+
+
+// ================= LONG =================
 if(t.side === "LONG"){
 
-    // 🔥 REVERSAL LONG
     if(t.setup === "REVERSAL_BOTTOM"){
-        if(price >= t.entryZone + t.atr * 0.15){
+        if(price >= zoneHigh + buffer * 0.3){
+            confirm = true
+        }
+    }else{
+
+        if(
+            price >= zoneLow - buffer &&
+            price <= zoneHigh + buffer * 0.3
+        ){
+            confirm = true
+        }
+
+        if(price > zoneHigh && price <= zoneHigh + breakoutBuffer){
             confirm = true
         }
     }
 
-    // 🔥 NORMAL LONG (FIX)
-    else{
-    if(
-    price >= t.entryZoneLow - t.atr * 0.15 &&
-    price <= t.entryZoneHigh + t.atr * 0.15
-){
-    confirm = true
-}
-}
-
-    // ❌ cancel chase
-    if(price > t.entryZone + maxChase){
+    if(price > zoneHigh + chaseLimit){
         activeTrades.splice(i,1)
         await trades.updateOne(
             { symbol: t.symbol, createdAt: t.createdAt },
@@ -1497,27 +1501,29 @@ if(t.side === "LONG"){
     }
 }
 
+
+// ================= SHORT =================
 if(t.side === "SHORT"){
 
-    // 🔥 REVERSAL SHORT
     if(t.setup === "REVERSAL_TOP"){
-        if(price <= t.entryZone - t.atr * 0.15){
+        if(price <= zoneLow - buffer * 0.3){
+            confirm = true
+        }
+    }else{
+
+        if(
+            price <= zoneHigh + buffer &&
+            price >= zoneLow - buffer * 0.3
+        ){
+            confirm = true
+        }
+
+        if(price < zoneLow && price >= zoneLow - breakoutBuffer){
             confirm = true
         }
     }
 
-    // 🔥 NORMAL SHORT (FIX)
-    else{
-    if(
-    price <= t.entryZoneHigh + t.atr * 0.15 &&
-    price >= t.entryZoneLow - t.atr * 0.15
-){
-    confirm = true
-}
-}
-
-    // ❌ cancel chase
-    if(price < t.entryZone - maxChase){
+    if(price < zoneLow - chaseLimit){
         activeTrades.splice(i,1)
         await trades.updateOne(
             { symbol: t.symbol, createdAt: t.createdAt },
