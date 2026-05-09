@@ -1933,7 +1933,7 @@ async function scanLoop(){
 }
 
 setInterval(()=>checkCommand(),35000)
-setInterval(()=>checkTrades(),60000)
+setInterval(()=>checkTrades(),10000)
 await loadValidFuturesSymbols()
        await scanLoop()
 
