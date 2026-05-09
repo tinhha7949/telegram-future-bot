@@ -1,3 +1,17 @@
+const fs = require("fs")
+
+const LOCK_FILE = "/tmp/bot.lock"
+
+if (fs.existsSync(LOCK_FILE)) {
+    console.log("❌ BOT đang chạy rồi")
+    process.exit(1)
+}
+
+fs.writeFileSync(LOCK_FILE, process.pid.toString())
+
+process.on("exit", () => {
+    fs.unlinkSync(LOCK_FILE)
+})
 process.on("unhandledRejection", err => {
     console.log("UNHANDLED:", err)
 })
@@ -23,8 +37,6 @@ async function safeFetch(url, options = {}, retry = 3){
 let controller = new AbortController()
 
 let signal = options.signal || controller.signal
-
-let timeout = null
 
 if(!options.signal){
     timeout = setTimeout(() => {
@@ -1504,6 +1516,24 @@ if(instantEntry){
         )
 
         console.log(`🔥 MARKET ENTER ${trade.symbol}`)
+        let msg = `🔥 BEST SIGNAL
+
+${t.symbol} (${t.setup})
+${t.side} | ${t.marketState}
+
+Entry: ${t.entry.toFixed(4)}
+
+TP: ${t.tp.toFixed(4)}
+
+SL: ${t.sl.toFixed(4)}
+
+Size: ${qty.toFixed(2)}
+Score: ${trade.score || 0}
+`  //Score: ${t.score || 0}
+
+    console.log(msg)
+    await sendTelegram(msg)
+        
     }
 }
 
@@ -1989,27 +2019,6 @@ if(!lock){
         console.log(`❌ ORDER NOT FILLED ${t.symbol}`)
         continue
     }
-    let msg = `🔥 BEST SIGNAL
-
-${t.symbol} (${t.setup})
-${t.side} | ${t.marketState}
-
-Entry: ${t.entry.toFixed(4)}
-
-TP: ${t.tp.toFixed(4)}
-
-SL: ${t.sl.toFixed(4)}
-
-Size: ${qty.toFixed(2)}
-Score: ${t.score || 0}
-`
-
-    console.log(msg)
-try{
-    await sendTelegram(msg)
-}catch(e){
-    console.log("❌ SEND TELE FAIL:", e.message)
-}
     //await sendTelegram(msg)
 
     await cancelAllOrders(t.symbol)
