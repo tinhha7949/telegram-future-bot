@@ -1323,7 +1323,7 @@ risk = Math.max(risk, 5)
 
     let diff = Math.abs(best.price - best.sl)
     if(!diff) continue
-    let zoneWidth = best.atr * 0.25
+    let zoneWidth = best.atr * 0.6
 
     let trade = {
         symbol: best.symbol,
@@ -1452,7 +1452,7 @@ ${t.side}
     continue
 }
 
-    // ===== ENTRY LOGIC =====
+   // ===== ENTRY LOGIC =====
 let confirm = false
 
 if(!price || price <= 0) continue
@@ -1463,76 +1463,119 @@ atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02))
 let zoneLow  = t.entryZoneLow
 let zoneHigh = t.entryZoneHigh
 
-let buffer = t.atr * (0.2 + atrRatio * 2)
-buffer = Math.min(buffer, t.atr * 1.5)
+// 🔥 NỚI ENTRY
+let buffer = t.atr * (0.35 + atrRatio * 3)
+buffer = Math.min(buffer, t.atr * 2.5)
 
-let breakoutBuffer = t.atr * 0.3
-let chaseLimit = t.atr * 2
+// 🔥 breakout cho phép chase nhẹ
+let breakoutBuffer = t.atr * 0.8
+
+// 🔥 nới cancel chase
+let chaseLimit = t.atr * 4
+
 
 
 // ================= LONG =================
 if(t.side === "LONG"){
 
+    // REVERSAL LONG
     if(t.setup === "REVERSAL_BOTTOM"){
-        if(price >= zoneHigh + buffer * 0.3){
+
+        if(price >= zoneLow - buffer * 0.5){
             confirm = true
         }
+
     }else{
 
+        // pullback / normal
         if(
             price >= zoneLow - buffer &&
-            price <= zoneHigh + buffer * 0.3
+            price <= zoneHigh + buffer
         ){
             confirm = true
         }
 
-        if(price > zoneHigh && price <= zoneHigh + breakoutBuffer){
+        // breakout follow
+        if(
+            price > zoneHigh &&
+            price <= zoneHigh + breakoutBuffer
+        ){
             confirm = true
         }
     }
 
+    // cancel chase
     if(price > zoneHigh + chaseLimit){
+
         activeTrades.splice(i,1)
+
         await trades.updateOne(
-            { symbol: t.symbol, createdAt: t.createdAt },
-            { $set: { result: "CANCEL_CHASE" } }
+            {
+                symbol: t.symbol,
+                createdAt: t.createdAt
+            },
+            {
+                $set:{
+                    result:"CANCEL_CHASE"
+                }
+            }
         )
+
         continue
     }
 }
+
 
 
 // ================= SHORT =================
 if(t.side === "SHORT"){
 
+    // REVERSAL SHORT
     if(t.setup === "REVERSAL_TOP"){
-        if(price <= zoneLow - buffer * 0.3){
+
+        if(price <= zoneHigh + buffer * 0.5){
             confirm = true
         }
+
     }else{
 
+        // pullback / normal
         if(
             price <= zoneHigh + buffer &&
-            price >= zoneLow - buffer * 0.3
+            price >= zoneLow - buffer
         ){
             confirm = true
         }
 
-        if(price < zoneLow && price >= zoneLow - breakoutBuffer){
+        // breakout follow
+        if(
+            price < zoneLow &&
+            price >= zoneLow - breakoutBuffer
+        ){
             confirm = true
         }
     }
 
+    // cancel chase
     if(price < zoneLow - chaseLimit){
+
         activeTrades.splice(i,1)
+
         await trades.updateOne(
-            { symbol: t.symbol, createdAt: t.createdAt },
-            { $set: { result: "CANCEL_CHASE" } }
+            {
+                symbol: t.symbol,
+                createdAt: t.createdAt
+            },
+            {
+                $set:{
+                    result:"CANCEL_CHASE"
+                }
+            }
         )
+
         continue
     }
 }
-
     // ===== VÀO LỆNH =====
     if(confirm){
 
