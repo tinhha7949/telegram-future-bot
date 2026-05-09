@@ -1325,26 +1325,32 @@ risk = Math.max(risk, 5)
     if(!diff) continue
     let zoneWidth = best.atr * 1.0
 
-    let trade = {
-        symbol: best.symbol,
-        side: best.side,
-        risk,
-        entry: null,
-        entryZoneMid: best.price,
-        entryZoneLow: best.price - zoneWidth,
-        entryZoneHigh: best.price + zoneWidth,
-        tp: best.tp,
-        sl: best.sl,
-        score: best.score,
-        waitingEntry: true,
-        createdAt: Date.now(),
-        breakoutTriggered: false,
-        setup: best.setup,
-        marketState: best.marketState,
-        volatility: best.volatility,
-        atr: best.atr,
-        result: "PENDING"
-    }
+    let instantEntry = best.setup === "BREAKOUT"
+
+let trade = {
+    symbol: best.symbol,
+    side: best.side,
+    risk,
+    entry: instantEntry ? best.price : null,
+
+    entryZoneMid: best.price,
+    entryZoneLow: best.price - zoneWidth,
+    entryZoneHigh: best.price + zoneWidth,
+
+    tp: best.tp,
+    sl: best.sl,
+    score: best.score,
+
+    waitingEntry: !instantEntry,
+
+    createdAt: Date.now(),
+    breakoutTriggered: false,
+    setup: best.setup,
+    marketState: best.marketState,
+    volatility: best.volatility,
+    atr: best.atr,
+    result: "PENDING"
+}
 
     // ===== RAM CHECK =====
     let isActive = activeTrades.some(x =>
@@ -1362,6 +1368,91 @@ risk = Math.max(risk, 5)
     }
 
     await trades.insertOne(trade)
+    // ===== BREAKOUT = MARKET ENTRY =====
+if(instantEntry){
+
+    console.log(`⚡ INSTANT ENTRY ${best.symbol}`)
+
+    let diff = Math.abs(trade.entry - trade.sl)
+
+    if(!diff || diff <= 0) continue
+
+    let qty = risk / diff
+
+    if(!qty || qty <= 0 || !isFinite(qty)){
+        continue
+    }
+
+    let info = await getSymbolInfo(trade.symbol)
+
+    if(!info || !info.filters){
+        continue
+    }
+
+    let lotFilter = info.filters.find(
+        f => f.filterType === "LOT_SIZE"
+    )
+
+    let stepSize = parseFloat(
+        lotFilter?.stepSize || 0.001
+    )
+
+    function roundStep(value, step){
+        return Math.floor(value / step) * step
+    }
+
+    function precisionFromStep(step){
+        return Math.max(
+            0,
+            (step.toString().split(".")[1] || "")
+                .replace(/0+$/,"")
+                .length
+        )
+    }
+
+    qty = roundStep(qty, stepSize)
+
+    qty = Number(
+        qty.toFixed(
+            precisionFromStep(stepSize)
+        )
+    )
+
+    let order = await openPosition(
+        trade.symbol,
+        trade.side,
+        qty
+    )
+
+    if(order){
+
+        trade.waitingEntry = false
+
+        await trades.updateOne(
+            {
+                symbol: trade.symbol,
+                createdAt: trade.createdAt
+            },
+            {
+                $set:{
+                    entry: trade.entry,
+                    waitingEntry: false,
+                    enteredAt: Date.now()
+                }
+            }
+        )
+
+        await setTPSL(
+            trade.symbol,
+            trade.side,
+            trade.tp,
+            trade.sl,
+            qty
+        )
+
+        console.log(`🔥 MARKET ENTER ${trade.symbol}`)
+    }
+}
 
     console.log(`✅ ADD: ${best.symbol} | Score: ${best.finalScore.toFixed(1)}`)
 }
