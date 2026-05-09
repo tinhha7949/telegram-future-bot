@@ -316,6 +316,21 @@ async function closePosition(symbol, side, qty){
         return false
     }
 }
+async function cancelAllOrders(symbol){
+
+    try{
+
+        await binance.futuresCancelAllOpenOrders({
+            symbol
+        })
+
+        console.log(`🗑 CANCEL OLD TPSL ${symbol}`)
+
+    }catch(e){
+
+        console.log(`❌ CANCEL TPSL ${symbol}:`, e.message)
+    }
+}
 async function setTPSL(symbol, side, tp, sl, qty){
 
     try{
@@ -1918,7 +1933,11 @@ if(!lock){
         continue
     }
 
-    const tpsl = await setTPSL(t.symbol, t.side, t.tp, t.sl, realQty)
+    await cancelAllOrders(t.symbol)
+
+await new Promise(r => setTimeout(r, 500))
+
+const tpsl = await setTPSL( t.symbol, t.side, t.tp, t.sl, realQty )
 
     if(!tpsl.ok){
 
