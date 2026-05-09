@@ -1724,9 +1724,7 @@ Score: ${t.score || 0}
 `
     console.log(msg)
     let ok = await sendTelegram(msg)
-
-  let ok = await sendTelegram(msg)
-
+        
 // lastSignalTime[`${t.symbol}-${t.side}`] = Date.now()
 
 } else {
