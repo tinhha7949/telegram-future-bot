@@ -154,6 +154,7 @@ let activeTrades = []
 let exchangeInfoCache = null
 let validFuturesSymbols = new Set()
 let pollingLock = true
+let telegramPolling = false
 
 async function getSymbolInfo(symbol){
 
@@ -391,76 +392,45 @@ let checkingCmd = false
 
 async function checkCommand(){
 
-    if(checkingCmd || !pollingLock) return
-    checkingCmd = true
+    if(telegramPolling) return
+    telegramPolling = true
 
     try{
-        
-       let controller = new AbortController()
 
-let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=30`
+        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=30`
 
-let timeout = setTimeout(() => {
-    controller.abort()
-}, 30000)
+        let res = await safeFetch(url)
 
-let res = await safeFetch(url, {
-    signal: controller.signal
-})
-
-clearTimeout(timeout)
-
-if(!res){
-    checkingCmd = false
-    return
-}
-
-// 🔥 FIX 409 TELEGRAM CONFLICT
-if(res.status === 409){
-
-    console.log("⚠️ 409 conflict → reset polling")
-
-    pollingLock = false
-
-    await new Promise(r => setTimeout(r, 3000))
-
-    pollingLock = true
-
-    checkingCmd = false
-    return
-}
-
-if(!res.ok){
-    checkingCmd = false
-    return
-}
-
-        let data = await res.json()
-
-        if(!data.result){
-            checkingCmd = false
+        if(!res){
             return
         }
 
-        for(let u of data.result){
+        // ⚠️ CỰC QUAN TRỌNG: check body trước status
+        if(res.status === 409){
+            console.log("⚠️ TELEGRAM CONFLICT -> RESET POLLING")
 
+            pollingLock = false
+            await new Promise(r => setTimeout(r, 5000))
+            pollingLock = true
+
+            return
+        }
+
+        let data = await res.json()
+        if(!data.result) return
+
+        for(let u of data.result){
             lastUpdateId = u.update_id
 
-            if(!u.message?.text) continue
-
-            if(u.message.text === "/status"){
-                await sendTelegram("🤖 BOT đang chạy OK")
+            if(u.message?.text === "/status"){
+                await sendTelegram("🤖 BOT OK")
             }
         }
 
     }catch(e){
-
-        if(e.name !== "AbortError"){
-            console.log("⚠️ CMD:", e.message)
-        }
-
+        console.log("CMD ERROR:", e.message)
     }finally{
-        checkingCmd = false
+        telegramPolling = false
     }
 }
 
