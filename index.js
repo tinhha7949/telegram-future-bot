@@ -1932,6 +1932,28 @@ if(!lock){
         console.log(`❌ ORDER NOT FILLED ${t.symbol}`)
         continue
     }
+    let msg = `🔥 BEST SIGNAL
+
+${t.symbol} (${t.setup})
+${t.side} | ${t.marketState}
+
+Entry: ${t.entry.toFixed(4)}
+
+TP: ${t.tp.toFixed(4)}
+
+SL: ${t.sl.toFixed(4)}
+
+Size: ${qty.toFixed(2)}
+Score: ${t.score || 0}
+`
+
+    console.log(msg)
+try{
+    await sendTelegram(msg)
+}catch(e){
+    console.log("❌ SEND TELE FAIL:", e.message)
+}
+    //await sendTelegram(msg)
 
     await cancelAllOrders(t.symbol)
 
@@ -1973,25 +1995,6 @@ ${tpsl.error}`
 
     continue
 }
-
-    let msg = `🔥 BEST SIGNAL
-
-${t.symbol} (${t.setup})
-${t.side} | ${t.marketState}
-
-Entry: ${t.entry.toFixed(4)}
-
-TP: ${t.tp.toFixed(4)}
-
-SL: ${t.sl.toFixed(4)}
-
-Size: ${qty.toFixed(2)}
-Score: ${t.score || 0}
-`
-
-    console.log(msg)
-    await sendTelegram(msg)
-
 } else {
     continue
 }
