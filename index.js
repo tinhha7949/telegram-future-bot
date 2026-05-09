@@ -1323,13 +1323,16 @@ risk = Math.max(risk, 5)
 
     let diff = Math.abs(best.price - best.sl)
     if(!diff) continue
+    let zoneWidth = best.atr * 0.25
 
     let trade = {
         symbol: best.symbol,
         side: best.side,
         risk,
         entry: null,
-        entryZone: best.price,
+        entryZoneMid: best.price,
+        entryZoneLow: best.price - zoneWidth,
+        entryZoneHigh: best.price + zoneWidth,
         tp: best.tp,
         sl: best.sl,
         score: best.score,
@@ -1402,6 +1405,27 @@ async function checkTrades(){
 
                   // ================= ENTRY 1M CONFIRM =================
 if(t.waitingEntry){
+
+    if(!t.entryZoneMid || !price) continue
+
+    let drift = Math.abs(price - t.entryZoneMid) / t.entryZoneMid
+
+// dynamic drift theo ATR (thay vì cố định 1.5%)
+let maxDrift = Math.max(0.015, t.atr / t.entryZoneMid * 2.5)
+
+if(drift > maxDrift){
+
+    console.log(`⛔ SKIP ENTRY (too far) ${t.symbol}`)
+
+    activeTrades.splice(i,1)
+
+    await trades.updateOne(
+        { symbol: t.symbol, createdAt: t.createdAt },
+        { $set: { result: "MISSED_ENTRY" } }
+    )
+
+    continue
+}
      // timeout 1h
     let waitTime = Date.now() - t.createdAt
     
@@ -1437,24 +1461,32 @@ ${t.side}
     let atrRatio = t.atr / price
     atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02))
 
-    let entryBuffer = t.atr * (0.15 + atrRatio * 5)
-    let maxChase    = t.atr * (1.2 + atrRatio * 20)
+    let entryBuffer = t.atr * (0.25 + atrRatio * 3)
+    let maxChase    = t.atr * (2 + atrRatio * 10)
 
     entryBuffer = Math.min(entryBuffer, t.atr * 2.5)
     maxChase    = Math.min(maxChase, t.atr * 8)
 
 if(t.side === "LONG"){
 
+    // 🔥 REVERSAL LONG
     if(t.setup === "REVERSAL_BOTTOM"){
-        if(price > t.entryZone + t.atr * 0.15){
-            confirm = true
-        }
-    }else{
-        if(price <= t.entryZone - entryBuffer * 0.6){
+        if(price >= t.entryZone + t.atr * 0.15){
             confirm = true
         }
     }
 
+    // 🔥 NORMAL LONG (FIX)
+    else{
+    if(
+    price >= t.entryZoneLow - t.atr * 0.15 &&
+    price <= t.entryZoneHigh + t.atr * 0.15
+){
+    confirm = true
+}
+}
+
+    // ❌ cancel chase
     if(price > t.entryZone + maxChase){
         activeTrades.splice(i,1)
         await trades.updateOne(
@@ -1467,16 +1499,24 @@ if(t.side === "LONG"){
 
 if(t.side === "SHORT"){
 
+    // 🔥 REVERSAL SHORT
     if(t.setup === "REVERSAL_TOP"){
-        if(price < t.entryZone - t.atr * 0.15){
-            confirm = true
-        }
-    }else{
-        if(price >= t.entryZone + entryBuffer * 0.6){
+        if(price <= t.entryZone - t.atr * 0.15){
             confirm = true
         }
     }
 
+    // 🔥 NORMAL SHORT (FIX)
+    else{
+    if(
+    price <= t.entryZoneHigh + t.atr * 0.15 &&
+    price >= t.entryZoneLow - t.atr * 0.15
+){
+    confirm = true
+}
+}
+
+    // ❌ cancel chase
     if(price < t.entryZone - maxChase){
         activeTrades.splice(i,1)
         await trades.updateOne(
