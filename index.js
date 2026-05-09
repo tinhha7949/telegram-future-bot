@@ -649,9 +649,9 @@ let atrRatio = atrVal / price
 let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
     // ===== DYNAMIC VOLUME FILTER =====
-if(atrRatio < 0.002){
+if(atrRatio < 0.0015){
     // sideway → cần volume mạnh
-    if(volRatio < 0.05) return null
+    if(volRatio < 0.03) return null
 }
 else if(atrRatio > 0.005){
     // trend mạnh → nới lỏng
@@ -659,7 +659,9 @@ else if(atrRatio > 0.005){
 }
 else{
     // bình thường
-    if(volRatio < 0.02) return null
+    if(volRatio < 0.02){
+    score -= 10
+}
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
@@ -686,30 +688,30 @@ if(volAvgUSDT < dynamicMinVol * 0.7){
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
-    let dynamicThreshold = 55
+    let dynamicThreshold = 50
 
 // ===== TREND STRONG =====
 if(trendHTF > 0.003 && trendLTF > 0.002){
-    dynamicThreshold = 45   // dễ vào hơn
+    dynamicThreshold = 40   // dễ vào hơn
 }
 
 // ===== TREND WEAK =====
 else if(trendHTF > 0.0015){
-    dynamicThreshold = 52
+    dynamicThreshold = 47
 }
 
 // ===== SIDEWAY =====
 else{
-    dynamicThreshold = 60   // siết mạnh
+    dynamicThreshold = 55   // siết mạnh
 }
 
 // ===== VOLATILITY adjustment =====
 if(atrRatio > 0.005){
-    dynamicThreshold -= 3   // trend mạnh → dễ vào
+    dynamicThreshold -= 5   // trend mạnh → dễ vào
 }
 
 if(atrRatio < 0.002){
-    dynamicThreshold += 5   // market chết → siết lại
+    dynamicThreshold += 2   // market chết → siết lại
 }
 
     let r = rsi(closes.slice(-50))
@@ -723,8 +725,8 @@ if(atrRatio < 0.002){
    // if(Math.abs(lastMove) > 0.03) return null
 
     // ===== WICK =====
-    if((highs.at(-1) - lows.at(-1)) > atrVal * 4.5){
-    score -= 20
+    if((highs.at(-1) - lows.at(-1)) > atrVal * 6){
+    score -= 15
 }
 
     // ===== MARKET =====
@@ -736,7 +738,7 @@ if(atrRatio < 0.002){
     else if(emaGap > 0.0025) marketState = "TREND_WEAK"
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    if(marketState === "SIDEWAY" && range < 0.0012) return null // 0.002
+    if(marketState === "SIDEWAY" && range < 0.0008) return null // 0.002
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
@@ -862,7 +864,7 @@ let isBottom =
 let reversalShortSignal = ENABLE_REVERSAL && isTop
 let reversalLongSignal  = ENABLE_REVERSAL && isBottom
 // 🔥 nếu giá quá xa EMA → bỏ (đu đỉnh)
-if(distFromEma > 0.08 && !reversalShortSignal && !reversalLongSignal){
+if(distFromEma > 0.12 && !reversalShortSignal && !reversalLongSignal){
     return null
 }
 // ===== REJECTION FILTER =====
