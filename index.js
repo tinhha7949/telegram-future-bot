@@ -1488,7 +1488,6 @@ async function checkTrades(){
     try{
 
         if(activeTrades.length === 0){
-            checkingTrades = false   // 🔥 FIX TREO STATE
             return
         }
 
@@ -1702,7 +1701,27 @@ if(t.side === "SHORT"){
 )
 
     let diff = Math.abs(t.entry - t.sl)
-    
+        let maxSlPercent = 0.05 // SL tối đa 5%
+
+if(diff / t.entry > maxSlPercent){
+
+    console.log(`⚠️ AUTO TIGHT SL ${t.symbol}`)
+
+    let newDiff = t.entry * maxSlPercent
+
+    if(t.side === "LONG"){
+
+        t.sl = t.entry - newDiff
+        t.tp = t.entry + newDiff * RR_THRESHOLD
+
+    }else{
+
+        t.sl = t.entry + newDiff
+        t.tp = t.entry - newDiff * RR_THRESHOLD
+    }
+
+    diff = Math.abs(t.entry - t.sl)
+}
 
     if(!diff || !isFinite(diff) || diff < 1e-8){
         console.log("❌ INVALID DIFF")
@@ -1960,6 +1979,15 @@ try{
 await new Promise(r => setTimeout(r, 500))
 
 const tpsl = await setTPSL( t.symbol, t.side, t.tp, t.sl, realQty )
+        await trades.updateOne(
+{
+    symbol: t.symbol,
+    createdAt: t.createdAt
+},
+{
+    $unset: { opening: "" }
+}
+)
 
     if(!tpsl.ok){
 
@@ -1978,6 +2006,25 @@ ${tpsl.error}`
         t.side,
         realQty
     )
+        await new Promise(r => setTimeout(r, 2000))
+
+let positionsAfter = await binance.futuresPositionRisk()
+
+let stillOpen = positionsAfter.find(p =>
+    p.symbol === t.symbol &&
+    Math.abs(Number(p.positionAmt)) > 0
+)
+
+if(stillOpen){
+
+    console.log(`🚨 FORCE CLOSE FAILED ${t.symbol}`)
+
+    await sendTelegram2(
+`🚨 NGUY HIỂM
+${t.symbol} vẫn còn position mở
+TPSL chưa tồn tại`
+    )
+}
 
     await trades.updateOne(
         {
@@ -2134,7 +2181,20 @@ async function scanLoop(){
     }
 }
 
-setInterval(()=>checkCommand(),35000)
+async function commandLoop(){
+
+    while(true){
+
+        try{
+            await checkCommand()
+        }catch(e){
+            console.log("CMD LOOP:", e.message)
+        }
+
+        await new Promise(r => setTimeout(r, 2000))
+    }
+}
+        commandLoop()
 setInterval(()=>checkTrades(),10000)
 await loadValidFuturesSymbols()
        await scanLoop()
