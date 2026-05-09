@@ -1726,7 +1726,7 @@ Score: ${t.score || 0}
     let ok = await sendTelegram(msg)
 
    // lastSignalTime[`${t.symbol}-${t.side}`] = Date.now()
-}
+}else{
 
     // ❌ chưa confirm thì bỏ qua
     continue
