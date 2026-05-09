@@ -20,13 +20,15 @@ async function safeFetch(url, options = {}, retry = 3){
         try{
            let isTelegramGetUpdates = url.includes("api.telegram.org") && url.includes("getUpdates")
 
-const controller = options.signal
-    ? null
-    : (isTelegramGetUpdates ? null : new AbortController())
+let controller = new AbortController()
+let signal = controller.signal
+
+if(options.signal){
+    signal = options.signal
+    controller = null
+}
 
 let timeout
-            const signal = options.signal || controller.signal
-
 if(controller){
     timeout = setTimeout(() => {
         controller.abort()
