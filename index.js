@@ -1323,7 +1323,7 @@ risk = Math.max(risk, 5)
 
     let diff = Math.abs(best.price - best.sl)
     if(!diff) continue
-    let zoneWidth = best.atr * 0.6
+    let zoneWidth = best.atr * 1.0
 
     let trade = {
         symbol: best.symbol,
@@ -1458,36 +1458,36 @@ let confirm = false
 if(!price || price <= 0) continue
 
 let atrRatio = t.atr / price
-atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02))
+atrRatio = Math.max(0.002, Math.min(atrRatio, 0.03))
 
 let zoneLow  = t.entryZoneLow
 let zoneHigh = t.entryZoneHigh
 
-// 🔥 NỚI ENTRY
-let buffer = t.atr * (0.35 + atrRatio * 3)
-buffer = Math.min(buffer, t.atr * 2.5)
+// 🔥 entry cực thoáng
+let buffer = t.atr * (0.6 + atrRatio * 4)
+buffer = Math.min(buffer, t.atr * 4)
 
-// 🔥 breakout cho phép chase nhẹ
-let breakoutBuffer = t.atr * 0.8
+// 🔥 cho chase breakout
+let breakoutBuffer = t.atr * 1.5
 
-// 🔥 nới cancel chase
-let chaseLimit = t.atr * 4
+// 🔥 cancel xa hơn
+let chaseLimit = t.atr * 6
 
 
 
 // ================= LONG =================
 if(t.side === "LONG"){
 
-    // REVERSAL LONG
+    // reversal
     if(t.setup === "REVERSAL_BOTTOM"){
 
-        if(price >= zoneLow - buffer * 0.5){
+        if(price >= zoneLow - buffer){
             confirm = true
         }
 
     }else{
 
-        // pullback / normal
+        // vùng pullback rộng
         if(
             price >= zoneLow - buffer &&
             price <= zoneHigh + buffer
@@ -1530,16 +1530,16 @@ if(t.side === "LONG"){
 // ================= SHORT =================
 if(t.side === "SHORT"){
 
-    // REVERSAL SHORT
+    // reversal
     if(t.setup === "REVERSAL_TOP"){
 
-        if(price <= zoneHigh + buffer * 0.5){
+        if(price <= zoneHigh + buffer){
             confirm = true
         }
 
     }else{
 
-        // pullback / normal
+        // vùng pullback rộng
         if(
             price <= zoneHigh + buffer &&
             price >= zoneLow - buffer
