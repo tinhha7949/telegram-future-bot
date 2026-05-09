@@ -387,12 +387,27 @@ async function checkCommand(){
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=30`
 
         let res = await safeFetch(url,{
-            signal: controller.signal
-        })
+    signal: controller.signal
+})
 
-        clearTimeout(timeout)
+clearTimeout(timeout)
 
-        if(!res || !res.ok){
+if(!res){
+    checkingCmd = false
+    return
+}
+
+// 🔥 FIX 409 TELEGRAM CONFLICT
+if(res.status === 409){
+    console.log("⚠️ Telegram 409 conflict -> pause polling")
+
+    checkingCmd = false
+
+    await new Promise(r => setTimeout(r, 5000))
+    return
+}
+
+if(!res.ok){
     checkingCmd = false
     return
 }
@@ -466,14 +481,12 @@ return slice.reduce((a,b)=>a+b,0) / slice.length
 async function getData(symbol, interval, limit){
 
     const urls = [
-        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
-        `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
-        `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
     ]
 
     for(let url of urls){
 
-        for(let attempt=0; attempt<5; attempt++){
+        for(let attempt=0; attempt<2; attempt++){
 
             try{
 
@@ -496,10 +509,13 @@ async function getData(symbol, interval, limit){
                 }
 
             }catch(e){
-                // retry im lặng
-                await new Promise(r => setTimeout(r, 400))
-                console.log("❌ DATA FAIL:", symbol)
-            }
+
+    await new Promise(r =>
+        setTimeout(r, 1000 + attempt * 2000)
+    )
+
+    console.log("❌ DATA FAIL:", symbol)
+}
         }
     }
 
@@ -1153,9 +1169,18 @@ for(let i=0;i<symbols.length;i+=5){
 
     let chunk = symbols.slice(i,i+5)
 
-    let r = await Promise.allSettled(
-        chunk.map(scan)
-    )
+    let r = []
+
+for(let s of chunk){
+
+    let result = await scan(s)
+
+    if(result){
+        r.push({ status:"fulfilled", value: result })
+    }
+
+    await new Promise(r => setTimeout(r, 300))
+}
 
     results.push(...r)
 
