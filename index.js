@@ -18,17 +18,20 @@ async function safeFetch(url, options = {}, retry = 3){
         let timeout
 
         try{
-            const controller = options.signal
-                ? null
-                : new AbortController()
+           let isTelegramGetUpdates = url.includes("api.telegram.org") && url.includes("getUpdates")
 
+const controller = options.signal
+    ? null
+    : (isTelegramGetUpdates ? null : new AbortController())
+
+let timeout
             const signal = options.signal || controller.signal
 
-            if(controller){
-                timeout = setTimeout(() => {
-                    controller.abort()
-                }, 10000)
-            }
+if(controller){
+    timeout = setTimeout(() => {
+        controller.abort()
+    }, 10000)
+}
 
             let res = await fetch(url, {
                 ...options,
@@ -139,6 +142,7 @@ let checkingTrades = false
 let activeTrades = []
 let exchangeInfoCache = null
 let validFuturesSymbols = new Set()
+let pollingLock = true
 
 async function getSymbolInfo(symbol){
 
@@ -376,13 +380,13 @@ let checkingCmd = false
 
 async function checkCommand(){
 
-    if(checkingCmd) return
+    if(checkingCmd || !pollingLock) return
     checkingCmd = true
 
     try{
-
-        const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(), 5000)
+        
+       let controller = null
+let signal = undefined
 
         let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=30`
 
@@ -399,11 +403,16 @@ if(!res){
 
 // 🔥 FIX 409 TELEGRAM CONFLICT
 if(res.status === 409){
-    console.log("⚠️ Telegram 409 conflict -> pause polling")
+
+    console.log("⚠️ 409 conflict → reset polling")
+
+    pollingLock = false
+
+    await new Promise(r => setTimeout(r, 3000))
+
+    pollingLock = true
 
     checkingCmd = false
-
-    await new Promise(r => setTimeout(r, 5000))
     return
 }
 
@@ -2149,6 +2158,13 @@ async function start(){
 
         await client.connect()
         let newBalance = await getBalance()
+        await safeFetch(
+  `https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`
+)
+console.log("🧹 Webhook cleared")
+        await safeFetch(
+  `https://api.telegram.org/bot${BOT_TOKEN_2}/deleteWebhook`
+)
 
 if(newBalance > 0){
     ACCOUNT_BALANCE = newBalance
