@@ -1365,6 +1365,7 @@ ${t.side}
     if(!t.atr || !t.entryZone){
     continue
 }
+}
     // ===== LONG =====
     let confirm = false
 
@@ -1787,8 +1788,7 @@ ${win ? "✅ WIN" : "❌ LOSS"}`
     activeTrades.splice(i,1)
     continue
 }
-}
-            catch(e){
+            }catch(e){
 
                 console.log(`❌ checkTrades ${t.symbol}:`, e.message)
             }
