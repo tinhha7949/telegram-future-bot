@@ -1320,6 +1320,7 @@ async function checkTrades(){
     try{
 
         if(activeTrades.length === 0){
+            checkingTrades = false   // 🔥 FIX TREO STATE
             return
         }
 
@@ -1339,6 +1340,7 @@ async function checkTrades(){
                 if(!data) continue
 
                 let price = +data.at(-1)[4]
+
                   // ================= ENTRY 1M CONFIRM =================
 if(t.waitingEntry){
      // timeout 1h
@@ -1361,30 +1363,30 @@ ${t.side}
     activeTrades.splice(i,1)
     continue
 }
+
     // ATR 
     if(!t.atr || !t.entryZone){
     continue
 }
 }
+
     // ===== LONG =====
     let confirm = false
 
-let atrRatio = t.atr / price
+    // 🔥 FIX PRICE ZERO
+    if(!price || price <= 0) continue
 
-atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02)) // 🔥 giảm max
+    let atrRatio = t.atr / price
+    atrRatio = Math.max(0.002, Math.min(atrRatio, 0.02))
 
-let entryBuffer = t.atr * (0.15 + atrRatio * 5)
-let maxChase    = t.atr * (1.2 + atrRatio * 20)
-//let entryBuffer = t.atr * (0.3 + atrRatio * 10)
-//let maxChase    = t.atr * (2 + atrRatio * 40)
+    let entryBuffer = t.atr * (0.15 + atrRatio * 5)
+    let maxChase    = t.atr * (1.2 + atrRatio * 20)
 
-// 🔥 clamp thêm lần cuối
-entryBuffer = Math.min(entryBuffer, t.atr * 2.5)
-maxChase    = Math.min(maxChase, t.atr * 8)
-    
+    entryBuffer = Math.min(entryBuffer, t.atr * 2.5)
+    maxChase    = Math.min(maxChase, t.atr * 8)
+
 if(t.side === "LONG"){
 
-    // 🔥 reversal đáy → phải bật lên mới vào
     if(t.setup === "REVERSAL_BOTTOM"){
         if(price > t.entryZone + t.atr * 0.15){
             confirm = true
@@ -1407,7 +1409,6 @@ if(t.side === "LONG"){
 
 if(t.side === "SHORT"){
 
-    // 🔥 reversal đỉnh → phải giảm mới vào
     if(t.setup === "REVERSAL_TOP"){
         if(price < t.entryZone - t.atr * 0.15){
             confirm = true
@@ -1428,283 +1429,210 @@ if(t.side === "SHORT"){
     }
 }
 
-   // if(t.side === "LONG"){
-   // if(last <= t.entryZone * 1.005){ //2
-       // confirm = true
-  //  }
-
-//if(t.side === "SHORT"){
-   // if(last >= t.entryZone * 0.995){ //2
-       // confirm = true
-  //  }
     // ===== VÀO LỆNH =====
     if(confirm){
+
     t.entry = price
-t.waitingEntry = false
+    t.waitingEntry = false
 
-// ===== SIZE =====
-let diff = Math.abs(t.entry - t.sl)
+    let diff = Math.abs(t.entry - t.sl)
 
-// ✅ FIX NULL / NaN / ZERO
-if(!diff || !isFinite(diff) || diff < 1e-8){
-    console.log("❌ INVALID DIFF")
-    continue
-}
-
-let risk = t.risk || 10
-
-// ❌ FIX risk rác
-if(!risk || risk <= 0){
-    console.log("❌ INVALID RISK")
-    continue
-}
-
-let rawQty = risk / diff
-
-if(!rawQty || !isFinite(rawQty) || rawQty <= 0){
-    console.log("❌ INVALID QTY (RAW)")
-    continue
-}
-
-let qty = rawQty
-
-// ❌ FINAL SAFETY CHECK
-if(!qty || !isFinite(qty) || qty <= 0){
-    console.log("❌ INVALID QTY")
-    continue
-}
-
-// 🔥 clamp max qty theo coin rẻ
-let maxQty = 10000
-
-if(t.symbol.includes("PENGU") || t.symbol.includes("SHIB")){
-    maxQty = 100000
-}
-
-if(qty > maxQty){
-    console.log("❌ QTY TOO BIG:", qty)
-    continue
-}
-
-if(risk > ACCOUNT_BALANCE * 0.05){
-    console.log("❌ RISK TOO HIGH")
-    continue
-}
-
-// ===== GET BINANCE FILTER =====
-let info = await getSymbolInfo(t.symbol)
-
-if(!info || !info.filters){
-
-    console.log(`❌ NO SYMBOL INFO ${t.symbol}`)
-    continue
-}
-
-let lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE")
-let priceFilter = info.filters.find(f => f.filterType === "PRICE_FILTER")
-let minNotionalFilter = info.filters.find(f => f.filterType === "MIN_NOTIONAL")
-
-let stepSize = parseFloat(lotFilter.stepSize)
-let minQty = parseFloat(lotFilter.minQty)
-
-let tickSize = parseFloat(priceFilter.tickSize)
-
-let minNotional = minNotionalFilter
-    ? parseFloat(minNotionalFilter.notional)
-    : 5
-
-function roundStep(value, step){
-    return Math.floor(value / step) * step
-}
-//////////
-        function precisionFromStep(step){
-
-    return Math.max(
-        0,
-        (step.toString().split(".")[1] || "")
-            .replace(/0+$/,"")
-            .length
-    )
-}
-// ===== ROUND =====
-qty = roundStep(qty, stepSize)
-      qty = Number(
-    qty.toFixed(
-        precisionFromStep(stepSize)
-    )
-)
-function roundPrice(price, tickSize, side){
-
-    if(side === "LONG"){
-        return Math.floor(price / tickSize) * tickSize
+    if(!diff || !isFinite(diff) || diff < 1e-8){
+        console.log("❌ INVALID DIFF")
+        continue
     }
 
-    return Math.ceil(price / tickSize) * tickSize
-}
+    let risk = t.risk || 10
 
-t.tp = roundPrice(t.tp, tickSize, t.side)
-t.sl = roundPrice(t.sl, tickSize, t.side)
-// ===== FIX FLOAT =====
-        function countDecimals(value){
+    if(!risk || risk <= 0){
+        console.log("❌ INVALID RISK")
+        continue
+    }
 
-    if(!value || Math.floor(value) === value) return 0
+    let rawQty = risk / diff
 
-    return value.toString().split(".")[1]?.length || 0
-}
-let pricePrecision = countDecimals(tickSize)
+    if(!rawQty || !isFinite(rawQty) || rawQty <= 0){
+        console.log("❌ INVALID QTY (RAW)")
+        continue
+    }
 
-t.tp = Number(t.tp.toFixed(pricePrecision))
-t.sl = Number(t.sl.toFixed(pricePrecision))
-qty = Number(qty.toFixed(countDecimals(stepSize)))
+    let qty = rawQty
 
-// ===== MIN QTY =====
-if(qty < minQty){
+    if(!qty || !isFinite(qty) || qty <= 0){
+        console.log("❌ INVALID QTY")
+        continue
+    }
 
-    console.log(`❌ QTY < MIN_QTY ${t.symbol}`)
-    console.log(`qty=${qty} | minQty=${minQty}`)
+    let maxQty = 10000
 
-    continue
-}
+    if(t.symbol.includes("PENGU") || t.symbol.includes("SHIB")){
+        maxQty = 100000
+    }
 
-// ===== MIN NOTIONAL =====
-let notional = qty * t.entry
+    if(qty > maxQty){
+        console.log("❌ QTY TOO BIG:", qty)
+        continue
+    }
 
-// ===== AUTO FIX MIN NOTIONAL =====
-if(notional < minNotional){
+    if(risk > ACCOUNT_BALANCE * 0.05){
+        console.log("❌ RISK TOO HIGH")
+        continue
+    }
 
-    qty = Math.ceil((minNotional / t.entry) / stepSize) * stepSize
-    qty = Math.round(qty / stepSize) * stepSize
-    qty = Number(qty.toFixed(8))
+    let info = await getSymbolInfo(t.symbol)
 
-    notional = qty * t.entry
+    if(!info || !info.filters){
+        console.log(`❌ NO SYMBOL INFO ${t.symbol}`)
+        continue
+    }
 
-    console.log(`⚡ AUTO FIX NOTIONAL ${t.symbol}`)
-    console.log(`NEW QTY=${qty}`)
-}
+    let lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE")
+    let priceFilter = info.filters.find(f => f.filterType === "PRICE_FILTER")
+    let minNotionalFilter = info.filters.find(f => f.filterType === "MIN_NOTIONAL")
 
-// ===== FINAL CHECK =====
-if(notional < minNotional){
+    let stepSize = parseFloat(lotFilter?.stepSize || 0.001)
+    let minQty = parseFloat(lotFilter?.minQty || 0)
 
-    console.log(`❌ NOTIONAL TOO SMALL ${t.symbol}`)
-    console.log(`notional=${notional} | min=${minNotional}`)
+    let tickSize = parseFloat(priceFilter?.tickSize || 0.01)
 
-    continue
-}
+    let minNotional = minNotionalFilter
+        ? parseFloat(minNotionalFilter.notional)
+        : 5
 
-// ===== FINAL SAFETY =====
-if(!qty || !isFinite(qty) || qty <= 0){
+    function roundStep(value, step){
+        return Math.floor(value / step) * step
+    }
 
-    console.log(`❌ INVALID FINAL QTY ${t.symbol}`)
-    continue
-}
-        ///////////
-        let lock = await trades.findOneAndUpdate(
-    {
-        symbol: t.symbol,
-        createdAt: t.createdAt,
-        opening: { $ne: true }
-    },
-    {
-        $set: {
-            opening: true
+    function precisionFromStep(step){
+        return Math.max(
+            0,
+            (step.toString().split(".")[1] || "")
+                .replace(/0+$/,"")
+                .length
+        )
+    }
+
+    qty = roundStep(qty, stepSize)
+    qty = Number(qty.toFixed(precisionFromStep(stepSize)))
+
+    function roundPrice(price, tickSize, side){
+        if(side === "LONG"){
+            return Math.floor(price / tickSize) * tickSize
         }
+        return Math.ceil(price / tickSize) * tickSize
     }
-)
 
-if(!lock.value){
+    t.tp = roundPrice(t.tp, tickSize, t.side)
+    t.sl = roundPrice(t.sl, tickSize, t.side)
 
-    console.log(`⛔ LOCKED ${t.symbol}`)
+    function countDecimals(value){
+        if(!value || Math.floor(value) === value) return 0
+        return value.toString().split(".")[1]?.length || 0
+    }
 
-    continue
-}
-// ===== OPEN ORDER =====
-        let positions = await binance.futuresPositionRisk()
+    let pricePrecision = countDecimals(tickSize)
 
-let hasPos = positions.find(p =>
-    p.symbol === t.symbol &&
-    Math.abs(Number(p.positionAmt)) > 0
-)
+    t.tp = Number(t.tp.toFixed(pricePrecision))
+    t.sl = Number(t.sl.toFixed(pricePrecision))
+    qty = Number(qty.toFixed(countDecimals(stepSize)))
 
-if(hasPos){
+    if(qty < minQty){
+        console.log(`❌ QTY < MIN_QTY ${t.symbol}`)
+        continue
+    }
 
-    console.log(`⛔ POSITION EXISTS ${t.symbol}`)
+    let notional = qty * t.entry
 
-    await trades.updateOne(
-        { symbol: t.symbol, createdAt: t.createdAt },
-        { $set: { result: "POSITION_EXISTS" } }
+    if(notional < minNotional){
+
+        qty = Math.ceil((minNotional / t.entry) / stepSize) * stepSize
+        qty = Number(qty.toFixed(8))
+
+        notional = qty * t.entry
+
+        console.log(`⚡ AUTO FIX NOTIONAL ${t.symbol}`)
+    }
+
+    if(notional < minNotional){
+        console.log(`❌ NOTIONAL TOO SMALL ${t.symbol}`)
+        continue
+    }
+
+    let lock = await trades.findOneAndUpdate(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt,
+            opening: { $ne: true }
+        },
+        {
+            $set: { opening: true }
+        }
     )
 
-    activeTrades.splice(i,1)
+    if(!lock || !lock.value){   // 🔥 FIX CRASH
+        console.log(`⛔ LOCKED ${t.symbol}`)
+        continue
+    }
 
-    continue
-}
-let order = await openPosition(t.symbol, t.side, qty)
-        if(!order){
+    let positions = await binance.futuresPositionRisk()
 
-    console.log("❌ ORDER FAIL")
-
-    await trades.updateOne(
-        { symbol: t.symbol, createdAt: t.createdAt },
-        { $set: { result: "ORDER_FAIL" } }
+    let hasPos = positions.find(p =>
+        p.symbol === t.symbol &&
+        Math.abs(Number(p.positionAmt)) > 0
     )
 
-    activeTrades.splice(i,1)
+    if(hasPos){
 
-    continue
-}
-// ===== WAIT ORDER FILLED =====
-await new Promise(r => setTimeout(r, 1500))
+        console.log(`⛔ POSITION EXISTS ${t.symbol}`)
 
-let realQty = Math.abs(Number(order.executedQty))
+        await trades.updateOne(
+            { symbol: t.symbol, createdAt: t.createdAt },
+            { $set: { result: "POSITION_EXISTS" } }
+        )
 
-// fallback nếu MARKET order đã FILLED nhưng executedQty lỗi
-if((!realQty || realQty <= 0) && order.status === "FILLED"){
-    realQty = qty
-}
-
-// nếu vẫn chưa fill -> query lại position
-if(!realQty || realQty <= 0){
-
-    try{
-
-        let positions = await binance.futuresPositionRisk()
-
-let pos = positions.find(p => p.symbol === t.symbol)
-
-let positionAmt = 0
-
-if(pos){
-    positionAmt = Math.abs(Number(pos.positionAmt || 0))
-}
-
-if(positionAmt > 0){
-    realQty = positionAmt
-}
-
-    }catch(e){
-        console.log("❌ POSITION CHECK FAIL:", e.message)
+        activeTrades.splice(i,1)
+        continue
     }
-}
 
-if(!realQty || realQty <= 0){
+    let order = await openPosition(t.symbol, t.side, qty)
 
-    console.log(`❌ ORDER NOT FILLED ${t.symbol}`)
+    if(!order){
 
-    continue
-}
-// ===== SET SL TP =====
-const tpsl = await setTPSL(t.symbol, t.side, t.tp, t.sl, realQty)
-        if(!tpsl.ok){
+        console.log("❌ ORDER FAIL")
 
-    await sendTelegram2(
+        await trades.updateOne(
+            { symbol: t.symbol, createdAt: t.createdAt },
+            { $set: { result: "ORDER_FAIL" } }
+        )
+
+        activeTrades.splice(i,1)
+        continue
+    }
+
+    await new Promise(r => setTimeout(r, 1500))
+
+    let realQty = Math.abs(Number(order.executedQty))
+
+    if((!realQty || realQty <= 0) && order.status === "FILLED"){
+        realQty = qty
+    }
+
+    if(!realQty || realQty <= 0){
+        console.log(`❌ ORDER NOT FILLED ${t.symbol}`)
+        continue
+    }
+
+    const tpsl = await setTPSL(t.symbol, t.side, t.tp, t.sl, realQty)
+
+    if(!tpsl.ok){
+        await sendTelegram2(
 `❌ TPSL FAIL ${t.symbol}
 ${t.side}
 
 TP/SL không đặt được
 ${tpsl.error}`
-    )
-}
-
+        )
+    }
 
     let msg = `🔥 BEST SIGNAL
 
@@ -1720,86 +1648,73 @@ SL: ${t.sl.toFixed(4)}
 Size: ${qty.toFixed(2)}
 Score: ${t.score || 0}
 `
+
     console.log(msg)
-    let ok = await sendTelegram(msg)
-        
-// lastSignalTime[`${t.symbol}-${t.side}`] = Date.now()
+    await sendTelegram(msg)
 
 } else {
-
-    // ❌ chưa confirm thì bỏ qua
     continue
 }
+
+// ===== RESULT CHECK =====
 if(!t.entry) continue
 
-            let win = false
-            let done = false
+let win = false
+let done = false
 
-            if(t.side === "LONG"){
-                if(price >= t.tp){ win = true; done = true }
-                if(price <= t.sl){ win = false; done = true }
-                
-            }
+if(t.side === "LONG"){
+    if(price >= t.tp){ win = true; done = true }
+    if(price <= t.sl){ done = true }
+}
 
-            if(t.side === "SHORT"){
-                if(price <= t.tp){ win = true; done = true }
-                if(price >= t.sl){ win = false; done = true }
-            }
-        
+if(t.side === "SHORT"){
+    if(price <= t.tp){ win = true; done = true }
+    if(price >= t.sl){ done = true }
+}
 
-            // timeout 12h
 let isTimeout = Date.now() - t.createdAt > 43200000
 
-// ===== TIMEOUT TRƯỚC =====
 if(isTimeout){
-    
+
     await trades.updateOne(
-    { symbol: t.symbol, createdAt: t.createdAt },
-    { $set: { result: "TIMEOUT" } }
-)
-    console.log(`⏳ Timeout: ${t.symbol}`)
+        { symbol: t.symbol, createdAt: t.createdAt },
+        { $set: { result: "TIMEOUT" } }
+    )
 
     await sendTelegram2(
 `⏳ TIMEOUT ${t.symbol}
-${t.side}
-⛔ Không chạm TP/SL trong 12h`
+${t.side}`
     )
 
     activeTrades.splice(i,1)
     continue
 }
 
-// ===== SAU ĐÓ MỚI CHECK TP/SL =====
 if(done){
-        // 🔥 UPDATE DB
+
     await trades.updateOne(
         { symbol: t.symbol, createdAt: t.createdAt },
         { $set: { result: win ? "WIN" : "LOSS" } }
     )
 
-    let msg =
+    await sendTelegram2(
 `📊 RESULT ${t.symbol}
 ${t.side}
-${win ? "✅ WIN" : "❌ LOSS"}`
-    
-// await sendTelegram(msg)
-    await sendTelegram2(msg)
+${win ? "WIN" : "LOSS"}`
+    )
 
     activeTrades.splice(i,1)
     continue
 }
-            }catch(e){
 
+            }catch(e){
                 console.log(`❌ checkTrades ${t.symbol}:`, e.message)
             }
         }
 
     }catch(e){
-
         console.log("❌ checkTrades global:", e.message)
-
     }finally{
-
         checkingTrades = false
     }
 }
