@@ -260,6 +260,62 @@ return data
         return null
     }
 }
+async function closePosition(symbol, side, qty){
+
+    try{
+
+        const baseUrl = "https://fapi.binance.com"
+        const path = "/fapi/v1/order"
+
+        const timestamp = Date.now()
+
+        const closeSide =
+            side === "LONG" ? "SELL" : "BUY"
+
+        const query =
+            `symbol=${symbol}` +
+            `&side=${closeSide}` +
+            `&type=MARKET` +
+            `&quantity=${qty}` +
+            `&timestamp=${timestamp}`
+
+        const signature = crypto
+            .createHmac("sha256", process.env.BINANCE_SECRET)
+            .update(query)
+            .digest("hex")
+
+        const url =
+            `${baseUrl}${path}?${query}&signature=${signature}`
+
+        let res = await safeFetch(url,{
+            method:"POST",
+            headers:{
+                "X-MBX-APIKEY": process.env.BINANCE_KEY
+            }
+        })
+
+        if(!res){
+            console.log("❌ CLOSE FAIL FETCH")
+            return false
+        }
+
+        let data = await res.json()
+
+        if(data.code){
+            console.log("❌ CLOSE ERROR:", data)
+            return false
+        }
+
+        console.log(`✅ FORCE CLOSED ${symbol}`)
+
+        return true
+
+    }catch(e){
+
+        console.log("❌ CLOSE FAIL:", e.message)
+        return false
+    }
+}
 async function setTPSL(symbol, side, tp, sl, qty){
 
     try{
@@ -1436,6 +1492,19 @@ if(t.side === "SHORT"){
 
     t.entry = price
     t.waitingEntry = false
+        await trades.updateOne(
+    {
+        symbol:t.symbol,
+        createdAt:t.createdAt
+    },
+    {
+        $set:{
+            entry:t.entry,
+            waitingEntry:false,
+            enteredAt: Date.now()
+        }
+    }
+)
 
     let diff = Math.abs(t.entry - t.sl)
     
@@ -1498,9 +1567,25 @@ if(qty * t.entry > maxNotional){
 }
 
     if(risk > ACCOUNT_BALANCE * 0.05){
-        console.log("❌ RISK TOO HIGH")
-        continue
-    }
+
+    console.log(`❌ RISK TOO HIGH ${t.symbol}`)
+
+    await trades.updateOne(
+        {
+            symbol:t.symbol,
+            createdAt:t.createdAt
+        },
+        {
+            $set:{
+                result:"RISK_TOO_HIGH"
+            }
+        }
+    )
+
+    activeTrades.splice(i,1)
+
+    continue
+}
 
     let info = await getSymbolInfo(t.symbol)
 
@@ -1656,14 +1741,39 @@ if(!lock){
     const tpsl = await setTPSL(t.symbol, t.side, t.tp, t.sl, realQty)
 
     if(!tpsl.ok){
-        await sendTelegram2(
+
+    console.log(`❌ TPSL FAIL ${t.symbol}`)
+
+    await sendTelegram2(
 `❌ TPSL FAIL ${t.symbol}
 ${t.side}
 
-TP/SL không đặt được
+Đang force close position
 ${tpsl.error}`
-        )
-    }
+    )
+
+    await closePosition(
+        t.symbol,
+        t.side,
+        realQty
+    )
+
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $set: {
+                result: "TPSL_FAIL"
+            }
+        }
+    )
+
+    activeTrades.splice(i,1)
+
+    continue
+}
 
     let msg = `🔥 BEST SIGNAL
 
@@ -1703,7 +1813,9 @@ if(t.side === "SHORT"){
     if(price >= t.sl){ done = true }
 }
 
-t.enteredAt = Date.now()
+if(!t.enteredAt){
+    t.enteredAt = Date.now()
+}
 let isTimeout =
     t.enteredAt &&
     Date.now() - t.enteredAt > 43200000 // 12h
