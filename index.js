@@ -1788,7 +1788,7 @@ ${win ? "✅ WIN" : "❌ LOSS"}`
     continue
 }
 }
-            }catch(e){
+            catch(e){
 
                 console.log(`❌ checkTrades ${t.symbol}:`, e.message)
             }
