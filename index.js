@@ -2209,7 +2209,10 @@ await safeFetch(
 
 await updateBalance()
 setInterval(updateBalance, 60000)
-
+        let newBalance = await getBalance()
+if(newBalance > 0){
+    ACCOUNT_BALANCE = newBalance
+}
 console.log("💰 BALANCE:", ACCOUNT_BALANCE)
 
         try{
