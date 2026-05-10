@@ -2206,14 +2206,58 @@ await safeFetch(
 await safeFetch(
   `https://api.telegram.org/bot${BOT_TOKEN_2}/getUpdates?offset=-1`
 )
-        async function updateBalance(){
-    ACCOUNT_BALANCE = await getBalance()
-}
+     async function getBalance(){
+    try{
+        const baseUrl = "https://fapi.binance.com"
+        const path = "/fapi/v2/balance"
 
+        const timestamp = Date.now() + serverTimeOffset
+
+        const query = `timestamp=${timestamp}&recvWindow=5000`
+
+        const signature = crypto
+            .createHmac("sha256", process.env.BINANCE_SECRET)
+            .update(query)
+            .digest("hex")
+
+        const url = `${baseUrl}${path}?${query}&signature=${signature}`
+
+        let res = await safeFetch(url, {
+            method: "GET",
+            headers: {
+                "X-MBX-APIKEY": process.env.BINANCE_KEY
+            }
+        })
+
+        if(!res || !res.ok){
+            console.log("❌ BAL HTTP FAIL:", res?.status)
+            return null
+        }
+
+        let data = await res.json()
+
+        if(!Array.isArray(data)){
+            console.log("❌ BAL INVALID RESPONSE:", data)
+            return null
+        }
+
+        let usdt = data.find(x => x.asset === "USDT")
+
+        if(!usdt){
+            console.log("❌ NO USDT BALANCE")
+            return null
+        }
+
+        return Number(usdt.balance || 0)
+
+    }catch(e){
+        console.log("❌ BAL ERROR:", e.message)
+        return null
+    }
+}
 await updateBalance()
 setInterval(updateBalance, 60000)
-if(newBalance > 0){
-}
+
 console.log("💰 BALANCE:", ACCOUNT_BALANCE)
 
         try{
