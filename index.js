@@ -241,53 +241,6 @@ async function openPosition(symbol, side, qty){
         const baseUrl = "https://fapi.binance.com"
         const path = "/fapi/v1/order"
 
-        const timestamp = Date.now() -800
-
-        const query = `symbol=${symbol}&side=${side === "LONG" ? "BUY" : "SELL"}&type=MARKET&quantity=${qty}&timestamp=${timestamp}`
-
-        const signature = crypto
-            .createHmac("sha256", process.env.BINANCE_SECRET)
-            .update(query)
-            .digest("hex")
-
-        const url = `${baseUrl}${path}?${query}&signature=${signature}`
-
-        let res = await safeFetch(url, {
-    method: "POST",
-    headers: {
-        "X-MBX-APIKEY": process.env.BINANCE_KEY
-    }
-})
-
-if(!res){
-    console.log("❌ OPEN ORDER FETCH NULL")
-    return null
-}
-
-let data = await res.json()
-
-if(data.code){
-
-    console.log("❌ BINANCE ORDER ERROR")
-    console.log(data)
-
-    return null
-}
-
-return data
-
-    }catch(e){
-        console.log("❌ OPEN ORDER FAIL:", e.message)
-        return null
-    }
-}
-async function openPosition(symbol, side, qty){
-
-    try{
-
-        const baseUrl = "https://fapi.binance.com"
-        const path = "/fapi/v1/order"
-
         // 🔥 FIX TIME
         const timestamp = Date.now() - 800
 
@@ -1488,17 +1441,6 @@ let stepSize = parseFloat(lotFilter?.stepSize || 0.001)
 let minQty = parseFloat(lotFilter?.minQty || 0)
 
 let minNotional = parseFloat(minNotionalFilter?.notional || 5)
-
-// ===== STEP 1: raw qty =====
-let positionValue = ACCOUNT_BALANCE * POSITION_SIZE_PERCENT
-let qtyBySize = positionValue / best.price
-
-let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
-let qtyByRisk = risk / Math.abs(best.price - best.sl)
-
-// ===== STEP 2: chọn qty nhỏ hơn =====
-let qty = Math.min(qtyBySize, qtyByRisk)
-
 // ===== STEP 3: round step =====
 qty = Math.floor(qty / stepSize) * stepSize
 
