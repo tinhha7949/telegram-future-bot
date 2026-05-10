@@ -348,6 +348,26 @@ const query =
         return null
     }
 }
+async function waitPosition(symbol){
+
+    for(let i = 0; i < 10; i++){
+
+        let positions = await binance.futuresPositionRisk()
+
+        let pos = positions.find(p =>
+            p.symbol === symbol &&
+            Math.abs(Number(p.positionAmt)) > 0
+        )
+
+        if(pos){
+            return pos
+        }
+
+        await new Promise(r => setTimeout(r, 700))
+    }
+
+    return null
+}
 async function cancelAllOrders(symbol){
 
     try{
@@ -1545,6 +1565,23 @@ if(notional < minNotional || !isFinite(qty) || qty <= 0){
                 .length
         )
     }
+    async function safeSetTPSL(symbol, side, tp, sl, qty){
+
+    for(let i=0;i<3;i++){
+
+        let res = await setTPSL(symbol, side, tp, sl, qty)
+
+        if(res.ok){
+            return true
+        }
+
+        console.log(`⚠️ TPSL retry ${symbol} lần ${i+1}`)
+
+        await new Promise(r => setTimeout(r, 1200))
+    }
+
+    return false
+}
     //qty = roundStep(qty, stepSize)
 
    // qty = Number(
@@ -1560,10 +1597,51 @@ if(!qty || qty <= 0 || !isFinite(qty)){
 }
 
     let order = await openPosition(
-        trade.symbol,
-        trade.side,
-        qty
+    trade.symbol,
+    trade.side,
+    qty
+)
+
+if(!order){
+    console.log("❌ ORDER FAIL")
+    continue
+}
+
+// 🔥 CHỜ POSITION THẬT
+let pos = await waitPosition(trade.symbol)
+
+if(!pos){
+    console.log("❌ NO POSITION AFTER OPEN → SKIP TPSL")
+
+    // lưu lại để retry sau
+    await trades.updateOne(
+        { symbol: trade.symbol, createdAt: trade.createdAt },
+        { $set: { tpslMissing: true } }
     )
+
+    continue
+}
+    await new Promise(r => setTimeout(r, 1000))
+
+let verifyPos = await binance.futuresPositionRisk()
+
+let realPos = verifyPos.find(p =>
+    p.symbol === trade.symbol &&
+    Math.abs(Number(p.positionAmt)) > 0
+)
+
+if(!realPos){
+    console.log("❌ VERIFY FAIL → NO POSITION")
+
+    await trades.updateOne(
+        { symbol: trade.symbol, createdAt: trade.createdAt },
+        { $set: { result: "NO_POSITION_VERIFY_FAIL" } }
+    )
+
+    continue
+}
+
+let realQty = Math.abs(Number(pos.positionAmt))
 
     if(order){
 
@@ -1583,12 +1661,12 @@ if(!qty || qty <= 0 || !isFinite(qty)){
             }
         )
 
-        await setTPSL(
+        let ok = await safeSetTPSL(
             trade.symbol,
             trade.side,
             trade.tp,
             trade.sl,
-            qty
+            realQty
         )
 
         console.log(`🔥 MARKET ENTER ${trade.symbol}`)
@@ -2489,6 +2567,35 @@ async function getBestTPSL(setup, market, side){
 }
             
 start()
+async function fixTPSL(){
+
+    for(let t of activeTrades){
+
+        if(!t.retryTPSL) continue
+
+        let pos = await waitPosition(t.symbol)
+        
+
+        if(!pos) continue
+
+        let qty = Math.abs(Number(pos.positionAmt))
+
+        let ok = await safeSetTPSL(
+            t.symbol,
+            t.side,
+            t.tp,
+            t.sl,
+            realQty
+        )
+
+        if(ok){
+            t.retryTPSL = false
+            console.log(`✅ FIX TPSL ${t.symbol}`)
+        }
+    }
+}
+
+setInterval(fixTPSL, 15000)
 function cleanup(){
     try{
         if(fs.existsSync(PID_FILE)){
