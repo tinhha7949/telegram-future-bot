@@ -135,7 +135,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 30 // 110
+const SCORE_THRESHOLD = 35 // 110
 const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
@@ -1292,9 +1292,19 @@ if(filtered.length === 0){
 //let picks = filtered.slice(0, 3)
 for (let best of filtered){
 
-    // giới hạn số lệnh tối đa
-    if(activeTrades.length >= 7){
-        console.log("⚠️ MAX ACTIVE TRADES")
+    let realActive = activeTrades.filter(
+        x => !x.waitingEntry
+    ).length
+
+    let totalPending = activeTrades.length
+
+    if(realActive >= 10){
+        console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`)
+        break
+    }
+
+    if(totalPending >= 25){
+        console.log(`⚠️ MAX TOTAL PENDING: ${totalPending}`)
         break
     }
 
@@ -1601,7 +1611,7 @@ if(drift > maxDrift){
      // timeout 1h
     let waitTime = Date.now() - t.createdAt
     
-    if(waitTime > 5 * 60 * 60 * 1000){
+    if(waitTime > 2 * 60 * 60 * 1000){
     console.log(`⛔ Timeout entry ${t.symbol}`)
 
     await trades.updateOne(
