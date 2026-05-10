@@ -1,3 +1,21 @@
+const fs = require("fs")
+
+const PID_FILE = "./bot.pid"
+
+// nếu đã có bot chạy
+if(fs.existsSync(PID_FILE)){
+    const oldPid = parseInt(fs.readFileSync(PID_FILE,"utf8"))
+
+    try{
+        process.kill(oldPid, 0)
+        console.log("⛔ BOT ĐANG CHẠY SẴN → EXIT")
+        process.exit(1)
+    }catch(e){
+        // process chết → ok
+    }
+}
+// ghi pid hiện tại
+fs.writeFileSync(PID_FILE, process.pid.toString())
 function cleanup(){
     try{
         if(fs.existsSync(LOCK_FILE)){
@@ -138,6 +156,7 @@ const SCORE_THRESHOLD = 30 // 110
 const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.01
+const POSITION_SIZE_PERCENT = 0.05 // 5% vốn vào lệnh
 let ACCOUNT_BALANCE = 0
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
 
@@ -157,6 +176,7 @@ let exchangeInfoCache = null
 let validFuturesSymbols = new Set()
 let pollingLock = true
 let telegramPolling = false
+let TELEGRAM_LOCK = 0
 
 async function getSymbolInfo(symbol){
 
@@ -394,12 +414,12 @@ let checkingCmd = false
 
 async function checkCommand(){
 
-    if(telegramPolling) return
-    telegramPolling = true
+    if (TELEGRAM_LOCK) return
+TELEGRAM_LOCK = Date.now()
 
     try{
 
-        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=30`
+        let url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId+1}&timeout=25`
 
         let res = await safeFetch(url)
 
@@ -407,13 +427,11 @@ async function checkCommand(){
             return
         }
 
-        // ⚠️ CỰC QUAN TRỌNG: check body trước status
+        // ⚠️ FIX 409
         if(res.status === 409){
-            console.log("⚠️ TELEGRAM CONFLICT -> RESET POLLING")
+            console.log("⚠️ 409 DETECTED → RESET")
 
-            pollingLock = false
             await new Promise(r => setTimeout(r, 5000))
-            pollingLock = true
 
             return
         }
@@ -431,11 +449,11 @@ async function checkCommand(){
 
     }catch(e){
         console.log("CMD ERROR:", e.message)
+
     }finally{
-        telegramPolling = false
+        TELEGRAM_LOCK = 0
     }
 }
-
 // ================= INDICATORS =================
 function ema(arr, p){
     let k = 2 / (p + 1)
@@ -1410,11 +1428,23 @@ if(instantEntry){
 
     console.log(`⚡ INSTANT ENTRY ${best.symbol}`)
 
-    let diff = Math.abs(trade.entry - trade.sl)
+    // ===== 5% POSITION SIZE =====
+let positionValue = ACCOUNT_BALANCE * POSITION_SIZE_PERCENT
+let qtyBySize = positionValue / best.price
+
+// ===== RISK CONTROL (SL) =====
+let diff = Math.abs(best.price - best.sl)
+if(!diff) continue
+
+let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
+let qtyByRisk = risk / diff
+
+// ===== FINAL QTY =====
+let qty = Math.min(qtyBySize, qtyByRisk)
 
     if(!diff || diff <= 0) continue
 
-    let qty = risk / diff
+    //let qty = risk / diff
 
     if(!qty || qty <= 0 || !isFinite(qty)){
         continue
@@ -1490,17 +1520,17 @@ if(instantEntry){
         console.log(`🔥 MARKET ENTER ${trade.symbol}`)
         let msg = `🔥 BEST SIGNAL
 
-${t.symbol} (${t.setup})
-${t.side} | ${t.marketState}
+${best.symbol} (${best.setup})
+${best.side} | ${best.marketState}
 
-Entry: ${t.entry.toFixed(4)}
+Entry: ${best.entry.toFixed(4)}
 
-TP: ${t.tp.toFixed(4)}
+TP: ${best.tp.toFixed(4)}
 
-SL: ${t.sl.toFixed(4)}
+SL: ${best.sl.toFixed(4)}
 
 Size: ${qty.toFixed(2)}
-Score: ${trade.score || 0}
+Score: ${best.finalScore || best.score}
 `  //Score: ${t.score || 0}
 
     console.log(msg)
@@ -1607,118 +1637,25 @@ atrRatio = Math.max(0.002, Math.min(atrRatio, 0.03))
 
 let zoneLow  = t.entryZoneLow
 let zoneHigh = t.entryZoneHigh
+let move1m = Math.abs(price - t.entryZoneMid) / t.entryZoneMid
 
-// 🔥 entry cực thoáng
-let buffer = t.atr * (0.6 + atrRatio * 4)
-buffer = Math.min(buffer, t.atr * 4)
-
-// 🔥 cho chase breakout
-let breakoutBuffer = t.atr * 1.5
-
-// 🔥 cancel xa hơn
-let chaseLimit = t.atr * 6
-
-
-
-// ================= LONG =================
+if(move1m < 0.001) continue
 if(t.side === "LONG"){
 
-    // reversal
-    if(t.setup === "REVERSAL_BOTTOM"){
+    let breakout = price > t.entryZoneHigh
+    let reclaim  = price > t.entryZoneMid
 
-        if(price >= zoneLow - buffer){
-            confirm = true
-        }
-
-    }else{
-
-        // vùng pullback rộng
-        if(
-            price >= zoneLow - buffer &&
-            price <= zoneHigh + buffer
-        ){
-            confirm = true
-        }
-
-        // breakout follow
-        if(
-            price > zoneHigh &&
-            price <= zoneHigh + breakoutBuffer
-        ){
-            confirm = true
-        }
-    }
-
-    // cancel chase
-    if(price > zoneHigh + chaseLimit){
-
-        activeTrades.splice(i,1)
-
-        await trades.updateOne(
-            {
-                symbol: t.symbol,
-                createdAt: t.createdAt
-            },
-            {
-                $set:{
-                    result:"CANCEL_CHASE"
-                }
-            }
-        )
-
-        continue
+    if(breakout || reclaim){
+        confirm = true
     }
 }
+    if(t.side === "SHORT"){
 
+    let breakdown = price < t.entryZoneLow
+    let reject    = price < t.entryZoneMid
 
-
-// ================= SHORT =================
-if(t.side === "SHORT"){
-
-    // reversal
-    if(t.setup === "REVERSAL_TOP"){
-
-        if(price <= zoneHigh + buffer){
-            confirm = true
-        }
-
-    }else{
-
-        // vùng pullback rộng
-        if(
-            price <= zoneHigh + buffer &&
-            price >= zoneLow - buffer
-        ){
-            confirm = true
-        }
-
-        // breakout follow
-        if(
-            price < zoneLow &&
-            price >= zoneLow - breakoutBuffer
-        ){
-            confirm = true
-        }
-    }
-
-    // cancel chase
-    if(price < zoneLow - chaseLimit){
-
-        activeTrades.splice(i,1)
-
-        await trades.updateOne(
-            {
-                symbol: t.symbol,
-                createdAt: t.createdAt
-            },
-            {
-                $set:{
-                    result:"CANCEL_CHASE"
-                }
-            }
-        )
-
-        continue
+    if(breakdown || reject){
+        confirm = true
     }
 }
     // ===== VÀO LỆNH =====
@@ -1783,14 +1720,12 @@ if(diff < minDiff){
     continue
 }
 
-    let risk = t.risk || 10
-
     if(!risk || risk <= 0){
         console.log("❌ INVALID RISK")
         continue
     }
 
-    let rawQty = risk / diff
+   // let rawQty = risk / diff
 
     if(!rawQty || !isFinite(rawQty) || rawQty <= 0){
         console.log("❌ INVALID QTY (RAW)")
@@ -2141,14 +2076,15 @@ async function start(){
 
         await client.connect()
         let newBalance = await getBalance()
-        await safeFetch(
-  `https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`
-)
-console.log("🧹 Webhook cleared")
-        await safeFetch(
-  `https://api.telegram.org/bot${BOT_TOKEN_2}/deleteWebhook`
+        // 🔥 RESET UPDATE STATE TRÁNH 409
+await safeFetch(
+  `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=-1`
 )
 
+await safeFetch(
+  `https://api.telegram.org/bot${BOT_TOKEN_2}/getUpdates?offset=-1`
+)
+        
 if(newBalance > 0){
     ACCOUNT_BALANCE = newBalance
 }
@@ -2206,11 +2142,13 @@ async function scanLoop(){
         )
     }
 }
-
+let TELEGRAM_RUNNING = false
 async function commandLoop(){
 
-    while(true){
+    if(TELEGRAM_RUNNING) return   // 🔥 CHẶN CHẠY 2 LẦN
+    TELEGRAM_RUNNING = true
 
+    while(true){
         try{
             await checkCommand()
         }catch(e){
@@ -2377,3 +2315,14 @@ async function getBestTPSL(setup, market, side){
 }
             
 start()
+function cleanup(){
+    try{
+        if(fs.existsSync(PID_FILE)){
+            fs.unlinkSync(PID_FILE)
+        }
+    }catch(e){}
+}
+
+process.on("exit", cleanup)
+process.on("SIGINT", () => { cleanup(); process.exit() })
+process.on("SIGTERM", () => { cleanup(); process.exit() })
