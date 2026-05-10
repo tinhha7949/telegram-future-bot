@@ -1289,8 +1289,14 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 3)
-for (let best of picks){
+//let picks = filtered.slice(0, 3)
+for (let best of filtered){
+
+    // giới hạn số lệnh tối đa
+    if(activeTrades.length >= 7){
+        console.log("⚠️ MAX ACTIVE TRADES")
+        break
+    }
 
     // ===== BLOCK COIN =====
     let existing = await trades.findOne({
