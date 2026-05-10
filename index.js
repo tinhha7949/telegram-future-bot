@@ -1,3 +1,4 @@
+let TIME_SYNCED = false
 const fs = require("fs")
 
 const PID_FILE = "./bot.pid"
@@ -79,6 +80,27 @@ if(!options.signal){
 
     return null
 }
+async function syncTime(){
+    try{
+        let res = await fetch("https://fapi.binance.com/fapi/v1/time")
+        let data = await res.json()
+        serverTimeOffset = data.serverTime - Date.now()
+        TIME_SYNCED = true   // ✅ quan trọng nhất
+        console.log("🕒 TIME OFFSET:", serverTimeOffset)
+
+    }catch(e){
+        TIME_SYNCED = false
+        console.log("❌ TIME SYNC FAIL:", e.message)
+    }
+}
+///////////
+function getTimestamp(){
+    if(!TIME_SYNCED){
+        return Date.now()
+    }
+    return Date.now() + serverTimeOffset
+}
+//////////////
 require("dotenv").config()
 const { MongoClient } = require("mongodb")
 const client = new MongoClient(process.env.MONGO_URI)
@@ -95,7 +117,7 @@ async function getBalance(){
         const baseUrl = "https://fapi.binance.com"
         const path = "/fapi/v2/balance"
 
-        const timestamp = Date.now() + serverTimeOffset
+        const timestamp = getTimestamp()
 
         const query = `timestamp=${timestamp}`
 
@@ -259,6 +281,15 @@ let data = await res.json()
         return false
     }
 }
+function normalizeQtyFinal(qty, stepSize){
+    if(!stepSize) return qty
+
+    const precision = (stepSize.toString().split(".")[1] || "").length
+
+    let fixed = Math.floor(qty / stepSize) * stepSize
+
+    return Number(fixed.toFixed(precision))
+}
 async function openPosition(symbol, side, qty){
 
     try{
@@ -267,15 +298,17 @@ async function openPosition(symbol, side, qty){
         const path = "/fapi/v1/order"
 
         // 🔥 FIX TIME
-        const timestamp = Date.now() + serverTimeOffset
+        const timestamp = getTimestamp()
 
-        const query =
-            `symbol=${symbol}` +
-            `&side=${side === "LONG" ? "BUY" : "SELL"}` +
-            `&type=MARKET` +
-            `&quantity=${qty}` +
-            `&timestamp=${timestamp}` +
-            `&recvWindow=5000`
+        const qtyFixed = Number(qty).toFixed(8)
+
+const query =
+    `symbol=${symbol}` +
+    `&side=${side === "LONG" ? "BUY" : "SELL"}` +
+    `&type=MARKET` +
+    `&quantity=${qtyFixed}` +
+    `&timestamp=${timestamp}` +
+    `&recvWindow=10000`
 
         const signature = crypto
             .createHmac("sha256", process.env.BINANCE_SECRET)
@@ -1512,13 +1545,6 @@ if(notional < minNotional || !isFinite(qty) || qty <= 0){
                 .length
         )
     }
-
-    qty = Math.floor(qty / stepSize) * stepSize
-
-if(qty <= 0){
-    console.log("❌ QTY = 0 after normalize")
-    continue
-}
     //qty = roundStep(qty, stepSize)
 
    // qty = Number(
@@ -1526,6 +1552,12 @@ if(qty <= 0){
             precisionFromStep(stepSize)
        // )
    // )
+   qty = normalizeQtyFinal(qty, stepSize)
+
+if(!qty || qty <= 0 || !isFinite(qty)){
+    console.log("❌ QTY INVALID BEFORE SEND")
+    continue
+}
 
     let order = await openPosition(
         trade.symbol,
@@ -2209,6 +2241,14 @@ async function start(){
         }
 
         await client.connect()
+        await syncTime()
+// ⛔ CHẶN CHO TỚI KHI SYNC OK
+while(!TIME_SYNCED){
+    console.log("⏳ Waiting time sync...")
+    await new Promise(r => setTimeout(r, 1000))
+}
+
+setInterval(syncTime, 60000)
         await updateBalance()
 setInterval(updateBalance, 60000)
         // 🔥 RESET UPDATE STATE TRÁNH 409
