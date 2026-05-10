@@ -151,6 +151,7 @@ let cachedSymbols = null
 let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
+let scanning = false
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
@@ -160,7 +161,22 @@ let validFuturesSymbols = new Set()
 let pollingLock = true
 let telegramPolling = false
 let TELEGRAM_LOCK = 0
+let serverTimeOffset = 0
 
+async function syncTime(){
+    let res = await fetch("https://fapi.binance.com/fapi/v1/time")
+    let data = await res.json()
+    serverTimeOffset = data.serverTime - Date.now()
+}
+
+function normalizeQty(qty, stepSize){
+    return Number(
+        (Math.floor(qty / stepSize) * stepSize)
+        .toFixed(
+            (stepSize.toString().split(".")[1] || "").length
+        )
+    )
+}
 async function getSymbolInfo(symbol){
 
     try{
@@ -242,7 +258,7 @@ async function openPosition(symbol, side, qty){
         const path = "/fapi/v1/order"
 
         // 🔥 FIX TIME
-        const timestamp = Date.now() - 800
+        const timestamp = Date.now() + serverTimeOffset
 
         const query =
             `symbol=${symbol}` +
@@ -1442,16 +1458,13 @@ let minQty = parseFloat(lotFilter?.minQty || 0)
 
 let minNotional = parseFloat(minNotionalFilter?.notional || 5)
 // ===== STEP 3: round step =====
-qty = Math.floor(qty / stepSize) * stepSize
+
 
 // ===== STEP 4: check min qty =====
 if(qty < minQty){
     console.log("❌ MIN QTY FAIL")
     continue
 }
-
-// ===== STEP 5: ENSURE MIN NOTIONAL (FIX TRIỆT ĐỂ) =====
-let notional = qty * best.price
 
 if(notional < minNotional){
 
@@ -1473,19 +1486,10 @@ if(notional < minNotional || !isFinite(qty) || qty <= 0){
         continue
     }
 
-    let info = await getSymbolInfo(trade.symbol)
 
     if(!info || !info.filters){
         continue
     }
-
-    let lotFilter = info.filters.find(
-        f => f.filterType === "LOT_SIZE"
-    )
-
-    let stepSize = parseFloat(
-        lotFilter?.stepSize || 0.001
-    )
 
     function roundStep(value, step){
         return Math.floor(value / step) * step
@@ -1502,11 +1506,10 @@ if(notional < minNotional || !isFinite(qty) || qty <= 0){
 
     qty = Math.floor(qty / stepSize) * stepSize
 
-qty = Number(qty.toFixed(
-    Math.max(0,
-        (stepSize.toString().split(".")[1] || "").length
-    )
-))
+if(qty <= 0){
+    console.log("❌ QTY = 0 after normalize")
+    continue
+}
     //qty = roundStep(qty, stepSize)
 
    // qty = Number(
@@ -1653,7 +1656,7 @@ ${t.side}
 }
 
     // ATR 
-    if(!t.atr || !t.entryZone){
+    if(!t.atr || !t.entryZoneMid){
     continue
 }
 
@@ -1848,7 +1851,7 @@ if(diff < minDiff){
         continue
     }
 
-   // let rawQty = risk / diff
+    let rawQty = risk / diff
 
     if(!rawQty || !isFinite(rawQty) || rawQty <= 0){
         console.log("❌ INVALID QTY (RAW)")
@@ -1931,10 +1934,7 @@ if(qty * t.entry > maxNotional){
                 .length
         )
     }
-
-    qty = roundStep(qty, stepSize)
-    qty = Number(qty.toFixed(precisionFromStep(stepSize)))
-
+        
     function roundToTick(price, tickSize, mode="down"){
     if(mode === "down"){
         return Math.floor(price / tickSize) * tickSize
@@ -1959,7 +1959,6 @@ if(t.side === "LONG"){
 
     t.tp = Number(t.tp.toFixed(pricePrecision))
     t.sl = Number(t.sl.toFixed(pricePrecision))
-    qty = Number(qty.toFixed(countDecimals(stepSize)))
 
     if(qty < minQty){
         console.log(`❌ QTY < MIN_QTY ${t.symbol}`)
@@ -1971,7 +1970,6 @@ if(t.side === "LONG"){
     if(notional < minNotional){
 
         qty = Math.ceil((minNotional / t.entry) / stepSize) * stepSize
-        qty = Number(qty.toFixed(8))
 
         notional = qty * t.entry
 
@@ -2198,7 +2196,8 @@ async function start(){
         }
 
         await client.connect()
-        let newBalance = await getBalance()
+        await syncTime()
+setInterval(syncTime, 60000)
         // 🔥 RESET UPDATE STATE TRÁNH 409
 await safeFetch(
   `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=-1`
@@ -2207,9 +2206,13 @@ await safeFetch(
 await safeFetch(
   `https://api.telegram.org/bot${BOT_TOKEN_2}/getUpdates?offset=-1`
 )
-        
+        async function updateBalance(){
+    ACCOUNT_BALANCE = await getBalance()
+}
+
+await updateBalance()
+setInterval(updateBalance, 60000)
 if(newBalance > 0){
-    ACCOUNT_BALANCE = newBalance
 }
 console.log("💰 BALANCE:", ACCOUNT_BALANCE)
 
@@ -2248,25 +2251,22 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
     ACCOUNT_BALANCE = await getBalance()
 }, 60000)
 async function scanLoop(){
-
     while(true){
 
-        try{
-
-            await Promise.race([
-                scanner(),
-                new Promise(r =>
-                    setTimeout(r, 300000) // 5 phút max
-                )
-            ])
-
-        }catch(e){
-            console.log("❌ scanLoop:", e.message)
+        if(scanning){
+            await new Promise(r => setTimeout(r, 5000))
+            continue
         }
 
-        await new Promise(r =>
-            setTimeout(r,120000)
-        )
+        scanning = true
+
+        try{
+            await scanner()
+        } finally {
+            scanning = false
+        }
+
+        await new Promise(r => setTimeout(r, 120000))
     }
 }
 let TELEGRAM_RUNNING = false
@@ -2278,6 +2278,7 @@ async function commandLoop(){
     while(true){
         try{
             await checkCommand()
+            await checkTrades() // 👈 thêm luôn vào đây
         }catch(e){
             console.log("CMD LOOP:", e.message)
         }
@@ -2286,7 +2287,6 @@ async function commandLoop(){
     }
 }
         commandLoop()
-setInterval(()=>checkTrades(),10000)
 await loadValidFuturesSymbols()
        await scanLoop()
 
