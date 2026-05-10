@@ -1813,7 +1813,12 @@ if(t.side === "SHORT"){
 )
 
     let diff = Math.abs(t.entry - t.sl)
-        let maxSlPercent = 0.05 // SL tối đa 5%
+if(!diff || diff <= 0) continue
+
+let risk = t.risk || (ACCOUNT_BALANCE * RISK_PER_TRADE)
+if(!risk || risk <= 0) continue
+
+let maxSlPercent = 0.05
 
 if(diff / t.entry > maxSlPercent){
 
@@ -1889,7 +1894,7 @@ if(qty * t.entry > maxNotional){
 
     continue
 }
-
+    let risk = t.risk || (ACCOUNT_BALANCE * RISK_PER_TRADE)
     if(risk > ACCOUNT_BALANCE * 0.05){
 
     console.log(`❌ RISK TOO HIGH ${t.symbol}`)
