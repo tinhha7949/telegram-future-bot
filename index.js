@@ -95,7 +95,7 @@ async function getBalance(){
         const baseUrl = "https://fapi.binance.com"
         const path = "/fapi/v2/balance"
 
-        const timestamp = Date.now() - 800
+        const timestamp = Date.now() + serverTimeOffset
 
         const query = `timestamp=${timestamp}`
 
@@ -163,12 +163,21 @@ let telegramPolling = false
 let TELEGRAM_LOCK = 0
 let serverTimeOffset = 0
 
-async function syncTime(){
-    let res = await fetch("https://fapi.binance.com/fapi/v1/time")
-    let data = await res.json()
-    serverTimeOffset = data.serverTime - Date.now()
-}
+async function updateBalance(){
+    try{
+        let bal = await getBalance()
 
+        if(bal && bal > 0){
+            ACCOUNT_BALANCE = bal
+            console.log("💰 BALANCE:", ACCOUNT_BALANCE)
+        }else{
+            console.log("⚠️ BALANCE INVALID:", bal)
+        }
+
+    }catch(e){
+        console.log("❌ updateBalance error:", e.message)
+    }
+}
 function normalizeQty(qty, stepSize){
     return Number(
         (Math.floor(qty / stepSize) * stepSize)
@@ -2196,8 +2205,8 @@ async function start(){
         }
 
         await client.connect()
-        await syncTime()
-setInterval(syncTime, 60000)
+        await updateBalance()
+setInterval(updateBalance, 60000)
         // 🔥 RESET UPDATE STATE TRÁNH 409
 await safeFetch(
   `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=-1`
@@ -2207,9 +2216,7 @@ await safeFetch(
   `https://api.telegram.org/bot${BOT_TOKEN_2}/getUpdates?offset=-1`
 )
 
-await updateBalance()
-setInterval(updateBalance, 60000)
-        let newBalance = await getBalance()
+        let newBalance = await updateBalance()
 if(newBalance > 0){
     ACCOUNT_BALANCE = newBalance
 }
@@ -2246,9 +2253,6 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
 
         // ================= LOOP =================
-        setInterval(async ()=>{
-    ACCOUNT_BALANCE = await getBalance()
-}, 60000)
 async function scanLoop(){
     while(true){
 
