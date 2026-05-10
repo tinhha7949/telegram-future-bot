@@ -1402,7 +1402,7 @@ if(best.setup === "REVERSAL_TOP" || best.setup === "REVERSAL_BOTTOM"){
 
 let risk = balance * riskPercent * multiplier
     // 🔥 minimum risk để đủ notional
-risk = Math.max(risk, 5)
+risk = Math.max(risk, ACCOUNT_BALANCE * 0.005)
     if(best.setup === "REVERSAL_TOP" || best.setup === "REVERSAL_BOTTOM"){
     risk *= 0.5
 }
@@ -1478,8 +1478,50 @@ let qty = Math.min(qtyBySize, qtyByRisk)
 }
     let notional = qty * best.price
 
-if(notional < 5){
-    console.log("❌ MIN NOTIONAL FAIL:", notional)
+let info = await getSymbolInfo(trade.symbol)
+if(!info || !info.filters) continue
+
+let lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE")
+let minNotionalFilter = info.filters.find(f => f.filterType === "MIN_NOTIONAL")
+
+let stepSize = parseFloat(lotFilter?.stepSize || 0.001)
+let minQty = parseFloat(lotFilter?.minQty || 0)
+
+let minNotional = parseFloat(minNotionalFilter?.notional || 5)
+
+// ===== STEP 1: raw qty =====
+let positionValue = ACCOUNT_BALANCE * POSITION_SIZE_PERCENT
+let qtyBySize = positionValue / best.price
+
+let risk = ACCOUNT_BALANCE * RISK_PER_TRADE * multiplier
+let qtyByRisk = risk / Math.abs(best.price - best.sl)
+
+// ===== STEP 2: chọn qty nhỏ hơn =====
+let qty = Math.min(qtyBySize, qtyByRisk)
+
+// ===== STEP 3: round step =====
+qty = Math.floor(qty / stepSize) * stepSize
+
+// ===== STEP 4: check min qty =====
+if(qty < minQty){
+    console.log("❌ MIN QTY FAIL")
+    continue
+}
+
+// ===== STEP 5: ENSURE MIN NOTIONAL (FIX TRIỆT ĐỂ) =====
+let notional = qty * best.price
+
+if(notional < minNotional){
+
+    qty = minNotional / best.price
+    qty = Math.ceil(qty / stepSize) * stepSize
+
+    notional = qty * best.price
+}
+
+// ===== STEP 6: FINAL CHECK =====
+if(notional < minNotional || !isFinite(qty) || qty <= 0){
+    console.log("❌ FINAL MIN NOTIONAL FAIL:", notional)
     continue
 }
     //if(!diff || diff <= 0) continue
