@@ -95,7 +95,7 @@ async function getBalance(){
         const baseUrl = "https://fapi.binance.com"
         const path = "/fapi/v2/balance"
 
-        const timestamp = Date.now()
+        const timestamp = Date.now() - 800
 
         const query = `timestamp=${timestamp}`
 
@@ -241,7 +241,7 @@ async function openPosition(symbol, side, qty){
         const baseUrl = "https://fapi.binance.com"
         const path = "/fapi/v1/order"
 
-        const timestamp = Date.now()
+        const timestamp = Date.now() -800
 
         const query = `symbol=${symbol}&side=${side === "LONG" ? "BUY" : "SELL"}&type=MARKET&quantity=${qty}&timestamp=${timestamp}`
 
@@ -281,60 +281,60 @@ return data
         return null
     }
 }
-async function closePosition(symbol, side, qty){
+async function openPosition(symbol, side, qty){
 
     try{
 
         const baseUrl = "https://fapi.binance.com"
         const path = "/fapi/v1/order"
 
-        const timestamp = Date.now()
-
-        const closeSide =
-            side === "LONG" ? "SELL" : "BUY"
+        // 🔥 FIX TIME
+        const timestamp = Date.now() - 800
 
         const query =
             `symbol=${symbol}` +
-            `&side=${closeSide}` +
+            `&side=${side === "LONG" ? "BUY" : "SELL"}` +
             `&type=MARKET` +
             `&quantity=${qty}` +
-            `&timestamp=${timestamp}`
+            `&timestamp=${timestamp}` +
+            `&recvWindow=5000`
 
         const signature = crypto
             .createHmac("sha256", process.env.BINANCE_SECRET)
             .update(query)
             .digest("hex")
 
-        const url =
-            `${baseUrl}${path}?${query}&signature=${signature}`
+        const url = `${baseUrl}${path}?${query}&signature=${signature}`
 
-        let res = await safeFetch(url,{
-            method:"POST",
-            headers:{
+        let res = await safeFetch(url, {
+            method: "POST",
+            headers: {
                 "X-MBX-APIKEY": process.env.BINANCE_KEY
             }
         })
 
-        if(!res){
-            console.log("❌ CLOSE FAIL FETCH")
-            return false
+        if(!res || !res.ok){
+            console.log("❌ ORDER HTTP FAIL", res?.status)
+            return null
         }
 
         let data = await res.json()
 
         if(data.code){
-            console.log("❌ CLOSE ERROR:", data)
-            return false
+            console.log("❌ BINANCE REJECT:", data)
+            return null
         }
 
-        console.log(`✅ FORCE CLOSED ${symbol}`)
+        if(data.status !== "FILLED"){
+            console.log("⚠️ NOT FILLED:", data.status)
+            return null
+        }
 
-        return true
+        return data
 
     }catch(e){
-
-        console.log("❌ CLOSE FAIL:", e.message)
-        return false
+        console.log("❌ OPEN ORDER FAIL:", e.message)
+        return null
     }
 }
 async function cancelAllOrders(symbol){
@@ -1472,9 +1472,17 @@ let qtyByRisk = risk / diff
 
 // ===== FINAL QTY =====
 let qty = Math.min(qtyBySize, qtyByRisk)
+    if(!qty || qty <= 0 || !isFinite(qty)){
+    console.log("❌ QTY INVALID BEFORE SEND")
+    continue
+}
+    let notional = qty * best.price
 
-    if(!diff || diff <= 0) continue
-
+if(notional < 5){
+    console.log("❌ MIN NOTIONAL FAIL:", notional)
+    continue
+}
+    //if(!diff || diff <= 0) continue
     //let qty = risk / diff
 
     if(!qty || qty <= 0 || !isFinite(qty)){
@@ -1508,13 +1516,20 @@ let qty = Math.min(qtyBySize, qtyByRisk)
         )
     }
 
-    qty = roundStep(qty, stepSize)
+    qty = Math.floor(qty / stepSize) * stepSize
 
-    qty = Number(
-        qty.toFixed(
-            precisionFromStep(stepSize)
-        )
+qty = Number(qty.toFixed(
+    Math.max(0,
+        (stepSize.toString().split(".")[1] || "").length
     )
+))
+    //qty = roundStep(qty, stepSize)
+
+   // qty = Number(
+      //  qty.toFixed(
+            precisionFromStep(stepSize)
+       // )
+   // )
 
     let order = await openPosition(
         trade.symbol,
