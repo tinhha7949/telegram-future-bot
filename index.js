@@ -14,23 +14,6 @@ if(fs.existsSync(PID_FILE)){
         // process chết → ok
     }
 }
-// ghi pid hiện tại
-fs.writeFileSync(PID_FILE, process.pid.toString())
-function cleanup(){
-    try{
-        if(fs.existsSync(LOCK_FILE)){
-            const pid = parseInt(fs.readFileSync(LOCK_FILE, "utf8"))
-
-            if(pid === process.pid){
-                fs.unlinkSync(LOCK_FILE)
-            }
-        }
-    }catch(e){}
-}
-
-process.on("exit", cleanup)
-process.on("SIGINT", () => { cleanup(); process.exit() })
-process.on("SIGTERM", () => { cleanup(); process.exit() })
 //
 process.on("unhandledRejection", err => {
     console.log("UNHANDLED:", err)
@@ -1578,7 +1561,7 @@ async function checkTrades(){
 
                 let price = +data.at(-1)[4]
 
-                  // ================= ENTRY 1M CONFIRM =================
+                // ================= ENTRY 1M CONFIRM =================
 if(t.waitingEntry){
 
     if(!t.entryZoneMid || !price) continue
@@ -1637,25 +1620,118 @@ atrRatio = Math.max(0.002, Math.min(atrRatio, 0.03))
 
 let zoneLow  = t.entryZoneLow
 let zoneHigh = t.entryZoneHigh
-let move1m = Math.abs(price - t.entryZoneMid) / t.entryZoneMid
 
-if(move1m < 0.001) continue
+// 🔥 entry cực thoáng
+let buffer = t.atr * (0.6 + atrRatio * 4)
+buffer = Math.min(buffer, t.atr * 4)
+
+// 🔥 cho chase breakout
+let breakoutBuffer = t.atr * 1.5
+
+// 🔥 cancel xa hơn
+let chaseLimit = t.atr * 6
+
+
+
+// ================= LONG =================
 if(t.side === "LONG"){
 
-    let breakout = price > t.entryZoneHigh
-    let reclaim  = price > t.entryZoneMid
+    // reversal
+    if(t.setup === "REVERSAL_BOTTOM"){
 
-    if(breakout || reclaim){
-        confirm = true
+        if(price >= zoneLow - buffer){
+            confirm = true
+        }
+
+    }else{
+
+        // vùng pullback rộng
+        if(
+            price >= zoneLow - buffer &&
+            price <= zoneHigh + buffer
+        ){
+            confirm = true
+        }
+
+        // breakout follow
+        if(
+            price > zoneHigh &&
+            price <= zoneHigh + breakoutBuffer
+        ){
+            confirm = true
+        }
+    }
+
+    // cancel chase
+    if(price > zoneHigh + chaseLimit){
+
+        activeTrades.splice(i,1)
+
+        await trades.updateOne(
+            {
+                symbol: t.symbol,
+                createdAt: t.createdAt
+            },
+            {
+                $set:{
+                    result:"CANCEL_CHASE"
+                }
+            }
+        )
+
+        continue
     }
 }
-    if(t.side === "SHORT"){
 
-    let breakdown = price < t.entryZoneLow
-    let reject    = price < t.entryZoneMid
 
-    if(breakdown || reject){
-        confirm = true
+
+// ================= SHORT =================
+if(t.side === "SHORT"){
+
+    // reversal
+    if(t.setup === "REVERSAL_TOP"){
+
+        if(price <= zoneHigh + buffer){
+            confirm = true
+        }
+
+    }else{
+
+        // vùng pullback rộng
+        if(
+            price <= zoneHigh + buffer &&
+            price >= zoneLow - buffer
+        ){
+            confirm = true
+        }
+
+        // breakout follow
+        if(
+            price < zoneLow &&
+            price >= zoneLow - breakoutBuffer
+        ){
+            confirm = true
+        }
+    }
+
+    // cancel chase
+    if(price < zoneLow - chaseLimit){
+
+        activeTrades.splice(i,1)
+
+        await trades.updateOne(
+            {
+                symbol: t.symbol,
+                createdAt: t.createdAt
+            },
+            {
+                $set:{
+                    result:"CANCEL_CHASE"
+                }
+            }
+        )
+
+        continue
     }
 }
     // ===== VÀO LỆNH =====
