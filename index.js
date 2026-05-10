@@ -1169,7 +1169,15 @@ for(let i=0;i<symbols.length;i+=5){
 
 for(let s of chunk){
 
-    let result = await scan(s)
+    let result = await Promise.race([
+    scan(s),
+    new Promise(resolve =>
+        setTimeout(() => resolve(null), 20000)
+    )
+]).catch(e => {
+    console.log("SCAN ERROR:", s, e.message)
+    return null
+})
 
     if(result){
         r.push({ status:"fulfilled", value: result })
@@ -2206,15 +2214,19 @@ async function scanLoop(){
 
         try{
 
-            await scanner()
+            await Promise.race([
+                scanner(),
+                new Promise(r =>
+                    setTimeout(r, 300000) // 5 phút max
+                )
+            ])
 
         }catch(e){
-
             console.log("❌ scanLoop:", e.message)
         }
 
         await new Promise(r =>
-            setTimeout(r,60000)
+            setTimeout(r,120000)
         )
     }
 }
