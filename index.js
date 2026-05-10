@@ -1894,7 +1894,6 @@ if(qty * t.entry > maxNotional){
 
     continue
 }
-    let risk = t.risk || (ACCOUNT_BALANCE * RISK_PER_TRADE)
     if(risk > ACCOUNT_BALANCE * 0.05){
 
     console.log(`❌ RISK TOO HIGH ${t.symbol}`)
