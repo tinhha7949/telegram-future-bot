@@ -82,9 +82,6 @@ if(!options.signal){
 
     return null
 }
-let serverTimeOffset = 0
-let LAST_OFFSET_LOG = 0
-
 async function syncTime(){
     try{
         let res = await fetch("https://fapi.binance.com/fapi/v1/time")
