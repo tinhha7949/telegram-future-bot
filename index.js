@@ -201,18 +201,24 @@ let TELEGRAM_LOCK = 0
 let TPSL_LOCKS = {}
 
 async function updateBalance(){
+
     try{
         let bal = await getBalance()
-
         if(bal && bal > 0){
             ACCOUNT_BALANCE = bal
-            console.log("💰 BALANCE:", ACCOUNT_BALANCE)
-        }else{
-            console.log("⚠️ BALANCE INVALID:", bal)
+            console.log(
+                "💰 BALANCE:",
+                ACCOUNT_BALANCE
+            )
+            return bal
         }
-
+        return ACCOUNT_BALANCE
     }catch(e){
-        console.log("❌ updateBalance error:", e.message)
+        console.log(
+            "❌ updateBalance error:",
+            e.message
+        )
+        return ACCOUNT_BALANCE
     }
 }
 function normalizeQty(qty, stepSize){
@@ -297,17 +303,55 @@ let data = await res.json()
     }
 }
 function normalizeQtyFinal(qty, stepSize){
+
     if(!stepSize) return qty
 
-    const precision = (stepSize.toString().split(".")[1] || "").length
+    const precision =
+        (stepSize.toString().split(".")[1] || "")
+        .replace(/0+$/,"")
+        .length
 
-    let fixed = Math.floor(qty / stepSize) * stepSize
+    const normalized =
+        Math.floor(qty / stepSize) * stepSize
 
-    return Number(fixed.toFixed(precision))
+    return parseFloat(
+        normalized.toFixed(precision)
+    )
 }
+//function normalizeQtyFinal(qty, stepSize){
+    //if(!stepSize) return qty
+
+    //const precision = (stepSize.toString().split(".")[1] || "").length
+
+   // let fixed = Math.floor(qty / stepSize) * stepSize
+
+   // return Number(fixed.toFixed(precision))
+//}
 async function openPosition(symbol, side, qty){
 
     try{
+         let info = await getSymbolInfo(symbol)
+
+        if(!info){
+            console.log("❌ NO SYMBOL INFO")
+            return null
+        }
+
+        let lotFilter = info.filters.find(
+            f => f.filterType === "LOT_SIZE"
+        )
+
+        let stepSize = parseFloat(
+            lotFilter?.stepSize || 0.001
+        )
+
+        // ===== NORMALIZE FINAL =====
+        qty = normalizeQtyFinal(qty, stepSize)
+
+        if(!qty || qty <= 0 || !isFinite(qty)){
+            console.log("❌ INVALID FINAL QTY")
+            return null
+        }
 
         const baseUrl = "https://fapi.binance.com"
         const path = "/fapi/v1/order"
@@ -315,13 +359,11 @@ async function openPosition(symbol, side, qty){
         // 🔥 FIX TIME
         const timestamp = getTimestamp()
 
-        const qtyFixed = Number(qty).toFixed(8)
-
 const query =
     `symbol=${symbol}` +
     `&side=${side === "LONG" ? "BUY" : "SELL"}` +
     `&type=MARKET` +
-    `&quantity=${qtyFixed}` +
+    `&quantity=${qty}` +
     `&timestamp=${timestamp}` +
     `&recvWindow=10000`
 
@@ -1682,6 +1724,12 @@ let qtyByRisk = risk / diff
 
 // ===== FINAL QTY =====
 let qty = Math.min(qtyBySize, qtyByRisk)
+let maxPositionValue = ACCOUNT_BALANCE * 3
+
+if(qty * best.price > maxPositionValue){
+
+    qty = maxPositionValue / best.price
+}
     if(!qty || qty <= 0 || !isFinite(qty)){
     console.log("❌ QTY INVALID BEFORE SEND")
     continue
@@ -1692,7 +1740,13 @@ let info = await getSymbolInfo(trade.symbol)
 if(!info || !info.filters) continue
 
 let lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE")
-let minNotionalFilter = info.filters.find(f => f.filterType === "MIN_NOTIONAL")
+//let minNotionalFilter = info.filters.find(f => f.filterType === "MIN_NOTIONAL")
+let minNotionalFilter =
+    info.filters.find(
+        f =>
+            f.filterType === "MIN_NOTIONAL" ||
+            f.filterType === "NOTIONAL"
+    )
 
 let stepSize = parseFloat(lotFilter?.stepSize || 0.001)
 let minQty = parseFloat(lotFilter?.minQty || 0)
@@ -2235,7 +2289,13 @@ if(qty * t.entry > maxNotional){
 
     let lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE")
     let priceFilter = info.filters.find(f => f.filterType === "PRICE_FILTER")
-    let minNotionalFilter = info.filters.find(f => f.filterType === "MIN_NOTIONAL")
+    //let minNotionalFilter = info.filters.find(f => f.filterType === "MIN_NOTIONAL")
+    let minNotionalFilter =
+    info.filters.find(
+        f =>
+            f.filterType === "MIN_NOTIONAL" ||
+            f.filterType === "NOTIONAL"
+    )
 
     let stepSize = parseFloat(lotFilter?.stepSize || 0.001)
     let minQty = parseFloat(lotFilter?.minQty || 0)
