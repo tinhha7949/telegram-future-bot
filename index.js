@@ -184,6 +184,7 @@ let pollingLock = true
 let telegramPolling = false
 let TELEGRAM_LOCK = 0
 let serverTimeOffset = 0
+let TPSL_LOCKS = {}
 
 async function updateBalance(){
     try{
@@ -383,43 +384,207 @@ async function cancelAllOrders(symbol){
         console.log(`❌ CANCEL TPSL ${symbol}:`, e.message)
     }
 }
-async function setTPSL(symbol, side, tp, sl, qty){
+async function setTPSL(symbol, side, tp, sl){
 
     try{
 
-        await new Promise(r => setTimeout(r, 1200))
+        // ===== VERIFY POSITION =====
+        let positions = await binance.futuresPositionRisk()
 
-        let tpOrder = await binance.futuresOrder({
-            symbol,
-            side: side === "LONG" ? "SELL" : "BUY",
-            type: "TAKE_PROFIT_MARKET",
-            stopPrice: tp,
-            closePosition: true,
-            workingType: "MARK_PRICE"
-        })
+        let pos = positions.find(p =>
+            p.symbol === symbol &&
+            Math.abs(Number(p.positionAmt)) > 0
+        )
 
-        let slOrder = await binance.futuresOrder({
-            symbol,
-            side: side === "LONG" ? "SELL" : "BUY",
-            type: "STOP_MARKET",
-            stopPrice: sl,
-            closePosition: true,
-            workingType: "MARK_PRICE"
-        })
+        if(!pos){
+
+            return {
+                ok:false,
+                error:"NO_POSITION"
+            }
+        }
+
+        // ===== CANCEL OLD =====
+        try{
+            await binance.futuresCancelAllOpenOrders({
+                symbol
+            })
+        }catch(e){}
+
+        await new Promise(r => setTimeout(r, 1500))
+
+        // ===== PRICE PRECISION =====
+        let info = await getSymbolInfo(symbol)
+
+        if(!info){
+
+            return {
+                ok:false,
+                error:"NO_SYMBOL_INFO"
+            }
+        }
+
+        let priceFilter = info.filters.find(
+            f => f.filterType === "PRICE_FILTER"
+        )
+
+        let tickSize = Number(priceFilter?.tickSize || 0.01)
+
+        function roundPrice(price, tick, sideMode){
+
+            let v
+
+            if(sideMode === "DOWN"){
+                v = Math.floor(price / tick) * tick
+            }else{
+                v = Math.ceil(price / tick) * tick
+            }
+
+            let precision =
+                (tick.toString().split(".")[1] || "").length
+
+            return Number(v.toFixed(precision))
+        }
+
+        // ===== ROUND PRICE =====
+        if(side === "LONG"){
+
+            tp = roundPrice(tp, tickSize, "DOWN")
+            sl = roundPrice(sl, tickSize, "DOWN")
+
+        }else{
+
+            tp = roundPrice(tp, tickSize, "UP")
+            sl = roundPrice(sl, tickSize, "UP")
+        }
+        // ===== VALIDATE TP SL =====
+let mark = Number(pos.markPrice)
+
+if(side === "LONG"){
+
+    if(sl >= mark){
 
         return {
-            ok: true,
+            ok:false,
+            error:"INVALID_SL_LONG"
+        }
+    }
+
+    if(tp <= mark){
+
+        return {
+            ok:false,
+            error:"INVALID_TP_LONG"
+        }
+    }
+
+}else{
+
+    if(sl <= mark){
+
+        return {
+            ok:false,
+            error:"INVALID_SL_SHORT"
+        }
+    }
+
+    if(tp >= mark){
+
+        return {
+            ok:false,
+            error:"INVALID_TP_SHORT"
+        }
+    }
+}
+        // ===== STOP LOSS =====
+        let slOrder = await binance.futuresOrder({
+
+            symbol,
+
+            side: side === "LONG"
+                ? "SELL"
+                : "BUY",
+
+            type: "STOP_MARKET",
+
+            stopPrice: sl,
+
+            closePosition: true,
+
+            workingType: "MARK_PRICE",
+
+            priceProtect: true
+        })
+
+        await new Promise(r => setTimeout(r, 1200))
+
+        // ===== VERIFY SL =====
+        let openOrders1 = await binance.futuresOpenOrders({
+            symbol
+        })
+
+        let hasSL = openOrders1.find(o =>
+            o.type === "STOP_MARKET"
+        )
+
+        if(!hasSL){
+
+            return {
+                ok:false,
+                error:"SL_NOT_FOUND"
+            }
+        }
+
+        // ===== TAKE PROFIT =====
+        let tpOrder = await binance.futuresOrder({
+
+            symbol,
+
+            side: side === "LONG"
+                ? "SELL"
+                : "BUY",
+
+            type: "TAKE_PROFIT_MARKET",
+
+            stopPrice: tp,
+
+            closePosition: true,
+
+            workingType: "MARK_PRICE",
+
+            priceProtect: true
+        })
+
+        await new Promise(r => setTimeout(r, 1200))
+
+        // ===== VERIFY TP =====
+        let openOrders2 = await binance.futuresOpenOrders({
+            symbol
+        })
+
+        let hasTP = openOrders2.find(o =>
+            o.type === "TAKE_PROFIT_MARKET"
+        )
+
+        if(!hasTP){
+
+            return {
+                ok:false,
+                error:"TP_NOT_FOUND"
+            }
+        }
+
+        return {
+            ok:true,
             tpOrder,
             slOrder
         }
 
     }catch(e){
 
-        console.log("❌ TPSL FAIL:", e.message)
-
         return {
-            ok: false,
-            error: e.message
+            ok:false,
+            error:e.message
         }
     }
 }
@@ -1565,22 +1730,45 @@ if(notional < minNotional || !isFinite(qty) || qty <= 0){
                 .length
         )
     }
-    async function safeSetTPSL(symbol, side, tp, sl, qty){
+    async function safeSetTPSL(symbol, side, tp, sl){
 
-    for(let i=0;i<3;i++){
-
-        let res = await setTPSL(symbol, side, tp, sl, qty)
-
-        if(res.ok){
-            return true
-        }
-
-        console.log(`⚠️ TPSL retry ${symbol} lần ${i+1}`)
-
-        await new Promise(r => setTimeout(r, 1200))
+    if(TPSL_LOCKS[symbol]){
+        return false
     }
 
-    return false
+    TPSL_LOCKS[symbol] = true
+
+    try{
+
+        for(let i=0;i<5;i++){
+
+            let res = await setTPSL(
+                symbol,
+                side,
+                tp,
+                sl
+            )
+
+            if(res.ok){
+                return true
+            }
+
+            console.log(
+                `⚠️ TPSL retry ${symbol} ${i+1}:`,
+                res.error
+            )
+
+            await new Promise(r =>
+                setTimeout(r, 2500)
+            )
+        }
+
+        return false
+
+    }finally{
+
+        delete TPSL_LOCKS[symbol]
+    }
 }
     //qty = roundStep(qty, stepSize)
 
@@ -1665,8 +1853,7 @@ let realQty = Math.abs(Number(pos.positionAmt))
             trade.symbol,
             trade.side,
             trade.tp,
-            trade.sl,
-            realQty
+            trade.sl
         )
 
         console.log(`🔥 MARKET ENTER ${trade.symbol}`)
@@ -2310,6 +2497,41 @@ ${win ? "WIN" : "LOSS"}`
         checkingTrades = false
     }
 }
+async function closePosition(symbol, side, qty){
+
+    try{
+
+        await cancelAllOrders(symbol)
+
+        await new Promise(r =>
+            setTimeout(r, 1000)
+        )
+
+        return await binance.futuresOrder({
+
+            symbol,
+
+            side: side === "LONG"
+                ? "SELL"
+                : "BUY",
+
+            type: "MARKET",
+
+            quantity: qty,
+
+            reduceOnly: true
+        })
+
+    }catch(e){
+
+        console.log(
+            `❌ FORCE CLOSE ${symbol}:`,
+            e.message
+        )
+
+        return null
+    }
+}
 
 async function start(){
     try{
@@ -2585,7 +2807,7 @@ async function fixTPSL(){
             t.side,
             t.tp,
             t.sl,
-            realQty
+            qty
         )
 
         if(ok){
