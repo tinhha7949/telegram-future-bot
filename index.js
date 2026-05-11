@@ -1,4 +1,6 @@
 let TIME_SYNCED = false
+let LAST_OFFSET_LOG = 0
+let serverTimeOffset = 0
 const fs = require("fs")
 
 const PID_FILE = "./bot.pid"
@@ -80,17 +82,33 @@ if(!options.signal){
 
     return null
 }
+let serverTimeOffset = 0
+let LAST_OFFSET_LOG = 0
+
 async function syncTime(){
     try{
         let res = await fetch("https://fapi.binance.com/fapi/v1/time")
         let data = await res.json()
         serverTimeOffset = data.serverTime - Date.now()
-        TIME_SYNCED = true   // ✅ quan trọng nhất
-        console.log("🕒 TIME OFFSET:", serverTimeOffset)
-
+        TIME_SYNCED = true
+        // chỉ log khi lệch thay đổi mạnh
+        if(
+            Math.abs(
+                serverTimeOffset - LAST_OFFSET_LOG
+            ) > 1000
+        ){
+            console.log(
+                "🕒 TIME OFFSET:",
+                serverTimeOffset
+            )
+            LAST_OFFSET_LOG = serverTimeOffset
+        }
     }catch(e){
         TIME_SYNCED = false
-        console.log("❌ TIME SYNC FAIL:", e.message)
+        console.log(
+            "❌ TIME SYNC FAIL:",
+            e.message
+        )
     }
 }
 ///////////
@@ -183,7 +201,6 @@ let validFuturesSymbols = new Set()
 let pollingLock = true
 let telegramPolling = false
 let TELEGRAM_LOCK = 0
-let serverTimeOffset = 0
 let TPSL_LOCKS = {}
 
 async function updateBalance(){
