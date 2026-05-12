@@ -1,3 +1,4 @@
+let TPSL_GLOBAL_LOCK = {}
 let TIME_SYNCED = false
 let TPSL_PENDING = {}
 let LAST_OFFSET_LOG = 0
@@ -463,16 +464,19 @@ const query =
 
         // ===== WAIT FILL =====
 if(data.status !== "FILLED"){
+
     let verifyPos = await waitPosition(symbol)
 
-if(verifyPos){
+    if(verifyPos){
 
-    console.log(`✅ POSITION EXISTS ${symbol}`)
+        console.log(`✅ POSITION EXISTS ${symbol}`)
 
-    data.status = "FILLED"
-}
+        data.status = "FILLED"
 
-    console.log(`⏳ WAIT FILL ${symbol}: ${data.status}`)
+    }else{
+
+        console.log(`⏳ WAIT FILL ${symbol}: ${data.status}`)
+    }
 
     for(let i = 0; i < 10; i++){
 
@@ -581,40 +585,52 @@ async function cancelAllOrders(symbol){
     }
 }
 async function cancelTPSLOrders(symbol){
-
     try{
-
         let orders =
             await binance.futuresOpenOrders({
                 symbol,
                 recvWindow:20000
             })
-
         for(let o of orders){
-
             if(
                 o.type === "STOP_MARKET" ||
                 o.type === "TAKE_PROFIT_MARKET"
             ){
 
                 try{
-
                     await binance.futuresCancelOrder({
                         symbol,
                         orderId:o.orderId,
                         recvWindow:20000
                     })
-
                 }catch(e){}
             }
         }
-
+        // ===== WAIT REAL CANCEL =====
+        for(let i=0;i<20;i++){
+            await new Promise(r =>
+                setTimeout(r, 1000)
+            )
+            let remain =
+                await binance.futuresOpenOrders({
+                    symbol,
+                    recvWindow:20000
+                })
+            let stillHas = remain.find(o =>
+                o.type === "STOP_MARKET" ||
+                o.type === "TAKE_PROFIT_MARKET"
+            )
+            if(!stillHas){
+                return true
+            }
+        }
+        return false
     }catch(e){
-
         console.log(
             `❌ CANCEL TPSL ${symbol}:`,
             e.message
         )
+        return false
     }
 }
 async function setTPSL(symbol, side, tp, sl){
@@ -901,9 +917,15 @@ if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
 }
 async function safeSetTPSL(symbol, side, tp, sl){
 
-    if(TPSL_LOCKS[symbol] || TPSL_PENDING[symbol]){
+   if(
+    TPSL_LOCKS[symbol] ||
+    TPSL_PENDING[symbol] ||
+    TPSL_GLOBAL_LOCK[symbol]
+){
     return false
 }
+
+TPSL_GLOBAL_LOCK[symbol] = true
 
 TPSL_PENDING[symbol] = true
 
@@ -961,6 +983,7 @@ if(
         return false
 
     }finally{
+        delete TPSL_GLOBAL_LOCK[symbol]
         delete TPSL_PENDING[symbol]
         delete TPSL_LOCKS[symbol]
     }
@@ -2147,7 +2170,7 @@ if(!qty || qty <= 0 || !isFinite(qty)){
     console.log("❌ QTY INVALID BEFORE SEND")
     continue
 }
-let existingPos = await hasPosition(symbol)
+let existingPos = await hasPosition(trade.symbol)
 
 if(existingPos){
 
@@ -2248,6 +2271,10 @@ let realQty = Math.abs(Number(realPos.positionAmt))
         trade.tp,
         trade.sl
     )
+}
+if(ok){
+
+    delete TPSL_MISSING[trade.symbol]
 }
 
         console.log(`🔥 MARKET ENTER ${trade.symbol}`)
@@ -2797,11 +2824,11 @@ if(!lock.value){
         activeTrades.splice(i,1)
         continue
     }
-    let existingPos = await hasPosition(symbol)
+    let existingPos = await hasPosition(t.symbol)
 
 if(existingPos){
 
-    console.log(`⛔ SKIP OPEN ${symbol}: POSITION EXISTS`)
+    console.log(`⛔ SKIP OPEN ${t.symbol}: POSITION EXISTS`)
 
     return null
 }
@@ -2839,7 +2866,7 @@ if(existingPos){
 
 await new Promise(r => setTimeout(r, 500))
 
-const tpsl = await setTPSL( t.symbol, t.side, t.tp, t.sl, realQty )
+const tpslOk = await safeSetTPSL( t.symbol, t.side, t.tp, t.sl, realQty )
         await trades.updateOne(
 {
     symbol: t.symbol,
@@ -2850,7 +2877,7 @@ const tpsl = await setTPSL( t.symbol, t.side, t.tp, t.sl, realQty )
 }
 )
 
-    if(!tpsl.ok){
+    if(!tpslOk){
 
     console.log(`❌ TPSL FAIL ${t.symbol}`)
 
@@ -3037,6 +3064,9 @@ async function closePosition(symbol, side, qty){
 }
 /////////
 async function watchdogTPSL(){
+    if(!trades){
+        return
+    }
     // 🔒 CHẶN WATCHDOG CHẠY ĐÈ
     if(WATCHDOG_RUNNING){
         return
@@ -3131,7 +3161,7 @@ async function watchdogTPSL(){
                     let missingTime =
                         Date.now() - TPSL_MISSING[symbol]
                     // ⏳ CHỜ BINANCE SYNC
-                    if(missingTime < 180000){
+                    if(missingTime < 600000){
                         console.log(
                             `⏳ WAIT TPSL ${symbol}`
                         )
@@ -3161,7 +3191,7 @@ async function watchdogTPSL(){
                     let missingTime =
                         Date.now() - TPSL_MISSING[symbol]
                     // ⏳ CHỜ BINANCE SYNC
-                    if(missingTime < 180000){
+                    if(missingTime < 600000){
                         console.log(
                             `⏳ WAIT TPSL ${symbol}`
                         )
@@ -3238,7 +3268,6 @@ while(!TIME_SYNCED){
 }
 
 setInterval(syncTime, 60000)
-watchdogLoop()
         await updateBalance()
 setInterval(updateBalance, 60000)
         // 🔥 RESET UPDATE STATE TRÁNH 409
@@ -3332,6 +3361,7 @@ async function commandLoop(){
        await loadValidFuturesSymbols()
 
         commandLoop()
+        watchdogLoop()
 
        await scanLoop()
 
