@@ -1,4 +1,5 @@
 let TIME_SYNCED = false
+let TPSL_PENDING = {}
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
 const fs = require("fs")
@@ -67,7 +68,16 @@ if(!options.signal){
                 continue
             }
 
-            console.log(`❌ FETCH STATUS: ${res?.status} ${url}`)
+            let text = ""
+
+try{
+    text = await res.text()
+}catch(e){}
+
+console.log(
+    `❌ FETCH STATUS ${res?.status}:`,
+    text.slice(0,300)
+)
 
         }catch(e){
             if(
@@ -113,8 +123,9 @@ async function syncTime(){
         // latency compensation
         const latency = (end - start) / 2
 
-        serverTimeOffset =
-            data.serverTime - end + latency
+        serverTimeOffset = Math.floor(
+    data.serverTime - end + latency
+)
 
         TIME_SYNCED = true
 
@@ -134,10 +145,10 @@ async function syncTime(){
 }
 ///////////
 function getTimestamp(){
-    if(!TIME_SYNCED){
-        return Date.now()
-    }
-    return Date.now() + serverTimeOffset
+    let ts = TIME_SYNCED
+        ? Date.now() + serverTimeOffset
+        : Date.now()
+    return Math.floor(ts)
 }
 //////////////
 require("dotenv").config()
@@ -149,7 +160,7 @@ const binance = Binance({
     apiKey: process.env.BINANCE_KEY,
     apiSecret: process.env.BINANCE_SECRET,
     recvWindow: 20000,
-    getTime: () => Date.now() + serverTimeOffset
+    getTime: () => getTimestamp()
 })
 const crypto = require("crypto")
 
@@ -358,9 +369,35 @@ function normalizeQtyFinal(qty, stepSize){
 
    // return Number(fixed.toFixed(precision))
 //}
+async function hasPosition(symbol){
+
+    try{
+
+        let positions =
+            await binance.futuresPositionRisk({
+                recvWindow: 20000
+            })
+
+        return positions.find(p =>
+            p.symbol === symbol &&
+            Math.abs(Number(p.positionAmt)) > 0.00001
+        )
+
+    }catch(e){
+        return null
+    }
+}
 async function openPosition(symbol, side, qty){
 
     try{
+        let existingPos = await hasPosition(symbol)
+
+if(existingPos){
+
+    console.log(`⛔ SKIP OPEN ${symbol}: POSITION EXISTS`)
+
+    return null
+}
          let info = await getSymbolInfo(symbol)
 
         if(!info){
@@ -807,7 +844,7 @@ if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
 
             // rollback SL
             try{
-                await cancelTPSLOrders(t.symbol)
+                await cancelTPSLOrders(symbol)
             }catch(e){}
 
             return {
@@ -817,11 +854,11 @@ if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
         }
 
         // ===== FINAL VERIFY =====
-        for(let i=0;i<20;i++){
+        for(let i=0;i<30;i++){
 
-            await new Promise(r =>
-                setTimeout(r, 1500)
-            )
+    await new Promise(r =>
+        setTimeout(r, 2000)
+    )
 
             let verify =
                 await binance.futuresOpenOrders({
@@ -864,9 +901,11 @@ if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
 }
 async function safeSetTPSL(symbol, side, tp, sl){
 
-    if(TPSL_LOCKS[symbol]){
-        return false
-    }
+    if(TPSL_LOCKS[symbol] || TPSL_PENDING[symbol]){
+    return false
+}
+
+TPSL_PENDING[symbol] = true
 
     TPSL_LOCKS[symbol] = true
 
@@ -922,7 +961,7 @@ if(
         return false
 
     }finally{
-
+        delete TPSL_PENDING[symbol]
         delete TPSL_LOCKS[symbol]
     }
 }
@@ -2108,6 +2147,14 @@ if(!qty || qty <= 0 || !isFinite(qty)){
     console.log("❌ QTY INVALID BEFORE SEND")
     continue
 }
+let existingPos = await hasPosition(symbol)
+
+if(existingPos){
+
+    console.log(`⛔ SKIP OPEN ${symbol}: POSITION EXISTS`)
+
+    return null
+}
 
     let order = await openPosition(
     trade.symbol,
@@ -2162,7 +2209,7 @@ if(!realPos){
     continue
 }
 
-let realQty = Math.abs(Number(pos.positionAmt))
+let realQty = Math.abs(Number(realPos.positionAmt))
 
     if(order){
 
@@ -2724,7 +2771,7 @@ if(
     }
 )
 
-if(!lock){
+if(!lock.value){
     console.log(`⛔ LOCKED ${t.symbol}`)
     continue
 }
@@ -2750,6 +2797,14 @@ if(!lock){
         activeTrades.splice(i,1)
         continue
     }
+    let existingPos = await hasPosition(symbol)
+
+if(existingPos){
+
+    console.log(`⛔ SKIP OPEN ${symbol}: POSITION EXISTS`)
+
+    return null
+}
 
     let order = await openPosition(t.symbol, t.side, qty)
 
@@ -2946,11 +3001,11 @@ async function closePosition(symbol, side, qty){
         })
 
         // ===== VERIFY CLOSED =====
-        for(let i=0;i<20;i++){
+        for(let i=0;i<30;i++){
 
-            await new Promise(r =>
-                setTimeout(r, 1500)
-            )
+    await new Promise(r =>
+        setTimeout(r, 2000)
+    )
 
             let positions =
                 await binance.futuresPositionRisk({
@@ -2982,7 +3037,7 @@ async function closePosition(symbol, side, qty){
 }
 /////////
 async function watchdogTPSL(){
-
+    let symbol = p.symbol
     // 🔒 CHẶN WATCHDOG CHẠY ĐÈ
     if(WATCHDOG_RUNNING){
         return
@@ -3000,7 +3055,7 @@ async function watchdogTPSL(){
             if(amt <= 0){
                 continue
             }
-            let symbol = p.symbol
+            
             // 🔒 LOCK THEO SYMBOL
             if(WATCHDOG_LOCKS[symbol]){
                 continue
@@ -3151,6 +3206,21 @@ async function watchdogTPSL(){
         WATCHDOG_RUNNING = false
     }
 }
+async function watchdogLoop(){
+
+    while(true){
+
+        try{
+            await watchdogTPSL()
+        }catch(e){
+            console.log("WATCHDOG LOOP:", e.message)
+        }
+
+        await new Promise(r =>
+            setTimeout(r, 15000)
+        )
+    }
+}
 //////////////
 async function start(){
     try{
@@ -3168,7 +3238,7 @@ while(!TIME_SYNCED){
 }
 
 setInterval(syncTime, 60000)
-setInterval(watchdogTPSL, 15000)
+watchdogLoop()
         await updateBalance()
 setInterval(updateBalance, 60000)
         // 🔥 RESET UPDATE STATE TRÁNH 409
@@ -3239,19 +3309,24 @@ async function scanLoop(){
 }
 let TELEGRAM_RUNNING = false
 async function commandLoop(){
-
-    if(TELEGRAM_RUNNING) return   // 🔥 CHẶN CHẠY 2 LẦN
+    if(TELEGRAM_RUNNING) return
     TELEGRAM_RUNNING = true
-
     while(true){
         try{
             await checkCommand()
-            await checkTrades() // 👈 thêm luôn vào đây
+            await checkTrades()
         }catch(e){
-            console.log("CMD LOOP:", e.message)
+            console.log(
+                "CMD LOOP:",
+                e.message
+            )
+            await new Promise(r =>
+                setTimeout(r, 5000)
+            )
         }
-
-        await new Promise(r => setTimeout(r, 2000))
+        await new Promise(r =>
+            setTimeout(r, 2000)
+        )
     }
 }
        await loadValidFuturesSymbols()
@@ -3429,8 +3504,7 @@ async function fixTPSL(){
             t.symbol,
             t.side,
             t.tp,
-            t.sl,
-            qty
+            t.sl
         )
 
         if(ok){
