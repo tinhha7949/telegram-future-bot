@@ -2285,8 +2285,6 @@ let realQty = Math.abs(Number(realPos.positionAmt))
         )
         let ok = true
 
-       let ok = true
-
 if(!TPSL_LOCKS[trade.symbol]){
 
     ok = await safeSetTPSL(
