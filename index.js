@@ -874,6 +874,11 @@ async function getTopSymbols(){
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
                 .slice(0,30)
 .map(c => c.symbol)
+.filter(s =>
+    validFuturesSymbols &&
+    validFuturesSymbols.size > 0 &&
+    validFuturesSymbols.has(s)
+)
                 }
             }catch(e){
                 if(attempt===1){
@@ -2901,8 +2906,10 @@ async function commandLoop(){
         await new Promise(r => setTimeout(r, 2000))
     }
 }
+       await loadValidFuturesSymbols()
+
         commandLoop()
-await loadValidFuturesSymbols()
+
        await scanLoop()
 
     }catch(e){
