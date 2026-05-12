@@ -3037,7 +3037,6 @@ async function closePosition(symbol, side, qty){
 }
 /////////
 async function watchdogTPSL(){
-    let symbol = p.symbol
     // 🔒 CHẶN WATCHDOG CHẠY ĐÈ
     if(WATCHDOG_RUNNING){
         return
@@ -3048,6 +3047,7 @@ async function watchdogTPSL(){
     recvWindow: 20000
 })
         for(let p of positions){
+            let symbol = p.symbol
              if(TPSL_LOCKS[symbol]){
     continue
 }
