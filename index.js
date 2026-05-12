@@ -995,8 +995,7 @@ TPSL_PENDING[symbol] = true
             o.type === "STOP_MARKET" ||
             o.type === "STOP"
         ) &&
-        o.side === closeSide &&
-        String(o.closePosition) === "true"
+        o.side === closeSide
     )
 
     let hasTP = verify.find(o =>
@@ -1004,25 +1003,51 @@ TPSL_PENDING[symbol] = true
             o.type === "TAKE_PROFIT_MARKET" ||
             o.type === "TAKE_PROFIT"
         ) &&
-        o.side === closeSide &&
-        String(o.closePosition) === "true"
+        o.side === closeSide
     )
 
     if(hasSL && hasTP){
 
-        return {
-            ok:true
-        }
+    console.log(`✅ TPSL VERIFIED ${symbol}`)
+
+    return {
+        ok:true
     }
+}
+
+if(hasSL && !hasTP){
+
+    return {
+        ok:false,
+        error:"MISSING_TP"
+    }
+}
+
+if(!hasSL && hasTP){
+
+    return {
+        ok:false,
+        error:"MISSING_SL"
+    }
+}
+
+return {
+    ok:false,
+    error:"TPSL_VERIFY_FAIL"
+}
 
     console.log(`⚠️ VERIFY TPSL FAIL ${symbol}`)
 
+    return {
+        ok:false,
+        error:"TPSL_VERIFY_FAIL"
+    }
 }
 
             console.log(
-                `⚠️ TPSL retry ${symbol} ${i+1}:`,
-                res.error
-            )
+    `⚠️ TPSL retry ${symbol} ${i+1}:`,
+    res?.error || "UNKNOWN"
+)
 
             // jika Binance belum sync cancel
 if(
