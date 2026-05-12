@@ -2765,7 +2765,28 @@ if(t.side === "LONG"){
 
     t.tp = Number(t.tp.toFixed(pricePrecision))
     t.sl = Number(t.sl.toFixed(pricePrecision))
-    diff = Math.abs(t.entry - t.sl)
+   if(t.side === "LONG"){
+
+    if(t.sl >= t.entry){
+        t.sl = t.entry - tickSize * 3
+    }
+
+    if(t.tp <= t.entry){
+        t.tp = t.entry + tickSize * 3
+    }
+
+}else{
+
+    if(t.sl <= t.entry){
+        t.sl = t.entry + tickSize * 3
+    }
+
+    if(t.tp >= t.entry){
+        t.tp = t.entry - tickSize * 3
+    }
+}
+
+diff = Math.abs(t.entry - t.sl)
 
 if(
     !diff ||
