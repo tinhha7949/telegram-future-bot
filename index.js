@@ -1977,9 +1977,34 @@ SL: ${best.sl.toFixed(4)}
 Size: ${qty.toFixed(2)}
 Score: ${best.finalScore || best.score}
 `  //Score: ${t.score || 0}
+console.log(msg)
+let teleSent = false
+for(let retry = 0; retry < 3; retry++){
+    teleSent = await sendTelegram(msg)
+    if(teleSent){
+        break
+    }
+    console.log(`⚠️ RETRY TELEGRAM ${retry + 1}`)
+    await new Promise(r =>
+        setTimeout(r, 2000)
+    )
+}
+if(!teleSent){
+    console.log(`🚨 TELEGRAM FAIL ${best.symbol}`)
+    // gửi bot phụ backup
+    await sendTelegram2(
+`🚨 TELE FAIL
+${best.symbol}
+${best.side}
+Entry: ${best.entry}
 
-    console.log(msg)
-    await sendTelegram(msg)
+TP: ${best.tp}
+
+SL: ${best.sl}`
+    )
+}
+    //console.log(msg)
+    //await sendTelegram(msg)
         
     }
 }
