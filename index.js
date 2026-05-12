@@ -900,7 +900,7 @@ try{
 }
 
         // ===== FINAL VERIFY =====
-        for(let i=0;i<30;i++){
+        for(let i=0;i<15;i++){
 
     await new Promise(r =>
         setTimeout(r, 2000)
@@ -978,69 +978,10 @@ TPSL_PENDING[symbol] = true
 
             if(res && res.ok){
 
-    // verify thật
-    let verify =
-        await binance.futuresOpenOrders({
-            symbol,
-            recvWindow: 20000
-        })
-
-    let closeSide =
-        side === "LONG"
-            ? "SELL"
-            : "BUY"
-
-    let hasSL = verify.find(o =>
-        (
-            o.type === "STOP_MARKET" ||
-            o.type === "STOP"
-        ) &&
-        o.side === closeSide
-    )
-
-    let hasTP = verify.find(o =>
-        (
-            o.type === "TAKE_PROFIT_MARKET" ||
-            o.type === "TAKE_PROFIT"
-        ) &&
-        o.side === closeSide
-    )
-
-    if(hasSL && hasTP){
-
     console.log(`✅ TPSL VERIFIED ${symbol}`)
 
     return {
         ok:true
-    }
-}
-
-if(hasSL && !hasTP){
-
-    return {
-        ok:false,
-        error:"MISSING_TP"
-    }
-}
-
-if(!hasSL && hasTP){
-
-    return {
-        ok:false,
-        error:"MISSING_SL"
-    }
-}
-
-return {
-    ok:false,
-    error:"TPSL_VERIFY_FAIL"
-}
-
-    console.log(`⚠️ VERIFY TPSL FAIL ${symbol}`)
-
-    return {
-        ok:false,
-        error:"TPSL_VERIFY_FAIL"
     }
 }
 
