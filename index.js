@@ -487,13 +487,15 @@ async function setTPSL(symbol, side, tp, sl){
         }
 
         // ===== CANCEL OLD =====
-        try{
-            await binance.futuresCancelAllOpenOrders({
-                symbol
-            })
-        }catch(e){}
+        //try{
+            //await binance.futuresCancelAllOpenOrders({
+               // symbol
+            //})
+        //}catch(e){}
 
-        await new Promise(r => setTimeout(r, 2000))
+       // await new Promise(r => setTimeout(r, 2000))
+       // ===== CANCEL OLD =====
+await cancelAllOrders(symbol)
 
         // ===== SYMBOL INFO =====
         let info = await getSymbolInfo(symbol)
@@ -2731,7 +2733,7 @@ console.log(`🚨 NO TPSL ${symbol}`)
                 let missingTime =
     Date.now() - TPSL_MISSING[symbol]
 
-if(missingTime < 30000){
+if(missingTime < 90000){
 
     console.log(
         `⏳ WAIT TPSL ${symbol}`
@@ -2767,7 +2769,7 @@ if(missingTime < 30000){
                 let missingTime =
     Date.now() - TPSL_MISSING[symbol]
 
-if(missingTime < 30000){
+if(missingTime < 90000){
 
     console.log(
         `⏳ WAIT TPSL ${symbol}`
