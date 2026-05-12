@@ -202,6 +202,8 @@ let TELEGRAM_LOCK = 0
 let TPSL_LOCKS = {}
 let WATCHDOG_LOCKS = {}
 let TPSL_MISSING = {}
+let DATA_FAILS = {}
+let WATCHDOG_RUNNING = false
 
 async function updateBalance(){
 
@@ -396,10 +398,54 @@ const query =
             return null
         }
 
-        if(data.status !== "FILLED"){
-            console.log("⚠️ NOT FILLED:", data.status)
-            return null
+        // ===== WAIT FILL =====
+if(data.status !== "FILLED"){
+
+    console.log(`⏳ WAIT FILL ${symbol}: ${data.status}`)
+
+    for(let i = 0; i < 10; i++){
+
+        await new Promise(r => setTimeout(r, 800))
+
+        try{
+
+            let check = await binance.futuresGetOrder({
+                symbol,
+                orderId: data.orderId
+            })
+
+            if(check.status === "FILLED"){
+
+                data = check
+
+                console.log(`✅ FILLED ${symbol}`)
+
+                break
+            }
+
+            // cancel nếu quá lâu
+            if(
+                check.status === "CANCELED" ||
+                check.status === "REJECTED" ||
+                check.status === "EXPIRED"
+            ){
+                console.log(`❌ ORDER DEAD ${symbol}`)
+                return null
+            }
+
+        }catch(e){
+            console.log(`❌ CHECK ORDER ${symbol}:`, e.message)
         }
+    }
+}
+
+// ===== FINAL VERIFY =====
+if(data.status !== "FILLED"){
+
+    console.log(`❌ NOT FILLED FINAL ${symbol}`)
+
+    return null
+}
 
         return data
 
@@ -496,7 +542,36 @@ async function setTPSL(symbol, side, tp, sl){
 
        // await new Promise(r => setTimeout(r, 2000))
        // ===== CANCEL OLD =====
-await cancelAllOrders(symbol)
+a// ===== CHECK TPSL CŨ =====
+let existingOrders = await binance.futuresOpenOrders({
+    symbol
+})
+
+let hasOldSL = existingOrders.find(o =>
+    o.type === "STOP_MARKET"
+)
+
+let hasOldTP = existingOrders.find(o =>
+    o.type === "TAKE_PROFIT_MARKET"
+)
+
+// nếu đã có đủ thì thôi
+if(hasOldSL && hasOldTP){
+
+    return {
+        ok:true
+    }
+}
+
+// chỉ cancel nếu thiếu
+if(existingOrders.length > 0){
+
+    await cancelAllOrders(symbol)
+
+    await new Promise(r =>
+        setTimeout(r, 3000)
+    )
+}
 
         // ===== SYMBOL INFO =====
         let info = await getSymbolInfo(symbol)
@@ -631,7 +706,36 @@ await cancelAllOrders(symbol)
 
             // ❌ TP fail => xoá SL tránh còn 1 chân
             try{
-                await cancelAllOrders(symbol)
+                // ===== CHECK TPSL CŨ =====
+let existingOrders = await binance.futuresOpenOrders({
+    symbol
+})
+
+let hasOldSL = existingOrders.find(o =>
+    o.type === "STOP_MARKET"
+)
+
+let hasOldTP = existingOrders.find(o =>
+    o.type === "TAKE_PROFIT_MARKET"
+)
+
+// nếu đã có đủ thì thôi
+if(hasOldSL && hasOldTP){
+
+    return {
+        ok:true
+    }
+}
+
+// chỉ cancel nếu thiếu
+if(existingOrders.length > 0){
+
+    await cancelAllOrders(symbol)
+
+    await new Promise(r =>
+        setTimeout(r, 3000)
+    )
+}
             }catch(e){}
 
             return {
@@ -647,13 +751,22 @@ await cancelAllOrders(symbol)
             symbol
         })
 
-        let hasSL = orders.find(o =>
-            o.type === "STOP_MARKET"
-        )
+        let closeSide =
+    side === "LONG"
+        ? "SELL"
+        : "BUY"
 
-        let hasTP = orders.find(o =>
-            o.type === "TAKE_PROFIT_MARKET"
-        )
+let hasSL = orders.find(o =>
+    o.type === "STOP_MARKET" &&
+    o.side === closeSide &&
+    o.closePosition
+)
+
+let hasTP = orders.find(o =>
+    o.type === "TAKE_PROFIT_MARKET" &&
+    o.side === closeSide &&
+    o.closePosition
+)
 
         if(!hasSL || !hasTP){
 
@@ -703,9 +816,25 @@ async function safeSetTPSL(symbol, side, tp, sl){
                 res.error
             )
 
-            await new Promise(r =>
-                setTimeout(r, 2500)
-            )
+            // nếu Binance chưa sync cancel
+if(
+    res.error &&
+    (
+        res.error.includes("existing") ||
+        res.error.includes("immediately trigger")
+    )
+){
+
+    await new Promise(r =>
+        setTimeout(r, 6000)
+    )
+
+}else{
+
+    await new Promise(r =>
+        setTimeout(r, 2500)
+    )
+}
         }
 
         return false
@@ -1638,9 +1767,41 @@ for (let best of filtered){
 
     // ===== BLOCK COIN =====
     let existing = await trades.findOne({
-        symbol: best.symbol,
-        result: "PENDING"
-    })
+    symbol: best.symbol,
+    result: "PENDING"
+})
+
+if(existing){
+
+    // verify position thật
+    let positions =
+        await binance.futuresPositionRisk()
+
+    let realPos = positions.find(p =>
+        p.symbol === best.symbol &&
+        Math.abs(Number(p.positionAmt)) > 0
+    )
+
+    // không còn position -> clear DB
+    if(!realPos){
+
+        await trades.updateOne(
+            {
+                _id: existing._id
+            },
+            {
+                $set:{
+                    result:"AUTO_CLEAR_NO_POSITION"
+                }
+            }
+        )
+
+    }else{
+
+        console.log(`⛔ ${best.symbol} đang có lệnh`)
+        continue
+    }
+}
 
     if(existing){
         console.log(`⛔ ${best.symbol} đang có lệnh`)
@@ -1919,6 +2080,9 @@ let realQty = Math.abs(Number(pos.positionAmt))
 
     if(order){
 
+        t.entry = price
+t.waitingEntry = false
+t.enteredAt = Date.now()
         trade.waitingEntry = false
         trade.enteredAt = Date.now()
 trade.entry = best.price
@@ -2026,7 +2190,24 @@ async function checkTrades(){
     )
 ])
 
-                if(!data) continue
+                if(!data){
+
+    DATA_FAILS[t.symbol] =
+        (DATA_FAILS[t.symbol] || 0) + 1
+
+    console.log(
+        `⚠️ DATA FAIL ${t.symbol}:`,
+        DATA_FAILS[t.symbol]
+    )
+
+    // chỉ close nếu fail quá nhiều
+    if(DATA_FAILS[t.symbol] < 15){
+        continue
+    }
+
+}else{
+    DATA_FAILS[t.symbol] = 0
+}
 
                 let price = +data.at(-1)[4]
 
@@ -2206,8 +2387,6 @@ if(t.side === "SHORT"){
     // ===== VÀO LỆNH =====
     if(confirm){
 
-    t.entry = price
-    t.waitingEntry = false
         await trades.updateOne(
     {
         symbol:t.symbol,
@@ -2653,6 +2832,12 @@ async function closePosition(symbol, side, qty){
 }
 /////////
 async function watchdogTPSL(){
+    // 🔒 CHẶN CHẠY ĐÈ
+    if(WATCHDOG_RUNNING){
+        return
+    }
+
+    WATCHDOG_RUNNING = true
 
     try{
 
@@ -2673,13 +2858,24 @@ async function watchdogTPSL(){
                 symbol
             })
 
-            let hasSL = orders.find(
-                o => o.type === "STOP_MARKET"
-            )
+            let closeSide =
+    Number(p.positionAmt) > 0
+        ? "SELL"
+        : "BUY"
 
-            let hasTP = orders.find(
-                o => o.type === "TAKE_PROFIT_MARKET"
-            )
+let hasSL = orders.find(
+    o =>
+        o.type === "STOP_MARKET" &&
+        o.side === closeSide &&
+        o.closePosition
+)
+
+let hasTP = orders.find(
+    o =>
+        o.type === "TAKE_PROFIT_MARKET" &&
+        o.side === closeSide &&
+        o.closePosition
+)
 
             // ✅ đã có đủ TPSL
             if(hasSL && hasTP){
@@ -2798,11 +2994,15 @@ if(missingTime < 90000){
 
     }catch(e){
 
-        console.log(
-            "WATCHDOG TPSL:",
-            e.message
-        )
-    }
+    console.log(
+        "WATCHDOG TPSL:",
+        e.message
+    )
+
+}finally{
+
+    WATCHDOG_RUNNING = false
+}
 }
 //////////////
 async function start(){
