@@ -3,6 +3,7 @@ let TIME_SYNCED = false
 let TPSL_PENDING = {}
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
+let TPSL_CONFIRMED = {}
 const fs = require("fs")
 
 const PID_FILE = "./bot.pid"
@@ -713,7 +714,7 @@ async function setTPSL(symbol, side, tp, sl){
 if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
 
     console.log(`✅ TPSL EXISTS ${symbol}`)
-
+    TPSL_CONFIRMED[symbol] = Date.now()
     return {
         ok:true,
         existed:true
@@ -950,6 +951,12 @@ let finalTP = verify.find(o =>
     }
 }
 async function safeSetTPSL(symbol, side, tp, sl){
+    if(TPSL_DONE[symbol]){
+    return {
+        ok:true,
+        existed:true
+    }
+}
 
    if(
     TPSL_LOCKS[symbol] ||
@@ -3047,6 +3054,7 @@ if(done){
         { symbol: t.symbol, createdAt: t.createdAt },
         { $set: { result: win ? "WIN" : "LOSS" } }
     )
+    delete TPSL_CONFIRMED[t.symbol]   // 🔥 ADD
     // 🔥 UPDATE BALANCE MỚI NHẤT
     let latestBalance = await updateBalance()
     if(latestBalance > 0){
@@ -3060,7 +3068,7 @@ ${win ? "✅ WIN" : "❌ LOSS"}
 💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
 
     )
-
+    
     activeTrades.splice(i,1)
     continue
 }
@@ -3118,6 +3126,7 @@ async function closePosition(symbol, side, qty){
             )
 
             if(!pos){
+                delete TPSL_CONFIRMED[symbol]   // 🔥 ADD
 
                 return true
             }
@@ -3151,6 +3160,9 @@ async function watchdogTPSL(){
 })
         for(let p of positions){
             let symbol = p.symbol
+            if(TPSL_CONFIRMED[symbol]){
+    continue
+}
              if(TPSL_LOCKS[symbol]){
     continue
 }
@@ -3278,7 +3290,9 @@ if(!TPSL_MISSING[symbol]){
     TPSL_MISSING[symbol] = Date.now()
 }
 
-console.log(`🚨 NO TPSL ${symbol}`)
+if(!TPSL_CONFIRMED[symbol]){
+    console.log(`🚨 NO TPSL ${symbol}`)
+}
                 let trade = activeTrades.find(
                     x => x.symbol === symbol
                 )
@@ -3674,7 +3688,7 @@ start()
 async function fixTPSL(){
 
     for(let t of activeTrades){
-
+        if(TPSL_CONFIRMED[t.symbol]) continue
         if(!t.tpslMissing) continue
         if(TPSL_LOCKS[t.symbol]) continue
 if(TPSL_PENDING[t.symbol]) continue
