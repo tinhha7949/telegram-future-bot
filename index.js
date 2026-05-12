@@ -870,34 +870,10 @@ async function getTopSymbols(){
     !c.symbol.includes("RLUSD")
 )
                      // volume tối thiểu
-.filter(c =>
-    Number(c.quoteVolume) > 20000000
-)
-// volatility tối thiểu
-.filter(c =>
-    Math.abs(Number(c.priceChangePercent)) > 2
-)
-// score volume + volatility
-.sort((a,b)=>{
-    let volA = Number(a.quoteVolume)
-    let volB = Number(b.quoteVolume)
-    // giới hạn pump quá mạnh
-    let moveA = Math.min(
-        Math.abs(Number(a.priceChangePercent)),
-        12
-    )
-    let moveB = Math.min(
-        Math.abs(Number(b.priceChangePercent)),
-        12
-    )
-    let scoreA = volA * moveA
-    let scoreB = volB * moveB
-    return scoreB - scoreA
-})
-// scan rộng hơn
-.slice(0,50)
+.filter(c => Number(c.quoteVolume) > 25000000)
+                    .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
+                .slice(0,30)
 .map(c => c.symbol)
-.filter(s => validFuturesSymbols.has(s))
                 }
             }catch(e){
                 if(attempt===1){
