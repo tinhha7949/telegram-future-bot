@@ -199,6 +199,8 @@ let pollingLock = true
 let telegramPolling = false
 let TELEGRAM_LOCK = 0
 let TPSL_LOCKS = {}
+let WATCHDOG_LOCKS = {}
+let TPSL_MISSING = {}
 
 async function updateBalance(){
 
@@ -432,6 +434,21 @@ async function cancelAllOrders(symbol){
         await binance.futuresCancelAllOpenOrders({
             symbol
         })
+        for(let i=0;i<10;i++){
+
+    let openOrders =
+        await binance.futuresOpenOrders({
+            symbol
+        })
+
+    if(openOrders.length === 0){
+        break
+    }
+
+    await new Promise(r =>
+        setTimeout(r, 1000)
+    )
+}
 
         console.log(`🗑 CANCEL OLD TPSL ${symbol}`)
 
@@ -583,7 +600,7 @@ async function setTPSL(symbol, side, tp, sl){
             }
         }
 
-        await new Promise(r => setTimeout(r, 1500))
+        await new Promise(r => setTimeout(r, 3500))
 
         // ===== TP =====
         let tpOrder
@@ -620,7 +637,7 @@ async function setTPSL(symbol, side, tp, sl){
             }
         }
 
-        await new Promise(r => setTimeout(r, 1500))
+        await new Promise(r => setTimeout(r, 3500))
 
         // ===== VERIFY FINAL =====
         let orders = await binance.futuresOpenOrders({
@@ -2639,6 +2656,9 @@ async function watchdogTPSL(){
             if(amt <= 0) continue
 
             let symbol = p.symbol
+            if(TPSL_LOCKS[symbol]){
+    continue
+}
 
             let orders = await binance.futuresOpenOrders({
                 symbol
@@ -2654,10 +2674,17 @@ async function watchdogTPSL(){
 
             // ✅ đã có đủ TPSL
             if(hasSL && hasTP){
-                continue
-            }
 
-            console.log(`🚨 NO TPSL ${symbol}`)
+    delete TPSL_MISSING[symbol]
+
+    continue
+}
+
+            if(!TPSL_MISSING[symbol]){
+    TPSL_MISSING[symbol] = Date.now()
+}
+
+console.log(`🚨 NO TPSL ${symbol}`)
 
             let trade = activeTrades.find(
                 x => x.symbol === symbol
@@ -2701,7 +2728,17 @@ async function watchdogTPSL(){
 
             // ===== KHÔNG RECOVER ĐƯỢC =====
             if(!trade || !trade.tp || !trade.sl){
+                let missingTime =
+    Date.now() - TPSL_MISSING[symbol]
 
+if(missingTime < 30000){
+
+    console.log(
+        `⏳ WAIT TPSL ${symbol}`
+    )
+
+    continue
+}
                 console.log(
                     `🚨 FORCE CLOSE NO DATA ${symbol}`
                 )
@@ -2727,7 +2764,17 @@ async function watchdogTPSL(){
 
             // ===== TPSL FAIL =====
             if(!ok){
+                let missingTime =
+    Date.now() - TPSL_MISSING[symbol]
 
+if(missingTime < 30000){
+
+    console.log(
+        `⏳ WAIT TPSL ${symbol}`
+    )
+
+    continue
+}
                 console.log(
                     `🚨 FORCE CLOSE ${symbol}`
                 )
