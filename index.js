@@ -179,6 +179,7 @@ const RISK_PER_TRADE = 0.02
 const POSITION_SIZE_PERCENT = 0.1 // 0.05 5% vốn vào lệnh
 let ACCOUNT_BALANCE = 0
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
+const MIN_VOL_24H = 10000000
 
 const DEBUG_AI = false
 const ENABLE_REVERSAL = true
@@ -870,7 +871,7 @@ async function getTopSymbols(){
     !c.symbol.includes("RLUSD")
 )
                      // volume tối thiểu
-.filter(c => Number(c.quoteVolume) > 25000000)
+.filter(c => Number(c.quoteVolume) > MIN_VOL_24H)
                     .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
                 .slice(0,30)
 .map(c => c.symbol)
