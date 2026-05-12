@@ -3178,17 +3178,30 @@ async function watchdogTPSL(){
                         ? "SELL"
                         : "BUY"
                 let hasSL = orders.find(
-                    o =>
-                        o.type === "STOP_MARKET" &&
-                        o.side === closeSide &&
-                        o.closePosition
-                )
-                let hasTP = orders.find(
-                    o =>
-                        o.type === "TAKE_PROFIT_MARKET" &&
-                        o.side === closeSide &&
-                        o.closePosition
-                )
+    o =>
+        (
+            o.type === "STOP_MARKET" ||
+            o.type === "STOP"
+        ) &&
+        o.side === closeSide &&
+        (
+            o.closePosition === true ||
+            String(o.closePosition) === "true"
+        )
+)
+
+let hasTP = orders.find(
+    o =>
+        (
+            o.type === "TAKE_PROFIT_MARKET" ||
+            o.type === "TAKE_PROFIT"
+        ) &&
+        o.side === closeSide &&
+        (
+            o.closePosition === true ||
+            String(o.closePosition) === "true"
+        )
+)
                 // ✅ ĐỦ TPSL
                 if(hasSL && hasTP){
                     delete TPSL_MISSING[symbol]
@@ -3212,16 +3225,28 @@ if(hasSL || hasTP){
         })
 
     let verifySL = verify.find(o =>
-        o.type === "STOP_MARKET" &&
-        o.side === closeSide &&
-        o.closePosition
+    (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
+    o.side === closeSide &&
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
     )
+)
 
-    let verifyTP = verify.find(o =>
-        o.type === "TAKE_PROFIT_MARKET" &&
-        o.side === closeSide &&
-        o.closePosition
+let verifyTP = verify.find(o =>
+    (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
+    o.side === closeSide &&
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
     )
+)
 
     // vẫn thiếu -> recreate
     if(!(verifySL && verifyTP)){
@@ -3308,14 +3333,15 @@ console.log(`🚨 NO TPSL ${symbol}`)
                     continue
                 }
                 // ===== RETRY TPSL =====
-                let ok = await safeSetTPSL(
-                    symbol,
-                    trade.side,
-                    trade.tp,
-                    trade.sl
-                )
-                // ===== TPSL FAIL =====
-                if(!ok){
+                let res = await safeSetTPSL(
+    symbol,
+    trade.side,
+    trade.tp,
+    trade.sl
+)
+
+// ===== TPSL FAIL =====
+if(!res || !res.ok){
                     let missingTime =
                         Date.now() - TPSL_MISSING[symbol]
                     // ⏳ CHỜ BINANCE SYNC
@@ -3661,7 +3687,7 @@ if(TPSL_GLOBAL_LOCK[t.symbol]) continue
 
         let qty = Math.abs(Number(pos.positionAmt))
 
-        let ok = await safeSetTPSL(
+         let ok = await safeSetTPSL(
             t.symbol,
             t.side,
             t.tp,
