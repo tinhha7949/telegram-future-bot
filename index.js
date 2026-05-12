@@ -816,10 +816,12 @@ if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
         }
 
         // ===== CREATE SL =====
+        let slAlreadyExists = false
+        let tpAlreadyExists = false
         // ===== CREATE SL =====
 try{
 
-    await binance.futuresOrder({
+    let slOrder = await binance.futuresOrder({
 
         symbol,
         recvWindow: 20000,
@@ -830,24 +832,29 @@ try{
         workingType: "MARK_PRICE",
         priceProtect: true
     })
+    if(slOrder?.orderId){
+    slAlreadyExists = true
+}
 
 }catch(e){
 
     const msg = String(e.message || e)
 
     if(
-        msg.includes("closePosition in the direction is existing")
-    ){
+    msg.includes("closePosition in the direction is existing")
+){
 
-        console.log(`✅ SL EXISTS ${symbol}`)
+    console.log(`✅ SL EXISTS ${symbol}`)
 
-    }else{
+    slAlreadyExists = true
 
-        return {
-            ok:false,
-            error:"SL_FAIL: " + msg
-        }
+}else{
+
+    return {
+        ok:false,
+        error:"SL_FAIL: " + msg
     }
+}
 }
 
         await new Promise(r =>
@@ -857,7 +864,7 @@ try{
         // ===== CREATE TP =====
 try{
 
-    await binance.futuresOrder({
+    let tpOrder = await binance.futuresOrder({
         symbol,
         recvWindow: 20000,
         side: closeSide,
@@ -867,24 +874,29 @@ try{
         workingType: "MARK_PRICE",
         priceProtect: true
     })
+    if(tpOrder?.orderId){
+    tpAlreadyExists = true
+}
 
 }catch(e){
 
     const msg = String(e.message || e)
 
     if(
-        msg.includes("closePosition in the direction is existing")
-    ){
+    msg.includes("closePosition in the direction is existing")
+){
 
-        console.log(`✅ TP EXISTS ${symbol}`)
+    console.log(`✅ TP EXISTS ${symbol}`)
 
-    }else{
+    tpAlreadyExists = true
 
-        return {
-            ok:false,
-            error:"TP_FAIL: " + msg
-        }
+}else{
+
+    return {
+        ok:false,
+        error:"TP_FAIL: " + msg
     }
+}
 }
 
         // ===== FINAL VERIFY =====
@@ -916,7 +928,10 @@ let finalTP = verify.find(o =>
     o.side === closeSide &&
     o.closePosition
 )
-            if(finalSL && finalTP){
+            if(
+    (finalSL || slAlreadyExists) &&
+    (finalTP || tpAlreadyExists)
+){
                 return {
                     ok:true
                 }
@@ -962,10 +977,29 @@ TPSL_PENDING[symbol] = true
             )
 
             if(res.ok){
-                return {
-    ok:true
+
+    // verify thật
+    let verify =
+        await binance.futuresOpenOrders({
+            symbol,
+            recvWindow: 20000
+        })
+
+    let hasSL = verify.find(o =>
+        o.type === "STOP_MARKET"
+    )
+
+    let hasTP = verify.find(o =>
+        o.type === "TAKE_PROFIT_MARKET"
+    )
+
+    if(hasSL && hasTP){
+
+        return {
+            ok:true
+        }
+    }
 }
-            }
 
             console.log(
                 `⚠️ TPSL retry ${symbol} ${i+1}:`,
@@ -980,7 +1014,9 @@ if(
 
     console.log(`✅ TPSL ALREADY EXISTS ${symbol}`)
 
-    return true
+    return {
+    ok:true
+}
 
 }else if(
     res.error &&
@@ -3175,9 +3211,55 @@ async function watchdogTPSL(){
                     continue
                 }
                 // ===== BINANCE CHƯA SYNC ĐỦ =====
+// ===== PARTIAL TPSL =====
 if(hasSL || hasTP){
 
-    console.log(`⏳ PARTIAL TPSL ${symbol}`)
+    console.log(`⚠️ PARTIAL TPSL ${symbol}`)
+
+    // chờ ngắn cho Binance sync
+    await new Promise(r =>
+        setTimeout(r, 5000)
+    )
+
+    let verify =
+        await binance.futuresOpenOrders({
+            symbol,
+            recvWindow: 20000
+        })
+
+    let verifySL = verify.find(o =>
+        o.type === "STOP_MARKET" &&
+        o.side === closeSide &&
+        o.closePosition
+    )
+
+    let verifyTP = verify.find(o =>
+        o.type === "TAKE_PROFIT_MARKET" &&
+        o.side === closeSide &&
+        o.closePosition
+    )
+
+    // vẫn thiếu -> recreate
+    if(!(verifySL && verifyTP)){
+
+        console.log(`🚨 REBUILD TPSL ${symbol}`)
+
+        await cancelTPSLOrders(symbol)
+
+        let trade = activeTrades.find(
+            x => x.symbol === symbol
+        )
+
+        if(trade){
+
+            await safeSetTPSL(
+                symbol,
+                trade.side,
+                trade.tp,
+                trade.sl
+            )
+        }
+    }
 
     continue
 }
