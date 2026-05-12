@@ -2652,6 +2652,7 @@ async function watchdogTPSL(){
                 o => o.type === "TAKE_PROFIT_MARKET"
             )
 
+            // ✅ đã có đủ TPSL
             if(hasSL && hasTP){
                 continue
             }
@@ -2662,22 +2663,48 @@ async function watchdogTPSL(){
                 x => x.symbol === symbol
             )
 
-            // ❌ không có dữ liệu => đóng luôn
+            // ===== RECOVER DB =====
             if(!trade || !trade.tp || !trade.sl){
-                let dbTrade = await trades.findOne({
-        symbol,
-        result:"PENDING"
-    })
 
-    if(dbTrade){
+                try{
 
-        trade = dbTrade
+                    let dbTrade = await trades.findOne({
+                        symbol,
+                        result:"PENDING"
+                    })
 
-        activeTrades.push(dbTrade)
-    }
-}
+                    if(dbTrade){
 
-                console.log(`🚨 FORCE CLOSE NO DATA ${symbol}`)
+                        trade = dbTrade
+
+                        let exists = activeTrades.find(
+                            x => x.symbol === symbol
+                        )
+
+                        if(!exists){
+                            activeTrades.push(dbTrade)
+                        }
+
+                        console.log(
+                            `♻️ RECOVER TRADE ${symbol}`
+                        )
+                    }
+
+                }catch(e){
+
+                    console.log(
+                        `❌ RECOVER DB ${symbol}:`,
+                        e.message
+                    )
+                }
+            }
+
+            // ===== KHÔNG RECOVER ĐƯỢC =====
+            if(!trade || !trade.tp || !trade.sl){
+
+                console.log(
+                    `🚨 FORCE CLOSE NO DATA ${symbol}`
+                )
 
                 await closePosition(
                     symbol,
@@ -2690,7 +2717,7 @@ async function watchdogTPSL(){
                 continue
             }
 
-            // retry TPSL
+            // ===== RETRY TPSL =====
             let ok = await safeSetTPSL(
                 symbol,
                 trade.side,
@@ -2698,10 +2725,12 @@ async function watchdogTPSL(){
                 trade.sl
             )
 
-            // ❌ retry fail => đóng
+            // ===== TPSL FAIL =====
             if(!ok){
 
-                console.log(`🚨 FORCE CLOSE ${symbol}`)
+                console.log(
+                    `🚨 FORCE CLOSE ${symbol}`
+                )
 
                 await closePosition(
                     symbol,
