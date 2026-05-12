@@ -84,7 +84,11 @@ if(!options.signal){
 }
 async function syncTime(){
     try{
-        let res = await fetch("https://fapi.binance.com/fapi/v1/time")
+        let res = await safeFetch("https://fapi.binance.com/fapi/v1/time")
+        if(!res){
+    TIME_SYNCED = false
+    return
+}
         let data = await res.json()
         serverTimeOffset = data.serverTime - Date.now()
         TIME_SYNCED = true
@@ -122,8 +126,10 @@ const client = new MongoClient(process.env.MONGO_URI)
 const Binance = require('binance-api-node').default
 
 const binance = Binance({
-  apiKey: process.env.BINANCE_KEY,
-  apiSecret: process.env.BINANCE_SECRET
+    apiKey: process.env.BINANCE_KEY,
+    apiSecret: process.env.BINANCE_SECRET,
+    recvWindow: 20000,
+    getTime: () => Date.now() + serverTimeOffset
 })
 const crypto = require("crypto")
 
@@ -466,7 +472,9 @@ async function waitPosition(symbol){
 
     for(let i=0;i<20;i++){
 
-        let positions = await binance.futuresPositionRisk()
+        let positions = await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
 
         let pos = positions.find(p =>
             p.symbol === symbol &&
@@ -487,14 +495,16 @@ async function cancelAllOrders(symbol){
     try{
 
         await binance.futuresCancelAllOpenOrders({
-            symbol
+            symbol,
+            recvWindow: 20000
         })
         for(let i=0;i<10;i++){
 
     let openOrders =
         await binance.futuresOpenOrders({
-            symbol
-        })
+    symbol,
+    recvWindow: 20000
+})
 
     if(openOrders.length === 0){
         break
@@ -522,7 +532,9 @@ async function setTPSL(symbol, side, tp, sl){
         for(let i=0;i<20;i++){
 
             let positions =
-                await binance.futuresPositionRisk()
+                await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
 
             pos = positions.find(p =>
                 p.symbol === symbol &&
@@ -565,7 +577,8 @@ async function setTPSL(symbol, side, tp, sl){
         // ===== CHECK EXISTING TPSL =====
         let openOrders =
             await binance.futuresOpenOrders({
-                symbol
+                symbol,
+                recvWindow: 20000
             })
 
         let closeSide =
@@ -604,7 +617,8 @@ async function setTPSL(symbol, side, tp, sl){
                 try{
                     await binance.futuresCancelOrder({
                         symbol,
-                        orderId:o.orderId
+                        recvWindow: 20000,
+                        orderId:o.orderId,
                     })
                 }catch(e){}
             }
@@ -690,17 +704,12 @@ async function setTPSL(symbol, side, tp, sl){
             await binance.futuresOrder({
 
                 symbol,
-
+                recvWindow: 20000,
                 side: closeSide,
-
                 type: "STOP_MARKET",
-
                 stopPrice: sl,
-
                 closePosition: true,
-
                 workingType: "MARK_PRICE",
-
                 priceProtect: true
             })
 
@@ -720,19 +729,13 @@ async function setTPSL(symbol, side, tp, sl){
         try{
 
             await binance.futuresOrder({
-
                 symbol,
-
+                recvWindow: 20000,
                 side: closeSide,
-
                 type: "TAKE_PROFIT_MARKET",
-
                 stopPrice: tp,
-
                 closePosition: true,
-
                 workingType: "MARK_PRICE",
-
                 priceProtect: true
             })
 
@@ -758,7 +761,8 @@ async function setTPSL(symbol, side, tp, sl){
 
             let verify =
                 await binance.futuresOpenOrders({
-                    symbol
+                    symbol,
+                    recvWindow: 20000
                 })
 
             let finalSL = verify.find(o =>
@@ -1781,7 +1785,9 @@ if(existing){
 
     // verify position thật
     let positions =
-        await binance.futuresPositionRisk()
+        await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
 
     let realPos = positions.find(p =>
         p.symbol === best.symbol &&
@@ -2064,7 +2070,9 @@ if(!pos){
 }
     await new Promise(r => setTimeout(r, 1000))
 
-let verifyPos = await binance.futuresPositionRisk()
+let verifyPos = await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
 
 let realPos = verifyPos.find(p =>
     p.symbol === trade.symbol &&
@@ -2619,7 +2627,9 @@ if(!lock){
     continue
 }
 
-    let positions = await binance.futuresPositionRisk()
+    let positions = await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
 
     let hasPos = positions.find(p =>
         p.symbol === t.symbol &&
@@ -2702,7 +2712,9 @@ ${tpsl.error}`
     )
         await new Promise(r => setTimeout(r, 2000))
 
-let positionsAfter = await binance.futuresPositionRisk()
+let positionsAfter = await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
 
 let stillOpen = positionsAfter.find(p =>
     p.symbol === t.symbol &&
@@ -2824,13 +2836,10 @@ async function closePosition(symbol, side, qty){
         let order = await binance.futuresOrder({
 
             symbol,
-
+            recvWindow: 20000,
             side: closeSide,
-
             type: "MARKET",
-
             quantity: qty,
-
             reduceOnly: true
         })
 
@@ -2842,7 +2851,9 @@ async function closePosition(symbol, side, qty){
             )
 
             let positions =
-                await binance.futuresPositionRisk()
+                await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
 
             let pos = positions.find(p =>
                 p.symbol === symbol &&
@@ -2875,7 +2886,9 @@ async function watchdogTPSL(){
     }
     WATCHDOG_RUNNING = true
     try{
-        let positions = await binance.futuresPositionRisk()
+        let positions = await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
         for(let p of positions){
             let amt = Math.abs(Number(p.positionAmt))
             if(amt <= 0){
@@ -2893,7 +2906,8 @@ async function watchdogTPSL(){
                     continue
                 }
                 let orders = await binance.futuresOpenOrders({
-                    symbol
+                    symbol,
+                    recvWindow: 20000
                 })
                 let closeSide =
                     Number(p.positionAmt) > 0
@@ -3007,6 +3021,15 @@ async function watchdogTPSL(){
                     `WATCHDOG ${symbol}:`,
                     e.message
                 )
+                if(
+        e.message &&
+        e.message.includes("recvWindow")
+    ){
+
+        console.log("🕒 RESYNC TIME")
+
+        await syncTime()
+    }
             }finally{
                 // 🔓 RELEASE SYMBOL LOCK
                 delete WATCHDOG_LOCKS[symbol]
