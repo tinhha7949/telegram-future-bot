@@ -3006,11 +3006,18 @@ if(done){
         { symbol: t.symbol, createdAt: t.createdAt },
         { $set: { result: win ? "WIN" : "LOSS" } }
     )
+    // 🔥 UPDATE BALANCE MỚI NHẤT
+    let latestBalance = await updateBalance()
+    if(latestBalance > 0){
+    ACCOUNT_BALANCE = latestBalance
+}
 
     await sendTelegram2(
-`📊 RESULT ${t.symbol}
+`📊 ${t.symbol}
 ${t.side}
-${win ? "WIN" : "LOSS"}`
+${win ? "✅ WIN" : "❌ LOSS"}
+💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
+
     )
 
     activeTrades.splice(i,1)
