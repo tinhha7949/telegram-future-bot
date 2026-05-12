@@ -700,13 +700,13 @@ async function setTPSL(symbol, side, tp, sl){
         let hasSL = openOrders.find(o =>
             o.type === "STOP_MARKET" &&
             o.side === closeSide &&
-            o.closePosition
+            String(o.closePosition) === "true"
         )
 
         let hasTP = openOrders.find(o =>
             o.type === "TAKE_PROFIT_MARKET" &&
             o.side === closeSide &&
-            o.closePosition
+            String(o.closePosition) === "true"
         )
 
         // ===== ĐỦ TPSL =====
@@ -918,7 +918,7 @@ try{
         o.type === "STOP"
     ) &&
     o.side === closeSide &&
-    o.closePosition
+    String(o.closePosition) === "true"
 )
 let finalTP = verify.find(o =>
     (
@@ -926,7 +926,7 @@ let finalTP = verify.find(o =>
         o.type === "TAKE_PROFIT"
     ) &&
     o.side === closeSide &&
-    o.closePosition
+    String(o.closePosition) === "true"
 )
             if(
     (finalSL || slAlreadyExists) &&
@@ -976,7 +976,7 @@ TPSL_PENDING[symbol] = true
                 sl
             )
 
-            if(res.ok){
+            if(res && res.ok){
 
     // verify thật
     let verify =
@@ -985,12 +985,27 @@ TPSL_PENDING[symbol] = true
             recvWindow: 20000
         })
 
+    let closeSide =
+        side === "LONG"
+            ? "SELL"
+            : "BUY"
+
     let hasSL = verify.find(o =>
-        o.type === "STOP_MARKET"
+        (
+            o.type === "STOP_MARKET" ||
+            o.type === "STOP"
+        ) &&
+        o.side === closeSide &&
+        String(o.closePosition) === "true"
     )
 
     let hasTP = verify.find(o =>
-        o.type === "TAKE_PROFIT_MARKET"
+        (
+            o.type === "TAKE_PROFIT_MARKET" ||
+            o.type === "TAKE_PROFIT"
+        ) &&
+        o.side === closeSide &&
+        String(o.closePosition) === "true"
     )
 
     if(hasSL && hasTP){
@@ -999,6 +1014,9 @@ TPSL_PENDING[symbol] = true
             ok:true
         }
     }
+
+    console.log(`⚠️ VERIFY TPSL FAIL ${symbol}`)
+
 }
 
             console.log(
