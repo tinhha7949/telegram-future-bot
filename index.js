@@ -951,10 +951,31 @@ let finalTP = verify.find(o =>
     }
 }
 async function safeSetTPSL(symbol, side, tp, sl){
-    if(TPSL_DONE[symbol]){
-    return {
-        ok:true,
-        existed:true
+    if(TPSL_CONFIRMED[symbol]){
+
+    try{
+        let posCheck = await binance.futuresPositionRisk({
+            recvWindow: 20000
+        })
+
+        let pos = posCheck.find(p =>
+            p.symbol === symbol &&
+            Math.abs(Number(p.positionAmt)) > 0
+        )
+
+        // nếu không còn position → reset state
+        if(!pos){
+            delete TPSL_CONFIRMED[symbol]
+        }else{
+            return {
+                ok:true,
+                existed:true
+            }
+        }
+
+    }catch(e){
+        // nếu lỗi API → không tin cache
+        delete TPSL_CONFIRMED[symbol]
     }
 }
 
@@ -963,7 +984,10 @@ async function safeSetTPSL(symbol, side, tp, sl){
     TPSL_PENDING[symbol] ||
     TPSL_GLOBAL_LOCK[symbol]
 ){
-    return false
+    return {
+    ok:false,
+    error:"LOCKED"
+}
 }
 
 TPSL_GLOBAL_LOCK[symbol] = true
@@ -986,6 +1010,7 @@ TPSL_PENDING[symbol] = true
             if(res && res.ok){
 
     console.log(`✅ TPSL VERIFIED ${symbol}`)
+    TPSL_CONFIRMED[symbol] = true
 
     return {
         ok:true
@@ -1032,6 +1057,7 @@ if(
 }
 
     }finally{
+        delete TPSL_PENDING[symbol]
         delete TPSL_GLOBAL_LOCK[symbol]
         delete TPSL_PENDING[symbol]
         delete TPSL_LOCKS[symbol]
@@ -3217,6 +3243,7 @@ let hasTP = orders.find(
                 // ✅ ĐỦ TPSL
                 if(hasSL && hasTP){
                     delete TPSL_MISSING[symbol]
+                    TPSL_CONFIRMED[symbol] = true
                     continue
                 }
                 // ===== BINANCE CHƯA SYNC ĐỦ =====
