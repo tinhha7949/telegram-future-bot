@@ -542,7 +542,7 @@ async function setTPSL(symbol, side, tp, sl){
 
        // await new Promise(r => setTimeout(r, 2000))
        // ===== CANCEL OLD =====
-a// ===== CHECK TPSL CŨ =====
+// ===== CHECK TPSL CŨ =====
 let existingOrders = await binance.futuresOpenOrders({
     symbol
 })
@@ -750,11 +750,6 @@ if(existingOrders.length > 0){
         let orders = await binance.futuresOpenOrders({
             symbol
         })
-
-        let closeSide =
-    side === "LONG"
-        ? "SELL"
-        : "BUY"
 
 let hasSL = orders.find(o =>
     o.type === "STOP_MARKET" &&
