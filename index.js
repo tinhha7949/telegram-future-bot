@@ -70,6 +70,15 @@ if(!options.signal){
             console.log(`❌ FETCH STATUS: ${res?.status} ${url}`)
 
         }catch(e){
+            if(
+    e.message &&
+    (
+        e.message.includes("recvWindow") ||
+        e.message.includes("Timestamp")
+    )
+){
+    await syncTime()
+}
             if(timeout) clearTimeout(timeout)
 
             if(!url.includes("telegram.org")){
@@ -83,29 +92,40 @@ if(!options.signal){
     return null
 }
 async function syncTime(){
+
     try{
-        let res = await safeFetch("https://fapi.binance.com/fapi/v1/time")
+
+        const start = Date.now()
+
+        let res = await safeFetch(
+            "https://fapi.binance.com/fapi/v1/time"
+        )
+
         if(!res){
-    TIME_SYNCED = false
-    return
-}
-        let data = await res.json()
-        serverTimeOffset = data.serverTime - Date.now()
-        TIME_SYNCED = true
-        // chỉ log khi lệch thay đổi mạnh
-        if(
-            Math.abs(
-                serverTimeOffset - LAST_OFFSET_LOG
-            ) > 1000
-        ){
-            console.log(
-                "🕒 TIME OFFSET:",
-                serverTimeOffset
-            )
-            LAST_OFFSET_LOG = serverTimeOffset
+            TIME_SYNCED = false
+            return
         }
+
+        let data = await res.json()
+
+        const end = Date.now()
+
+        // latency compensation
+        const latency = (end - start) / 2
+
+        serverTimeOffset =
+            data.serverTime - end + latency
+
+        TIME_SYNCED = true
+
+        console.log(
+            `🕒 TIME OFFSET: ${serverTimeOffset}ms`
+        )
+
     }catch(e){
+
         TIME_SYNCED = false
+
         console.log(
             "❌ TIME SYNC FAIL:",
             e.message
@@ -408,11 +428,11 @@ const query =
 if(data.status !== "FILLED"){
     let verifyPos = await waitPosition(symbol)
 
-if(!verifyPos){
+if(verifyPos){
 
-    console.log(`❌ NO REAL POSITION ${symbol}`)
+    console.log(`✅ POSITION EXISTS ${symbol}`)
 
-    return null
+    data.status = "FILLED"
 }
 
     console.log(`⏳ WAIT FILL ${symbol}: ${data.status}`)
@@ -455,6 +475,7 @@ if(!verifyPos){
 
 // ===== FINAL VERIFY =====
 if(data.status !== "FILLED"){
+    
 
     console.log(`❌ NOT FILLED FINAL ${symbol}`)
 
@@ -498,7 +519,7 @@ async function cancelAllOrders(symbol){
             symbol,
             recvWindow: 20000
         })
-        for(let i=0;i<10;i++){
+        for(let i=0;i<20;i++){
 
     let openOrders =
         await binance.futuresOpenOrders({
@@ -511,7 +532,7 @@ async function cancelAllOrders(symbol){
     }
 
     await new Promise(r =>
-        setTimeout(r, 1000)
+        setTimeout(r, 1500)
     )
 }
 
@@ -520,6 +541,43 @@ async function cancelAllOrders(symbol){
     }catch(e){
 
         console.log(`❌ CANCEL TPSL ${symbol}:`, e.message)
+    }
+}
+async function cancelTPSLOrders(symbol){
+
+    try{
+
+        let orders =
+            await binance.futuresOpenOrders({
+                symbol,
+                recvWindow:20000
+            })
+
+        for(let o of orders){
+
+            if(
+                o.type === "STOP_MARKET" ||
+                o.type === "TAKE_PROFIT_MARKET"
+            ){
+
+                try{
+
+                    await binance.futuresCancelOrder({
+                        symbol,
+                        orderId:o.orderId,
+                        recvWindow:20000
+                    })
+
+                }catch(e){}
+            }
+        }
+
+    }catch(e){
+
+        console.log(
+            `❌ CANCEL TPSL ${symbol}:`,
+            e.message
+        )
     }
 }
 async function setTPSL(symbol, side, tp, sl){
@@ -598,10 +656,16 @@ async function setTPSL(symbol, side, tp, sl){
             o.closePosition
         )
 
-        if(hasSL && hasTP){
+        // ===== ĐỦ TPSL =====
+if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
 
-            return { ok:true }
-        }
+    console.log(`✅ TPSL EXISTS ${symbol}`)
+
+    return {
+        ok:true,
+        existed:true
+    }
+}
 
         // ===== CANCEL ONLY WRONG ORDERS =====
         for(let o of openOrders){
@@ -743,7 +807,7 @@ async function setTPSL(symbol, side, tp, sl){
 
             // rollback SL
             try{
-                await cancelAllOrders(symbol)
+                await cancelTPSLOrders(t.symbol)
             }catch(e){}
 
             return {
@@ -753,10 +817,10 @@ async function setTPSL(symbol, side, tp, sl){
         }
 
         // ===== FINAL VERIFY =====
-        for(let i=0;i<10;i++){
+        for(let i=0;i<20;i++){
 
             await new Promise(r =>
-                setTimeout(r, 1000)
+                setTimeout(r, 1500)
             )
 
             let verify =
@@ -829,10 +893,18 @@ async function safeSetTPSL(symbol, side, tp, sl){
             // nếu Binance chưa sync cancel
 if(
     res.error &&
-    (
-        res.error.includes("existing") ||
-        res.error.includes("immediately trigger")
+    res.error.includes("existing")
+){
+
+    await cancelTPSLOrders(symbol)
+
+    await new Promise(r =>
+        setTimeout(r, 2500)
     )
+
+}else if(
+    res.error &&
+    res.error.includes("immediately trigger")
 ){
 
     await new Promise(r =>
@@ -2119,13 +2191,17 @@ let realQty = Math.abs(Number(pos.positionAmt))
                 }
             }
         )
+        let ok = true
 
-        let ok = await safeSetTPSL(
-            trade.symbol,
-            trade.side,
-            trade.tp,
-            trade.sl
-        )
+        if(!TPSL_LOCKS[trade.symbol]){
+
+    let ok = await safeSetTPSL(
+        trade.symbol,
+        trade.side,
+        trade.tp,
+        trade.sl
+    )
+}
 
         console.log(`🔥 MARKET ENTER ${trade.symbol}`)
         let msg = `🔥 BEST SIGNAL
@@ -2133,7 +2209,7 @@ let realQty = Math.abs(Number(pos.positionAmt))
 ${best.symbol} (${best.setup})
 ${best.side} | ${best.marketState}
 
-Entry: ${best.entry.toFixed(4)}
+Entry: ${(trade.entry || best.price).toFixed(4)}
 
 TP: ${best.tp.toFixed(4)}
 
@@ -2586,6 +2662,32 @@ if(t.side === "LONG"){
 
     t.tp = Number(t.tp.toFixed(pricePrecision))
     t.sl = Number(t.sl.toFixed(pricePrecision))
+    diff = Math.abs(t.entry - t.sl)
+
+if(
+    !diff ||
+    !isFinite(diff) ||
+    diff <= tickSize
+){
+
+    console.log(`❌ INVALID DIFF ${t.symbol}`)
+
+    await trades.updateOne(
+        {
+            symbol:t.symbol,
+            createdAt:t.createdAt
+        },
+        {
+            $set:{
+                result:"INVALID_DIFF"
+            }
+        }
+    )
+
+    activeTrades.splice(i,1)
+
+    continue
+}
 
     if(qty < minQty){
         console.log(`❌ QTY < MIN_QTY ${t.symbol}`)
@@ -2674,11 +2776,11 @@ if(!lock){
 
     if(!realQty || realQty <= 0){
         console.log(`❌ ORDER NOT FILLED ${t.symbol}`)
-        continue
+        continue 
     }
     //await sendTelegram(msg)
 
-    await cancelAllOrders(t.symbol)
+    await cancelTPSLOrders(t.symbol)
 
 await new Promise(r => setTimeout(r, 500))
 
@@ -2844,10 +2946,10 @@ async function closePosition(symbol, side, qty){
         })
 
         // ===== VERIFY CLOSED =====
-        for(let i=0;i<10;i++){
+        for(let i=0;i<20;i++){
 
             await new Promise(r =>
-                setTimeout(r, 1000)
+                setTimeout(r, 1500)
             )
 
             let positions =
@@ -2880,6 +2982,7 @@ async function closePosition(symbol, side, qty){
 }
 /////////
 async function watchdogTPSL(){
+
     // 🔒 CHẶN WATCHDOG CHẠY ĐÈ
     if(WATCHDOG_RUNNING){
         return
@@ -2890,6 +2993,9 @@ async function watchdogTPSL(){
     recvWindow: 20000
 })
         for(let p of positions){
+             if(TPSL_LOCKS[symbol]){
+    continue
+}
             let amt = Math.abs(Number(p.positionAmt))
             if(amt <= 0){
                 continue
@@ -2970,7 +3076,7 @@ async function watchdogTPSL(){
                     let missingTime =
                         Date.now() - TPSL_MISSING[symbol]
                     // ⏳ CHỜ BINANCE SYNC
-                    if(missingTime < 90000){
+                    if(missingTime < 180000){
                         console.log(
                             `⏳ WAIT TPSL ${symbol}`
                         )
@@ -3000,7 +3106,7 @@ async function watchdogTPSL(){
                     let missingTime =
                         Date.now() - TPSL_MISSING[symbol]
                     // ⏳ CHỜ BINANCE SYNC
-                    if(missingTime < 90000){
+                    if(missingTime < 180000){
                         console.log(
                             `⏳ WAIT TPSL ${symbol}`
                         )
