@@ -655,6 +655,46 @@ async function setTPSL(symbol, side, tp, sl){
         }
     }
 }
+async function safeSetTPSL(symbol, side, tp, sl){
+
+    if(TPSL_LOCKS[symbol]){
+        return false
+    }
+
+    TPSL_LOCKS[symbol] = true
+
+    try{
+
+        for(let i=0;i<5;i++){
+
+            let res = await setTPSL(
+                symbol,
+                side,
+                tp,
+                sl
+            )
+
+            if(res.ok){
+                return true
+            }
+
+            console.log(
+                `⚠️ TPSL retry ${symbol} ${i+1}:`,
+                res.error
+            )
+
+            await new Promise(r =>
+                setTimeout(r, 2500)
+            )
+        }
+
+        return false
+
+    }finally{
+
+        delete TPSL_LOCKS[symbol]
+    }
+}
 // ================= COMMAND =================
 let checkingCmd = false
 
@@ -1809,46 +1849,6 @@ if(notional < minNotional || !isFinite(qty) || qty <= 0){
                 .length
         )
     }
-    async function safeSetTPSL(symbol, side, tp, sl){
-
-    if(TPSL_LOCKS[symbol]){
-        return false
-    }
-
-    TPSL_LOCKS[symbol] = true
-
-    try{
-
-        for(let i=0;i<5;i++){
-
-            let res = await setTPSL(
-                symbol,
-                side,
-                tp,
-                sl
-            )
-
-            if(res.ok){
-                return true
-            }
-
-            console.log(
-                `⚠️ TPSL retry ${symbol} ${i+1}:`,
-                res.error
-            )
-
-            await new Promise(r =>
-                setTimeout(r, 2500)
-            )
-        }
-
-        return false
-
-    }finally{
-
-        delete TPSL_LOCKS[symbol]
-    }
-}
     //qty = roundStep(qty, stepSize)
 
    // qty = Number(
@@ -1919,6 +1919,8 @@ let realQty = Math.abs(Number(pos.positionAmt))
     if(order){
 
         trade.waitingEntry = false
+        trade.enteredAt = Date.now()
+trade.entry = best.price
 
         await trades.updateOne(
             {
@@ -2661,7 +2663,19 @@ async function watchdogTPSL(){
             )
 
             // ❌ không có dữ liệu => đóng luôn
-            if(!trade){
+            if(!trade || !trade.tp || !trade.sl){
+                let dbTrade = await trades.findOne({
+        symbol,
+        result:"PENDING"
+    })
+
+    if(dbTrade){
+
+        trade = dbTrade
+
+        activeTrades.push(dbTrade)
+    }
+}
 
                 console.log(`🚨 FORCE CLOSE NO DATA ${symbol}`)
 
