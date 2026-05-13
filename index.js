@@ -218,7 +218,7 @@ const RISK_PER_TRADE = 0.05  // 0.1 = 10% // 0.01 = 1%
 const POSITION_SIZE_PERCENT = 0.15 // 0.05 5% vốn // 0.1 =10%
 let ACCOUNT_BALANCE = 0
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
-const MIN_VOL_24H = 10000000
+// const MIN_VOL_24H = 15000000
 
 const DEBUG_AI = false
 const ENABLE_REVERSAL = true
@@ -1218,10 +1218,22 @@ async function getTopSymbols(){
     !c.symbol.includes("TRY") &&
     !c.symbol.includes("RLUSD")
 )
-                     // volume tối thiểu
-.filter(c => Number(c.quoteVolume) > MIN_VOL_24H)
-                    .sort((a,b)=> Number(b.quoteVolume) - Number(a.quoteVolume))
-                .slice(0,30)
+                      // 🔥 1. SQUEEZE (quan trọng nhất)
+    .filter(c => {
+        let change = Math.abs(Number(c.priceChangePercent))
+        // coin chưa chạy nhưng có dấu hiệu tích lực
+        return change >= 1 && change <= 10 // 
+    })
+    // 🔥 2. LIQUIDITY nhẹ (KHÔNG dùng minVol 24h nữa)
+    .filter(c =>
+        Number(c.quoteVolume) > 3_000_000
+    )
+    // 🔥 3. SORT theo “độ sắp chạy”
+    .sort((a, b) =>
+        Math.abs(Number(b.priceChangePercent)) -
+        Math.abs(Number(a.priceChangePercent))
+    )
+    .slice(0, 30)
 .map(c => c.symbol)
 .filter(s =>
     validFuturesSymbols &&
@@ -3056,7 +3068,7 @@ if(!t.enteredAt){
 }
 let isTimeout =
     t.enteredAt &&
-    Date.now() - t.enteredAt > 43200000 // 12h
+    Date.now() - t.enteredAt > 86400000 //43200000 // 12h
 
 if(isTimeout){
 
@@ -3066,7 +3078,7 @@ if(isTimeout){
     )
 
     await sendTelegram2(
-`⏳ TIMEOUT ${t.symbol}
+`⏳ Không chạm TP SL ${t.symbol}
 ${t.side}`
     )
 
@@ -3496,7 +3508,7 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
     {
         result: "PENDING",
         createdAt: {
-            $lt: Date.now() - 12 * 60 * 60 * 1000
+            $lt: Date.now() - 24 * 60 * 60 * 1000
         }
     },
     {
