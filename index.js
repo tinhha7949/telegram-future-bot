@@ -3013,6 +3013,21 @@ ${tpslRes.error}`
         t.side,
         realQty
     )
+    t.result = "FORCE_CLOSED"
+
+await trades.updateOne(
+    {
+        symbol: t.symbol,
+        createdAt: t.createdAt
+    },
+    {
+        $set:{
+            result:"FORCE_CLOSED"
+        }
+    }
+)
+
+activeTrades.splice(i,1)
         await new Promise(r => setTimeout(r, 2000))
 
 let positionsAfter = await binance.futuresPositionRisk({
@@ -3355,9 +3370,12 @@ if(!TPSL_CONFIRMED[symbol]){
                             let exists = activeTrades.find(
                                 x => x.symbol === symbol
                             )
-                            if(!exists){
-                                activeTrades.push(dbTrade)
-                            }
+                            if(
+    !exists &&
+    dbTrade.result === "PENDING"
+){
+    activeTrades.push(dbTrade)
+}
                             console.log(
                                 `♻️ RECOVER TRADE ${symbol}`
                             )
@@ -3391,6 +3409,35 @@ if(!TPSL_CONFIRMED[symbol]){
                             : "SHORT",
                         amt
                     )
+                    delete TPSL_CONFIRMED[symbol]
+delete TPSL_MISSING[symbol]
+
+if(trade){
+
+    trade.result = "FORCE_CLOSED"
+
+    await trades.updateOne(
+        {
+            symbol: trade.symbol,
+            createdAt: trade.createdAt
+        },
+        {
+            $set:{
+                result:"FORCE_CLOSED"
+            }
+        }
+    )
+
+    let idx = activeTrades.findIndex(
+        x =>
+            x.symbol === trade.symbol &&
+            x.createdAt === trade.createdAt
+    )
+
+    if(idx !== -1){
+        activeTrades.splice(idx,1)
+    }
+}
                     continue
                 }
                 // ===== RETRY TPSL =====
@@ -3420,9 +3467,33 @@ if(!res || !res.ok){
                         trade.side,
                         amt
                     )
+                    delete TPSL_CONFIRMED[symbol]
+delete TPSL_MISSING[symbol]
+if(trade){
+    trade.result = "FORCE_CLOSED"
+
+    await trades.updateOne(
+        {
+            symbol: trade.symbol,
+            createdAt: trade.createdAt
+        },
+        {
+            $set:{
+                result:"FORCE_CLOSED"
+            }
+        }
+    )
+    let idx = activeTrades.findIndex(
+        x =>
+            x.symbol === trade.symbol &&
+            x.createdAt === trade.createdAt
+    )
+    if(idx !== -1){
+        activeTrades.splice(idx,1)
+    }
+}
                 }
             }catch(e){
-
                 console.log(
                     `WATCHDOG ${symbol}:`,
                     e.message
