@@ -214,7 +214,7 @@ const LIMIT_1H  = 200 //100
 const SCORE_THRESHOLD = 35 // 110
 const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
-const RISK_PER_TRADE = 0.05  // 0.1 = 10% // 0.01 = 1% 
+const RISK_PER_TRADE = 0.1  // 0.1 = 10% // 0.01 = 1% 
 const POSITION_SIZE_PERCENT = 0.15 // 0.05 5% vốn // 0.1 =10%
 let ACCOUNT_BALANCE = 0
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
