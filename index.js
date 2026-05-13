@@ -3596,9 +3596,53 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         }
     }
 )
+activeTrades = await trades.find({
+    result: "PENDING"
+}).toArray()
 
-        // 🔥 LOAD LẠI LỆNH
-        activeTrades = await trades.find({ result: "PENDING" }).toArray()
+let positions = await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
+
+let openSymbols = new Set(
+    positions
+        .filter(
+            p => Math.abs(Number(p.positionAmt)) > 0
+        )
+        .map(p => p.symbol)
+)
+let cleaned = []
+for(let t of activeTrades){
+    // giữ waiting entry
+    if(t.waitingEntry){
+
+        cleaned.push(t)
+
+        continue
+    }
+    // còn position thật
+    if(openSymbols.has(t.symbol)){
+
+        cleaned.push(t)
+
+        continue
+    }
+    // ===== GHOST TRADE =====
+    await trades.updateOne(
+        {
+            _id: t._id
+        },
+        {
+            $set:{
+                result:"AUTO_CLEAR_NO_POSITION"
+            }
+        }
+    )
+    console.log(
+        `🧹 CLEAR GHOST ${t.symbol}`
+    )
+}
+activeTrades = cleaned
         console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
 
         // ================= LOOP =================
@@ -3728,9 +3772,6 @@ async function getDBStats(setup, market, side, volatility){
             }
             else if(t.result === "LOSS"){
                 lossScore += weight
-            }
-            else{
-                lossScore += weight * 0.5
             }
         }
 
