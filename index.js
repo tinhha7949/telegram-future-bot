@@ -1981,10 +1981,14 @@ if(filtered.length === 0){
 for (let best of filtered){
 
     let realActive = activeTrades.filter(
-        x => !x.waitingEntry
-    ).length
+    x =>
+        x.result === "PENDING" &&
+        !x.waitingEntry
+).length
 
-    let totalPending = activeTrades.length
+    let totalPending = activeTrades.filter(
+    x => x.result === "PENDING"
+).length
 
     if(realActive >= 10){
         console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`)
@@ -2443,6 +2447,10 @@ async function checkTrades(){
         for(let i = activeTrades.length - 1; i >= 0; i--){
 
             let t = activeTrades[i]
+            if(t.result !== "PENDING"){
+    activeTrades.splice(i,1)
+    continue
+}
 
             try{
 
@@ -3755,6 +3763,18 @@ if(TPSL_GLOBAL_LOCK[t.symbol]) continue
 }
 
 setInterval(fixTPSL, 15000)
+async function syncActiveTrades(){
+
+    activeTrades = await trades.find({
+        result:"PENDING"
+    }).toArray()
+
+    console.log(
+        `♻️ SYNC ACTIVE: ${activeTrades.length}`
+    )
+}
+
+setInterval(syncActiveTrades, 3600000)
 function cleanup(){
     try{
         if(fs.existsSync(PID_FILE)){
