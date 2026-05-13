@@ -1990,12 +1990,12 @@ for (let best of filtered){
     x => x.result === "PENDING"
 ).length
 
-    if(realActive >= 10){
+    if(realActive >= 25){
         console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`)
         break
     }
 
-    if(totalPending >= 25){
+    if(totalPending >= 50){
         console.log(`⚠️ MAX TOTAL PENDING: ${totalPending}`)
         break
     }
