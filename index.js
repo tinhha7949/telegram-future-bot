@@ -211,7 +211,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 35 // 110
+const SCORE_THRESHOLD = 42 // 110
 const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.1  // 0.1 = 10% // 0.01 = 1% 
@@ -1497,6 +1497,9 @@ if(spikeCandle > 0.035){ // nến trước >3.5%
 
     // ===== MOMENTUM =====
     let momentumStrength = (closes.at(-1) - closes.at(-4)) / closes.at(-4)
+    if(Math.abs(momentumStrength) < 0.0015){
+    score -= 15
+}
 
     let momentumUp = momentumStrength > 0.002
     let momentumDown = momentumStrength < -0.002
@@ -1517,11 +1520,16 @@ if(spikeCandle > 0.035){ // nến trước >3.5%
 
     // ===== SIDEWAY =====
     if(marketState === "SIDEWAY"){
-        if(sweepHigh){ side="SHORT"; score+=60 }
-        if(sweepLow){ side="LONG"; score+=60 }
-        if(!side) return null
-        //if(bosUp || bosDown) return null
+    if(sweepHigh && volNowUSDT > volAvgUSDT * 1.2){
+        side="SHORT"
+        score+=60
     }
+    if(sweepLow && volNowUSDT > volAvgUSDT * 1.2){
+        side="LONG"
+        score+=60
+    }
+    if(!side) return null
+}
     if(side === "LONG" && nearHigh){
     score -= 20
 }
@@ -1573,12 +1581,12 @@ if(candleRange > 0){
     let lowerWickRatio = lowerWick / candleRange
 
     // ❌ bị đạp xuống → không long
-    if(upperWickRatio > 0.4){
+    if(upperWickRatio > 0.32){
         if(side === "LONG") return null
     }
 
     // ❌ bị đẩy lên → không short
-    if(lowerWickRatio > 0.4){
+    if(lowerWickRatio > 0.32){
         if(side === "SHORT") return null
     }
 }
@@ -1627,9 +1635,9 @@ if(!side) return null
    if(
     side==="LONG" &&
     bosUp &&
-    volNowUSDT > volAvgUSDT * 1.15 &&
+    volNowUSDT > volAvgUSDT * 1.35 &&
     momentumUp &&
-    distFromEma < 0.12 
+    distFromEma < 0.08 
 ){
     score += 50
     setupType = "BREAKOUT"
@@ -1638,9 +1646,9 @@ if(!side) return null
 if(
     side==="SHORT" &&
     bosDown &&
-    volNowUSDT > volAvgUSDT * 1.15 &&
+    volNowUSDT > volAvgUSDT * 1.35 &&
     momentumDown &&
-    distFromEma > -0.02
+    distFromEma > -0.08
 ){
     score += 50
     setupType = "BREAKOUT"
@@ -1687,8 +1695,8 @@ if(
     if(side==="LONG" && higherLow) score+=15
     if(side==="SHORT" && lowerHigh) score+=15
    
-    if(side==="LONG" && r>50 && r<65) score+=10
-    if(side==="SHORT" && r>35 && r<50) score+=10
+    if(side==="LONG" && r>52 && r<62) score+=10
+    if(side==="SHORT" && r>38 && r<48) score+=10
 
     if(!side) return null
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
@@ -1707,7 +1715,7 @@ if(side === "SHORT" && distToSup < 0.002) return null
 let isBreakout = setupType === "BREAKOUT"
 
 if(!isBreakout){
-    if(marketState !== "TREND_STRONG" && distance > atrVal * 3.5){
+    if(marketState !== "TREND_STRONG" && distance > atrVal * 3.0){
         score -= 25
     }
 }
@@ -1777,6 +1785,9 @@ if(rangeCandle === 0 || body / rangeCandle < 0.1){ //0.2
     }else{
         setupType = "PULLBACK"
     }
+}
+if(score < dynamicThreshold - 5){
+    return null
 }
 
     return {
@@ -1980,10 +1991,17 @@ if(filtered.length === 0){
 //let picks = filtered.slice(0, 3)
 for (let best of filtered){
 
-    let realActive = activeTrades.filter(
-    x =>
-        x.result === "PENDING" &&
-        !x.waitingEntry
+    //let realActive = activeTrades.filter(
+    //x =>
+        //x.result === "PENDING" &&
+       // !x.waitingEntry
+//).length
+let positions = await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
+
+let realActive = positions.filter(p =>
+    Math.abs(Number(p.positionAmt)) > 0
 ).length
 
     let totalPending = activeTrades.filter(
@@ -2147,12 +2165,6 @@ let trade = {
 
     if(isActive){
         continue
-    }
-
-    activeTrades.push(trade)
-
-    if(activeTrades.length > 50){
-        activeTrades.shift()
     }
 
     await trades.insertOne(trade)
@@ -2322,10 +2334,13 @@ if(!realPos){
 
     continue
 }
+activeTrades.push(trade)
+
+    if(activeTrades.length > 50){
+        activeTrades.shift()
+    }
 
 let realQty = Math.abs(Number(realPos.positionAmt))
-
-    if(order){
 
     trade.waitingEntry = false
     trade.enteredAt = Date.now()
@@ -2418,8 +2433,6 @@ SL: ${best.sl}`
 }
     //console.log(msg)
     //await sendTelegram(msg)
-        
-    }
 }
 
     console.log(`✅ ADD: ${best.symbol} | Score: ${best.finalScore.toFixed(1)}`)
@@ -3108,7 +3121,33 @@ ${t.side}`
     activeTrades.splice(i,1)
     continue
 }
+let positions = await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
 
+let stillOpen = positions.find(p =>
+    p.symbol === t.symbol &&
+    Math.abs(Number(p.positionAmt)) > 0
+)
+
+if(!stillOpen){
+
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $set:{
+                result:"AUTO_CLEAR_NO_POSITION"
+            }
+        }
+    )
+
+    activeTrades.splice(i,1)
+
+    continue
+}
 if(done){
 
     await trades.updateOne(
