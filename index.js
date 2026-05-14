@@ -3178,17 +3178,48 @@ let isTimeout =
 
 if(isTimeout){
 
-    await trades.updateOne(
-        { symbol: t.symbol, createdAt: t.createdAt },
-        { $set: { result: "TIMEOUT" } }
+    console.log(`⏳ TIMEOUT CLOSE ${t.symbol}`)
+    // ===== CHECK POSITION THẬT =====
+    let positions = await binance.futuresPositionRisk({
+        recvWindow: 20000
+    })
+    let realPos = positions.find(p =>
+        p.symbol === t.symbol &&
+        Math.abs(Number(p.positionAmt)) > 0
     )
-
+    // ===== NẾU CÒN POSITION -> CLOSE =====
+    if(realPos){
+        let realQty = Math.abs(Number(realPos.positionAmt))
+        await closePosition(
+            t.symbol,
+            t.side,
+            realQty
+        )
+        console.log(`✅ AUTO CLOSED ${t.symbol}`)
+    }
+    // ===== UPDATE DB =====
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $set:{
+                result:"TIMEOUT_CLOSED"
+            }
+        }
+    )
+    // ===== TELEGRAM =====
     await sendTelegram2(
-`⏳ Không chạm TP SL ${t.symbol}
+`⏳ AUTO CLOSE TIMEOUT
+${t.symbol}
 ${t.side}`
     )
 
+    delete TPSL_CONFIRMED[t.symbol]
+
     activeTrades.splice(i,1)
+
     continue
 }
 let positions = await binance.futuresPositionRisk({
