@@ -2088,6 +2088,7 @@ if(existing){
                 }
             }
         )
+        existing = null // 🔥 QUAN TRỌNG
 
     }else{
 
@@ -2329,7 +2330,17 @@ let existingPos = await hasPosition(trade.symbol)
 if(existingPos){
 
     console.log(`⛔ SKIP OPEN ${symbol}: POSITION EXISTS`)
-
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $unset:{
+                opening:""
+            }
+        }
+    )
     continue
 }
 
@@ -2617,8 +2628,8 @@ buffer = Math.min(buffer, t.atr * 4)
 let breakoutBuffer = t.atr * 0.5
 
 // 🔥 cancel xa hơn
-//let chaseLimit = t.atr * 6
-let chaseLimit = t.atr * 2.5
+let chaseLimit = t.atr * 4
+
 
 // ================= LONG =================
 if(t.side === "LONG"){
@@ -3020,12 +3031,11 @@ if(
         returnDocument: "before"
     }
 )
-
-if(!lock || !lock.value){
+if(!lock){
+//if(!lock || !lock.value){
     console.log(`⛔ LOCKED ${t.symbol}`)
     continue
 }
-
     let positions = await binance.futuresPositionRisk({
     recvWindow: 20000
 })
@@ -3060,7 +3070,17 @@ if(!lock || !lock.value){
 if(existingPos){
 
     console.log(`⛔ SKIP OPEN ${t.symbol}: POSITION EXISTS`)
-
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $unset:{
+                opening:""
+            }
+        }
+    )
     continue
 }
 
@@ -3097,6 +3117,17 @@ if(existingPos){
 
     if(!realQty || realQty <= 0){
         console.log(`❌ ORDER NOT FILLED ${t.symbol}`)
+        await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $unset:{
+                opening:""
+            }
+        }
+    )
         continue 
     }
     //await sendTelegram(msg)
