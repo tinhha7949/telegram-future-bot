@@ -1063,6 +1063,36 @@ if(
         delete TPSL_LOCKS[symbol]
     }
 }
+function getPending(){
+    return activeTrades.filter(t =>
+        t.result === "PENDING" &&
+        t.waitingEntry === true
+    )
+}
+
+function getActive(){
+    return activeTrades.filter(t =>
+        t.result === "PENDING"
+    )
+}
+
+function getDone(){
+    return activeTrades.filter(t =>
+        t.result !== "PENDING"
+    )
+}
+
+function getWin(){
+    return activeTrades.filter(t =>
+        t.result === "WIN"
+    )
+}
+
+function getLoss(){
+    return activeTrades.filter(t =>
+        t.result === "LOSS"
+    )
+}
 // ================= COMMAND =================
 let checkingCmd = false
 
@@ -1093,153 +1123,167 @@ TELEGRAM_LOCK = Date.now()
         let data = await res.json()
         if(!data.result) return
 
-        for(let u of data.result){
+        for (let u of data.result) {
+
     lastUpdateId = u.update_id
-    let text =
-        u.message?.text?.trim()
-    // ===== STATUS =====
-    if(text === "/status"){
+    let text = u.message?.text?.trim()
+
+    if (!text) continue
+
+    // ================= STATUS =================
+    if (text === "/status") {
         await sendTelegram("🤖 BOT OK")
+        continue
     }
-    // ===== BALANCE =====
-    if(text === "/balance"){
+
+    // ================= BALANCE =================
+    if (text === "/balance") {
         let bal = await updateBalance()
-        await sendTelegram(
-`💰 BALANCE: ${bal.toFixed(2)} USDT`
-        )
+        await sendTelegram(`💰 BALANCE: ${bal.toFixed(2)} USDT`)
+        continue
     }
-    // ===== PENDING ENTRY =====
-    if(text === "/pending"){
-        let pending = activeTrades.filter(t =>
-            t.result === "PENDING" &&
-            t.waitingEntry
-        )
-        if(pending.length === 0){
-            await sendTelegram(
-                "🟡 Không có lệnh chờ entry"
-            )
+
+    // ================= PENDING =================
+    if (text === "/pending") {
+
+        let pending = getPending()
+
+        if (pending.length === 0) {
+            await sendTelegram("🟢 Không có lệnh chờ entry")
             continue
         }
-        let msg =
-`🟡 PENDING ENTRY: ${pending.length}\n`
-        for(let t of pending.slice(0,20)){
-            msg +=
-`\n${t.symbol} ${t.side}
-Zone: ${t.entryZoneLow?.toFixed(4)} - ${t.entryZoneHigh?.toFixed(4)}`
+
+        let msg = `🟢 PENDING: ${pending.length}\n`
+
+        for (let t of pending.slice(0, 20)) {
+            msg += `\n${t.symbol} ${t.side}
+ZONE: ${t.entryZoneLow?.toFixed(4)} - ${t.entryZoneHigh?.toFixed(4)}`
         }
+
         await sendTelegram(msg)
+        continue
     }
-    // ===== OPEN POSITIONS =====
-    if(text === "/position"){
-        try{
-            let positions =
-                await binance.futuresPositionRisk({
-                    recvWindow: 20000
-                })
+
+    // ================= POSITION =================
+    if (text === "/position") {
+
+        try {
+            let positions = await binance.futuresPositionRisk({
+                recvWindow: 20000
+            })
+
             let opened = positions.filter(p =>
                 Math.abs(Number(p.positionAmt)) > 0
             )
-            if(opened.length === 0){
-                await sendTelegram(
-                    "🟢 Không có position mở"
-                )
+
+            if (opened.length === 0) {
+                await sendTelegram("🟢 Không có position")
                 continue
             }
-            let msg =
-`🟢 OPEN POSITIONS: ${opened.length}\n`
-            for(let p of opened){
+
+            let msg = `🟢 POSITIONS: ${opened.length}\n`
+
+            for (let p of opened) {
                 let amt = Number(p.positionAmt)
-                let entry = Number(p.entryPrice)
                 let pnl = Number(p.unRealizedProfit)
-                msg +=
-`\n${p.symbol}
+
+                msg += `\n${p.symbol}
 ${amt > 0 ? "LONG" : "SHORT"}
 Qty: ${Math.abs(amt)}
-Entry: ${entry}
+Entry: ${Number(p.entryPrice)}
 PnL: ${pnl.toFixed(2)} USDT`
             }
+
             await sendTelegram(msg)
-        }catch(e){
-            await sendTelegram(
-                "❌ POSITION ERROR"
-            )
+
+        } catch (e) {
+            await sendTelegram("❌ POSITION ERROR")
         }
+
+        continue
     }
-    // ===== WINRATE =====
-    if(text === "/winrate"){
-        let wins = await trades.countDocuments({
-            result:"WIN"
-        })
-        let losses = await trades.countDocuments({
-            result:"LOSS"
-        })
+
+    // ================= WINRATE =================
+    if (text === "/winrate") {
+
+        let wins = getWin().length
+        let losses = getLoss().length
+
         let total = wins + losses
+
         let wr = total > 0
             ? ((wins / total) * 100).toFixed(1)
-            : 0
+            : "0.0"
+
         await sendTelegram(
 `📊 WINRATE
+
 ✅ WIN: ${wins}
 ❌ LOSS: ${losses}
 🎯 WR: ${wr}%`
         )
+
+        continue
     }
-    // ===== ACTIVE =====
-    if(text === "/active"){
-        if(activeTrades.length === 0){
-            await sendTelegram(
-                "📭 activeTrades rỗng"
-            )
+
+    // ================= ACTIVE =================
+    if (text === "/active") {
+
+        let active = getActive()
+
+        if (active.length === 0) {
+            await sendTelegram("📭 Không có active trades")
             continue
         }
-        let msg =
-`📌 ACTIVE TRADES: ${activeTrades.length}\n`
-        for(let t of activeTrades.slice(0,20)){
-            msg +=
-`\n${t.symbol}
+
+        let msg = `📌 ACTIVE: ${active.length}\n`
+
+        for (let t of active.slice(0, 20)) {
+            msg += `\n${t.symbol}
 ${t.side}
-${t.waitingEntry ? "🟡 WAIT ENTRY" : "🟢 ENTERED"}`
+${t.waitingEntry ? "🟡 WAIT ENTRY" : "🟢 LIVE"}`
         }
+
         await sendTelegram(msg)
+        continue
     }
-    // ===== HEALTH =====
-    if(text === "/health"){
-        let ram =
-            process.memoryUsage().rss / 1024 / 1024
-        let locks =
-            Object.keys(TPSL_LOCKS).length
-        let pendingTPSL =
-            Object.keys(TPSL_PENDING).length
-        let confirmed =
-            Object.keys(TPSL_CONFIRMED).length
+
+    // ================= HEALTH =================
+    if (text === "/health") {
+
+        let ram = process.memoryUsage().rss / 1024 / 1024
+
+        let pending = getPending()
+        let active = getActive()
+        let done = getDone()
+
         await sendTelegram(
 `🤖 BOT HEALTH
+
 💾 RAM: ${ram.toFixed(0)} MB
-📌 ActiveTrades: ${activeTrades.length}
-🔒 TPSL Locks: ${locks}
-⏳ TPSL Pending: ${pendingTPSL}
-✅ TPSL Confirmed: ${confirmed}
-🕒 Time Offset:
-${serverTimeOffset} ms
-💰 Balance:
-${ACCOUNT_BALANCE.toFixed(2)} USDT`
+📦 ActiveTrades: ${activeTrades.length}
+🟡 Pending: ${pending.length}
+🟢 Active: ${active.length}
+🔴 Done: ${done.length}
+💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
         )
+
+        continue
     }
-    // ===== CLEAR CACHE =====
-    if(text === "/clear"){
+
+    // ================= CLEAR =================
+    if (text === "/clear") {
+
         TPSL_LOCKS = {}
         TPSL_PENDING = {}
         TPSL_GLOBAL_LOCK = {}
         TPSL_CONFIRMED = {}
-        WATCHDOG_LOCKS = {}
         DATA_FAILS = {}
-        await sendTelegram(
-`🧹 CACHE CLEARED
-✅ TPSL_LOCKS
-✅ TPSL_PENDING
-✅ TPSL_CONFIRMED
-✅ DATA_FAILS`
-        )
+        WATCHDOG_LOCKS = {}
+
+        await sendTelegram("🧹 CLEARED ALL CACHE")
+
+        continue
     }
 }
     }catch(e){
