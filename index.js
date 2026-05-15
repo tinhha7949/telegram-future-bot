@@ -1522,7 +1522,15 @@ if(spikeCandle > 0.035){ // nến trước >3.5%
     let lowerHigh = highs.at(-2) < highs.at(-5)
 
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
-    // ===== HEALTHY PULLBACK =====
+    // ===== TREND FILTER =====
+    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
+    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
+
+    let trendStrength = Math.abs(ema20-ema50)/price
+    //if(marketState === "SIDEWAY" && trendStrength < 0.0008){ //0.0011
+    //return null
+//}
+// ===== HEALTHY PULLBACK =====
 let healthyPullbackLong =
     trendLong &&
     lows.at(-2) <= ema20 &&
@@ -1534,15 +1542,6 @@ let healthyPullbackShort =
     highs.at(-2) >= ema20 &&
     closes.at(-1) < ema20 &&
     lowerHigh
-    
-    // ===== TREND FILTER =====
-    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
-    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
-
-    let trendStrength = Math.abs(ema20-ema50)/price
-    //if(marketState === "SIDEWAY" && trendStrength < 0.0008){ //0.0011
-    //return null
-//}
 
     // ===== SIDEWAY =====
     if(marketState === "SIDEWAY"){
