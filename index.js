@@ -1094,12 +1094,78 @@ TELEGRAM_LOCK = Date.now()
         if(!data.result) return
 
         for(let u of data.result){
-            lastUpdateId = u.update_id
-
-            if(u.message?.text === "/status"){
-                await sendTelegram("🤖 BOT OK")
-            }
+    lastUpdateId = u.update_id
+    let text =
+        u.message?.text?.trim()
+    // ===== STATUS =====
+    if(text === "/status"){
+        await sendTelegram("🤖 BOT OK")
+    }
+    // ===== PENDING ENTRY =====
+    if(text === "/pending"){
+        let pending = activeTrades.filter(t =>
+            t.result === "PENDING" &&
+            t.waitingEntry
+        )
+        if(pending.length === 0){
+            await sendTelegram(
+                "🟡 Không có lệnh chờ entry"
+            )
+            continue
         }
+        let msg =
+`🟡 PENDING ENTRY: ${pending.length}\n`
+        for(let t of pending.slice(0,20)){
+            msg +=
+`\n${t.symbol} ${t.side}
+Zone: ${t.entryZoneLow?.toFixed(4)} - ${t.entryZoneHigh?.toFixed(4)}`
+        }
+        await sendTelegram(msg)
+    }
+    // ===== OPEN POSITIONS =====
+    if(text === "/position"){
+        try{
+            let positions =
+                await binance.futuresPositionRisk({
+                    recvWindow: 20000
+                })
+            let opened = positions.filter(p =>
+                Math.abs(Number(p.positionAmt)) > 0
+            )
+            if(opened.length === 0){
+                await sendTelegram(
+                    "🟢 Không có position mở"
+                )
+                continue
+            }
+            let msg =
+`🟢 OPEN POSITIONS: ${opened.length}\n`
+            for(let p of opened){
+                let amt = Number(p.positionAmt)
+                let entry = Number(p.entryPrice)
+                let pnl = Number(p.unRealizedProfit)
+                msg +=
+`\n${p.symbol}
+${amt > 0 ? "LONG" : "SHORT"}
+Qty: ${Math.abs(amt)}
+Entry: ${entry}
+PnL: ${pnl.toFixed(2)} USDT`
+            }
+            await sendTelegram(msg)
+        }catch(e){
+            await sendTelegram(
+                "❌ POSITION ERROR"
+            )
+        }
+    }
+    // ===== BALANCE =====
+    if(text === "/balance"){
+        let bal = await updateBalance()
+        await sendTelegram(
+`💰 BALANCE: ${bal.toFixed(2)} USDT`
+        )
+    }
+}
 
     }catch(e){
         console.log("CMD ERROR:", e.message)
@@ -3203,9 +3269,6 @@ TPSL chưa tồn tại`
         createdAt: t.createdAt
     },
     {
-        $set:{
-            result:"TPSL_FAIL"
-        },
         // 🔥 UNLOCK
         $unset:{
             opening:""
