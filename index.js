@@ -4,6 +4,7 @@ let TPSL_PENDING = {}
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
 let TPSL_CONFIRMED = {}
+let ACTIVE_SYMBOLS = new Set()
 const fs = require("fs")
 
 const PID_FILE = "./bot.pid"
@@ -36,6 +37,27 @@ const agent = new https.Agent({
     maxFreeSockets: 5,
     timeout: 15000
 })
+function removeTrade(i, t, reason){
+    if(t?.symbol){
+        ACTIVE_SYMBOLS.delete(t.symbol)
+    }
+
+    if(i !== null && i !== undefined && i >= 0){
+        activeTrades.splice(i,1)
+    }
+
+    if(t){
+        trades.updateOne(
+            {
+                symbol: t.symbol,
+                createdAt: t.createdAt
+            },
+            {
+                $set: { result: reason }
+            }
+        )
+    }
+}
 async function safeFetch(url, options = {}, retry = 3){
     for(let i = 0; i < retry; i++){
         let timeout
@@ -1064,34 +1086,29 @@ if(
     }
 }
 function getPending(){
-    return activeTrades.filter(t =>
-        t.result === "PENDING" &&
-        t.waitingEntry === true
-    )
+    return activeTrades.filter(t => t.waitingEntry)
 }
 
 function getActive(){
     return activeTrades.filter(t =>
+        t.waitingEntry === false &&
         t.result === "PENDING"
     )
 }
 
-function getDone(){
-    return activeTrades.filter(t =>
-        t.result !== "PENDING"
-    )
+async function getDone(){
+    return await trades.countDocuments({
+        result: { $in: ["WIN", "LOSS", "TIMEOUT_CLOSED", "FORCE_CLOSED", "CANCEL_ENTRY", "SL_TOO_CLOSE"] }
+    })
 }
 
-function getWin(){
-    return activeTrades.filter(t =>
-        t.result === "WIN"
-    )
+// DB
+async function getWin(){
+    return await trades.countDocuments({ result: "WIN" })
 }
 
-function getLoss(){
-    return activeTrades.filter(t =>
-        t.result === "LOSS"
-    )
+async function getLoss(){
+    return await trades.countDocuments({ result: "LOSS" })
 }
 // ================= COMMAND =================
 let checkingCmd = false
@@ -1206,8 +1223,8 @@ PnL: ${pnl.toFixed(2)} USDT`
     // ================= WINRATE =================
     if (text === "/winrate") {
 
-        let wins = getWin().length
-        let losses = getLoss().length
+        let wins = await getWin()
+        let losses = await getLoss()
 
         let total = wins + losses
 
@@ -2581,11 +2598,21 @@ if(!realPos){
 
     continue
 }
-activeTrades.push(trade)
+if (ACTIVE_SYMBOLS.has(best.symbol)) {
+    console.log("SKIP DUP:", best.symbol)
+    return
+}
 
-    if(activeTrades.length > 50){
-        activeTrades.shift()
+ACTIVE_SYMBOLS.add(best.symbol)
+activeTrades.push(best)
+
+// chống leak queue
+if(activeTrades.length > 50){
+    let old = activeTrades.shift()
+    if(old?.symbol){
+        ACTIVE_SYMBOLS.delete(old.symbol)
     }
+}
 
 let realQty = Math.abs(Number(realPos.positionAmt))
 
@@ -2708,7 +2735,7 @@ async function checkTrades(){
 
             let t = activeTrades[i]
             if(t.result !== "PENDING"){
-    activeTrades.splice(i,1)
+                removeTrade(i, t, "PENDING")
     continue
 }
 
@@ -2755,8 +2782,7 @@ let maxDrift = Math.max(0.015, t.atr / t.entryZoneMid * 2.5)
 if(drift > maxDrift){
 
     console.log(`⛔ SKIP ENTRY (too far) ${t.symbol}`)
-
-    activeTrades.splice(i,1)
+    removeTrade(i, t, "MISSED_ENTRY")
 
     await trades.updateOne(
         { symbol: t.symbol, createdAt: t.createdAt },
@@ -2781,8 +2807,7 @@ if(drift > maxDrift){
 ${t.side}
 ❌ Không khớp entry `
     )
-
-    activeTrades.splice(i,1)
+    removeTrade(i, t, "CANCEL_ENTRY")
     continue
 }
 
@@ -2857,8 +2882,7 @@ if(t.side === "LONG"){
 
     // cancel chase
     if(price > zoneHigh + chaseLimit){
-
-        activeTrades.splice(i,1)
+        removeTrade(i, t, "CANCEL_CHASE")
 
         await trades.updateOne(
             {
@@ -2919,8 +2943,7 @@ if(t.side === "SHORT"){
 
     // cancel chase
     if(price < zoneLow - chaseLimit){
-
-        activeTrades.splice(i,1)
+        removeTrade(i, t, "CANCEL_CHASE")
 
         await trades.updateOne(
             {
@@ -3010,8 +3033,7 @@ if(diff < minDiff){
         { symbol:t.symbol, createdAt:t.createdAt },
         { $set:{ result:"SL_TOO_CLOSE" } }
     )
-
-    activeTrades.splice(i,1)
+    removeTrade(i, t, "SL_TOO_CLOSE")
 
     continue
 }
@@ -3046,7 +3068,7 @@ if(qty * t.entry > maxNotional){
         { $set:{ result:"POSITION_TOO_BIG" } }
     )
 
-    activeTrades.splice(i,1)
+    removeTrade(i, t, "POSITION_TOO_BIG")
 
     continue
 }
@@ -3066,7 +3088,7 @@ if(qty * t.entry > maxNotional){
         }
     )
 
-    activeTrades.splice(i,1)
+    removeTrade(i, t, "RISK_TOO_HIGH")
 
     continue
 }
@@ -3177,13 +3199,14 @@ if(
         }
     )
 
-    activeTrades.splice(i,1)
+    removeTrade(i, t, "INVALID_DIFF")
 
     continue
 }
 
     if(qty < minQty){
         console.log(`❌ QTY < MIN_QTY ${t.symbol}`)
+        removeTrade(i, t, "QTY_TOO_SMALL")
         continue
     }
 
@@ -3247,7 +3270,7 @@ if(!lock){
             }
         }
     )
-    activeTrades.splice(i,1)
+    removeTrade(i, t, "POSITION_EXISTS")
     continue
 }
     let existingPos = await hasPosition(t.symbol)
@@ -3288,7 +3311,7 @@ if(existingPos){
             }
         }
     )
-    activeTrades.splice(i,1)
+    removeTrade(i, t, "ORDER_FAIL")
     continue
 }
 
@@ -3358,8 +3381,7 @@ await trades.updateOne(
         }
     }
 )
-
-activeTrades.splice(i,1)
+removeTrade(i, t, "FORCE_CLOSED")
         await new Promise(r => setTimeout(r, 2000))
 
 let positionsAfter = await binance.futuresPositionRisk({
@@ -3394,7 +3416,7 @@ TPSL chưa tồn tại`
         }
     }
 )
-    activeTrades.splice(i,1)
+    removeTrade(i, t, "AUTO_CLEAR_NO_POSITION")
     continue
 }
 } else {
@@ -3465,9 +3487,7 @@ ${t.side}`
     )
 
     delete TPSL_CONFIRMED[t.symbol]
-
-    activeTrades.splice(i,1)
-
+    removeTrade(i, t, "TIMEOUT_CLOSED")
     continue
 }
 let positions = await binance.futuresPositionRisk({
@@ -3492,9 +3512,7 @@ if(!stillOpen){
             }
         }
     )
-
-    activeTrades.splice(i,1)
-
+    removeTrade(i, t, "AUTO_CLEAR_NO_POSITION")
     continue
 }
 if(done){
@@ -3517,8 +3535,7 @@ ${win ? "✅ WIN" : "❌ LOSS"}
 💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
 
     )
-    
-    activeTrades.splice(i,1)
+    removeTrade(i, t, win ? "WIN" : "LOSS")
     continue
 }
             }catch(e){
