@@ -3020,7 +3020,7 @@ if(
     }
 )
 
-if(!lock.value){
+if(!lock || !lock.value){
     console.log(`⛔ LOCKED ${t.symbol}`)
     continue
 }
