@@ -4,7 +4,6 @@ let TPSL_PENDING = {}
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
 let TPSL_CONFIRMED = {}
-let ACTIVE_SYMBOLS = new Set()
 const fs = require("fs")
 
 const PID_FILE = "./bot.pid"
@@ -37,27 +36,6 @@ const agent = new https.Agent({
     maxFreeSockets: 5,
     timeout: 15000
 })
-function removeTrade(i, t, reason){
-    if(t?.symbol){
-        ACTIVE_SYMBOLS.delete(t.symbol)
-    }
-
-    if(i !== null && i !== undefined && i >= 0){
-        activeTrades.splice(i,1)
-    }
-
-    if(t){
-        trades.updateOne(
-            {
-                symbol: t.symbol,
-                createdAt: t.createdAt
-            },
-            {
-                $set: { result: reason }
-            }
-        )
-    }
-}
 async function safeFetch(url, options = {}, retry = 3){
     for(let i = 0; i < retry; i++){
         let timeout
@@ -1085,31 +1063,6 @@ if(
         delete TPSL_LOCKS[symbol]
     }
 }
-function getPending(){
-    return activeTrades.filter(t => t.waitingEntry)
-}
-
-function getActive(){
-    return activeTrades.filter(t =>
-        t.waitingEntry === false &&
-        t.result === "PENDING"
-    )
-}
-
-async function getDone(){
-    return await trades.countDocuments({
-        result: { $in: ["WIN", "LOSS", "TIMEOUT_CLOSED", "FORCE_CLOSED", "CANCEL_ENTRY", "SL_TOO_CLOSE"] }
-    })
-}
-
-// DB
-async function getWin(){
-    return await trades.countDocuments({ result: "WIN" })
-}
-
-async function getLoss(){
-    return await trades.countDocuments({ result: "LOSS" })
-}
 // ================= COMMAND =================
 let checkingCmd = false
 
@@ -1140,169 +1093,14 @@ TELEGRAM_LOCK = Date.now()
         let data = await res.json()
         if(!data.result) return
 
-        for (let u of data.result) {
+        for(let u of data.result){
+            lastUpdateId = u.update_id
 
-    lastUpdateId = u.update_id
-    let text = u.message?.text?.trim()
-
-    if (!text) continue
-
-    // ================= STATUS =================
-    if (text === "/status") {
-        await sendTelegram("🤖 BOT OK")
-        continue
-    }
-
-    // ================= BALANCE =================
-    if (text === "/balance") {
-        let bal = await updateBalance()
-        await sendTelegram(`💰 BALANCE: ${bal.toFixed(2)} USDT`)
-        continue
-    }
-
-    // ================= PENDING =================
-    if (text === "/pending") {
-
-        let pending = getPending()
-
-        if (pending.length === 0) {
-            await sendTelegram("🟢 Không có lệnh chờ entry")
-            continue
-        }
-
-        let msg = `🟢 PENDING: ${pending.length}\n`
-
-        for (let t of pending.slice(0, 20)) {
-            msg += `\n${t.symbol} ${t.side}
-ZONE: ${t.entryZoneLow?.toFixed(4)} - ${t.entryZoneHigh?.toFixed(4)}`
-        }
-
-        await sendTelegram(msg)
-        continue
-    }
-
-    // ================= POSITION =================
-    if (text === "/position") {
-
-        try {
-            let positions = await binance.futuresPositionRisk({
-                recvWindow: 20000
-            })
-
-            let opened = positions.filter(p =>
-                Math.abs(Number(p.positionAmt)) > 0
-            )
-
-            if (opened.length === 0) {
-                await sendTelegram("🟢 Không có position")
-                continue
+            if(u.message?.text === "/status"){
+                await sendTelegram("🤖 BOT OK")
             }
-
-            let msg = `🟢 POSITIONS: ${opened.length}\n`
-
-            for (let p of opened) {
-                let amt = Number(p.positionAmt)
-                let pnl = Number(p.unRealizedProfit)
-
-                msg += `\n${p.symbol}
-${amt > 0 ? "LONG" : "SHORT"}
-Qty: ${Math.abs(amt)}
-Entry: ${Number(p.entryPrice)}
-PnL: ${pnl.toFixed(2)} USDT`
-            }
-
-            await sendTelegram(msg)
-
-        } catch (e) {
-            await sendTelegram("❌ POSITION ERROR")
         }
 
-        continue
-    }
-
-    // ================= WINRATE =================
-    if (text === "/winrate") {
-
-        let wins = await getWin()
-        let losses = await getLoss()
-
-        let total = wins + losses
-
-        let wr = total > 0
-            ? ((wins / total) * 100).toFixed(1)
-            : "0.0"
-
-        await sendTelegram(
-`📊 WINRATE
-
-✅ WIN: ${wins}
-❌ LOSS: ${losses}
-🎯 WR: ${wr}%`
-        )
-
-        continue
-    }
-
-    // ================= ACTIVE =================
-    if (text === "/active") {
-
-        let active = getActive()
-
-        if (active.length === 0) {
-            await sendTelegram("📭 Không có active trades")
-            continue
-        }
-
-        let msg = `📌 ACTIVE: ${active.length}\n`
-
-        for (let t of active.slice(0, 20)) {
-            msg += `\n${t.symbol}
-${t.side}
-${t.waitingEntry ? "🟡 WAIT ENTRY" : "🟢 LIVE"}`
-        }
-
-        await sendTelegram(msg)
-        continue
-    }
-
-    // ================= HEALTH =================
-    if (text === "/health") {
-
-        let ram = process.memoryUsage().rss / 1024 / 1024
-
-        let pending = getPending()
-        let active = getActive()
-        let done = getDone()
-
-        await sendTelegram(
-`🤖 BOT HEALTH
-
-💾 RAM: ${ram.toFixed(0)} MB
-📦 ActiveTrades: ${activeTrades.length}
-🟡 Pending: ${pending.length}
-🟢 Active: ${active.length}
-🔴 Done: ${done.length}
-💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
-        )
-
-        continue
-    }
-
-    // ================= CLEAR =================
-    if (text === "/clear") {
-
-        TPSL_LOCKS = {}
-        TPSL_PENDING = {}
-        TPSL_GLOBAL_LOCK = {}
-        TPSL_CONFIRMED = {}
-        DATA_FAILS = {}
-        WATCHDOG_LOCKS = {}
-
-        await sendTelegram("🧹 CLEARED ALL CACHE")
-
-        continue
-    }
-}
     }catch(e){
         console.log("CMD ERROR:", e.message)
 
@@ -2598,21 +2396,11 @@ if(!realPos){
 
     continue
 }
-if (ACTIVE_SYMBOLS.has(best.symbol)) {
-    console.log("SKIP DUP:", best.symbol)
-    return
-}
+activeTrades.push(trade)
 
-ACTIVE_SYMBOLS.add(best.symbol)
-activeTrades.push(best)
-
-// chống leak queue
-if(activeTrades.length > 50){
-    let old = activeTrades.shift()
-    if(old?.symbol){
-        ACTIVE_SYMBOLS.delete(old.symbol)
+    if(activeTrades.length > 50){
+        activeTrades.shift()
     }
-}
 
 let realQty = Math.abs(Number(realPos.positionAmt))
 
@@ -2735,7 +2523,7 @@ async function checkTrades(){
 
             let t = activeTrades[i]
             if(t.result !== "PENDING"){
-                removeTrade(i, t, "PENDING")
+    activeTrades.splice(i,1)
     continue
 }
 
@@ -2782,7 +2570,8 @@ let maxDrift = Math.max(0.015, t.atr / t.entryZoneMid * 2.5)
 if(drift > maxDrift){
 
     console.log(`⛔ SKIP ENTRY (too far) ${t.symbol}`)
-    removeTrade(i, t, "MISSED_ENTRY")
+
+    activeTrades.splice(i,1)
 
     await trades.updateOne(
         { symbol: t.symbol, createdAt: t.createdAt },
@@ -2807,7 +2596,8 @@ if(drift > maxDrift){
 ${t.side}
 ❌ Không khớp entry `
     )
-    removeTrade(i, t, "CANCEL_ENTRY")
+
+    activeTrades.splice(i,1)
     continue
 }
 
@@ -2882,7 +2672,8 @@ if(t.side === "LONG"){
 
     // cancel chase
     if(price > zoneHigh + chaseLimit){
-        removeTrade(i, t, "CANCEL_CHASE")
+
+        activeTrades.splice(i,1)
 
         await trades.updateOne(
             {
@@ -2943,7 +2734,8 @@ if(t.side === "SHORT"){
 
     // cancel chase
     if(price < zoneLow - chaseLimit){
-        removeTrade(i, t, "CANCEL_CHASE")
+
+        activeTrades.splice(i,1)
 
         await trades.updateOne(
             {
@@ -3033,7 +2825,8 @@ if(diff < minDiff){
         { symbol:t.symbol, createdAt:t.createdAt },
         { $set:{ result:"SL_TOO_CLOSE" } }
     )
-    removeTrade(i, t, "SL_TOO_CLOSE")
+
+    activeTrades.splice(i,1)
 
     continue
 }
@@ -3068,7 +2861,7 @@ if(qty * t.entry > maxNotional){
         { $set:{ result:"POSITION_TOO_BIG" } }
     )
 
-    removeTrade(i, t, "POSITION_TOO_BIG")
+    activeTrades.splice(i,1)
 
     continue
 }
@@ -3088,7 +2881,7 @@ if(qty * t.entry > maxNotional){
         }
     )
 
-    removeTrade(i, t, "RISK_TOO_HIGH")
+    activeTrades.splice(i,1)
 
     continue
 }
@@ -3199,14 +2992,13 @@ if(
         }
     )
 
-    removeTrade(i, t, "INVALID_DIFF")
+    activeTrades.splice(i,1)
 
     continue
 }
 
     if(qty < minQty){
         console.log(`❌ QTY < MIN_QTY ${t.symbol}`)
-        removeTrade(i, t, "QTY_TOO_SMALL")
         continue
     }
 
@@ -3270,7 +3062,7 @@ if(!lock){
             }
         }
     )
-    removeTrade(i, t, "POSITION_EXISTS")
+    activeTrades.splice(i,1)
     continue
 }
     let existingPos = await hasPosition(t.symbol)
@@ -3311,7 +3103,7 @@ if(existingPos){
             }
         }
     )
-    removeTrade(i, t, "ORDER_FAIL")
+    activeTrades.splice(i,1)
     continue
 }
 
@@ -3381,7 +3173,8 @@ await trades.updateOne(
         }
     }
 )
-removeTrade(i, t, "FORCE_CLOSED")
+
+activeTrades.splice(i,1)
         await new Promise(r => setTimeout(r, 2000))
 
 let positionsAfter = await binance.futuresPositionRisk({
@@ -3416,7 +3209,7 @@ TPSL chưa tồn tại`
         }
     }
 )
-    removeTrade(i, t, "AUTO_CLEAR_NO_POSITION")
+    activeTrades.splice(i,1)
     continue
 }
 } else {
@@ -3487,7 +3280,9 @@ ${t.side}`
     )
 
     delete TPSL_CONFIRMED[t.symbol]
-    removeTrade(i, t, "TIMEOUT_CLOSED")
+
+    activeTrades.splice(i,1)
+
     continue
 }
 let positions = await binance.futuresPositionRisk({
@@ -3512,7 +3307,9 @@ if(!stillOpen){
             }
         }
     )
-    removeTrade(i, t, "AUTO_CLEAR_NO_POSITION")
+
+    activeTrades.splice(i,1)
+
     continue
 }
 if(done){
@@ -3535,7 +3332,8 @@ ${win ? "✅ WIN" : "❌ LOSS"}
 💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
 
     )
-    removeTrade(i, t, win ? "WIN" : "LOSS")
+    
+    activeTrades.splice(i,1)
     continue
 }
             }catch(e){
