@@ -2607,13 +2607,14 @@ let zoneLow  = t.entryZoneLow
 let zoneHigh = t.entryZoneHigh
 
 // 🔥 entry cực thoáng
-buffer = t.atr * (0.7 + atrRatio * 3)
+let buffer = t.atr * 0.8
+//buffer = t.atr * (0.7 + atrRatio * 3)
 //let buffer = t.atr * (1.0 + atrRatio * 5)
 buffer = Math.min(buffer, t.atr * 4)
 
 // 🔥 cho chase breakout
 //let breakoutBuffer = t.atr * 2.2
-let breakoutBuffer = t.atr * 1.0
+let breakoutBuffer = t.atr * 0.5
 
 // 🔥 cancel xa hơn
 //let chaseLimit = t.atr * 6
@@ -3035,17 +3036,25 @@ if(!lock || !lock.value){
     )
 
     if(hasPos){
-
-        console.log(`⛔ POSITION EXISTS ${t.symbol}`)
-
-        await trades.updateOne(
-            { symbol: t.symbol, createdAt: t.createdAt },
-            { $set: { result: "POSITION_EXISTS" } }
-        )
-
-        activeTrades.splice(i,1)
-        continue
-    }
+    console.log(`⛔ POSITION EXISTS ${t.symbol}`)
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $set:{
+                result:"POSITION_EXISTS"
+            },
+            // 🔥 UNLOCK
+            $unset:{
+                opening:""
+            }
+        }
+    )
+    activeTrades.splice(i,1)
+    continue
+}
     let existingPos = await hasPosition(t.symbol)
 
 if(existingPos){
@@ -3058,17 +3067,25 @@ if(existingPos){
     let order = await openPosition(t.symbol, t.side, qty)
 
     if(!order){
-
-        console.log("❌ ORDER FAIL")
-
-        await trades.updateOne(
-            { symbol: t.symbol, createdAt: t.createdAt },
-            { $set: { result: "ORDER_FAIL" } }
-        )
-
-        activeTrades.splice(i,1)
-        continue
-    }
+    console.log("❌ ORDER FAIL")
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $set:{
+                result:"ORDER_FAIL"
+            },
+            // 🔥 UNLOCK
+            $unset:{
+                opening:""
+            }
+        }
+    )
+    activeTrades.splice(i,1)
+    continue
+}
 
     await new Promise(r => setTimeout(r, 1500))
 
@@ -3150,19 +3167,21 @@ TPSL chưa tồn tại`
 }
 
     await trades.updateOne(
-        {
-            symbol: t.symbol,
-            createdAt: t.createdAt
+    {
+        symbol: t.symbol,
+        createdAt: t.createdAt
+    },
+    {
+        $set:{
+            result:"TPSL_FAIL"
         },
-        {
-            $set: {
-                result: "TPSL_FAIL"
-            }
+        // 🔥 UNLOCK
+        $unset:{
+            opening:""
         }
-    )
-
+    }
+)
     activeTrades.splice(i,1)
-
     continue
 }
 } else {
@@ -3738,6 +3757,15 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         trades = db.collection("trades")
 
         console.log("✅ MongoDB connected")
+        // 🔥 CLEAR DEAD LOCK
+await trades.updateMany(
+    { opening:true },
+    {
+        $unset:{ opening:"" }
+    }
+)
+
+console.log("✅ DEAD LOCK CLEARED")
 /////////////////
         await trades.updateMany(
     {
