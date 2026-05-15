@@ -1101,6 +1101,13 @@ TELEGRAM_LOCK = Date.now()
     if(text === "/status"){
         await sendTelegram("🤖 BOT OK")
     }
+    // ===== BALANCE =====
+    if(text === "/balance"){
+        let bal = await updateBalance()
+        await sendTelegram(
+`💰 BALANCE: ${bal.toFixed(2)} USDT`
+        )
+    }
     // ===== PENDING ENTRY =====
     if(text === "/pending"){
         let pending = activeTrades.filter(t =>
@@ -1158,15 +1165,83 @@ PnL: ${pnl.toFixed(2)} USDT`
             )
         }
     }
-    // ===== BALANCE =====
-    if(text === "/balance"){
-        let bal = await updateBalance()
+    // ===== WINRATE =====
+    if(text === "/winrate"){
+        let wins = await trades.countDocuments({
+            result:"WIN"
+        })
+        let losses = await trades.countDocuments({
+            result:"LOSS"
+        })
+        let total = wins + losses
+        let wr = total > 0
+            ? ((wins / total) * 100).toFixed(1)
+            : 0
         await sendTelegram(
-`💰 BALANCE: ${bal.toFixed(2)} USDT`
+`📊 WINRATE
+✅ WIN: ${wins}
+❌ LOSS: ${losses}
+🎯 WR: ${wr}%`
+        )
+    }
+    // ===== ACTIVE =====
+    if(text === "/active"){
+        if(activeTrades.length === 0){
+            await sendTelegram(
+                "📭 activeTrades rỗng"
+            )
+            continue
+        }
+        let msg =
+`📌 ACTIVE TRADES: ${activeTrades.length}\n`
+        for(let t of activeTrades.slice(0,20)){
+            msg +=
+`\n${t.symbol}
+${t.side}
+${t.waitingEntry ? "🟡 WAIT ENTRY" : "🟢 ENTERED"}`
+        }
+        await sendTelegram(msg)
+    }
+    // ===== HEALTH =====
+    if(text === "/health"){
+        let ram =
+            process.memoryUsage().rss / 1024 / 1024
+        let locks =
+            Object.keys(TPSL_LOCKS).length
+        let pendingTPSL =
+            Object.keys(TPSL_PENDING).length
+        let confirmed =
+            Object.keys(TPSL_CONFIRMED).length
+        await sendTelegram(
+`🤖 BOT HEALTH
+💾 RAM: ${ram.toFixed(0)} MB
+📌 ActiveTrades: ${activeTrades.length}
+🔒 TPSL Locks: ${locks}
+⏳ TPSL Pending: ${pendingTPSL}
+✅ TPSL Confirmed: ${confirmed}
+🕒 Time Offset:
+${serverTimeOffset} ms
+💰 Balance:
+${ACCOUNT_BALANCE.toFixed(2)} USDT`
+        )
+    }
+    // ===== CLEAR CACHE =====
+    if(text === "/clear"){
+        TPSL_LOCKS = {}
+        TPSL_PENDING = {}
+        TPSL_GLOBAL_LOCK = {}
+        TPSL_CONFIRMED = {}
+        WATCHDOG_LOCKS = {}
+        DATA_FAILS = {}
+        await sendTelegram(
+`🧹 CACHE CLEARED
+✅ TPSL_LOCKS
+✅ TPSL_PENDING
+✅ TPSL_CONFIRMED
+✅ DATA_FAILS`
         )
     }
 }
-
     }catch(e){
         console.log("CMD ERROR:", e.message)
 
