@@ -1228,12 +1228,26 @@ async function getTopSymbols(){
     .filter(c =>
         Number(c.quoteVolume) > 3_000_000
     )
-    // 🔥 3. SORT theo “độ sắp chạy”
-    .sort((a, b) =>
-        Math.abs(Number(b.priceChangePercent)) -
-        Math.abs(Number(a.priceChangePercent))
-    )
-    .slice(0, 30)
+    // 🔥 3. SORT
+    .sort((a,b)=>{
+
+    let volScore = 
+        Number(b.quoteVolume) -
+        Number(a.quoteVolume)
+
+    let moveA = Math.abs(Number(a.priceChangePercent))
+    let moveB = Math.abs(Number(b.priceChangePercent))
+
+    // ưu tiên move vừa phải
+    let moveScore = Math.abs(moveA - 3) - Math.abs(moveB - 3)
+
+    return volScore * 0.7 + moveScore * 0.3
+})
+    //.sort((a, b) =>
+        //Math.abs(Number(b.priceChangePercent)) -
+        //Math.abs(Number(a.priceChangePercent))
+    //)
+    .slice(0, 50)
 .map(c => c.symbol)
 .filter(s =>
     validFuturesSymbols &&
@@ -1326,8 +1340,8 @@ async function coreLogic(data15, data1h){
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-if(Math.abs(lastMove) > 0.035){
-    score -= 20
+if(Math.abs(lastMove) > 0.025){
+    score -= 15
 }
     
    let last30 = volumes.slice(-30)
@@ -1508,6 +1522,18 @@ if(spikeCandle > 0.035){ // nến trước >3.5%
     let lowerHigh = highs.at(-2) < highs.at(-5)
 
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
+    // ===== HEALTHY PULLBACK =====
+let healthyPullbackLong =
+    trendLong &&
+    lows.at(-2) <= ema20 &&
+    closes.at(-1) > ema20 &&
+    higherLow
+
+let healthyPullbackShort =
+    trendShort &&
+    highs.at(-2) >= ema20 &&
+    closes.at(-1) < ema20 &&
+    lowerHigh
     
     // ===== TREND FILTER =====
     let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
@@ -1647,7 +1673,7 @@ let recentPullbackShort =
     momentumUp &&
     distFromEma < 0.018
 ){
-    score += 35
+    score += 20
     setupType = "BREAKOUT"
 }
 
@@ -1659,38 +1685,29 @@ if(
     momentumDown &&
     distFromEma > -0.018
 ){
-    score += 35
+    score += 20
     setupType = "BREAKOUT"
 }
-    //if(side==="LONG" && bosUp){
-       // score += 40
-       // setupType = "BREAKOUT"
-   // }
 
-   // if(side==="SHORT" && bosDown){
-      //  score += 40
-       // setupType = "BREAKOUT"
-    //}
-
-    if(side==="LONG" && nearEma){
-        score += 35
-        if(!setupType) setupType = "PULLBACK"
+    // ===== HEALTHY PULLBACK =====
+if(side==="LONG" && healthyPullbackLong){
+    score += 45
+    if(volNowUSDT > volAvgUSDT * 1.1){
+        score += 10
     }
-
-    if(side==="SHORT" && nearEma){
-        score += 35
-        if(!setupType) setupType = "PULLBACK"
+    if(!setupType){
+        setupType = "PULLBACK"
     }
-    // ❌ không có hồi → không short
-//if(side === "SHORT"){
-    //let pulledBack = highs.at(-2) > highs.at(-4)
-   // if(!pulledBack) score -= 10
-//}
-
-//if(side === "LONG"){
-   // let pulledBack = lows.at(-2) < lows.at(-4)
-   // if(!pulledBack) score -= 10
-//}
+}
+if(side==="SHORT" && healthyPullbackShort){
+    score += 45
+    if(volNowUSDT > volAvgUSDT * 1.1){
+        score += 10
+    }
+    if(!setupType){
+        setupType = "PULLBACK"
+    }
+}
 
     if(side==="LONG" && sweepLow) score+=35
     if(side==="SHORT" && sweepHigh) score+=35
@@ -2163,10 +2180,10 @@ risk = Math.max(risk, ACCOUNT_BALANCE * 0.005)
     let zoneWidth = best.atr * 0.35
 
     //let instantEntry = best.setup === "BREAKOUT"
-    //let instantEntry = false
-    let instantEntry =
-    best.setup === "BREAKOUT" &&
-    best.marketState === "TREND_STRONG"
+    let instantEntry = false
+    //let instantEntry =
+   // best.setup === "BREAKOUT" &&
+    //best.marketState === "TREND_STRONG"
 
 let trade = {
     symbol: best.symbol,
