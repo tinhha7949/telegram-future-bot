@@ -720,32 +720,16 @@ if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
         existed:true
     }
 }
+// ===== KHÔNG HỦY TPSL THẬT =====
+if(hasSL || hasTP){
 
-        // ===== CANCEL ONLY WRONG ORDERS =====
-        for(let o of openOrders){
+    console.log(`🛡 KEEP EXISTING TPSL ${symbol}`)
 
-            if(
-                o.side === closeSide &&
-                (
-                    o.type === "STOP_MARKET" ||
-                    o.type === "TAKE_PROFIT_MARKET"
-                )
-            ){
-
-                try{
-                    await binance.futuresCancelOrder({
-                        symbol,
-                        recvWindow: 20000,
-                        orderId:o.orderId,
-                    })
-                }catch(e){}
-            }
-        }
-
-        await new Promise(r =>
-            setTimeout(r, 2000)
-        )
-
+    return {
+        ok:true,
+        existed:true
+    }
+}
         // ===== SYMBOL INFO =====
         let info = await getSymbolInfo(symbol)
 
