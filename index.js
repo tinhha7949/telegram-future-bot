@@ -951,34 +951,71 @@ let finalTP = verify.find(o =>
     }
 }
 async function safeSetTPSL(symbol, side, tp, sl){
+
+    // ===== VERIFY REAL TPSL =====
     if(TPSL_CONFIRMED[symbol]){
 
-    try{
-        let posCheck = await binance.futuresPositionRisk({
-            recvWindow: 20000
-        })
+        try{
+            let verifyOrders =
+                await binance.futuresOpenOrders({
+                    symbol,
+                    recvWindow: 20000
+                })
 
-        let pos = posCheck.find(p =>
-            p.symbol === symbol &&
-            Math.abs(Number(p.positionAmt)) > 0
-        )
+            let posCheck =
+                await binance.futuresPositionRisk({
+                    recvWindow: 20000
+                })
+            let pos = posCheck.find(p =>
+                p.symbol === symbol &&
+                Math.abs(Number(p.positionAmt)) > 0
+            )
+            // không còn position
+            if(!pos){
+                delete TPSL_CONFIRMED[symbol]
+            }else{
+                let closeSide =
+                    Number(pos.positionAmt) > 0
+                        ? "SELL"
+                        : "BUY"
 
-        // nếu không còn position → reset state
-        if(!pos){
-            delete TPSL_CONFIRMED[symbol]
-        }else{
-            return {
-                ok:true,
-                existed:true
+                let hasSL = verifyOrders.find(o =>
+                    (
+                        o.type === "STOP_MARKET" ||
+                        o.type === "STOP"
+                    ) &&
+                    o.side === closeSide &&
+                    (
+                        o.closePosition === true ||
+                        String(o.closePosition) === "true"
+                    )
+                )
+                let hasTP = verifyOrders.find(o =>
+                    (
+                        o.type === "TAKE_PROFIT_MARKET" ||
+                        o.type === "TAKE_PROFIT"
+                    ) &&
+                    o.side === closeSide &&
+                    (
+                        o.closePosition === true ||
+                        String(o.closePosition) === "true"
+                    )
+                )
+                // TPSL thật sự tồn tại
+                if(hasSL && hasTP){
+                    return {
+                        ok:true,
+                        existed:true
+                    }
+                }
+                // cache sai
+                delete TPSL_CONFIRMED[symbol]
             }
+        }catch(e){
+
+            delete TPSL_CONFIRMED[symbol]
         }
-
-    }catch(e){
-        // nếu lỗi API → không tin cache
-        delete TPSL_CONFIRMED[symbol]
     }
-}
-
    if(
     TPSL_LOCKS[symbol] ||
     TPSL_PENDING[symbol] ||
@@ -3711,17 +3748,56 @@ async function watchdogTPSL(){
 })
         for(let p of positions){
             let symbol = p.symbol
-            if(TPSL_CONFIRMED[symbol]){
+            let amt = Math.abs(Number(p.positionAmt))
+// ❌ KHÔNG CÓ POSITION → BỎ QUA
+if(amt <= 0){
+    delete TPSL_CONFIRMED[symbol]
+    delete TPSL_MISSING[symbol]
     continue
 }
+            // ===== VERIFY REAL TPSL =====
+let existingOrders =
+    await binance.futuresOpenOrders({
+        symbol,
+        recvWindow: 20000
+    })
+let closeSide =
+    Number(p.positionAmt) > 0
+        ? "SELL"
+        : "BUY"
+let realSL = existingOrders.find(o =>
+    (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
+    o.side === closeSide &&
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
+)
+let realTP = existingOrders.find(o =>
+    (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
+    o.side === closeSide &&
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
+)
+// có thật trên Binance
+if(realSL && realTP){
+    TPSL_CONFIRMED[symbol] = true
+    delete TPSL_MISSING[symbol]
+    continue
+}
+// cache sai -> reset
+delete TPSL_CONFIRMED[symbol]
              if(TPSL_LOCKS[symbol]){
     continue
 }
-            let amt = Math.abs(Number(p.positionAmt))
-            if(amt <= 0){
-                continue
-            }
-            
             // 🔒 LOCK THEO SYMBOL
             if(WATCHDOG_LOCKS[symbol]){
                 continue
