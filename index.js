@@ -701,13 +701,19 @@ async function setTPSL(symbol, side, tp, sl){
         let hasSL = openOrders.find(o =>
             o.type === "STOP_MARKET" &&
             o.side === closeSide &&
-            String(o.closePosition) === "true"
+            (
+    o.closePosition === true ||
+    String(o.closePosition) === "true"
+)
         )
 
         let hasTP = openOrders.find(o =>
             o.type === "TAKE_PROFIT_MARKET" &&
             o.side === closeSide &&
-            String(o.closePosition) === "true"
+            (
+    o.closePosition === true ||
+    String(o.closePosition) === "true"
+)
         )
 
         // ===== ĐỦ TPSL =====
@@ -931,7 +937,10 @@ try{
         o.type === "STOP"
     ) &&
     o.side === closeSide &&
-    String(o.closePosition) === "true"
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
 )
 let finalTP = verify.find(o =>
     (
@@ -939,7 +948,10 @@ let finalTP = verify.find(o =>
         o.type === "TAKE_PROFIT"
     ) &&
     o.side === closeSide &&
-    String(o.closePosition) === "true"
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
 )
             if(
     (finalSL || slAlreadyExists) &&
