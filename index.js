@@ -720,15 +720,43 @@ if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
         existed:true
     }
 }
-// ===== KHÔNG HỦY TPSL THẬT =====
-if(hasSL || hasTP){
+// ===== ĐỦ CẢ 2 =====
+if(hasSL && hasTP){
 
-    console.log(`🛡 KEEP EXISTING TPSL ${symbol}`)
+    TPSL_CONFIRMED[symbol] = Date.now()
 
     return {
         ok:true,
         existed:true
     }
+}
+
+// ===== PARTIAL TPSL =====
+if(hasSL || hasTP){
+    console.log(`⚠️ PARTIAL TPSL ${symbol}`)
+    // hủy phần còn sót
+    for(let o of openOrders){
+        if(
+            o.side === closeSide &&
+            (
+                o.type === "STOP_MARKET" ||
+                o.type === "TAKE_PROFIT_MARKET" ||
+                o.type === "STOP" ||
+                o.type === "TAKE_PROFIT"
+            )
+        ){
+            try{
+                await binance.futuresCancelOrder({
+                    symbol,
+                    recvWindow: 20000,
+                    orderId:o.orderId
+                })
+            }catch(e){}
+        }
+    }
+    await new Promise(r =>
+        setTimeout(r, 1500)
+    )
 }
         // ===== SYMBOL INFO =====
         let info = await getSymbolInfo(symbol)
