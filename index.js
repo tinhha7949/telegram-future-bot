@@ -3863,89 +3863,43 @@ let hasTP = orders.find(
             String(o.closePosition) === "true"
         )
 )
-                // ✅ ĐỦ TPSL
-                if(hasSL && hasTP){
-                    delete TPSL_MISSING[symbol]
-                    TPSL_CONFIRMED[symbol] = true
-                    continue
-                }
-                // ===== BINANCE CHƯA SYNC ĐỦ =====
-// ===== PARTIAL TPSL =====
-if(hasSL || hasTP){
+                // ===== TPSL OK =====
+if(hasSL && hasTP){
 
-    console.log(`⚠️ PARTIAL TPSL ${symbol}`)
-
-    // chờ ngắn cho Binance sync
-    await new Promise(r =>
-        setTimeout(r, 5000)
-    )
-
-    let verify =
-        await binance.futuresOpenOrders({
-            symbol,
-            recvWindow: 20000
-        })
-
-    let verifySL = verify.find(o =>
-    (
-        o.type === "STOP_MARKET" ||
-        o.type === "STOP"
-    ) &&
-    o.side === closeSide &&
-    (
-        o.closePosition === true ||
-        String(o.closePosition) === "true"
-    )
-)
-
-let verifyTP = verify.find(o =>
-    (
-        o.type === "TAKE_PROFIT_MARKET" ||
-        o.type === "TAKE_PROFIT"
-    ) &&
-    o.side === closeSide &&
-    (
-        o.closePosition === true ||
-        String(o.closePosition) === "true"
-    )
-)
-
-    // vẫn thiếu -> recreate
-    if(!(verifySL && verifyTP)){
-
-        console.log(`🚨 REBUILD TPSL ${symbol}`)
-
-        await cancelTPSLOrders(symbol)
-
-        let trade = activeTrades.find(
-            x => x.symbol === symbol
-        )
-
-        if(trade){
-
-            await safeSetTPSL(
-                symbol,
-                trade.side,
-                trade.tp,
-                trade.sl
-            )
-        }
-    }
+    TPSL_CONFIRMED[symbol] = true
+    delete TPSL_MISSING[symbol]
 
     continue
 }
 
-// ===== MARK MISSING =====
+// ===== FIRST MISS =====
 if(!TPSL_MISSING[symbol]){
+
     TPSL_MISSING[symbol] = Date.now()
+
+    console.log(`⚠️ TPSL MISS ${symbol}`)
+
+    continue
 }
-// ===== CHỜ 30s =====
-let missingFor =
+
+// ===== WAIT BINANCE SYNC =====
+let missTime =
     Date.now() - TPSL_MISSING[symbol]
-// chỉ log nếu mất quá 30s
-if(missingFor > 30000){
-    console.log(`🚨 NO TPSL ${symbol}`)
+
+// Binance đôi lúc trả snapshot thiếu
+// chờ đủ lâu mới xử lý thật
+if(missTime < 60000){
+
+    console.log(
+        `⏳ WAIT TPSL SYNC ${symbol}`
+    )
+
+    continue
 }
+
+console.log(
+    `🚨 TPSL REALLY MISSING ${symbol}`
+)
                 let trade = activeTrades.find(
                     x => x.symbol === symbol
                 )
