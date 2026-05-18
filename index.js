@@ -3777,8 +3777,6 @@ if(realSL && realTP){
     delete TPSL_MISSING[symbol]
     continue
 }
-// cache sai -> reset
-delete TPSL_CONFIRMED[symbol]
              if(TPSL_LOCKS[symbol]){
     continue
 }
@@ -3901,8 +3899,11 @@ let verifyTP = verify.find(o =>
 if(!TPSL_MISSING[symbol]){
     TPSL_MISSING[symbol] = Date.now()
 }
-
-if(!TPSL_CONFIRMED[symbol]){
+// ===== CHỜ 30s =====
+let missingFor =
+    Date.now() - TPSL_MISSING[symbol]
+// chỉ log nếu mất quá 30s
+if(missingFor > 30000){
     console.log(`🚨 NO TPSL ${symbol}`)
 }
                 let trade = activeTrades.find(
