@@ -803,61 +803,38 @@ if(
         let slAlreadyExists = false
         let tpAlreadyExists = false
         // ===== CREATE SL =====
-try{
+if(!hasSL){
 
-    let slOrder = await binance.futuresOrder({
+    try{
 
-        symbol,
-        recvWindow: 20000,
-        side: closeSide,
-        type: "STOP_MARKET",
-        stopPrice: sl,
-        closePosition: true,
-        workingType: "MARK_PRICE",
-        priceProtect: true
-    })
-    if(slOrder?.orderId){
-    slAlreadyExists = true
-}
+        let slOrder = await binance.futuresOrder({
+            symbol,
+            recvWindow: 20000,
+            side: closeSide,
+            type: "STOP_MARKET",
+            stopPrice: sl,
+            closePosition: true,
+            workingType: "MARK_PRICE",
+            priceProtect: true
+        })
 
-}catch(e){
+    }catch(e){
 
-    const msg = String(e.message || e)
+        const msg = String(e.message || e)
 
-    if(
-    msg.includes(
-        "closePosition in the direction is existing"
-    ) ||
+        if(
+            msg.includes("already exists") ||
+            msg.includes("closePosition in the direction is existing")
+        ){
 
-    msg.includes(
-        "already exists"
-    )
-){
-    
+            console.log(`⚠️ SL MAY EXIST ${symbol}`)
 
-        console.log(`⚠️ SL MAY EXIST ${symbol}`)
-         }
-    else if(
-        msg.includes(
-            "Order would immediately trigger"
-        )
-    ){
+        }else{
 
-        return {
-            ok:false,
-            error:"TPSL_TOO_CLOSE"
-        }
-
-        // KHÔNG set slAlreadyExists nữa
-        // để FINAL VERIFY kiểm tra thật
-
-    }else{
-
-        console.log("SL REAL ERROR:", msg)
-
-        return {
-            ok:false,
-            error:"SL_FAIL: " + msg
+            return {
+                ok:false,
+                error:"SL_FAIL: " + msg
+            }
         }
     }
 }
@@ -867,56 +844,38 @@ try{
         )
 
         // ===== CREATE TP =====
-try{
+if(!hasTP){
 
-    let tpOrder = await binance.futuresOrder({
-        symbol,
-        recvWindow: 20000,
-        side: closeSide,
-        type: "TAKE_PROFIT_MARKET",
-        stopPrice: tp,
-        closePosition: true,
-        workingType: "MARK_PRICE",
-        priceProtect: true
-    })
-    if(tpOrder?.orderId){
-    tpAlreadyExists = true
-}
+    try{
 
-}catch(e){
+        let tpOrder = await binance.futuresOrder({
+            symbol,
+            recvWindow: 20000,
+            side: closeSide,
+            type: "TAKE_PROFIT_MARKET",
+            stopPrice: tp,
+            closePosition: true,
+            workingType: "MARK_PRICE",
+            priceProtect: true
+        })
 
-    const msg = String(e.message || e)
+    }catch(e){
 
-    if(
-    msg.includes(
-        "closePosition in the direction is existing"
-    ) ||
+        const msg = String(e.message || e)
 
-    msg.includes(
-        "already exists"
-    )
-){
+        if(
+            msg.includes("already exists") ||
+            msg.includes("closePosition in the direction is existing")
+        ){
 
-        console.log(`⚠️ TP MAY EXIST ${symbol}`)
-         }
-    else if(
-        msg.includes(
-            "Order would immediately trigger"
-        )
-){
+            console.log(`⚠️ TP MAY EXIST ${symbol}`)
 
-    return {
-        ok:false,
-        error:"TPSL_TOO_CLOSE"
-    }
-}
-else{
+        }else{
 
-        console.log("TP REAL ERROR:", msg)
-
-        return {
-            ok:false,
-            error:"TP_FAIL: " + msg
+            return {
+                ok:false,
+                error:"TP_FAIL: " + msg
+            }
         }
     }
 }
