@@ -3004,6 +3004,9 @@ async function watchdogTPSL(){
     recvWindow: 20000
 })
         for(let p of positions){
+            if(Math.abs(Number(p.positionAmt)) <= 0){
+    continue
+}
             let symbol = p.symbol
            {
 
@@ -3029,6 +3032,7 @@ if(verified){
 }
 
     console.log(`🚨 FAKE TPSL CONFIRMED ${symbol}`)
+    TPSL_MISSING[symbol] = Date.now()
 
     
 }
