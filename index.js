@@ -4,6 +4,7 @@ let TPSL_PENDING = {}
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
 let TPSL_CONFIRMED = {}
+const OPENING_POSITIONS = {}
 const fs = require("fs")
 
 const PID_FILE = "./bot.pid"
@@ -212,7 +213,7 @@ const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
 const SCORE_THRESHOLD = 52 // 110
-const RR_THRESHOLD = 1.3 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 0.9 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.1  // 0.1 = 10% // 0.01 = 1% 
 const POSITION_SIZE_PERCENT = 0.15 // 0.05 5% vốn // 0.1 =10%
@@ -533,7 +534,7 @@ if(data.status !== "FILLED"){
 }
 async function waitPosition(symbol){
 
-    for(let i=0;i<20;i++){
+    for(let i=0;i<35;i++){
 
         let positions = await binance.futuresPositionRisk({
     recvWindow: 20000
@@ -561,7 +562,7 @@ async function cancelAllOrders(symbol){
             symbol,
             recvWindow: 20000
         })
-        for(let i=0;i<20;i++){
+        for(let i=0;i<35;i++){
 
     let openOrders =
         await binance.futuresOpenOrders({
@@ -608,7 +609,7 @@ async function cancelTPSLOrders(symbol){
             }
         }
         // ===== WAIT REAL CANCEL =====
-        for(let i=0;i<20;i++){
+        for(let i=0;i<35;i++){
             await new Promise(r =>
                 setTimeout(r, 1000)
             )
@@ -861,9 +862,10 @@ try{
 
     ){
 
-        console.log(`✅ SL EXISTS ${symbol}`)
+        console.log(`⚠️ SL MAY EXIST ${symbol}`)
 
-        slAlreadyExists = true
+        // KHÔNG set slAlreadyExists nữa
+        // để FINAL VERIFY kiểm tra thật
 
     }else{
 
@@ -921,9 +923,10 @@ try{
 
     ){
 
-        console.log(`✅ TP EXISTS ${symbol}`)
+        console.log(`⚠️ TP MAY EXIST ${symbol}`)
 
-        tpAlreadyExists = true
+        // KHÔNG set tpAlreadyExists nữa
+        // để FINAL VERIFY kiểm tra thật
 
     }else{
 
@@ -937,43 +940,67 @@ try{
 }
 
         // ===== FINAL VERIFY =====
-        for(let i=0;i<15;i++){
+        for(let i=0;i<25;i++){
 
     await new Promise(r =>
         setTimeout(r, 2000)
     )
 
-            let verify =
-                await binance.futuresOpenOrders({
-                    symbol,
-                    recvWindow: 20000
-                })
+    let verify =
+        await binance.futuresOpenOrders({
+            symbol,
+            recvWindow:20000
+        })
 
-            let finalSL = verify.find(o =>
-    (
-        o.type === "STOP_MARKET" ||
-        o.type === "STOP"
-    ) &&
-    o.side === closeSide &&
-    String(o.closePosition) === "true"
-)
-let finalTP = verify.find(o =>
-    (
-        o.type === "TAKE_PROFIT_MARKET" ||
-        o.type === "TAKE_PROFIT"
-    ) &&
-    o.side === closeSide &&
-    String(o.closePosition) === "true"
-)
-            if(
-    (finalSL || slAlreadyExists) &&
-    (finalTP || tpAlreadyExists)
-){
-                return {
-                    ok:true
-                }
-            }
+    let posCheck =
+        await binance.futuresPositionRisk({
+            recvWindow:20000
+        })
+
+    let verifyPos = posCheck.find(p =>
+        p.symbol === symbol &&
+        Math.abs(Number(p.positionAmt)) > 0
+    )
+
+    // position mất rồi
+    if(!verifyPos){
+
+        return {
+            ok:false,
+            error:"POSITION_CLOSED"
         }
+    }
+
+    let verifyCloseSide =
+        Number(verifyPos.positionAmt) > 0
+            ? "SELL"
+            : "BUY"
+
+    let finalSL = verify.find(o =>
+        (
+            o.type === "STOP_MARKET" ||
+            o.type === "STOP"
+        ) &&
+        o.side === verifyCloseSide &&
+        String(o.closePosition) === "true"
+    )
+
+    let finalTP = verify.find(o =>
+        (
+            o.type === "TAKE_PROFIT_MARKET" ||
+            o.type === "TAKE_PROFIT"
+        ) &&
+        o.side === verifyCloseSide &&
+        String(o.closePosition) === "true"
+    )
+
+    if(finalSL && finalTP){
+
+        return {
+            ok:true
+        }
+    }
+}
         return {
             ok:false,
             error:"TPSL_VERIFY_FAIL"
@@ -1045,12 +1072,74 @@ TPSL_PENDING[symbol] = true
 
             if(res && res.ok){
 
-    console.log(`✅ TPSL VERIFIED ${symbol}`)
-    TPSL_CONFIRMED[symbol] = true
+    // VERIFY REAL TPSL AGAIN
+    let verify = await binance.futuresOpenOrders({
+        symbol,
+        recvWindow:20000
+    })
 
-    return {
-        ok:true
+    let posCheck = await binance.futuresPositionRisk({
+        recvWindow:20000
+    })
+
+    let pos = posCheck.find(p =>
+        p.symbol === symbol &&
+        Math.abs(Number(p.positionAmt)) > 0
+    )
+
+    if(!pos){
+
+        return {
+            ok:false,
+            error:"POSITION_LOST"
+        }
     }
+
+    let closeSide =
+        Number(pos.positionAmt) > 0
+            ? "SELL"
+            : "BUY"
+
+    let finalSL = verify.find(o =>
+        (
+            o.type === "STOP_MARKET" ||
+            o.type === "STOP"
+        ) &&
+        o.side === closeSide &&
+        String(o.closePosition) === "true"
+    )
+
+    let finalTP = verify.find(o =>
+        (
+            o.type === "TAKE_PROFIT_MARKET" ||
+            o.type === "TAKE_PROFIT"
+        ) &&
+        o.side === closeSide &&
+        String(o.closePosition) === "true"
+    )
+
+    if(finalSL && finalTP){
+
+        console.log(`✅ TPSL VERIFIED ${symbol}`)
+
+        TPSL_CONFIRMED[symbol] = Date.now()
+
+        delete TPSL_MISSING[symbol]
+
+        return {
+            ok:true
+        }
+    }
+
+    console.log(`⚠️ TPSL FAKE CONFIRMED ${symbol}`)
+
+    await cancelTPSLOrders(symbol)
+
+    await new Promise(r =>
+        setTimeout(r, 3000)
+    )
+
+    continue
 }
 
             console.log(
@@ -1258,31 +1347,44 @@ async function getTopSymbols(){
     .filter(c => {
         let change = Math.abs(Number(c.priceChangePercent))
         // coin chưa chạy nhưng có dấu hiệu tích lực
-        return change >= 1 && change <= 10 // 
+        return change >= 1.5 && change <= 7 // 
     })
     // 🔥 2. LIQUIDITY nhẹ (KHÔNG dùng minVol 24h nữa)
     .filter(c =>
         Number(c.quoteVolume) > 3_000_000
     )
+    .filter(c => {
+
+    let high = Number(c.highPrice)
+    let low  = Number(c.lowPrice)
+    let last = Number(c.lastPrice)
+
+    if(!high || !low || !last) return false
+
+    let dayRange = (high - low) / last
+
+    return dayRange > 0.02
+})
     // 🔥 3. SORT
     .sort((a,b)=>{
 
-    let volScore = 
-        Number(b.quoteVolume) -
-        Number(a.quoteVolume)
+    let volA = Number(a.quoteVolume)
+    let volB = Number(b.quoteVolume)
 
     let moveA = Math.abs(Number(a.priceChangePercent))
     let moveB = Math.abs(Number(b.priceChangePercent))
 
-    // ưu tiên move vừa phải
-    let moveScore = Math.abs(moveA - 3) - Math.abs(moveB - 3)
+    // ưu tiên move đẹp quanh 3-5%
+    let scoreA =
+        (volA / 1_000_000) -
+        Math.abs(moveA - 4) * 8
 
-    return volScore * 0.7 + moveScore * 0.3
+    let scoreB =
+        (volB / 1_000_000) -
+        Math.abs(moveB - 4) * 8
+
+    return scoreB - scoreA
 })
-    //.sort((a, b) =>
-        //Math.abs(Number(b.priceChangePercent)) -
-        //Math.abs(Number(a.priceChangePercent))
-    //)
     .slice(0, 50)
 .map(c => c.symbol)
 .filter(s =>
@@ -1370,7 +1472,7 @@ async function coreLogic(data15, data1h){
 
     let price = closes.at(-1)
     let prevPrice = closes.at(-2)
-    let side=null, score=0
+    let side=null
     let setupType = null
     
    let last30 = volumes.slice(-30)
@@ -1406,14 +1508,14 @@ else if(atrRatio > 0.005){
 }
 // market bình thường
 else{
-    if(volRatio < 0.75){
+    if(volRatio < 0.55){
         return null
     }
 }
 //if(volNowUSDT < volAvgUSDT * 0.6) return null
     // ===== FILTER VOLUME =====
 if(volAvgUSDT < dynamicMinVol * 0.7){
-    score -= 15
+    return null
 }
 
     //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
@@ -1435,57 +1537,6 @@ if(volAvgUSDT < dynamicMinVol * 0.7){
 
     //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
 
-    let dynamicThreshold = 50
-
-// ===== TREND STRONG =====
-if(trendHTF > 0.003 && trendLTF > 0.002){
-    dynamicThreshold = 40   // dễ vào hơn
-}
-
-// ===== TREND WEAK =====
-else if(trendHTF > 0.0015){
-    dynamicThreshold = 47
-}
-
-// ===== SIDEWAY =====
-else{
-    dynamicThreshold = 56   // siết mạnh
-}
-
-// ===== VOLATILITY adjustment =====
-if(atrRatio > 0.005){
-    dynamicThreshold -= 3   // trend mạnh → dễ vào
-}
-
-if(atrRatio < 0.002){
-    dynamicThreshold += 3   // market chết → siết lại
-}
-// ===== MARKET QUALITY =====
-let marketQuality = 0
-// trend rõ
-if(trendHTF > 0.003){
-    marketQuality += 25
-}
-else if(trendHTF > 0.0015){
-    marketQuality += 10
-}
-else{
-    marketQuality -= 20
-}
-// volatility tốt
-if(atrRatio > 0.004){
-    marketQuality += 20
-}
-else if(atrRatio < 0.002){
-    marketQuality -= 25
-}
-// volume ổn
-if(volNowUSDT > volAvgUSDT * 1.2){
-    marketQuality += 15
-}
-else{
-    marketQuality -= 10
-}
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
 
@@ -1498,7 +1549,7 @@ else{
 
     // ===== WICK =====
     if((highs.at(-1) - lows.at(-1)) > atrVal * 6){
-    score -= 15
+    return null
 }
 
     // ===== MARKET =====
@@ -1508,45 +1559,54 @@ let emaSlope =
     Math.abs(ema20 - ema20Prev) / price
 
 if(emaSlope > atrRatio * 6){
-    score -= 20
+    return null
 }
     //let atrRatio = atrVal / price
 
     let marketState = "SIDEWAY"
-    if(emaGap > 0.004 && atrRatio > 0.0045) marketState = "TREND_STRONG"
-    else if(emaGap > 0.0025) marketState = "TREND_WEAK"
+
+if(
+    emaGap > 0.005 &&
+    atrRatio > 0.0045
+){
+    marketState = "TREND_STRONG"
+}
+else if(
+    emaGap > 0.003
+){
+    marketState = "TREND_NORMAL"
+}
+else{
+    return null
+}
     // ===== ANTI CHASE (ĐÚNG CHỖ) =====
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
 // nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-let antiChaseLimit = atrRatio * 4.5
+let antiChaseLimit = atrRatio * 3.5
 
 if(marketState === "TREND_STRONG"){
-    antiChaseLimit *= 1.4
+    antiChaseLimit *= 1.15
 }
 
 if(Math.abs(lastMove) > antiChaseLimit){
-    score -= 20
+    return null
 }
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
     let spreadHigh = Math.max(...highs.slice(-10))
 let spreadLow = Math.min(...lows.slice(-10))
-let candleSpread =
-    (spreadHigh - spreadLow) / price
-
-if(candleSpread < atrRatio * 3){
-    return null
-}
     let minRange = atrRatio * 1.5
-if(range < minRange){
+if(range < minRange * 0.8){
     return null
 }
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
+    if(distEma > atrRatio * 4){
+    return null
+}
     let nearEma = distEma < 0.0055
-
-    if(marketState === "SIDEWAY"){
+{
         if(nearEma && volNowUSDT < volAvgUSDT * 0.2) return null //0.5
     }
 
@@ -1572,67 +1632,10 @@ if(rangeSize <= 0) return null
 
 let pos = (price - rangeLow) / rangeSize
 
-if(marketState === "SIDEWAY"){
+{
     if(pos > 0.45 && pos < 0.55){
-        score -= 10
+        return null
     }
-}
-
-    let prevHigh = Math.max(...highs.slice(-25,-5))
-    let prevLow  = Math.min(...lows.slice(-25,-5))
-
-   // ===== DYNAMIC BOS =====
-let bosBuffer = atrVal * 0.15
-// trend mạnh → breakout dễ hơn
-if(marketState === "TREND_STRONG"){
-    bosBuffer = atrVal * 0.08
-}
-// sideway → cần breakout rõ
-if(marketState === "SIDEWAY"){
-    bosBuffer = atrVal * 0.25
-}
-// volatility cực mạnh
-if(atrRatio > 0.008){
-    // volatility cao + volume mạnh
-    // breakout thật dễ xảy ra hơn
-    if(volNowUSDT > volAvgUSDT * 2){
-        bosBuffer *= 0.85
-    }
-    // volatility cao nhưng volume yếu
-    // dễ fake breakout
-    else{
-        bosBuffer *= 1.25
-    }
-
-}
-// market chết → breakout giả nhiều
-else if(atrRatio < 0.002){
-    bosBuffer *= 1.4
-}
-// volume mạnh ở market bình thường
-else if(volNowUSDT > volAvgUSDT * 2){
-    bosBuffer *= 0.8
-}
-let bosUp = price > (prevHigh + bosBuffer)
-let bosDown = price < (prevLow - bosBuffer)
-    // ===== SPIKE FILTER =====
-let spikeCandle = (highs.at(-2) - lows.at(-2)) / lows.at(-2)
-// ===== DYNAMIC SPIKE FILTER =====
-let spikeLimit = Math.max(
-    atrRatio * 6,
-    0.02
-)
-// trend mạnh → cho spike lớn hơn
-if(marketState === "TREND_STRONG"){
-    spikeLimit *= 1.4
-}
-// market chết → siết mạnh
-if(atrRatio < 0.002){
-    spikeLimit *= 0.7
-}
-if(spikeCandle > spikeLimit){
-    bosUp = false
-    bosDown = false
 }
     let prevHigh50 = Math.max(...highs.slice(-51,-1))
     let prevLow50  = Math.min(...lows.slice(-51,-1))
@@ -1640,19 +1643,32 @@ if(spikeCandle > spikeLimit){
     let sweepHigh = highs.at(-2) > prevHigh50 && closes.at(-2) < prevHigh50
     let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
 
-    // ===== MOMENTUM =====
-    let momentumStrength = (closes.at(-1) - closes.at(-4)) / closes.at(-4)
-    let minMomentum = atrRatio * 0.5
-if(Math.abs(momentumStrength) < minMomentum){
-    score -= 15
-}
     // ===== DYNAMIC MOMENTUM =====
+    let momentumStrength =
+(closes.at(-1) - closes.at(-4)) / closes.at(-4)
 let momentumNeed = atrRatio * 0.5
 let momentumUp = momentumStrength > momentumNeed
 let momentumDown = momentumStrength < -momentumNeed
+let minMomentum = atrRatio * 0.35
+if(Math.abs(momentumStrength) < minMomentum){
+    return null
+}
 
-    let higherLow = lows.at(-2) > lows.at(-5)
-    let lowerHigh = highs.at(-2) < highs.at(-5)
+    let bullishRetest =
+    closes.at(-2) < ema20 &&
+    closes.at(-1) > ema20
+
+    let bullishConfirm =
+    closes.at(-1) > opens.at(-1) &&
+    closes.at(-1) > highs.at(-2)
+
+    let bearishConfirm =
+    closes.at(-1) < opens.at(-1) &&
+    closes.at(-1) < lows.at(-2)
+
+let bearishRetest =
+    closes.at(-2) > ema20 &&
+    closes.at(-1) < ema20
     let recentVol = volumes.slice(-5)
 let upCount = 0
 for(let i=1;i<recentVol.length;i++){
@@ -1664,61 +1680,69 @@ let volTrendUp =
     upCount >= 3 &&
     volNowUSDT > volAvgUSDT * 1.1
     // ===== TREND FILTER =====
-    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
-    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
+    let trendLong =
+    ema20 > ema50 &&
+    ema50 > ema200 &&
+    ema20_1h > ema50_1h &&
+    emaGap > 0.003 &&
+    emaSlope > atrRatio * 0.5
+
+let trendShort =
+    ema20 < ema50 &&
+    ema50 < ema200 &&
+    ema20_1h < ema50_1h &&
+    emaGap > 0.003 &&
+    emaSlope > atrRatio * 0.5
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    //if(marketState === "SIDEWAY" && trendStrength < 0.0008){ //0.0011
-    //return null
-//}
+    // ===== TREND STRENGTH FILTER =====
+if(trendLong){
+    if(
+        emaGap < 0.0025 ||
+        emaSlope < atrRatio * 0.4
+    ){
+        trendLong = false
+    }
+}
+if(trendShort){
+    if(
+        emaGap < 0.0025 ||
+        emaSlope < atrRatio * 0.4
+    ){
+        trendShort = false
+    }
+}
 // ===== HEALTHY PULLBACK =====
 let pullbackAtr = atrVal * 0.2
 // trend mạnh → cho pullback sâu hơn
 if(marketState === "TREND_STRONG"){
     pullbackAtr = atrVal * 0.35
 }
-// sideway → siết lại
-if(marketState === "SIDEWAY"){
-    pullbackAtr = atrVal * 0.12
-}
 // volatility cao → nới thêm
 if(atrRatio > 0.006){
     pullbackAtr *= 1.3
 }
+
 let healthyPullbackLong =
     trendLong &&
-    lows.at(-2) <= ema20 + pullbackAtr &&
-    closes.at(-1) > ema20 &&
-    higherLow
+    bullishRetest &&
+    bullishConfirm &&
+    r > 55 && r < 68
+
 let healthyPullbackShort =
     trendShort &&
-    highs.at(-2) >= ema20 - pullbackAtr &&
-    closes.at(-1) < ema20 &&
-    lowerHigh
-    // ===== SIDEWAY =====
-    if(marketState === "SIDEWAY"){
-    if(sweepHigh && volNowUSDT > volAvgUSDT * 1.2){
-        side="SHORT"
-        score+=60
-    }
-    if(sweepLow && volNowUSDT > volAvgUSDT * 1.2){
-        side="LONG"
-        score+=60
-    }
-    // sideway nhưng KHÔNG có breakout
-    // và KHÔNG có liquidity sweep
-    // thì mới bỏ
-    if(!side && !bosUp && !bosDown){
-        return null
-    }
-}
-    if(side === "LONG" && nearHigh){
-    score -= 20
-}
+    bearishRetest &&
+    bearishConfirm &&
+    r < 45 && r > 32
 
-if(side === "SHORT" && nearLow){
-    score -= 20
-}
+    let longSignal =
+    trendLong &&
+    healthyPullbackLong
+
+let shortSignal =
+    trendShort &&
+    healthyPullbackShort
+
     // Fake breakout
     let high = highs.at(-1)
 let low = lows.at(-1)
@@ -1726,45 +1750,12 @@ let low = lows.at(-1)
 let close = closes.at(-1)
 
 let candleRange = high - low
+if(candleRange <= 0){
+    return null
+}
 let upperWick = high - Math.max(open, close)
 let lowerWick = Math.min(open, close) - low
-// wick sạch
-if(candleRange > 0){
-    if(
-        upperWick / candleRange < 0.3 &&
-        lowerWick / candleRange < 0.3
-    ){
-        marketQuality += 10
-    }
-    else{
-        marketQuality -= 15
-    }
 
-}
-// ===== REVERSAL DETECTION (TOP + BOTTOM) =====
-let strongUpperWick = candleRange > 0 && (upperWick / candleRange > 0.5)
-let strongLowerWick = candleRange > 0 && (lowerWick / candleRange > 0.5)
-
-let bearishClose = close < open
-let bullishClose = close > open
-
-// ===== ĐỈNH =====
-let isTop =
-    distFromEma > 0.03 &&
-    r > 68 &&
-    strongUpperWick &&
-    bearishClose &&
-    nearHigh   // 🔥 thêm
-// ===== ĐÁY =====
-let isBottom =
-    distFromEma < -0.03 &&
-    r < 32 &&
-    strongLowerWick &&
-    bullishClose &&
-    nearLow
-
-let reversalShortSignal = ENABLE_REVERSAL && isTop
-let reversalLongSignal  = ENABLE_REVERSAL && isBottom
 // 🔥 nếu giá quá xa EMA → bỏ (đu đỉnh)
 let maxDistEma = atrRatio * 8
 if(marketState === "TREND_STRONG"){
@@ -1773,9 +1764,7 @@ if(marketState === "TREND_STRONG"){
 if(atrRatio < 0.002){
     maxDistEma *= 0.7
 }
-if(Math.abs(distFromEma) > maxDistEma &&
-   !reversalShortSignal &&
-   !reversalLongSignal){
+if(Math.abs(distFromEma) > maxDistEma){
     return null
 }
 // ===== DYNAMIC WICK FILTER =====
@@ -1791,18 +1780,35 @@ if(candleRange > 0){
     if(atrRatio > 0.006){
         wickLimit = 0.45
     }
-    // ❌ reject long
-    if(upperWickRatio > wickLimit){
-        if(side === "LONG"){
-            return null
-        }
-    }
-    // ❌ reject short
-    if(lowerWickRatio > wickLimit){
-        if(side === "SHORT"){
-            return null
-        }
-    }
+    if(
+    longSignal &&
+    upperWickRatio > wickLimit
+){
+    return null
+}
+
+if(
+    shortSignal &&
+    lowerWickRatio > wickLimit
+){
+    return null
+}
+}
+let upperRatio = upperWick / candleRange
+let lowerRatio = lowerWick / candleRange
+
+if(
+    longSignal &&
+    upperRatio > 0.35
+){
+    return null
+}
+
+if(
+    shortSignal &&
+    lowerRatio > 0.35
+){
+    return null
 }
 let fakePump = volNowUSDT > volAvgUSDT * 2
     && upperWick / candleRange > 0.5
@@ -1814,42 +1820,9 @@ if(fakePump || fakeDump){
     //score -= 20
 }
 
-    // ===== SCORE =====
-    if(!side){
-
-    // ❌ không long ở đỉnh
-    if(trendLong && !reversalShortSignal){
-        side="LONG"
-        score+=15
-    }
-
-    // ❌ không short ở đáy
-    else if(trendShort && !reversalLongSignal){
-        side="SHORT"
-        score+=15
-    }
-}
-// ===== FORCE REVERSAL =====
-if(reversalShortSignal){
-    side = "SHORT"
-    score += 70
-    setupType = "REVERSAL_TOP"
-}
-
-if(reversalLongSignal){
-    side = "LONG"
-    score += 70
-    setupType = "REVERSAL_BOTTOM"
-}
-if(trendLong && side==="LONG" && !reversalLongSignal) score += 10
-if(trendShort && side==="SHORT" && !reversalShortSignal) score += 10
-if(!side) return null
 let recentPullbackBuffer = atrVal * 0.2
 if(marketState === "TREND_STRONG"){
     recentPullbackBuffer = atrVal * 0.35
-}
-if(marketState === "SIDEWAY"){
-    recentPullbackBuffer = atrVal * 0.12
 }
 if(atrRatio > 0.006){
     recentPullbackBuffer *= 1.3
@@ -1864,105 +1837,30 @@ let recentPullbackShort =
     highs.at(-2) >= ema20 - recentPullbackBuffer ||
     highs.at(-3) >= ema20 - recentPullbackBuffer
 )
-    // ===== SETUP =====
-   if(
-    side==="LONG" &&
-    bosUp &&
-    recentPullbackLong &&
-    volNowUSDT > volAvgUSDT * 1.5 &&
-    momentumUp &&
-    distFromEma < 0.015
-){
-    score += 25
-    setupType = "BREAKOUT"
-}
-
-if(
-    side==="SHORT" &&
-    bosDown &&
-    recentPullbackShort &&
-    volNowUSDT > volAvgUSDT * 1.6 &&
-    momentumDown &&
-    distFromEma > -0.015
-){
-    score += 25
-    setupType = "BREAKOUT"
-}
-
     // ===== HEALTHY PULLBACK =====
-if(side==="LONG" && healthyPullbackLong){
-
-    let pullbackBonus = 35
-
-if(marketState === "TREND_STRONG"){
-    pullbackBonus = 50
+if(
+    trendLong &&
+    healthyPullbackLong &&
+    bullishConfirm &&
+    volNowUSDT > volAvgUSDT * 1.15
+){
+    side = "LONG"
+    setupType = "PULLBACK"
 }
-
-if(atrRatio < 0.002){
-    pullbackBonus = 25
+if(
+    trendShort &&
+    healthyPullbackShort &&
+    bearishConfirm &&
+    volNowUSDT > volAvgUSDT * 1.15
+){
+    side = "SHORT"
+    setupType = "PULLBACK"
 }
-
-    if(marketQuality > 40){
-        pullbackBonus += 10
-    }
-
-    if(marketQuality < 0){
-        pullbackBonus -= 15
-    }
-
-    score += pullbackBonus
-    if(volNowUSDT > volAvgUSDT * 1.1){
-        score += 10
-    }
-    if(!setupType){
-        setupType = "PULLBACK"
-    }
-}
-if(side==="SHORT" && healthyPullbackShort){
-
-    let pullbackBonus = 35
-
-if(marketState === "TREND_STRONG"){
-    pullbackBonus = 50
-}
-
-if(atrRatio < 0.002){
-    pullbackBonus = 25
-}
-
-    if(marketQuality > 40){
-        pullbackBonus += 10
-    }
-
-    if(marketQuality < 0){
-        pullbackBonus -= 15
-    }
-
-    score += pullbackBonus
-    if(volNowUSDT > volAvgUSDT * 1.1){
-        score += 10
-    }
-    if(!setupType){
-        setupType = "PULLBACK"
-    }
-}
-
-    if(side==="LONG" && sweepLow) score+=35
-    if(side==="SHORT" && sweepHigh) score+=35
-
-    if(volTrendUp) score+=10
-    if(volNowUSDT > volAvgUSDT *1.5) score+=10
-
-    if(side==="LONG" && momentumUp) score+=10
-    if(side==="SHORT" && momentumDown) score+=10
-
-    if(side==="LONG" && higherLow) score+=15
-    if(side==="SHORT" && lowerHigh) score+=15
    
-    let longRsiMin = 52
-let longRsiMax = 62
-let shortRsiMin = 38
-let shortRsiMax = 48
+    let longRsiMin = 54
+let longRsiMax = 68
+let shortRsiMin = 32
+let shortRsiMax = 46
 if(marketState === "TREND_STRONG"){
     longRsiMax = 70
     shortRsiMin = 30
@@ -1970,12 +1868,6 @@ if(marketState === "TREND_STRONG"){
 if(atrRatio < 0.002){
     longRsiMax = 58
     shortRsiMin = 42
-}
-if(side==="LONG" && r>longRsiMin && r<longRsiMax){
-    score += 10
-}
-if(side==="SHORT" && r>shortRsiMin && r<shortRsiMax){
-    score += 10
 }
     if(!side) return null
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
@@ -1995,14 +1887,11 @@ if(setupType !== "BREAKOUT"){
 }
     // ===== ANTI FOMO (GỌN - KHÔNG TRÙNG) =====
     let distance = Math.abs(price - ema20)
-    // ===== ANTI FOMO =====
-let isBreakout = setupType === "BREAKOUT"
-
 // ===== DYNAMIC ANTI FOMO =====
-let antiFomoLimit = atrVal * 3
+let antiFomoLimit = atrVal * 2.2
 // trend mạnh → cho chạy hơn
 if(marketState === "TREND_STRONG"){
-    antiFomoLimit = atrVal * 4.5
+    antiFomoLimit = atrVal * 3
 }
 // market chết → siết cực mạnh
 if(atrRatio < 0.002){
@@ -2012,26 +1901,21 @@ if(atrRatio < 0.002){
 if(atrRatio > 0.006){
     antiFomoLimit = atrVal * 5
 }
-if(!isBreakout){
+{
     if(distance > antiFomoLimit){
-        score -= 25
+        return null
     }
 
 }
-   // if(setupType !== "BREAKOUT"){
-    //if(marketState !== "TREND_STRONG" && distance > atrVal * 3.5){ // *4
-        //return null
-   // }
-  //  }
     // ===== SL TP (GIỮ NGUYÊN) =====
     let swingLow = Math.min(...lows.slice(-20))
     let swingHigh = Math.max(...highs.slice(-20))
 
     // ===== DYNAMIC SL =====
-let slAtr = 1.0
+let slAtr = 0.9
 // volatility mạnh → SL rộng hơn
 if(atrRatio > 0.006){
-    slAtr = 1.4
+    slAtr = 1.1
 }
 // market chết → SL ngắn lại
 if(atrRatio < 0.002){
@@ -2047,16 +1931,13 @@ let sl = side==="LONG"
 }
 
 // ===== DYNAMIC RR =====
-let rrTarget = 1.5
+let rrTarget = 0.9
 
 if(marketState === "TREND_STRONG"){
-    rrTarget = 1.8
-}
-else if(marketState === "TREND_WEAK"){
-    rrTarget = 1.5
+    rrTarget = 1.15
 }
 else{
-    rrTarget = 1.3
+    rrTarget = 1.0
 }
 if(atrRatio > 0.007){
     rrTarget += 0.3
@@ -2071,15 +1952,7 @@ let rawTP = side === "LONG"
 
     let tp
 
-if(marketState === "SIDEWAY"){
-    
-    if(side === "LONG"){
-        tp = Math.min(rawTP, resistance * 0.999)
-    }else{
-        tp = Math.max(rawTP, support * 1.001)
-    }
-
-}else if(marketState === "TREND_WEAK"){
+if(marketState !== "TREND_STRONG"){
 
     // clamp nhẹ
     if(side === "LONG"){
@@ -2108,52 +1981,12 @@ if(atrRatio > 0.006){
     minBodyRatio = 0.06
 }
 if(rangeCandle === 0 || body / rangeCandle < minBodyRatio){
-    score -= 15
+    return null
 }
 
     function round(n){ return Number(n.toFixed(4)) }
-
-    if(!setupType){
-    if(bosUp || bosDown){
-        setupType = "BREAKOUT"
-    }else{
-        setupType = "PULLBACK"
-    }
-}
-// ===== MARKET QUALITY FILTER =====
-if(marketQuality < -20){
-    return null
-}
-// market xấu → siết
-if(marketQuality < 0){
-    dynamicThreshold += 8
-}
-// market đẹp → dễ vào
-if(marketQuality > 40){
-    dynamicThreshold -= 5
-}
-// ===== DYNAMIC SCORE BOOST =====
-let scoreBoost = 1
-// market cực đẹp
-if(marketQuality > 40){
-    scoreBoost = 1.15
-}
-// market tốt
-else if(marketQuality > 20){
-    scoreBoost = 1.08
-}
-// market xấu
-else if(marketQuality < 0){
-    scoreBoost = 0.7
-}
-score *= scoreBoost
-if(score < dynamicThreshold){
-    return null
-}
     return {
         side,
-        score,
-        dynamicThreshold,
         setup: setupType,
         marketState,
         volatility,
@@ -2284,9 +2117,9 @@ for (let s of signals){
 
     if(dbMain.total < 15) aiMain *= 0.5
 
-    let finalMain = s.score + aiMain
+    let finalMain = aiMain
 
-    if(finalMain >= s.dynamicThreshold - 5){
+    if(finalMain >= - 5){
         candidates.push({
             ...s,
             finalScore: finalMain,
@@ -2306,7 +2139,7 @@ for (let s of signals){
     if(a.marketState === "TREND_STRONG" && b.marketState !== "TREND_STRONG") return -1
     if(b.marketState === "TREND_STRONG" && a.marketState !== "TREND_STRONG") return 1
 
-    return (b.finalScore || b.score) - (a.finalScore || a.score)
+    return b.finalScore - a.finalScore
 })
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
@@ -2317,14 +2150,9 @@ let filtered = candidates.filter(c => {
     if(rr < RR_THRESHOLD) return false
 
     // ❌ score quá thấp
-    let threshold = SCORE_THRESHOLD
-
-//if(c.marketState === "SIDEWAY"){
-    //threshold += 10
-//}
-
-if((c.finalScore || c.score) < threshold) return false
-
+    if(c.finalScore < -10){
+    return false
+}
     return true
 })
 // ===== SORT LẠI =====
@@ -2410,6 +2238,7 @@ if(existing){
                 }
             }
         )
+        delete TPSL_CONFIRMED[best.symbol]
         existing = null // 🔥 QUAN TRỌNG
 
     }else{
@@ -2432,21 +2261,8 @@ if(existing){
         best.volatility
     )
 
-    // ===== MOMENTUM FILTER =====
-    if(best.setup === "BREAKOUT"){
-
-        if(best.momentumUp || best.momentumDown){
-            best.finalScore += 10
-        }else{
-            if(best.marketState === "SIDEWAY"){
-                continue
-            }
-            best.finalScore -= 5
-        }
-    }
-
     let weakMomentum =
-        Math.abs(best.price - best.sl)/best.price < 0.0015 &&
+        Math.abs(best.price - best.sl)/best.price < 0.003 &&
         !best.momentumUp && !best.momentumDown
     
     if(best.setup === "PULLBACK" && weakMomentum){
@@ -2458,13 +2274,13 @@ if(existing){
         ? (best.tp - best.price) / (best.price - best.sl)
         : (best.price - best.tp) / (best.sl - best.price)
 
-    let minRR = 1.3
+    let minRR = 0.9
 
 if(best.marketState === "TREND_STRONG"){
-    minRR = 1.8
+    minRR = 1.1
 }
-else if(best.marketState === "TREND_WEAK"){
-    minRR = 1.5
+else{
+    minRR = 0.9
 }
 
 if(rr < minRR){
@@ -2499,30 +2315,18 @@ risk = Math.max(risk, ACCOUNT_BALANCE * 0.005)
 
     let diff = Math.abs(best.price - best.sl)
     if(!diff) continue
-    let zoneWidth = best.atr * 0.35
-
-    //let instantEntry = best.setup === "BREAKOUT"
-    let instantEntry = true
-    //let instantEntry = false
-    //let instantEntry =
-   // best.setup === "BREAKOUT" &&
-    //best.marketState === "TREND_STRONG"
 
 let trade = {
     symbol: best.symbol,
     side: best.side,
     risk,
-    entry: instantEntry ? best.price : null,
+    entry: best.price,
 
-    entryZoneMid: best.price,
-    entryZoneLow: best.price - zoneWidth,
-    entryZoneHigh: best.price + zoneWidth,
+tp: best.tp,
+sl: best.sl,
+score: best.score,
 
-    tp: best.tp,
-    sl: best.sl,
-    score: best.score,
-
-    waitingEntry: !instantEntry,
+waitingEntry: false,
 
     createdAt: Date.now(),
     breakoutTriggered: false,
@@ -2541,11 +2345,18 @@ let trade = {
     if(isActive){
         continue
     }
+    let existingMem = activeTrades.some(x =>
+    x.symbol === trade.symbol &&
+    x.result === "PENDING"
+)
+
+if(existingMem){
+    continue
+}
 
     await trades.insertOne(trade)
     // ===== BREAKOUT = MARKET ENTRY =====
-if(instantEntry){
-
+{
     console.log(`⚡ INSTANT ENTRY ${best.symbol}`)
 
     // ===== 5% POSITION SIZE =====
@@ -2601,7 +2412,10 @@ if(qty < minQty){
 if(notional < minNotional){
 
     qty = minNotional / best.price
-    qty = Math.ceil(qty / stepSize) * stepSize
+    qty = normalizeQtyFinal(
+    Math.ceil(qty / stepSize) * stepSize,
+    stepSize
+)
 
     notional = qty * best.price
 }
@@ -2652,11 +2466,11 @@ let existingPos = await hasPosition(trade.symbol)
 
 if(existingPos){
 
-    console.log(`⛔ SKIP OPEN ${symbol}: POSITION EXISTS`)
+    console.log(`⛔ SKIP OPEN ${trade.symbol}: POSITION EXISTS`)
     await trades.updateOne(
         {
-            symbol: t.symbol,
-            createdAt: t.createdAt
+            symbol: trade.symbol,
+            createdAt: trade.createdAt
         },
         {
             $unset:{
@@ -2666,7 +2480,13 @@ if(existingPos){
     )
     continue
 }
+if(OPENING_POSITIONS[trade.symbol]){
+    console.log(`⛔ OPENING LOCK ${trade.symbol}`)
+    continue
+}
 
+OPENING_POSITIONS[trade.symbol] = true
+try{
     let order = await openPosition(
     trade.symbol,
     trade.side,
@@ -2719,11 +2539,15 @@ if(!realPos){
 
     continue
 }
-activeTrades.push(trade)
+let existsActive = activeTrades.find(
+    x =>
+        x.symbol === trade.symbol &&
+        x.createdAt === trade.createdAt
+)
 
-    if(activeTrades.length > 50){
-        activeTrades.shift()
-    }
+if(!existsActive){
+    activeTrades.push(trade)
+}
 
 let realQty = Math.abs(Number(realPos.positionAmt))
 
@@ -2738,6 +2562,18 @@ let realQty = Math.abs(Number(realPos.positionAmt))
     }
 
     trade.entry = realEntry
+    trade.sl = best.sl
+    let realRisk = Math.abs(realEntry - best.sl)
+
+let rr =
+    best.side === "LONG"
+    ? (best.tp - best.price) / (best.price - best.sl)
+    : (best.price - best.tp) / (best.sl - best.price)
+
+trade.tp =
+    best.side === "LONG"
+    ? realEntry + realRisk * rr
+    : realEntry - realRisk * rr
 
         await trades.updateOne(
             {
@@ -2783,12 +2619,12 @@ ${best.side} | ${best.marketState}
 
 Entry: ${(trade.entry || best.price).toFixed(4)}
 
-TP: ${best.tp.toFixed(4)}
+TP: ${trade.tp.toFixed(4)}
 
-SL: ${best.sl.toFixed(4)}
+SL: ${trade.sl.toFixed(4)}
 
 Size: ${qty.toFixed(2)}
-Score: ${best.finalScore || best.score}
+AI: ${best.finalScore.toFixed(1)}
 `  //Score: ${t.score || 0}
 console.log(msg)
 let teleSent = false
@@ -2815,6 +2651,10 @@ TP: ${best.tp}
 
 SL: ${best.sl}`
     )
+}
+}finally{
+
+    delete OPENING_POSITIONS[trade.symbol]
 }
     //console.log(msg)
     //await sendTelegram(msg)
@@ -2853,7 +2693,7 @@ async function checkTrades(){
             try{
 
                 let data = await Promise.race([
-    getData(t.symbol,"1m",2),
+    getData(t.symbol,"15m",2),
     new Promise(resolve =>
         setTimeout(()=>resolve(null),10000)
     )
@@ -2873,6 +2713,41 @@ async function checkTrades(){
     if(DATA_FAILS[t.symbol] < 15){
         continue
     }
+    console.log(`🚨 FORCE VERIFY ${t.symbol}`)
+
+let positions = await binance.futuresPositionRisk({
+    recvWindow: 20000
+})
+
+let realPos = positions.find(p =>
+    p.symbol === t.symbol &&
+    Math.abs(Number(p.positionAmt)) > 0
+)
+
+// không còn position
+if(!realPos){
+
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $set:{
+                result:"AUTO_CLEAR_NO_POSITION"
+            }
+        }
+    )
+
+    delete TPSL_CONFIRMED[t.symbol]
+
+    activeTrades.splice(i,1)
+
+    continue
+}
+
+// còn position -> watchdog xử lý TPSL
+continue
 
 }else{
     DATA_FAILS[t.symbol] = 0
@@ -2880,665 +2755,6 @@ async function checkTrades(){
 
                 let price = +data.at(-1)[4]
 
-                // ================= ENTRY 1M CONFIRM =================
-if(t.waitingEntry){
-
-    if(!t.entryZoneMid || !price) continue
-
-    let drift = Math.abs(price - t.entryZoneMid) / t.entryZoneMid
-
-// dynamic drift theo ATR (thay vì cố định 1.5%)
-let maxDrift = Math.max(0.015, t.atr / t.entryZoneMid * 2.5)
-
-if(drift > maxDrift){
-
-    console.log(`⛔ SKIP ENTRY (too far) ${t.symbol}`)
-
-    activeTrades.splice(i,1)
-
-    await trades.updateOne(
-        { symbol: t.symbol, createdAt: t.createdAt },
-        { $set: { result: "MISSED_ENTRY" } }
-    )
-
-    continue
-}
-     // timeout 1h
-    let waitTime = Date.now() - t.createdAt
-    
-    if(waitTime > 90 * 60 * 1000){
-    console.log(`⛔ Timeout entry ${t.symbol}`)
-
-    await trades.updateOne(
-        { symbol: t.symbol, createdAt: t.createdAt },
-        { $set: { result: "CANCEL_ENTRY" } }
-    )
-
-    await sendTelegram2(
-`⛔ TIMEOUT ENTRY ${t.symbol}
-${t.side}
-❌ Không khớp entry `
-    )
-
-    activeTrades.splice(i,1)
-    continue
-}
-
-    // ATR 
-    if(!t.atr || !t.entryZoneMid){
-    continue
-}
-
-   // ===== ENTRY LOGIC =====
-let confirm = false
-
-if(!price || price <= 0) continue
-
-let atrRatio = t.atr / price
-atrRatio = Math.max(0.002, Math.min(atrRatio, 0.03))
-
-let zoneLow  = t.entryZoneLow
-let zoneHigh = t.entryZoneHigh
-
-// 🔥 entry cực thoáng
-let buffer = t.atr * 0.8
-//buffer = t.atr * (0.7 + atrRatio * 3)
-//let buffer = t.atr * (1.0 + atrRatio * 5)
-buffer = Math.min(buffer, t.atr * 4)
-
-// 🔥 cho chase breakout
-//let breakoutBuffer = t.atr * 2.2
-let breakoutBuffer = t.atr * 0.5
-
-// 🔥 cancel xa hơn
-let chaseLimit = t.atr * 4
-
-
-// ================= LONG =================
-if(t.side === "LONG"){
-
-    // reversal
-    if(t.setup === "REVERSAL_BOTTOM"){
-
-        if(price >= zoneLow - buffer){
-            confirm = true
-        }
-
-    }else{
-
-        // vùng pullback rộng
-        if(
-            price >= zoneLow - buffer &&
-            price <= zoneHigh + buffer
-        ){
-            confirm = true
-        }
-
-        // breakout follow
-        if(
-            price > zoneHigh - t.atr * 0.2 &&
-            price <= zoneHigh + breakoutBuffer
-        ){
-
-            // ❌ breakout chạy quá xa -> không đu
-            if(
-                t.setup === "BREAKOUT" &&
-                price > t.entryZoneHigh + t.atr * 0.5
-            ){
-                confirm = false
-
-            }else{
-                confirm = true
-            }
-        }
-    }
-
-    // cancel chase
-    if(price > zoneHigh + chaseLimit){
-
-        activeTrades.splice(i,1)
-
-        await trades.updateOne(
-            {
-                symbol: t.symbol,
-                createdAt: t.createdAt
-            },
-            {
-                $set:{
-                    result:"CANCEL_CHASE"
-                }
-            }
-        )
-
-        continue
-    }
-}
-
-
-
-// ================= SHORT =================
-if(t.side === "SHORT"){
-
-    // reversal
-    if(t.setup === "REVERSAL_TOP"){
-
-        if(price <= zoneHigh + buffer){
-            confirm = true
-        }
-
-    }else{
-
-        // vùng pullback rộng
-        if(
-            price <= zoneHigh + buffer &&
-            price >= zoneLow - buffer
-        ){
-            confirm = true
-        }
-
-        // breakout follow
-        if(
-            price < zoneLow + t.atr * 0.2 &&
-            price >= zoneLow - breakoutBuffer
-        ){
-
-            // ❌ breakout chạy quá xa -> không đu
-            if(
-                t.setup === "BREAKOUT" &&
-                price < t.entryZoneLow - t.atr * 0.5
-            ){
-                confirm = false
-
-            }else{
-                confirm = true
-            }
-        }
-    }
-
-    // cancel chase
-    if(price < zoneLow - chaseLimit){
-
-        activeTrades.splice(i,1)
-
-        await trades.updateOne(
-            {
-                symbol: t.symbol,
-                createdAt: t.createdAt
-            },
-            {
-                $set:{
-                    result:"CANCEL_CHASE"
-                }
-            }
-        )
-
-        continue
-    }
-}
-    // ===== VÀO LỆNH =====
-    if(confirm){
-        // 🔥 cập nhật entry realtime
-t.entry = price
-        await trades.updateOne(
-    {
-        symbol:t.symbol,
-        createdAt:t.createdAt
-    },
-    {
-        $set:{
-            entry:t.entry,
-            waitingEntry:false,
-            enteredAt: Date.now()
-        }
-    }
-)
-
-    let diff = Math.abs(t.entry - t.sl)
-if(!diff || diff <= 0) continue
-
-let risk = t.risk || (ACCOUNT_BALANCE * RISK_PER_TRADE)
-if(!risk || risk <= 0) continue
-
-let maxSlPercent = 0.05
-
-if(diff / t.entry > maxSlPercent){
-
-    console.log(`⚠️ AUTO TIGHT SL ${t.symbol}`)
-
-    let newDiff = t.entry * maxSlPercent
-
-    // ===== DYNAMIC RR =====
-let rrTarget = 1.5
-
-if(t.marketState === "TREND_STRONG"){
-    rrTarget = 1.8
-}
-else if(t.marketState === "TREND_WEAK"){
-    rrTarget = 1.5
-}
-else{
-    rrTarget = 1.3
-}
-
-if(t.side === "LONG"){
-
-    t.sl = t.entry - newDiff
-    t.tp = t.entry + newDiff * rrTarget
-
-}else{
-
-    t.sl = t.entry + newDiff
-    t.tp = t.entry - newDiff * rrTarget
-}
-
-    diff = Math.abs(t.entry - t.sl)
-}
-
-    if(!diff || !isFinite(diff) || diff < 1e-8){
-        console.log("❌ INVALID DIFF")
-        continue
-    }
-    let minDiff = t.entry * 0.002
-
-if(diff < minDiff){
-
-    console.log(`❌ SL TOO CLOSE ${t.symbol}`)
-
-    await trades.updateOne(
-        { symbol:t.symbol, createdAt:t.createdAt },
-        { $set:{ result:"SL_TOO_CLOSE" } }
-    )
-
-    activeTrades.splice(i,1)
-
-    continue
-}
-
-    if(!risk || risk <= 0){
-        console.log("❌ INVALID RISK")
-        continue
-    }
-
-    let rawQty = risk / diff
-
-    if(!rawQty || !isFinite(rawQty) || rawQty <= 0){
-        console.log("❌ INVALID QTY (RAW)")
-        continue
-    }
-
-    let qty = rawQty
-
-    if(!qty || !isFinite(qty) || qty <= 0){
-        console.log("❌ INVALID QTY")
-        continue
-    }
-
-    let maxNotional = ACCOUNT_BALANCE * 5
-
-if(qty * t.entry > maxNotional){
-
-    console.log(`❌ POSITION TOO BIG ${t.symbol}`)
-
-    await trades.updateOne(
-        { symbol:t.symbol, createdAt:t.createdAt },
-        { $set:{ result:"POSITION_TOO_BIG" } }
-    )
-
-    activeTrades.splice(i,1)
-
-    continue
-}
-    if(risk > ACCOUNT_BALANCE * 0.05){
-
-    console.log(`❌ RISK TOO HIGH ${t.symbol}`)
-
-    await trades.updateOne(
-        {
-            symbol:t.symbol,
-            createdAt:t.createdAt
-        },
-        {
-            $set:{
-                result:"RISK_TOO_HIGH"
-            }
-        }
-    )
-
-    activeTrades.splice(i,1)
-
-    continue
-}
-
-    let info = await getSymbolInfo(t.symbol)
-
-    if(!info || !info.filters){
-        console.log(`❌ NO SYMBOL INFO ${t.symbol}`)
-        continue
-    }
-
-    let lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE")
-    let priceFilter = info.filters.find(f => f.filterType === "PRICE_FILTER")
-    //let minNotionalFilter = info.filters.find(f => f.filterType === "MIN_NOTIONAL")
-    let minNotionalFilter =
-    info.filters.find(
-        f =>
-            f.filterType === "MIN_NOTIONAL" ||
-            f.filterType === "NOTIONAL"
-    )
-
-    let stepSize = parseFloat(lotFilter?.stepSize || 0.001)
-    let minQty = parseFloat(lotFilter?.minQty || 0)
-
-    let tickSize = parseFloat(priceFilter?.tickSize || 0.01)
-
-    let minNotional = minNotionalFilter
-        ? parseFloat(minNotionalFilter.notional)
-        : 5
-
-    function roundStep(value, step){
-        return Math.floor(value / step) * step
-    }
-
-    function precisionFromStep(step){
-        return Math.max(
-            0,
-            (step.toString().split(".")[1] || "")
-                .replace(/0+$/,"")
-                .length
-        )
-    }
-        
-    function roundToTick(price, tickSize, mode="down"){
-    if(mode === "down"){
-        return Math.floor(price / tickSize) * tickSize
-    }
-    return Math.ceil(price / tickSize) * tickSize
-}
-
-if(t.side === "LONG"){
-    t.tp = roundToTick(t.tp, tickSize, "down")
-    t.sl = roundToTick(t.sl, tickSize, "down")
-}else{
-    t.tp = roundToTick(t.tp, tickSize, "up")
-    t.sl = roundToTick(t.sl, tickSize, "up")
-}
-
-    function countDecimals(value){
-        if(!value || Math.floor(value) === value) return 0
-        return value.toString().split(".")[1]?.length || 0
-    }
-
-    let pricePrecision = countDecimals(tickSize)
-
-    t.tp = Number(t.tp.toFixed(pricePrecision))
-    t.sl = Number(t.sl.toFixed(pricePrecision))
-   if(t.side === "LONG"){
-
-    if(t.sl >= t.entry){
-        t.sl = t.entry - tickSize * 3
-    }
-
-    if(t.tp <= t.entry){
-        t.tp = t.entry + tickSize * 3
-    }
-
-}else{
-
-    if(t.sl <= t.entry){
-        t.sl = t.entry + tickSize * 3
-    }
-
-    if(t.tp >= t.entry){
-        t.tp = t.entry - tickSize * 3
-    }
-}
-
-diff = Math.abs(t.entry - t.sl)
-
-if(
-    !diff ||
-    !isFinite(diff) ||
-    diff <= tickSize
-){
-
-    console.log(`❌ INVALID DIFF ${t.symbol}`)
-
-    await trades.updateOne(
-        {
-            symbol:t.symbol,
-            createdAt:t.createdAt
-        },
-        {
-            $set:{
-                result:"INVALID_DIFF"
-            }
-        }
-    )
-
-    activeTrades.splice(i,1)
-
-    continue
-}
-
-    if(qty < minQty){
-        console.log(`❌ QTY < MIN_QTY ${t.symbol}`)
-        continue
-    }
-
-    let notional = qty * t.entry
-
-    if(notional < minNotional){
-
-        qty = Math.ceil((minNotional / t.entry) / stepSize) * stepSize
-
-        notional = qty * t.entry
-
-        console.log(`⚡ AUTO FIX NOTIONAL ${t.symbol}`)
-    }
-
-    if(notional < minNotional){
-        console.log(`❌ NOTIONAL TOO SMALL ${t.symbol}`)
-        continue
-    }
-
-    let lock = await trades.findOneAndUpdate(
-    {
-        symbol: t.symbol,
-        createdAt: t.createdAt,
-        opening: { $ne: true }
-    },
-    {
-        $set: { opening: true }
-    },
-    {
-        returnDocument: "before"
-    }
-)
-if(!lock){
-//if(!lock || !lock.value){
-    console.log(`⛔ LOCKED ${t.symbol}`)
-    continue
-}
-    let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
-
-    let hasPos = positions.find(p =>
-        p.symbol === t.symbol &&
-        Math.abs(Number(p.positionAmt)) > 0
-    )
-
-    if(hasPos){
-    console.log(`⛔ POSITION EXISTS ${t.symbol}`)
-    await trades.updateOne(
-        {
-            symbol: t.symbol,
-            createdAt: t.createdAt
-        },
-        {
-            $set:{
-                result:"POSITION_EXISTS"
-            },
-            // 🔥 UNLOCK
-            $unset:{
-                opening:""
-            }
-        }
-    )
-    activeTrades.splice(i,1)
-    continue
-}
-    let existingPos = await hasPosition(t.symbol)
-
-if(existingPos){
-
-    console.log(`⛔ SKIP OPEN ${t.symbol}: POSITION EXISTS`)
-    await trades.updateOne(
-        {
-            symbol: t.symbol,
-            createdAt: t.createdAt
-        },
-        {
-            $unset:{
-                opening:""
-            }
-        }
-    )
-    continue
-}
-
-    let order = await openPosition(t.symbol, t.side, qty)
-
-    if(!order){
-    console.log("❌ ORDER FAIL")
-    await trades.updateOne(
-        {
-            symbol: t.symbol,
-            createdAt: t.createdAt
-        },
-        {
-            $set:{
-                result:"ORDER_FAIL"
-            },
-            // 🔥 UNLOCK
-            $unset:{
-                opening:""
-            }
-        }
-    )
-    activeTrades.splice(i,1)
-    continue
-}
-
-    await new Promise(r => setTimeout(r, 1500))
-
-    let realQty = Math.abs(Number(order.executedQty))
-
-    if((!realQty || realQty <= 0) && order.status === "FILLED"){
-        realQty = qty
-    }
-
-    if(!realQty || realQty <= 0){
-        console.log(`❌ ORDER NOT FILLED ${t.symbol}`)
-        await trades.updateOne(
-        {
-            symbol: t.symbol,
-            createdAt: t.createdAt
-        },
-        {
-            $unset:{
-                opening:""
-            }
-        }
-    )
-        continue 
-    }
-    //await sendTelegram(msg)
-
-const tpslRes = await safeSetTPSL( t.symbol, t.side, t.tp, t.sl, realQty )
-        await trades.updateOne(
-{
-    symbol: t.symbol,
-    createdAt: t.createdAt
-},
-{
-    $unset: { opening: "" }
-}
-)
-
-    if(!tpslRes.ok){
-
-    console.log(`❌ TPSL FAIL ${t.symbol}`)
-
-    await sendTelegram2(
-`❌ TPSL FAIL ${t.symbol}
-${t.side}
-
-Đang force close position
-${tpslRes.error}`
-    )
-
-    await closePosition(
-        t.symbol,
-        t.side,
-        realQty
-    )
-    t.result = "FORCE_CLOSED"
-
-await trades.updateOne(
-    {
-        symbol: t.symbol,
-        createdAt: t.createdAt
-    },
-    {
-        $set:{
-            result:"FORCE_CLOSED"
-        }
-    }
-)
-
-activeTrades.splice(i,1)
-        await new Promise(r => setTimeout(r, 2000))
-
-let positionsAfter = await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
-
-let stillOpen = positionsAfter.find(p =>
-    p.symbol === t.symbol &&
-    Math.abs(Number(p.positionAmt)) > 0
-)
-
-if(stillOpen){
-
-    console.log(`🚨 FORCE CLOSE FAILED ${t.symbol}`)
-
-    await sendTelegram2(
-`🚨 NGUY HIỂM
-${t.symbol} vẫn còn position mở
-TPSL chưa tồn tại`
-    )
-}
-
-    await trades.updateOne(
-    {
-        symbol: t.symbol,
-        createdAt: t.createdAt
-    },
-    {
-        // 🔥 UNLOCK
-        $unset:{
-            opening:""
-        }
-    }
-)
-    activeTrades.splice(i,1)
-    continue
-}
-} else {
-    continue
-}
-}
 // ===== RESULT CHECK =====
 if(!t.entry) continue
 
@@ -3576,12 +2792,18 @@ if(isTimeout){
     // ===== NẾU CÒN POSITION -> CLOSE =====
     if(realPos){
         let realQty = Math.abs(Number(realPos.positionAmt))
-        await closePosition(
-            t.symbol,
-            t.side,
-            realQty
-        )
-        console.log(`✅ AUTO CLOSED ${t.symbol}`)
+        let closed = await closePosition(
+    t.symbol,
+    t.side,
+    realQty
+)
+
+if(closed){
+    console.log(`✅ AUTO CLOSED ${t.symbol}`)
+}else{
+    console.log(`❌ AUTO CLOSE FAIL ${t.symbol}`)
+    continue
+}
     }
     // ===== UPDATE DB =====
     await trades.updateOne(
@@ -3619,6 +2841,51 @@ let stillOpen = positions.find(p =>
 
 if(!stillOpen){
 
+    await new Promise(r=>setTimeout(r,2000))
+
+    let retryPos = await binance.futuresPositionRisk({
+        recvWindow: 20000
+    })
+
+    stillOpen = retryPos.find(p =>
+        p.symbol === t.symbol &&
+        Math.abs(Number(p.positionAmt)) > 0
+    )
+
+    if(!stillOpen){
+
+        await trades.updateOne(
+            {
+                symbol: t.symbol,
+                createdAt: t.createdAt
+            },
+            {
+                $set:{
+                    result:"AUTO_CLEAR_NO_POSITION"
+                }
+            }
+        )
+
+        delete TPSL_CONFIRMED[t.symbol]
+
+        activeTrades.splice(i,1)
+
+        continue
+    }
+}
+if(done){
+
+    let positions = await binance.futuresPositionRisk({
+        recvWindow: 20000
+    })
+    let stillOpen = positions.find(p =>
+        p.symbol === t.symbol &&
+        Math.abs(Number(p.positionAmt)) > 0
+    )
+    // còn position thật => chưa tính win/loss
+    if(stillOpen){
+        continue
+    }
     await trades.updateOne(
         {
             symbol: t.symbol,
@@ -3626,36 +2893,23 @@ if(!stillOpen){
         },
         {
             $set:{
-                result:"AUTO_CLEAR_NO_POSITION"
+                result: win ? "WIN" : "LOSS"
             }
         }
     )
-
-    activeTrades.splice(i,1)
-
-    continue
-}
-if(done){
-
-    await trades.updateOne(
-        { symbol: t.symbol, createdAt: t.createdAt },
-        { $set: { result: win ? "WIN" : "LOSS" } }
-    )
-    delete TPSL_CONFIRMED[t.symbol]   // 🔥 ADD
-    // 🔥 UPDATE BALANCE MỚI NHẤT
+    delete TPSL_CONFIRMED[t.symbol]
     let latestBalance = await updateBalance()
-    if(latestBalance > 0){
-    ACCOUNT_BALANCE = latestBalance
-}
 
+    if(latestBalance > 0){
+        ACCOUNT_BALANCE = latestBalance
+    }
     await sendTelegram2(
 `📊 ${t.symbol}
 ${t.side}
 ${win ? "✅ WIN" : "❌ LOSS"}
 💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
-
     )
-    
+
     activeTrades.splice(i,1)
     continue
 }
@@ -3748,7 +3002,43 @@ async function watchdogTPSL(){
         for(let p of positions){
             let symbol = p.symbol
             if(TPSL_CONFIRMED[symbol]){
-    continue
+
+    let verifyOrders =
+        await binance.futuresOpenOrders({
+            symbol,
+            recvWindow:20000
+        })
+
+    let closeSide =
+        Number(p.positionAmt) > 0
+            ? "SELL"
+            : "BUY"
+
+    let hasSL = verifyOrders.find(o =>
+        (
+            o.type === "STOP_MARKET" ||
+            o.type === "STOP"
+        ) &&
+        o.side === closeSide &&
+        String(o.closePosition) === "true"
+    )
+
+    let hasTP = verifyOrders.find(o =>
+        (
+            o.type === "TAKE_PROFIT_MARKET" ||
+            o.type === "TAKE_PROFIT"
+        ) &&
+        o.side === closeSide &&
+        String(o.closePosition) === "true"
+    )
+
+    if(hasSL && hasTP){
+        continue
+    }
+
+    console.log(`🚨 FAKE TPSL CONFIRMED ${symbol}`)
+
+    delete TPSL_CONFIRMED[symbol]
 }
              if(TPSL_LOCKS[symbol]){
     continue
@@ -3810,6 +3100,7 @@ let hasTP = orders.find(
                 // ===== BINANCE CHƯA SYNC ĐỦ =====
 // ===== PARTIAL TPSL =====
 if(hasSL || hasTP){
+    TPSL_MISSING[symbol] = Date.now()
 
     console.log(`⚠️ PARTIAL TPSL ${symbol}`)
 
@@ -4173,6 +3464,7 @@ for(let t of activeTrades){
             }
         }
     )
+    delete TPSL_CONFIRMED[t.symbol]
     console.log(
         `🧹 CLEAR GHOST ${t.symbol}`
     )
@@ -4380,7 +3672,6 @@ async function getBestTPSL(setup, market, side){
             
 start()
 async function fixTPSL(){
-
     for(let t of activeTrades){
         if(TPSL_CONFIRMED[t.symbol]) continue
         if(!t.tpslMissing) continue
@@ -4403,9 +3694,26 @@ if(TPSL_GLOBAL_LOCK[t.symbol]) continue
         )
 
         if(ok){
-            t.retryTPSL = false
-            console.log(`✅ FIX TPSL ${t.symbol}`)
+
+    t.retryTPSL = false
+    t.tpslMissing = false
+    delete TPSL_MISSING[t.symbol]
+
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $unset:{
+                retryTPSL:"",
+                tpslMissing:""
+            }
         }
+    )
+
+    console.log(`✅ FIX TPSL ${t.symbol}`)
+}
     }
 }
 
