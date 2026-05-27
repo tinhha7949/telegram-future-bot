@@ -713,7 +713,8 @@ let hasTP = openOrders.find(o =>
 )
         // ===== ĐỦ TPSL =====
 if(
-    (hasSL || hasTP) &&
+    hasSL &&
+    hasTP &&
     Number(pos.positionAmt) !== 0
 ){
 
@@ -806,7 +807,7 @@ if(
 if(!hasSL){
 
     try{
-
+        
         let slOrder = await binance.futuresOrder({
             symbol,
             recvWindow: 20000,
@@ -904,6 +905,7 @@ let finalTP = verify.find(o =>
 if(finalSL && finalTP){
 
     TPSL_CONFIRMED[symbol] = Date.now()
+    delete TPSL_MISSING[symbol]
 
     return {
         ok:true
@@ -1091,7 +1093,6 @@ if(
 }
 
     }finally{
-        delete TPSL_PENDING[symbol]
         delete TPSL_GLOBAL_LOCK[symbol]
         delete TPSL_PENDING[symbol]
         delete TPSL_LOCKS[symbol]
@@ -3003,7 +3004,7 @@ let hasTP = orders.find(
                 // ✅ ĐỦ TPSL
                 if(hasSL && hasTP){
                     delete TPSL_MISSING[symbol]
-                    TPSL_CONFIRMED[symbol] = true
+                    TPSL_CONFIRMED[symbol] = Date.now()
                     continue
                 }
                 // ===== BINANCE CHƯA SYNC ĐỦ =====
@@ -3602,7 +3603,7 @@ if(TPSL_GLOBAL_LOCK[t.symbol]) continue
             t.sl
         )
 
-        if(ok){
+        if(ok && ok.ok){
 
     t.retryTPSL = false
     t.tpslMissing = false
