@@ -712,7 +712,10 @@ let hasTP = openOrders.find(o =>
     )
 )
         // ===== ĐỦ TPSL =====
-if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
+if(
+    (hasSL || hasTP) &&
+    Number(pos.positionAmt) !== 0
+){
 
     console.log(`✅ TPSL EXISTS ${symbol}`)
     TPSL_CONFIRMED[symbol] = Date.now()
@@ -721,27 +724,6 @@ if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
         existed:true
     }
 }
-
-        // ===== CANCEL ONLY WRONG ORDERS =====
-        for(let o of openOrders){
-
-            if(
-                o.side === closeSide &&
-                (
-                    o.type === "STOP_MARKET" ||
-                    o.type === "TAKE_PROFIT_MARKET"
-                )
-            ){
-
-                try{
-                    await binance.futuresCancelOrder({
-                        symbol,
-                        recvWindow: 20000,
-                        orderId:o.orderId,
-                    })
-                }catch(e){}
-            }
-        }
 
         await new Promise(r =>
             setTimeout(r, 2000)
