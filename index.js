@@ -843,26 +843,28 @@ try{
     const msg = String(e.message || e)
 
     if(
+    msg.includes(
+        "closePosition in the direction is existing"
+    ) ||
 
-        msg.includes(
-            "closePosition in the direction is existing"
-        ) ||
-
-        msg.includes(
-            "Order would immediately trigger"
-        ) ||
-
-        msg.includes(
-            "ReduceOnly Order is rejected"
-        ) ||
-
-        msg.includes(
-            "already exists"
-        )
-
-    ){
+    msg.includes(
+        "already exists"
+    )
+){
+    
 
         console.log(`⚠️ SL MAY EXIST ${symbol}`)
+         }
+    else if(
+        msg.includes(
+            "Order would immediately trigger"
+        )
+    ){
+
+        return {
+            ok:false,
+            error:"TPSL_TOO_CLOSE"
+        }
 
         // KHÔNG set slAlreadyExists nữa
         // để FINAL VERIFY kiểm tra thật
@@ -904,31 +906,33 @@ try{
     const msg = String(e.message || e)
 
     if(
+    msg.includes(
+        "closePosition in the direction is existing"
+    ) ||
 
-        msg.includes(
-            "closePosition in the direction is existing"
-        ) ||
-
-        msg.includes(
-            "Order would immediately trigger"
-        ) ||
-
-        msg.includes(
-            "ReduceOnly Order is rejected"
-        ) ||
-
-        msg.includes(
-            "already exists"
-        )
-
-    ){
+    msg.includes(
+        "already exists"
+    )
+){
 
         console.log(`⚠️ TP MAY EXIST ${symbol}`)
+         }
+    else if(
+        msg.includes(
+            "Order would immediately trigger"
+        )
+){
+
+    return {
+        ok:false,
+        error:"TPSL_TOO_CLOSE"
+    }
+}
 
         // KHÔNG set tpAlreadyExists nữa
         // để FINAL VERIFY kiểm tra thật
 
-    }else{
+    else{
 
         console.log("TP REAL ERROR:", msg)
 
@@ -982,7 +986,10 @@ try{
             o.type === "STOP"
         ) &&
         o.side === verifyCloseSide &&
-        String(o.closePosition) === "true"
+        (
+    o.closePosition === true ||
+    o.closePosition === "true"
+)
     )
 
     let finalTP = verify.find(o =>
@@ -991,7 +998,10 @@ try{
             o.type === "TAKE_PROFIT"
         ) &&
         o.side === verifyCloseSide &&
-        String(o.closePosition) === "true"
+        (
+    o.closePosition === true ||
+    o.closePosition === "true"
+)
     )
 
     if(finalSL && finalTP){
