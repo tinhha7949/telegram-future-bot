@@ -700,16 +700,20 @@ async function setTPSL(symbol, side, tp, sl){
                 : "BUY"
 
         let hasSL = openOrders.find(o =>
-            o.type === "STOP_MARKET" &&
-            o.side === closeSide &&
-            String(o.closePosition) === "true"
-        )
+    (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
+    o.side === closeSide
+)
 
-        let hasTP = openOrders.find(o =>
-            o.type === "TAKE_PROFIT_MARKET" &&
-            o.side === closeSide &&
-            String(o.closePosition) === "true"
-        )
+let hasTP = openOrders.find(o =>
+    (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
+    o.side === closeSide
+)
 
         // ===== ĐỦ TPSL =====
 if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
@@ -981,28 +985,20 @@ try{
             : "BUY"
 
     let finalSL = verify.find(o =>
-        (
-            o.type === "STOP_MARKET" ||
-            o.type === "STOP"
-        ) &&
-        o.side === verifyCloseSide &&
-        (
-    o.closePosition === true ||
-    o.closePosition === "true"
+    (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
+    o.side === verifyCloseSide
 )
-    )
 
-    let finalTP = verify.find(o =>
-        (
-            o.type === "TAKE_PROFIT_MARKET" ||
-            o.type === "TAKE_PROFIT"
-        ) &&
-        o.side === verifyCloseSide &&
-        (
-    o.closePosition === true ||
-    o.closePosition === "true"
+let finalTP = verify.find(o =>
+    (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
+    o.side === verifyCloseSide
 )
-    )
 
     if(finalSL && finalTP){
 
