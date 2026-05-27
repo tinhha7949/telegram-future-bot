@@ -700,21 +700,17 @@ async function setTPSL(symbol, side, tp, sl){
                 : "BUY"
 
         let hasSL = openOrders.find(o =>
+    o.side === closeSide &&
     (
-        o.type === "STOP_MARKET" ||
-        o.type === "STOP"
-    ) &&
-    o.side === closeSide
+        o.type.includes("STOP")
+    )
 )
-
 let hasTP = openOrders.find(o =>
+    o.side === closeSide &&
     (
-        o.type === "TAKE_PROFIT_MARKET" ||
-        o.type === "TAKE_PROFIT"
-    ) &&
-    o.side === closeSide
+        o.type.includes("TAKE_PROFIT")
+    )
 )
-
         // ===== ĐỦ TPSL =====
 if(hasSL && hasTP && Number(pos.positionAmt) !== 0){
 
@@ -948,10 +944,10 @@ try{
 }
 
         // ===== FINAL VERIFY =====
-        for(let i=0;i<25;i++){
+        for(let i=0;i<40;i++){
 
     await new Promise(r =>
-        setTimeout(r, 2000)
+        setTimeout(r, 2500)
     )
 
     let verify =
@@ -985,21 +981,18 @@ try{
             : "BUY"
 
     let finalSL = verify.find(o =>
+    o.side === verifyCloseSide &&
     (
-        o.type === "STOP_MARKET" ||
-        o.type === "STOP"
-    ) &&
-    o.side === verifyCloseSide
+        o.type.includes("STOP")
+    )
 )
-
 let finalTP = verify.find(o =>
-    (
-        o.type === "TAKE_PROFIT_MARKET" ||
-        o.type === "TAKE_PROFIT"
-    ) &&
-    o.side === verifyCloseSide
-)
 
+    o.side === verifyCloseSide &&
+    (
+        o.type.includes("TAKE_PROFIT")
+    )
+)
     if(finalSL && finalTP){
 
         return {
