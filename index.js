@@ -928,11 +928,7 @@ try{
         error:"TPSL_TOO_CLOSE"
     }
 }
-
-        // KHÔNG set tpAlreadyExists nữa
-        // để FINAL VERIFY kiểm tra thật
-
-    else{
+else{
 
         console.log("TP REAL ERROR:", msg)
 
@@ -944,66 +940,39 @@ try{
 }
 
         // ===== FINAL VERIFY =====
-        for(let i=0;i<40;i++){
-
-    await new Promise(r =>
-        setTimeout(r, 2500)
-    )
-
-    let verify =
-        await binance.futuresOpenOrders({
-            symbol,
-            recvWindow:20000
-        })
-
-    let posCheck =
-        await binance.futuresPositionRisk({
-            recvWindow:20000
-        })
-
-    let verifyPos = posCheck.find(p =>
-        p.symbol === symbol &&
-        Math.abs(Number(p.positionAmt)) > 0
-    )
-
-    // position mất rồi
-    if(!verifyPos){
-
-        return {
-            ok:false,
-            error:"POSITION_CLOSED"
-        }
-    }
-
-    let verifyCloseSide =
-        Number(verifyPos.positionAmt) > 0
-            ? "SELL"
-            : "BUY"
-
-    let finalSL = verify.find(o =>
-    o.side === verifyCloseSide &&
-    (
-        o.type.includes("STOP")
-    )
+await new Promise(r =>
+    setTimeout(r, 2500)
 )
+
+let verify =
+    await binance.futuresOpenOrders({
+        symbol,
+        recvWindow:20000
+    })
+
+let finalSL = verify.find(o =>
+    o.side === closeSide &&
+    o.type.includes("STOP")
+)
+
 let finalTP = verify.find(o =>
-
-    o.side === verifyCloseSide &&
-    (
-        o.type.includes("TAKE_PROFIT")
-    )
+    o.side === closeSide &&
+    o.type.includes("TAKE_PROFIT")
 )
-    if(finalSL && finalTP){
 
-        return {
-            ok:true
-        }
+if(finalSL && finalTP){
+
+    TPSL_CONFIRMED[symbol] = Date.now()
+
+    return {
+        ok:true
     }
 }
-        return {
-            ok:false,
-            error:"TPSL_VERIFY_FAIL"
-        }
+
+return {
+    ok:false,
+    error:"TPSL_VERIFY_FAIL"
+}
     }catch(e){
 
         return {
