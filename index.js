@@ -3,7 +3,6 @@ let TIME_SYNCED = false
 let TPSL_PENDING = {}
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
-let TPSL_CONFIRMED = {}
 const OPENING_POSITIONS = {}
 const fs = require("fs")
 
@@ -635,6 +634,73 @@ async function cancelTPSLOrders(symbol){
         return false
     }
 }
+async function hasFullTPSL(symbol){
+
+    try{
+
+        let positions =
+            await binance.futuresPositionRisk({
+                recvWindow:20000
+            })
+
+        let pos = positions.find(p =>
+            p.symbol === symbol &&
+            Math.abs(Number(p.positionAmt)) > 0
+        )
+
+        if(!pos){
+            return false
+        }
+
+        let closeSide =
+            Number(pos.positionAmt) > 0
+                ? "SELL"
+                : "BUY"
+
+        let orders =
+            await binance.futuresOpenOrders({
+                symbol,
+                recvWindow:20000
+            })
+
+        let hasSL = orders.find(o =>
+
+            (
+                o.type === "STOP_MARKET" ||
+                o.type === "STOP"
+            ) &&
+            o.side === closeSide &&
+            (
+                o.closePosition === true ||
+                String(o.closePosition) === "true"
+            )
+        )
+
+        let hasTP = orders.find(o =>
+
+            (
+                o.type === "TAKE_PROFIT_MARKET" ||
+                o.type === "TAKE_PROFIT"
+            ) &&
+            o.side === closeSide &&
+            (
+                o.closePosition === true ||
+                String(o.closePosition) === "true"
+            )
+        )
+
+        return !!(hasSL && hasTP)
+
+    }catch(e){
+
+        console.log(
+            `❌ hasFullTPSL ${symbol}:`,
+            e.message
+        )
+
+        return false
+    }
+}
 async function setTPSL(symbol, side, tp, sl){
 
     try{
@@ -699,36 +765,41 @@ async function setTPSL(symbol, side, tp, sl){
                 ? "SELL"
                 : "BUY"
 
-        let hasSL = openOrders.find(o =>
+       let hasSL = openOrders.find(o =>
+    (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
     o.side === closeSide &&
     (
-        o.type.includes("STOP")
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
     )
 )
 let hasTP = openOrders.find(o =>
+
+    (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
     o.side === closeSide &&
     (
-        o.type.includes("TAKE_PROFIT")
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
     )
 )
         // ===== ĐỦ TPSL =====
-if(
-    hasSL &&
-    hasTP &&
-    Number(pos.positionAmt) !== 0
-){
+let alreadyOK = await hasFullTPSL(symbol)
+
+if(alreadyOK){
 
     console.log(`✅ TPSL EXISTS ${symbol}`)
-    TPSL_CONFIRMED[symbol] = Date.now()
+
     return {
         ok:true,
         existed:true
     }
 }
-
-        await new Promise(r =>
-            setTimeout(r, 2000)
-        )
 
         // ===== SYMBOL INFO =====
         let info = await getSymbolInfo(symbol)
@@ -903,8 +974,7 @@ let finalTP = verify.find(o =>
 )
 
 if(finalSL && finalTP){
-
-    TPSL_CONFIRMED[symbol] = Date.now()
+    console.log(`✅ TPSL VERIFIED ${symbol}`)
     delete TPSL_MISSING[symbol]
 
     return {
@@ -925,32 +995,79 @@ return {
     }
 }
 async function safeSetTPSL(symbol, side, tp, sl){
-    if(TPSL_CONFIRMED[symbol]){
-
     try{
-        let posCheck = await binance.futuresPositionRisk({
-            recvWindow: 20000
-        })
 
-        let pos = posCheck.find(p =>
-            p.symbol === symbol &&
-            Math.abs(Number(p.positionAmt)) > 0
-        )
+    let posCheck = await binance.futuresPositionRisk({
+        recvWindow: 20000
+    })
 
-        // nếu không còn position → reset state
-        if(!pos){
-            delete TPSL_CONFIRMED[symbol]
-        }else{
+    let pos = posCheck.find(p =>
+        p.symbol === symbol &&
+        Math.abs(Number(p.positionAmt)) > 0
+    )
+
+    // ❌ không còn position
+    if(!pos){
+
+        delete TPSL_CONFIRMED[symbol]
+        delete TPSL_MISSING[symbol]
+
+    }else{
+
+        // ===== VERIFY TPSL THẬT =====
+        let verify =
+            await binance.futuresOpenOrders({
+                symbol,
+                recvWindow:20000
+            })
+
+        let closeSide =
+            Number(pos.positionAmt) > 0
+                ? "SELL"
+                : "BUY"
+
+        let hasSL = openOrders.find(o =>
+
+    (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
+    o.side === closeSide &&
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
+)
+
+let hasTP = openOrders.find(o =>
+
+    (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
+    o.side === closeSide &&
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
+)
+
+        // ✅ TPSL thật sự tồn tại
+        if(hasSL && hasTP){
+
+            TPSL_CONFIRMED[symbol] = Date.now()
+
             return {
                 ok:true,
                 existed:true
             }
         }
 
-    }catch(e){
-        // nếu lỗi API → không tin cache
+        // ❌ fake confirmed
         delete TPSL_CONFIRMED[symbol]
     }
+
+}catch(e){
 }
 
    if(
@@ -1033,8 +1150,6 @@ TPSL_PENDING[symbol] = true
 
         console.log(`✅ TPSL VERIFIED ${symbol}`)
 
-        TPSL_CONFIRMED[symbol] = Date.now()
-
         delete TPSL_MISSING[symbol]
 
         return {
@@ -1044,7 +1159,6 @@ TPSL_PENDING[symbol] = true
 
     console.log(`⚠️ TPSL FAKE CONFIRMED ${symbol}`)
 
-    await cancelTPSLOrders(symbol)
 
     await new Promise(r =>
         setTimeout(r, 3000)
@@ -1058,19 +1172,8 @@ TPSL_PENDING[symbol] = true
     res?.error || "UNKNOWN"
 )
 
-            // jika Binance belum sync cancel
+            // jika Binance chưa sync cancel
 if(
-    res.error &&
-    res.error.includes("existing")
-){
-
-    console.log(`✅ TPSL ALREADY EXISTS ${symbol}`)
-
-    return {
-    ok:true
-}
-
-}else if(
     res.error &&
     res.error.includes("immediately trigger")
 ){
@@ -2148,7 +2251,6 @@ if(existing){
                 }
             }
         )
-        delete TPSL_CONFIRMED[best.symbol]
         existing = null // 🔥 QUAN TRỌNG
 
     }else{
@@ -2649,8 +2751,6 @@ if(!realPos){
         }
     )
 
-    delete TPSL_CONFIRMED[t.symbol]
-
     activeTrades.splice(i,1)
 
     continue
@@ -2734,8 +2834,6 @@ ${t.symbol}
 ${t.side}`
     )
 
-    delete TPSL_CONFIRMED[t.symbol]
-
     activeTrades.splice(i,1)
 
     continue
@@ -2776,8 +2874,6 @@ if(!stillOpen){
             }
         )
 
-        delete TPSL_CONFIRMED[t.symbol]
-
         activeTrades.splice(i,1)
 
         continue
@@ -2807,7 +2903,6 @@ if(done){
             }
         }
     )
-    delete TPSL_CONFIRMED[t.symbol]
     let latestBalance = await updateBalance()
 
     if(latestBalance > 0){
@@ -2877,7 +2972,6 @@ async function closePosition(symbol, side, qty){
             )
 
             if(!pos){
-                delete TPSL_CONFIRMED[symbol]   // 🔥 ADD
 
                 return true
             }
@@ -2911,7 +3005,7 @@ async function watchdogTPSL(){
 })
         for(let p of positions){
             let symbol = p.symbol
-            if(TPSL_CONFIRMED[symbol]){
+           {
 
     let verifyOrders =
         await binance.futuresOpenOrders({
@@ -2924,31 +3018,19 @@ async function watchdogTPSL(){
             ? "SELL"
             : "BUY"
 
-    let hasSL = verifyOrders.find(o =>
-        (
-            o.type === "STOP_MARKET" ||
-            o.type === "STOP"
-        ) &&
-        o.side === closeSide &&
-        String(o.closePosition) === "true"
-    )
+    let verified =
+    await hasFullTPSL(symbol)
 
-    let hasTP = verifyOrders.find(o =>
-        (
-            o.type === "TAKE_PROFIT_MARKET" ||
-            o.type === "TAKE_PROFIT"
-        ) &&
-        o.side === closeSide &&
-        String(o.closePosition) === "true"
-    )
+if(verified){
 
-    if(hasSL && hasTP){
-        continue
-    }
+    delete TPSL_MISSING[symbol]
+
+    continue
+}
 
     console.log(`🚨 FAKE TPSL CONFIRMED ${symbol}`)
 
-    delete TPSL_CONFIRMED[symbol]
+    
 }
              if(TPSL_LOCKS[symbol]){
     continue
@@ -3002,11 +3084,13 @@ let hasTP = orders.find(
         )
 )
                 // ✅ ĐỦ TPSL
-                if(hasSL && hasTP){
-                    delete TPSL_MISSING[symbol]
-                    TPSL_CONFIRMED[symbol] = Date.now()
-                    continue
-                }
+                let verified =
+    await hasFullTPSL(symbol)
+
+if(verified){
+    delete TPSL_MISSING[symbol]
+    continue
+}
                 // ===== BINANCE CHƯA SYNC ĐỦ =====
 // ===== PARTIAL TPSL =====
 if(hasSL || hasTP){
@@ -3054,8 +3138,6 @@ let verifyTP = verify.find(o =>
 
         console.log(`🚨 REBUILD TPSL ${symbol}`)
 
-        await cancelTPSLOrders(symbol)
-
         let trade = activeTrades.find(
             x => x.symbol === symbol
         )
@@ -3079,7 +3161,7 @@ if(!TPSL_MISSING[symbol]){
     TPSL_MISSING[symbol] = Date.now()
 }
 
-if(!TPSL_CONFIRMED[symbol]){
+{
     console.log(`🚨 NO TPSL ${symbol}`)
 }
                 let trade = activeTrades.find(
@@ -3136,7 +3218,6 @@ if(!TPSL_CONFIRMED[symbol]){
                             : "SHORT",
                         amt
                     )
-                    delete TPSL_CONFIRMED[symbol]
 delete TPSL_MISSING[symbol]
 
 if(trade){
@@ -3194,7 +3275,7 @@ if(!res || !res.ok){
                         trade.side,
                         amt
                     )
-                    delete TPSL_CONFIRMED[symbol]
+                    
 delete TPSL_MISSING[symbol]
 if(trade){
     trade.result = "FORCE_CLOSED"
@@ -3374,7 +3455,6 @@ for(let t of activeTrades){
             }
         }
     )
-    delete TPSL_CONFIRMED[t.symbol]
     console.log(
         `🧹 CLEAR GHOST ${t.symbol}`
     )
@@ -3583,8 +3663,10 @@ async function getBestTPSL(setup, market, side){
 start()
 async function fixTPSL(){
     for(let t of activeTrades){
-        if(TPSL_CONFIRMED[t.symbol]) continue
-        if(!t.tpslMissing) continue
+        if(
+    !t.tpslMissing &&
+    !t.retryTPSL
+) continue
         if(TPSL_LOCKS[t.symbol]) continue
 if(TPSL_PENDING[t.symbol]) continue
 if(TPSL_GLOBAL_LOCK[t.symbol]) continue
