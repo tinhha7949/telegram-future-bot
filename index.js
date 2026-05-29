@@ -1662,24 +1662,6 @@ let trendShort =
     ema20_1h < ema50_1h &&
     emaGap > 0.002
 
-    let trendStrength = Math.abs(ema20-ema50)/price
-    // ===== TREND STRENGTH FILTER =====
-if(trendLong){
-    if(
-        emaGap < 0.0025 ||
-        emaSlope < atrRatio * 0.4
-    ){
-        trendLong = false
-    }
-}
-if(trendShort){
-    if(
-        emaGap < 0.0025 ||
-        emaSlope < atrRatio * 0.4
-    ){
-        trendShort = false
-    }
-}
 // ===== HEALTHY PULLBACK =====
 let pullbackAtr = atrVal * 0.2
 // trend mạnh → cho pullback sâu hơn
