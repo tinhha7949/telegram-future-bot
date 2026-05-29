@@ -1502,12 +1502,26 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
     atrVal = price * 0.003 // fallback ATR giả
 }
 let atrRatio = atrVal / price
+let dynamicMinVol =
+    getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
-if(volNowUSDT < volAvgUSDT * 0.8){
+if(volAvgUSDT < dynamicMinVol){
     return null
 }
-    //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
-    //if(volAvgUSDT < MIN_VOL_15M) return null
+
+let minVolNow = 0.85
+
+if(atrRatio > 0.006){
+    minVolNow = 0.75
+}
+
+if(atrRatio < 0.0025){
+    minVolNow = 0.95
+}
+
+if(volNowUSDT < volAvgUSDT * minVolNow){
+    return null
+}
 
     // ===== EMA =====
     let ema20 = ema(closes.slice(-100), 20)
@@ -1516,6 +1530,11 @@ if(volNowUSDT < volAvgUSDT * 0.8){
 
     let ema20_1h = ema(closes1h.slice(-60),20)
     let ema50_1h = ema(closes1h.slice(-120),50)
+    let emaSlope =
+Math.abs(
+    ema20 -
+    ema(closes.slice(-101,-1),20)
+) / price
 
     let distFromEma = (price - ema20) / ema20
 
@@ -1550,8 +1569,6 @@ else{
     return null
 }
 
-    let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
     if(distEma > atrRatio * 3.5){
@@ -1582,16 +1599,14 @@ if(rangeSize <= 0) return null
 let pos = (price - rangeLow) / rangeSize
 
 {
-    if(pos > 0.45 && pos < 0.55){
+    if(pos > 0.42 && pos < 0.58){
         return null
     }
 }
-    let prevHigh50 = Math.max(...highs.slice(-51,-1))
-    let prevLow50  = Math.min(...lows.slice(-51,-1))
-
     // ===== DYNAMIC MOMENTUM =====
     let momentumStrength =
 (closes.at(-1) - closes.at(-4)) / closes.at(-4)
+let momentumNeed = atrRatio * 0.35
 let momentumUp = momentumStrength > momentumNeed
 let momentumDown = momentumStrength < -momentumNeed
 let minMomentum = atrRatio * 0.22
@@ -1616,13 +1631,15 @@ if(Math.abs(momentumStrength) < minMomentum){
 let bearishRetest =
     closes.at(-2) > ema20 &&
     closes.at(-1) < ema20
-    let recentVol = volumes.slice(-5)
+
+let recentVol = volumes.slice(-5)
 let upCount = 0
 for(let i=1;i<recentVol.length;i++){
     if(recentVol[i] >= recentVol[i-1]){
         upCount++
     }
 }
+let volTrendUp = upCount >= 3
     // ===== TREND FILTER =====
     let trendLong =
     ema20 > ema50 &&
@@ -1636,6 +1653,9 @@ let trendShort =
     ema20_1h < ema50_1h &&
     emaGap > 0.002
 
+    if(emaSlope < atrRatio * 0.3){
+    return null
+}
 // ===== HEALTHY PULLBACK =====
 let pullbackAtr = atrVal * 0.2
 // trend mạnh → cho pullback sâu hơn
@@ -1712,7 +1732,8 @@ if(
     trendLong &&
     healthyPullbackLong &&
     bullishConfirm &&
-    volNowUSDT > volAvgUSDT * 1.1
+    volNowUSDT > volAvgUSDT * 1.06 &&
+    volTrendUp
 ){
     // 🔥 confirm giữ EMA thật
     if(closes.at(-1) < ema20){
@@ -1725,7 +1746,8 @@ if(
     trendShort &&
     healthyPullbackShort &&
     bearishConfirm &&
-    volNowUSDT > volAvgUSDT * 1.1
+    volNowUSDT > volAvgUSDT * 1.06 &&
+    volTrendUp
 ){
      // 🔥 confirm giữ EMA thật
     if(closes.at(-1) > ema20){
@@ -1735,14 +1757,6 @@ if(
     setupType = "PULLBACK"
 }
 
-if(marketState === "TREND_STRONG"){
-    longRsiMax = 70
-    shortRsiMin = 30
-}
-if(atrRatio < 0.002){
-    longRsiMax = 58
-    shortRsiMin = 42
-}
     if(!side) return null
 // kháng cự hỗ trợ gần quá thì tránh vào (giữ nguyên)
     let resistance = rangeHigh
