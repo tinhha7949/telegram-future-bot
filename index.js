@@ -1,4 +1,5 @@
 let TPSL_GLOBAL_LOCK = {}
+let WATCHDOG_LAST_RUN = 0
 let TIME_SYNCED = false
 let TPSL_PENDING = {}
 let LAST_OFFSET_LOG = 0
@@ -62,8 +63,9 @@ if(!options.signal){
             if(timeout) clearTimeout(timeout)
 
             if(res && res.ok){
-                return res
-            }
+    if(timeout) clearTimeout(timeout)
+    return res
+}
 
             if(res && (res.status === 429 || res.status === 418)){
                 await new Promise(r => setTimeout(r, 3000))
@@ -400,6 +402,21 @@ if(existingPos){
 
     return null
 }
+let openOrders = await binance.futuresOpenOrders({
+    symbol,
+    recvWindow:20000
+})
+
+let pendingMarket = openOrders.find(o =>
+    o.type === "MARKET"
+)
+
+if(pendingMarket){
+
+    console.log(`⛔ MARKET ORDER EXISTS ${symbol}`)
+
+    return null
+}
          let info = await getSymbolInfo(symbol)
 
         if(!info){
@@ -533,7 +550,7 @@ if(data.status !== "FILLED"){
 }
 async function waitPosition(symbol){
 
-    for(let i=0;i<35;i++){
+    for(let i=0;i<15;i++){
 
         let positions = await binance.futuresPositionRisk({
     recvWindow: 20000
@@ -1026,7 +1043,7 @@ async function safeSetTPSL(symbol, side, tp, sl){
                 ? "SELL"
                 : "BUY"
 
-        let hasSL = openOrders.find(o =>
+        let hasSL = verify.find(o =>
 
     (
         o.type === "STOP_MARKET" ||
@@ -1039,7 +1056,7 @@ async function safeSetTPSL(symbol, side, tp, sl){
     )
 )
 
-let hasTP = openOrders.find(o =>
+let hasTP = verify.find(o =>
 
     (
         o.type === "TAKE_PROFIT_MARKET" ||
@@ -1071,9 +1088,18 @@ let hasTP = openOrders.find(o =>
 }
 
    if(
-    TPSL_LOCKS[symbol] ||
-    TPSL_PENDING[symbol] ||
-    TPSL_GLOBAL_LOCK[symbol]
+    (
+        TPSL_LOCKS[symbol] &&
+        Date.now() - TPSL_LOCKS[symbol] < 60000
+    ) ||
+    (
+        TPSL_PENDING[symbol] &&
+        Date.now() - TPSL_PENDING[symbol] < 60000
+    ) ||
+    (
+        TPSL_GLOBAL_LOCK[symbol] &&
+        Date.now() - TPSL_GLOBAL_LOCK[symbol] < 60000
+    )
 ){
     return {
     ok:false,
@@ -1081,15 +1107,15 @@ let hasTP = openOrders.find(o =>
 }
 }
 
-TPSL_GLOBAL_LOCK[symbol] = true
+TPSL_GLOBAL_LOCK[symbol] = Date.now()
 
-TPSL_PENDING[symbol] = true
+TPSL_PENDING[symbol] = Date.now()
 
-    TPSL_LOCKS[symbol] = true
+TPSL_LOCKS[symbol] = Date.now()
 
     try{
 
-        for(let i=0;i<5;i++){
+        for(let i=0;i<3;i++){
 
             let res = await setTPSL(
                 symbol,
@@ -2853,40 +2879,76 @@ async function watchdogTPSL(){
         let positions = await binance.futuresPositionRisk({
     recvWindow: 20000
 })
+let openOrdersCache = {}
         for(let p of positions){
             if(Math.abs(Number(p.positionAmt)) <= 0){
     continue
 }
             let symbol = p.symbol
-           {
 
-    let verifyOrders =
-        await binance.futuresOpenOrders({
-            symbol,
-            recvWindow:20000
-        })
+let hasSL = false
+let hasTP = false
 
-    let closeSide =
-        Number(p.positionAmt) > 0
-            ? "SELL"
-            : "BUY"
+let closeSide =
+    Number(p.positionAmt) > 0
+        ? "SELL"
+        : "BUY"
 
-    let verified =
-    await hasFullTPSL(symbol)
+let orders = openOrdersCache[symbol]
 
-if(verified){
+if(!orders){
 
+    orders = await binance.futuresOpenOrders({
+        symbol,
+        recvWindow: 20000
+    })
+
+    openOrdersCache[symbol] = orders
+}
+
+hasSL = orders.find(
+    o =>
+        (
+            o.type === "STOP_MARKET" ||
+            o.type === "STOP"
+        ) &&
+        o.side === closeSide &&
+        (
+            o.closePosition === true ||
+            String(o.closePosition) === "true"
+        )
+)
+
+hasTP = orders.find(
+    o =>
+        (
+            o.type === "TAKE_PROFIT_MARKET" ||
+            o.type === "TAKE_PROFIT"
+        ) &&
+        o.side === closeSide &&
+        (
+            o.closePosition === true ||
+            String(o.closePosition) === "true"
+        )
+)
+
+if(hasSL && hasTP){
+    delete openOrdersCache[symbol]
     delete TPSL_MISSING[symbol]
-
     continue
 }
 
-    console.log(`🚨 FAKE TPSL CONFIRMED ${symbol}`)
-    TPSL_MISSING[symbol] = Date.now()
+if(!TPSL_MISSING[symbol]){
 
-    
+    console.log(`🚨 FAKE TPSL CONFIRMED ${symbol}`)
+
+    TPSL_MISSING[symbol] = Date.now()
 }
-             if(TPSL_LOCKS[symbol]){
+
+if(
+    TPSL_LOCKS[symbol] &&
+    Date.now() - TPSL_LOCKS[symbol] < 60000
+){
     continue
 }
             let amt = Math.abs(Number(p.positionAmt))
@@ -2901,54 +2963,19 @@ if(verified){
             WATCHDOG_LOCKS[symbol] = true
             try{
                 // 🔒 đang set TPSL thì skip
-                if(TPSL_LOCKS[symbol]){
-                    continue
-                }
-                let orders = await binance.futuresOpenOrders({
-                    symbol,
-                    recvWindow: 20000
-                })
-                let closeSide =
-                    Number(p.positionAmt) > 0
-                        ? "SELL"
-                        : "BUY"
-                let hasSL = orders.find(
-    o =>
-        (
-            o.type === "STOP_MARKET" ||
-            o.type === "STOP"
-        ) &&
-        o.side === closeSide &&
-        (
-            o.closePosition === true ||
-            String(o.closePosition) === "true"
-        )
-)
-
-let hasTP = orders.find(
-    o =>
-        (
-            o.type === "TAKE_PROFIT_MARKET" ||
-            o.type === "TAKE_PROFIT"
-        ) &&
-        o.side === closeSide &&
-        (
-            o.closePosition === true ||
-            String(o.closePosition) === "true"
-        )
-)
-                // ✅ ĐỦ TPSL
-                let verified =
-    await hasFullTPSL(symbol)
-
-if(verified){
-    delete TPSL_MISSING[symbol]
+                if(
+    TPSL_LOCKS[symbol] &&
+    Date.now() - TPSL_LOCKS[symbol] < 60000
+){
     continue
 }
+
                 // ===== BINANCE CHƯA SYNC ĐỦ =====
 // ===== PARTIAL TPSL =====
 if(hasSL || hasTP){
-    TPSL_MISSING[symbol] = Date.now()
+    if(!TPSL_MISSING[symbol]){
+        TPSL_MISSING[symbol] = Date.now()
+    }
 
     console.log(`⚠️ PARTIAL TPSL ${symbol}`)
 
@@ -2956,12 +2983,14 @@ if(hasSL || hasTP){
     await new Promise(r =>
         setTimeout(r, 5000)
     )
+    delete openOrdersCache[symbol]
 
     let verify =
         await binance.futuresOpenOrders({
             symbol,
             recvWindow: 20000
         })
+    openOrdersCache[symbol] = verify
 
     let verifySL = verify.find(o =>
     (
@@ -2991,7 +3020,7 @@ let verifyTP = verify.find(o =>
     if(!(verifySL && verifyTP)){
 
         console.log(`🚨 REBUILD TPSL ${symbol}`)
-
+        delete openOrdersCache[symbol]
         let trade = activeTrades.find(
             x => x.symbol === symbol
         )
@@ -3109,6 +3138,9 @@ if(trade){
     trade.tp,
     trade.sl
 )
+if(res && res.ok){
+    delete openOrdersCache[symbol]
+}
 
 // ===== TPSL FAIL =====
 if(!res || !res.ok){
