@@ -1574,12 +1574,6 @@ else{
     if(distEma > atrRatio * 3.5){
     return null
 }
-    let nearEma = distEma < 0.0055
-{
-        if(nearEma && volNowUSDT < volAvgUSDT * 0.2) return null //0.5
-    }
-
-    // ===== STRUCTURE =====
     // ===== STRUCTURE (FIXED) =====
 let hArr = highs.slice(-30)
 let lArr = lows.slice(-30)
@@ -1639,7 +1633,7 @@ for(let i=1;i<recentVol.length;i++){
         upCount++
     }
 }
-let volTrendUp = upCount >= 3
+let volTrendOk = upCount >= 2
     // ===== TREND FILTER =====
     let trendLong =
     ema20 > ema50 &&
@@ -1733,7 +1727,7 @@ if(
     healthyPullbackLong &&
     bullishConfirm &&
     volNowUSDT > volAvgUSDT * 1.06 &&
-    volTrendUp
+    volTrendOk
 ){
     // 🔥 confirm giữ EMA thật
     if(closes.at(-1) < ema20){
@@ -1747,7 +1741,7 @@ if(
     healthyPullbackShort &&
     bearishConfirm &&
     volNowUSDT > volAvgUSDT * 1.06 &&
-    volTrendUp
+    volTrendOk
 ){
      // 🔥 confirm giữ EMA thật
     if(closes.at(-1) > ema20){
@@ -1837,6 +1831,9 @@ if(Math.abs(tp - price) / price < 0.001){ //0.0015
 }
         // candle có thân lớn so với toàn cây không (giữ nguyên)
 let body = Math.abs(close - open)
+if(body > atrVal * 1.8){
+    return null
+}
 let rangeCandle = highs.at(-1) - lows.at(-1)
 
 let minBodyRatio = 0.1
