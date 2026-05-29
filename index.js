@@ -1502,9 +1502,6 @@ let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
     atrVal = price * 0.003 // fallback ATR giả
 }
 let atrRatio = atrVal / price
-    let volRatio = volNowUSDT / volAvgUSDT //cmt dòng này nếu bỏ dymic
-
-let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
 if(volNowUSDT < volAvgUSDT * 0.8){
     return null
@@ -1522,21 +1519,12 @@ if(volNowUSDT < volAvgUSDT * 0.8){
 
     let distFromEma = (price - ema20) / ema20
 
-    // ===== TREND =====
-    let trendHTF = Math.abs(ema20_1h - ema50_1h) / price
-    let trendLTF = Math.abs(ema20 - ema50) / price
-
-    //if(trendHTF < 0.0012 && trendLTF < 0.001) return null
-
     let r = rsi(closes.slice(-50))
    // let atrVal = atr(data15.slice(-100))
 
     let volatility = "LOW"
     if(atrVal / price > 0.0045) volatility = "HIGH"
 
-    // ===== ANTI CHASE (GIỮ 1) =====
-   // let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-   // if(Math.abs(lastMove) > 0.03) return null
 
     // ===== WICK =====
     if((highs.at(-1) - lows.at(-1)) > atrVal * 6){
@@ -1561,12 +1549,8 @@ else if(
 else{
     return null
 }
-    // ===== ANTI CHASE (ĐÚNG CHỖ) =====
-let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
-    let spreadHigh = Math.max(...highs.slice(-10))
-let spreadLow = Math.min(...lows.slice(-10))
 
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
@@ -1591,9 +1575,6 @@ let rangeLow  = Math.min(...lArr)
 
 // tránh divide by zero
 if(!rangeHigh || !rangeLow || rangeHigh <= rangeLow) return null
-    // ===== AVOID TOP =====
-let nearHigh = (rangeHigh - price) / price < 0.01
-let nearLow  = (price - rangeLow) / price < 0.01
 
     let rangeSize = rangeHigh - rangeLow
 if(rangeSize <= 0) return null
@@ -1608,16 +1589,12 @@ let pos = (price - rangeLow) / rangeSize
     let prevHigh50 = Math.max(...highs.slice(-51,-1))
     let prevLow50  = Math.min(...lows.slice(-51,-1))
 
-    let sweepHigh = highs.at(-2) > prevHigh50 && closes.at(-2) < prevHigh50
-    let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
-
     // ===== DYNAMIC MOMENTUM =====
     let momentumStrength =
 (closes.at(-1) - closes.at(-4)) / closes.at(-4)
-let momentumNeed = atrRatio * 0.5
 let momentumUp = momentumStrength > momentumNeed
 let momentumDown = momentumStrength < -momentumNeed
-let minMomentum = atrRatio * 0.35
+let minMomentum = atrRatio * 0.22
 if(Math.abs(momentumStrength) < minMomentum){
     return null
 }
@@ -1646,9 +1623,6 @@ for(let i=1;i<recentVol.length;i++){
         upCount++
     }
 }
-let volTrendUp =
-    upCount >= 3 &&
-    volNowUSDT > volAvgUSDT * 1.1
     // ===== TREND FILTER =====
     let trendLong =
     ema20 > ema50 &&
@@ -1733,30 +1707,12 @@ if(
     return null
 }
 }
-
-let recentPullbackBuffer = atrVal * 0.2
-if(marketState === "TREND_STRONG"){
-    recentPullbackBuffer = atrVal * 0.35
-}
-if(atrRatio > 0.006){
-    recentPullbackBuffer *= 1.3
-}
-let recentPullbackLong =
-(
-    lows.at(-2) <= ema20 + recentPullbackBuffer ||
-    lows.at(-3) <= ema20 + recentPullbackBuffer
-)
-let recentPullbackShort =
-(
-    highs.at(-2) >= ema20 - recentPullbackBuffer ||
-    highs.at(-3) >= ema20 - recentPullbackBuffer
-)
     // ===== HEALTHY PULLBACK =====
 if(
     trendLong &&
     healthyPullbackLong &&
     bullishConfirm &&
-    volNowUSDT > volAvgUSDT * 1.15
+    volNowUSDT > volAvgUSDT * 1.1
 ){
     // 🔥 confirm giữ EMA thật
     if(closes.at(-1) < ema20){
@@ -1769,7 +1725,7 @@ if(
     trendShort &&
     healthyPullbackShort &&
     bearishConfirm &&
-    volNowUSDT > volAvgUSDT * 1.15
+    volNowUSDT > volAvgUSDT * 1.1
 ){
      // 🔥 confirm giữ EMA thật
     if(closes.at(-1) > ema20){
@@ -1778,11 +1734,7 @@ if(
     side = "SHORT"
     setupType = "PULLBACK"
 }
-   
-    let longRsiMin = 54
-let longRsiMax = 68
-let shortRsiMin = 32
-let shortRsiMax = 46
+
 if(marketState === "TREND_STRONG"){
     longRsiMax = 70
     shortRsiMin = 30
@@ -1831,20 +1783,20 @@ let sl = side==="LONG"
 }
 
 // ===== DYNAMIC RR =====
-let rrTarget = 1.2
+let rrTarget = 1.0
 
 if(marketState === "TREND_STRONG"){
-    rrTarget = 1.6
+    rrTarget = 1.25
 }
 else{
     rrTarget = 1.0
 }
 if(atrRatio > 0.007){
-    rrTarget += 0.3
+    rrTarget += 0.15
 }
 
 if(atrRatio < 0.002){
-    rrTarget -= 0.2
+    rrTarget -= 0.1
 }
 let rawTP = side === "LONG"
     ? price + risk * rrTarget
