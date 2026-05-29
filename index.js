@@ -1506,31 +1506,9 @@ let atrRatio = atrVal / price
 
 let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
-    // ===== DYNAMIC VOLUME FILTER =====
-// market chết → bỏ luôn
-if(atrRatio < 0.0015){
-    if(volRatio < 1.0){
-        return null
-    }
-}
-// trend mạnh → nới
-else if(atrRatio > 0.005){
-    if(volRatio < 0.55){
-        return null
-    }
-}
-// market bình thường
-else{
-    if(volRatio < 0.55){
-        return null
-    }
-}
-//if(volNowUSDT < volAvgUSDT * 0.6) return null
-    // ===== FILTER VOLUME =====
-if(volAvgUSDT < dynamicMinVol * 0.7){
+if(volNowUSDT < volAvgUSDT * 0.8){
     return null
 }
-
     //if(volNowUSDT < volAvgUSDT * 0.2) return null //1.1
     //if(volAvgUSDT < MIN_VOL_15M) return null
 
@@ -1567,25 +1545,16 @@ if(volAvgUSDT < dynamicMinVol * 0.7){
 
     // ===== MARKET =====
     let emaGap = Math.abs(ema20 - ema50) / price
-    let ema20Prev = ema(closes.slice(0,-5),20)
-let emaSlope =
-    Math.abs(ema20 - ema20Prev) / price
-
-if(emaSlope > atrRatio * 6){
-    return null
-}
-    //let atrRatio = atrVal / price
-
     let marketState = "SIDEWAY"
 
 if(
-    emaGap > 0.005 &&
-    atrRatio > 0.0045
+    emaGap > 0.0035 &&
+    atrRatio > 0.004
 ){
     marketState = "TREND_STRONG"
 }
 else if(
-    emaGap > 0.003
+    emaGap > 0.002
 ){
     marketState = "TREND_NORMAL"
 }
@@ -1595,27 +1564,13 @@ else{
     // ===== ANTI CHASE (ĐÚNG CHỖ) =====
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 
-// nếu pump/dump mạnh → bỏ luôn (không cần biết LONG hay SHORT)
-let antiChaseLimit = atrRatio * 3.5
-
-if(marketState === "TREND_STRONG"){
-    antiChaseLimit *= 1.15
-}
-
-if(Math.abs(lastMove) > antiChaseLimit){
-    return null
-}
-
     let range = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
     let spreadHigh = Math.max(...highs.slice(-10))
 let spreadLow = Math.min(...lows.slice(-10))
-    let minRange = atrRatio * 1.5
-if(range < minRange * 0.8){
-    return null
-}
+
     // ===== EMA DIST =====
     let distEma = Math.abs(price - ema20) / price
-    if(distEma > atrRatio * 4){
+    if(distEma > atrRatio * 3.5){
     return null
 }
     let nearEma = distEma < 0.0055
@@ -1673,11 +1628,13 @@ if(Math.abs(momentumStrength) < minMomentum){
 
     let bullishConfirm =
     closes.at(-1) > opens.at(-1) &&
-    closes.at(-1) > highs.at(-2)
+    closes.at(-1) > highs.at(-2) &&
+    lows.at(-1) <= ema20
 
     let bearishConfirm =
     closes.at(-1) < opens.at(-1) &&
-    closes.at(-1) < lows.at(-2)
+    closes.at(-1) < lows.at(-2) &&
+    highs.at(-1) >= ema20
 
 let bearishRetest =
     closes.at(-2) > ema20 &&
@@ -1697,15 +1654,13 @@ let volTrendUp =
     ema20 > ema50 &&
     ema50 > ema200 &&
     ema20_1h > ema50_1h &&
-    emaGap > 0.003 &&
-    emaSlope > atrRatio * 0.5
+    emaGap > 0.002
 
 let trendShort =
     ema20 < ema50 &&
     ema50 < ema200 &&
     ema20_1h < ema50_1h &&
-    emaGap > 0.003 &&
-    emaSlope > atrRatio * 0.5
+    emaGap > 0.002
 
     let trendStrength = Math.abs(ema20-ema50)/price
     // ===== TREND STRENGTH FILTER =====
@@ -1740,13 +1695,13 @@ let healthyPullbackLong =
     trendLong &&
     bullishRetest &&
     bullishConfirm &&
-    r > 55 && r < 68
+    r > 52 && r < 72
 
 let healthyPullbackShort =
     trendShort &&
     bearishRetest &&
     bearishConfirm &&
-    r < 45 && r > 32
+    r < 48 && r > 28
 
     let longSignal =
     trendLong &&
@@ -1769,17 +1724,6 @@ if(candleRange <= 0){
 let upperWick = high - Math.max(open, close)
 let lowerWick = Math.min(open, close) - low
 
-// 🔥 nếu giá quá xa EMA → bỏ (đu đỉnh)
-let maxDistEma = atrRatio * 8
-if(marketState === "TREND_STRONG"){
-    maxDistEma *= 1.5
-}
-if(atrRatio < 0.002){
-    maxDistEma *= 0.7
-}
-if(Math.abs(distFromEma) > maxDistEma){
-    return null
-}
 // ===== DYNAMIC WICK FILTER =====
 if(candleRange > 0){
     let upperWickRatio = upperWick / candleRange
@@ -1807,31 +1751,6 @@ if(
     return null
 }
 }
-let upperRatio = upperWick / candleRange
-let lowerRatio = lowerWick / candleRange
-
-if(
-    longSignal &&
-    upperRatio > 0.35
-){
-    return null
-}
-
-if(
-    shortSignal &&
-    lowerRatio > 0.35
-){
-    return null
-}
-let fakePump = volNowUSDT > volAvgUSDT * 2
-    && upperWick / candleRange > 0.5
-
-let fakeDump = volNowUSDT > volAvgUSDT * 2
-    && lowerWick / candleRange > 0.5
-if(fakePump || fakeDump){
-    return null
-    //score -= 20
-}
 
 let recentPullbackBuffer = atrVal * 0.2
 if(marketState === "TREND_STRONG"){
@@ -1857,6 +1776,10 @@ if(
     bullishConfirm &&
     volNowUSDT > volAvgUSDT * 1.15
 ){
+    // 🔥 confirm giữ EMA thật
+    if(closes.at(-1) < ema20){
+        return null
+    }
     side = "LONG"
     setupType = "PULLBACK"
 }
@@ -1866,6 +1789,10 @@ if(
     bearishConfirm &&
     volNowUSDT > volAvgUSDT * 1.15
 ){
+     // 🔥 confirm giữ EMA thật
+    if(closes.at(-1) > ema20){
+        return null
+    }
     side = "SHORT"
     setupType = "PULLBACK"
 }
@@ -1898,28 +1825,6 @@ if(setupType !== "BREAKOUT"){
         return null
     }
 }
-    // ===== ANTI FOMO (GỌN - KHÔNG TRÙNG) =====
-    let distance = Math.abs(price - ema20)
-// ===== DYNAMIC ANTI FOMO =====
-let antiFomoLimit = atrVal * 2.2
-// trend mạnh → cho chạy hơn
-if(marketState === "TREND_STRONG"){
-    antiFomoLimit = atrVal * 3
-}
-// market chết → siết cực mạnh
-if(atrRatio < 0.002){
-    antiFomoLimit = atrVal * 2
-}
-// volatility cao → nới
-if(atrRatio > 0.006){
-    antiFomoLimit = atrVal * 5
-}
-{
-    if(distance > antiFomoLimit){
-        return null
-    }
-
-}
     // ===== SL TP (GIỮ NGUYÊN) =====
     let swingLow = Math.min(...lows.slice(-20))
     let swingHigh = Math.max(...highs.slice(-20))
@@ -1944,10 +1849,10 @@ let sl = side==="LONG"
 }
 
 // ===== DYNAMIC RR =====
-let rrTarget = 0.9
+let rrTarget = 1.2
 
 if(marketState === "TREND_STRONG"){
-    rrTarget = 1.15
+    rrTarget = 1.6
 }
 else{
     rrTarget = 1.0
@@ -2209,12 +2114,12 @@ let realActive = positions.filter(p =>
     x => x.result === "PENDING"
 ).length
 
-    if(realActive >= 25){
+    if(realActive >= 15){
         console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`)
         break
     }
 
-    if(totalPending >= 50){
+    if(totalPending >= 30){
         console.log(`⚠️ MAX TOTAL PENDING: ${totalPending}`)
         break
     }
