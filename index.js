@@ -109,11 +109,9 @@ async function syncTime(){
 
     try{
 
-        const start = Date.now()
+        const t1 = Date.now()
 
-        let res = await safeFetch(
-            "https://fapi.binance.com/fapi/v1/time"
-        )
+        let res = await fetch("https://fapi.binance.com/fapi/v1/time")
 
         if(!res){
             TIME_SYNCED = false
@@ -122,29 +120,22 @@ async function syncTime(){
 
         let data = await res.json()
 
-        const end = Date.now()
+        const t2 = Date.now()
 
-        // latency compensation
-        const latency = (end - start) / 2
+        const rtt = t2 - t1
+        const latency = rtt / 2
 
-        serverTimeOffset = Math.floor(
-    data.serverTime - end + latency
-)
+        const localNow = t1 + latency
+
+        serverTimeOffset = data.serverTime - localNow
 
         TIME_SYNCED = true
 
-        console.log(
-            `🕒 TIME OFFSET: ${serverTimeOffset}ms`
-        )
+        console.log(`🕒 TIME OFFSET: ${serverTimeOffset}ms`)
 
     }catch(e){
-
         TIME_SYNCED = false
-
-        console.log(
-            "❌ TIME SYNC FAIL:",
-            e.message
-        )
+        console.log("❌ TIME SYNC FAIL:", e.message)
     }
 }
 ///////////
@@ -152,6 +143,12 @@ function getTimestamp(){
     let ts = TIME_SYNCED
         ? Date.now() + serverTimeOffset
         : Date.now()
+
+    // clamp chống lệch cực đoan
+    if(Math.abs(serverTimeOffset) > 5000){
+        return Date.now()
+    }
+
     return Math.floor(ts)
 }
 //////////////
@@ -2986,7 +2983,10 @@ async function start(){
         }
 
         await client.connect()
-        await syncTime()
+        for(let i=0;i<3;i++){
+    await syncTime()
+    await new Promise(r => setTimeout(r, 1000))
+}
 // ⛔ CHẶN CHO TỚI KHI SYNC OK
 while(!TIME_SYNCED){
     console.log("⏳ Waiting time sync...")
