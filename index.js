@@ -1500,6 +1500,7 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
     return base
 }
 // ================= CORE =================
+// ================= CORE (FIXED FOR FREQUENT SIGNALS) =================
 async function coreLogic(data15, data1h){
 
     let closes = data15.map(x=>+x[4])
@@ -1512,49 +1513,55 @@ async function coreLogic(data15, data1h){
     let price = closes.at(-1)
     let prevPrice = closes.at(-2)
 
+    let last30 = volumes.slice(-30)
+    if(last30.length < 15) return null
+
+    let volAvg = last30.reduce((a,b)=>a+b,0)/last30.length
+    let volNow = volumes.at(-1)
+
+    let volAvgUSDT = volAvg * price
+    let volNowUSDT = volNow * price
+
     let atrVal = atr(data15.slice(-100))
-    if(!atrVal || atrVal <= 0) atrVal = price * 0.003
+    if(!atrVal || atrVal <= 0){
+        atrVal = price * 0.003
+    }
     let atrRatio = atrVal / price
 
-    let ema20 = ema(closes.slice(-100), 20)
-    let ema50 = ema(closes.slice(-200), 50)
+    // ================= MARKET FILTER (SOFT, KHÔNG KILL) =================
+    if(atrRatio < 0.0008) return null   // chỉ bỏ market chết thật
+
+    // ================= EMA =================
+    let ema20  = ema(closes.slice(-100), 20)
+    let ema50  = ema(closes.slice(-200), 50)
     let ema200 = ema(closes.slice(-500), 200)
 
-    let ema20_1h = ema(closes1h.slice(-60),20)
-    let ema50_1h = ema(closes1h.slice(-120),50)
-
-    let r = rsi(closes.slice(-50))
-
-    // =========================
-    // 1. MARKET FILTER (NỚI)
-    // =========================
-
-    if(atrRatio < 0.0008) return null   // chỉ bỏ market chết thật sự
+    let ema20_1h  = ema(closes1h.slice(-60),20)
+    let ema50_1h  = ema(closes1h.slice(-120),50)
 
     let emaGap = Math.abs(ema20 - ema50) / price
 
-    let trendLong = ema20 > ema50 && ema50 > ema200
-    let trendShort = ema20 < ema50 && ema50 < ema200
+    // ================= MARKET STATE (KHÔNG RETURN NULL) =================
+    let marketState =
+        emaGap > 0.003 ? "TREND_STRONG" :
+        emaGap > 0.0015 ? "TREND_WEAK" :
+        "RANGE"
 
-    // nếu không trend → vẫn trade theo bias RSI
-    let bias = trendLong ? "LONG" : trendShort ? "SHORT" : (r > 50 ? "LONG" : "SHORT")
+    // ================= BIAS =================
+    let trendLong  = ema20 > ema50
+    let trendShort = ema20 < ema50
 
-    // =========================
-    // 2. SCORE SYSTEM (QUAN TRỌNG NHẤT)
-    // =========================
+    let r = rsi(closes.slice(-50))
 
+    // ================= MOMENTUM (SOFT) =================
+    let momentum = (closes.at(-1) - closes.at(-4)) / closes.at(-4)
+
+    // ================= SCORE SYSTEM (KEY FIX) =================
     let scoreLong = 0
     let scoreShort = 0
 
     if(trendLong) scoreLong += 2
     if(trendShort) scoreShort += 2
-
-    if(emaGap > 0.0025){
-        scoreLong += 1
-        scoreShort += 1
-    }
-
-    let momentum = (closes.at(-1) - closes.at(-4)) / closes.at(-4)
 
     if(momentum > atrRatio * 0.15) scoreLong += 1
     if(momentum < -atrRatio * 0.15) scoreShort += 1
@@ -1562,34 +1569,45 @@ async function coreLogic(data15, data1h){
     if(r > 50 && r < 75) scoreLong += 1
     if(r < 50 && r > 25) scoreShort += 1
 
-    // volume soft
-    let volAvg = volumes.slice(-20).reduce((a,b)=>a+b)/20
-    if(volumes.at(-1) > volAvg) {
+    if(volNowUSDT > volAvgUSDT) {
         scoreLong += 0.5
         scoreShort += 0.5
     }
 
-    // wick penalty nhẹ
+    // ================= STRUCTURE (SOFT, KHÔNG BLOCK) =================
+    let hArr = highs.slice(-30)
+    let lArr = lows.slice(-30)
+
+    let rangeHigh = Math.max(...hArr)
+    let rangeLow  = Math.min(...lArr)
+
+    let pos = (price - rangeLow) / (rangeHigh - rangeLow || 1)
+
+    if(pos > 0.45 && pos < 0.55){
+        // giảm nhẹ điểm, KHÔNG return
+        scoreLong -= 0.5
+        scoreShort -= 0.5
+    }
+
+    // ================= WICK FILTER (SOFT) =================
     let high = highs.at(-1)
     let low  = lows.at(-1)
     let open = opens.at(-1)
     let close= closes.at(-1)
 
-    let range = high - low
-    let wick = range>0 ? Math.max(high-Math.max(open,close),
-                                  Math.min(open,close)-low)/range : 0
+    let candleRange = high - low || 1
+    let upperWick = high - Math.max(open, close)
+    let lowerWick = Math.min(open, close) - low
 
-    if(wick > 0.65){
-        scoreLong -= 0.5
-        scoreShort -= 0.5
+    let wickRatio = Math.max(upperWick, lowerWick) / candleRange
+
+    if(wickRatio > 0.65){
+        scoreLong -= 1
+        scoreShort -= 1
     }
 
-    // =========================
-    // 3. ENTRY DECISION (NỚI NGƯỠNG)
-    // =========================
-
+    // ================= DECISION (IMPORTANT FIX) =================
     let side = null
-    let setupType = "GROWTH"
 
     if(scoreLong >= 2.5 && scoreLong > scoreShort){
         side = "LONG"
@@ -1601,35 +1619,32 @@ async function coreLogic(data15, data1h){
         return null
     }
 
-    // =========================
-    // 4. SL / TP (GIỮ NHẸ)
-    // =========================
-
+    // ================= SL / TP =================
     let swingLow = Math.min(...lows.slice(-20))
     let swingHigh = Math.max(...highs.slice(-20))
 
-    let sl = side==="LONG"
-        ? swingLow - atrVal*0.7
-        : swingHigh + atrVal*0.7
+    let sl = side === "LONG"
+        ? swingLow - atrVal * 0.8
+        : swingHigh + atrVal * 0.8
 
     let risk = Math.abs(price - sl)
-    if(risk/price < 0.0012) return null
+    if(risk / price < 0.0015) return null
 
-    let rr = 1.05 + (Math.abs(scoreLong - scoreShort) * 0.1)
-    if(rr > 1.5) rr = 1.5
+    let rr = 1.05
+    if(marketState === "TREND_STRONG") rr = 1.2
+    if(atrRatio > 0.006) rr += 0.1
 
-    let tp = side==="LONG"
+    let tp = side === "LONG"
         ? price + risk * rr
         : price - risk * rr
 
     return {
         side,
-        setup: setupType,
-        marketState: bias,
+        setup: "GROWTH_CORE_V2",
+        marketState,
         volatility: atrRatio > 0.004 ? "HIGH" : "MID",
-        momentumUp: scoreLong > scoreShort,
-        momentumDown: scoreShort > scoreLong,
         price,
+        prevPrice,
         sl,
         tp,
         atr: atrVal,
@@ -1753,7 +1768,7 @@ for (let s of signals){
     let weightMain = Math.min(dbMain.total / 50, 1)
     let aiMain = (dbMain.winrate - 0.5) * 80 * weightMain
 
-    if(dbMain.total < 15) aiMain *= 0.5
+    if(dbMain.total < 15) aiMain *= 0.9
 
     let finalMain = aiMain
 
