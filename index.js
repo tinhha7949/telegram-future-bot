@@ -1,4 +1,5 @@
 let TPSL_GLOBAL_LOCK = {}
+let LAST_SYNC = 0
 let WATCHDOG_LAST_RUN = 0
 let TIME_SYNCED = false
 let TPSL_PENDING = {}
@@ -109,6 +110,12 @@ console.log(
 }
 async function syncTime(){
 
+    if(Date.now() - LAST_SYNC < 30000){
+        return
+    }
+
+    LAST_SYNC = Date.now()
+
     try{
 
         const t0 = Date.now()
@@ -124,13 +131,10 @@ async function syncTime(){
 
         let data = await res.json()
 
-        // 👇 round trip latency
         const rtt = t1 - t0
 
-        // 👇 server time at middle of request
         const estimatedServerTime = data.serverTime + rtt / 2
 
-        // 👇 offset = server - local
         serverTimeOffset = Math.floor(estimatedServerTime - t1)
 
         TIME_SYNCED = true
@@ -140,7 +144,6 @@ async function syncTime(){
     }catch(e){
 
         TIME_SYNCED = false
-        console.log("❌ TIME SYNC FAIL:", e.message)
     }
 }
 ///////////
