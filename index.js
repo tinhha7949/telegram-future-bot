@@ -109,50 +109,15 @@ console.log(
     return null
 }
 async function syncTime(){
+    const res = await fetch("https://fapi.binance.com/fapi/v1/time")
+    const data = await res.json()
 
-    if(Date.now() - LAST_SYNC < 30000){
-        return
-    }
+    serverTimeOffset = data.serverTime - Date.now()
 
-    LAST_SYNC = Date.now()
-
-    try{
-
-        const t0 = Date.now()
-
-        let res = await fetch("https://fapi.binance.com/fapi/v1/time")
-
-        const t1 = Date.now()
-
-        if(!res){
-            TIME_SYNCED = false
-            return
-        }
-
-        let data = await res.json()
-
-        const rtt = t1 - t0
-
-        const estimatedServerTime = data.serverTime + rtt / 2
-
-        serverTimeOffset = Math.floor(estimatedServerTime - t1)
-
-        TIME_SYNCED = true
-
-        console.log(`🕒 TIME OFFSET: ${serverTimeOffset}ms`)
-
-    }catch(e){
-
-        TIME_SYNCED = false
-    }
+    console.log("🕒 OFFSET:", serverTimeOffset)
 }
 ///////////
 function getTimestamp(){
-
-    if(!TIME_SYNCED){
-        return Date.now()
-    }
-
     return Date.now() + serverTimeOffset
 }
 //////////////
