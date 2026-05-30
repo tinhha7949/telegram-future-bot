@@ -1499,6 +1499,7 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
     return base
 }
+// ================= CORE =================
 async function coreLogic(data15, data1h){
 
     let closes = data15.map(x=>+x[4])
@@ -1509,118 +1510,131 @@ async function coreLogic(data15, data1h){
     let closes1h = data1h.map(x=>+x[4])
 
     let price = closes.at(-1)
+    let prevPrice = closes.at(-2)
 
-    // ================= ATR =================
     let atrVal = atr(data15.slice(-100))
     if(!atrVal || atrVal <= 0) atrVal = price * 0.003
     let atrRatio = atrVal / price
 
-    // ================= MARKET FILTER (NỚI RẤT MẠNH) =================
-    if(atrRatio < 0.001) return null   // chỉ chặn chết thật
-
-    let ema20  = ema(closes.slice(-100), 20)
-    let ema50  = ema(closes.slice(-200), 50)
+    let ema20 = ema(closes.slice(-100), 20)
+    let ema50 = ema(closes.slice(-200), 50)
     let ema200 = ema(closes.slice(-500), 200)
 
     let ema20_1h = ema(closes1h.slice(-60),20)
+    let ema50_1h = ema(closes1h.slice(-120),50)
 
     let r = rsi(closes.slice(-50))
 
-    // ================= SCORE ENGINE (CORE MỚI) =================
+    // =========================
+    // 1. MARKET FILTER (NỚI)
+    // =========================
+
+    if(atrRatio < 0.0008) return null   // chỉ bỏ market chết thật sự
+
+    let emaGap = Math.abs(ema20 - ema50) / price
+
+    let trendLong = ema20 > ema50 && ema50 > ema200
+    let trendShort = ema20 < ema50 && ema50 < ema200
+
+    // nếu không trend → vẫn trade theo bias RSI
+    let bias = trendLong ? "LONG" : trendShort ? "SHORT" : (r > 50 ? "LONG" : "SHORT")
+
+    // =========================
+    // 2. SCORE SYSTEM (QUAN TRỌNG NHẤT)
+    // =========================
+
     let scoreLong = 0
     let scoreShort = 0
 
-    // TREND (GIẢM WEIGHT)
-    if(ema20 > ema50) scoreLong += 1
-    else scoreShort += 1
+    if(trendLong) scoreLong += 2
+    if(trendShort) scoreShort += 2
 
-    if(ema50 > ema200) scoreLong += 0.5
-    else scoreShort += 0.5
-
-    if(ema20_1h > ema50_1h) scoreLong += 0.5
-    else scoreShort += 0.5
-
-    // MOMENTUM
-    let momentum = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-
-    if(momentum > atrRatio * 0.1) scoreLong += 1
-    if(momentum < -atrRatio * 0.1) scoreShort += 1
-
-    // RSI (MỞ RỘNG ĐỂ CÓ NHIỀU KÈO)
-    if(r > 48 && r < 80) scoreLong += 0.5
-    if(r < 52 && r > 20) scoreShort += 0.5
-
-    // VOLUME (BONUS NHẸ)
-    let volAvg = volumes.slice(-20).reduce((a,b)=>a+b,0)/20
-    let volNow = volumes.at(-1)
-
-    if(volNow > volAvg * 1.02){
-        scoreLong += 0.3
-        scoreShort += 0.3
+    if(emaGap > 0.0025){
+        scoreLong += 1
+        scoreShort += 1
     }
 
-    // WICK (KHÔNG KILL)
+    let momentum = (closes.at(-1) - closes.at(-4)) / closes.at(-4)
+
+    if(momentum > atrRatio * 0.15) scoreLong += 1
+    if(momentum < -atrRatio * 0.15) scoreShort += 1
+
+    if(r > 50 && r < 75) scoreLong += 1
+    if(r < 50 && r > 25) scoreShort += 1
+
+    // volume soft
+    let volAvg = volumes.slice(-20).reduce((a,b)=>a+b)/20
+    if(volumes.at(-1) > volAvg) {
+        scoreLong += 0.5
+        scoreShort += 0.5
+    }
+
+    // wick penalty nhẹ
     let high = highs.at(-1)
     let low  = lows.at(-1)
     let open = opens.at(-1)
     let close= closes.at(-1)
 
     let range = high - low
-    let wick = range > 0
-        ? Math.max(high-Math.max(open,close), Math.min(open,close)-low)/range
-        : 0
+    let wick = range>0 ? Math.max(high-Math.max(open,close),
+                                  Math.min(open,close)-low)/range : 0
 
-    if(wick > 0.7){
-        scoreLong -= 0.3
-        scoreShort -= 0.3
+    if(wick > 0.65){
+        scoreLong -= 0.5
+        scoreShort -= 0.5
     }
 
-    // ================= DECISION (QUAN TRỌNG) =================
-    let side = null
+    // =========================
+    // 3. ENTRY DECISION (NỚI NGƯỠNG)
+    // =========================
 
-    // NGƯỠNG THẤP ĐỂ CÓ 5–15 KÈO
-    if(scoreLong >= 2 && scoreLong > scoreShort){
+    let side = null
+    let setupType = "GROWTH"
+
+    if(scoreLong >= 2.5 && scoreLong > scoreShort){
         side = "LONG"
     }
-    else if(scoreShort >= 2 && scoreShort > scoreLong){
+    else if(scoreShort >= 2.5 && scoreShort > scoreLong){
         side = "SHORT"
     }
     else{
         return null
     }
 
-    // ================= STRUCTURE =================
+    // =========================
+    // 4. SL / TP (GIỮ NHẸ)
+    // =========================
+
     let swingLow = Math.min(...lows.slice(-20))
     let swingHigh = Math.max(...highs.slice(-20))
 
-    let sl = side === "LONG"
-        ? swingLow - atrVal * 0.7
-        : swingHigh + atrVal * 0.7
+    let sl = side==="LONG"
+        ? swingLow - atrVal*0.7
+        : swingHigh + atrVal*0.7
 
     let risk = Math.abs(price - sl)
-    if(risk / price < 0.0015) return null
+    if(risk/price < 0.0012) return null
 
-    // ================= RR ADAPTIVE =================
-    let rr = 1.05 + (Math.abs(scoreLong - scoreShort) * 0.05)
-
-    if(atrRatio > 0.005) rr += 0.1
+    let rr = 1.05 + (Math.abs(scoreLong - scoreShort) * 0.1)
     if(rr > 1.5) rr = 1.5
 
-    let tp = side === "LONG"
+    let tp = side==="LONG"
         ? price + risk * rr
         : price - risk * rr
 
     return {
         side,
-        setup: "FLOW_ENGINE",
-        marketState: ema20 > ema50 ? "BULL" : "BEAR",
-        volatility: atrRatio > 0.005 ? "HIGH" : "MID",
+        setup: setupType,
+        marketState: bias,
+        volatility: atrRatio > 0.004 ? "HIGH" : "MID",
+        momentumUp: scoreLong > scoreShort,
+        momentumDown: scoreShort > scoreLong,
         price,
         sl,
         tp,
+        atr: atrVal,
         scoreLong,
-        scoreShort,
-        atr: atrVal
+        scoreShort
     }
 }
 // ================= SCAN =================
