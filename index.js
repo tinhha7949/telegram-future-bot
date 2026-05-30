@@ -53,7 +53,9 @@ if(!options.signal){
         controller.abort()
     }, 10000)
 }
-
+if(Math.abs(serverTimeOffset) > 3000){
+    await syncTime()
+}
             let res = await fetch(url, {
                 ...options,
                 signal,
@@ -109,9 +111,11 @@ async function syncTime(){
 
     try{
 
-        const t1 = Date.now()
+        const t0 = Date.now()
 
         let res = await fetch("https://fapi.binance.com/fapi/v1/time")
+
+        const t1 = Date.now()
 
         if(!res){
             TIME_SYNCED = false
@@ -120,36 +124,33 @@ async function syncTime(){
 
         let data = await res.json()
 
-        const t2 = Date.now()
+        // 👇 round trip latency
+        const rtt = t1 - t0
 
-        const rtt = t2 - t1
-        const latency = rtt / 2
+        // 👇 server time at middle of request
+        const estimatedServerTime = data.serverTime + rtt / 2
 
-        const localNow = t1 + latency
-
-        serverTimeOffset = data.serverTime - localNow
+        // 👇 offset = server - local
+        serverTimeOffset = Math.floor(estimatedServerTime - t1)
 
         TIME_SYNCED = true
 
         console.log(`🕒 TIME OFFSET: ${serverTimeOffset}ms`)
 
     }catch(e){
+
         TIME_SYNCED = false
         console.log("❌ TIME SYNC FAIL:", e.message)
     }
 }
 ///////////
 function getTimestamp(){
-    let ts = TIME_SYNCED
-        ? Date.now() + serverTimeOffset
-        : Date.now()
 
-    // clamp chống lệch cực đoan
-    if(Math.abs(serverTimeOffset) > 5000){
+    if(!TIME_SYNCED){
         return Date.now()
     }
 
-    return Math.floor(ts)
+    return Date.now() + serverTimeOffset
 }
 //////////////
 require("dotenv").config()
@@ -160,7 +161,7 @@ const Binance = require('binance-api-node').default
 const binance = Binance({
     apiKey: process.env.BINANCE_KEY,
     apiSecret: process.env.BINANCE_SECRET,
-    recvWindow: 20000,
+    recvWindow: 60000,
     getTime: () => getTimestamp()
 })
 const crypto = require("crypto")
@@ -170,7 +171,7 @@ async function getBalance(){
         const baseUrl = "https://fapi.binance.com"
         const path = "/fapi/v2/balance"
 
-        const timestamp = getTimestamp()
+        const timestamp = Date.now() + serverTimeOffset
 
         const query = `timestamp=${timestamp}`
 
@@ -376,7 +377,7 @@ async function hasPosition(symbol){
 
         let positions =
             await binance.futuresPositionRisk({
-                recvWindow: 20000
+                recvWindow: 60000
             })
 
         return positions.find(p =>
@@ -441,7 +442,10 @@ if(pendingMarket){
         const path = "/fapi/v1/order"
 
         // 🔥 FIX TIME
-        const timestamp = getTimestamp()
+        if(Math.abs(serverTimeOffset) > 3000){
+    await syncTime()
+}
+        const timestamp = Date.now() + serverTimeOffset
 
 const query =
     `symbol=${symbol}` +
@@ -550,7 +554,7 @@ async function waitPosition(symbol){
     for(let i=0;i<15;i++){
 
         let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
         let pos = positions.find(p =>
@@ -573,14 +577,14 @@ async function cancelAllOrders(symbol){
 
         await binance.futuresCancelAllOpenOrders({
             symbol,
-            recvWindow: 20000
+            recvWindow: 60000
         })
         for(let i=0;i<35;i++){
 
     let openOrders =
         await binance.futuresOpenOrders({
     symbol,
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
     if(openOrders.length === 0){
@@ -604,7 +608,7 @@ async function cancelTPSLOrders(symbol){
         let orders =
             await binance.futuresOpenOrders({
                 symbol,
-                recvWindow:20000
+                recvWindow:60000
             })
         for(let o of orders){
             if(
@@ -629,7 +633,7 @@ async function cancelTPSLOrders(symbol){
             let remain =
                 await binance.futuresOpenOrders({
                     symbol,
-                    recvWindow:20000
+                    recvWindow:60000
                 })
             let stillHas = remain.find(o =>
                 o.type === "STOP_MARKET" ||
@@ -726,7 +730,7 @@ async function setTPSL(symbol, side, tp, sl){
 
             let positions =
                 await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
             pos = positions.find(p =>
@@ -771,7 +775,7 @@ async function setTPSL(symbol, side, tp, sl){
         let openOrders =
             await binance.futuresOpenOrders({
                 symbol,
-                recvWindow: 20000
+                recvWindow: 60000
             })
 
         let closeSide =
@@ -895,7 +899,7 @@ if(!hasSL){
         
         let slOrder = await binance.futuresOrder({
             symbol,
-            recvWindow: 20000,
+            recvWindow: 60000,
             side: closeSide,
             type: "STOP_MARKET",
             stopPrice: sl,
@@ -936,7 +940,7 @@ if(!hasTP){
 
         let tpOrder = await binance.futuresOrder({
             symbol,
-            recvWindow: 20000,
+            recvWindow: 60000,
             side: closeSide,
             type: "TAKE_PROFIT_MARKET",
             stopPrice: tp,
@@ -974,7 +978,7 @@ await new Promise(r =>
 let verify =
     await binance.futuresOpenOrders({
         symbol,
-        recvWindow:20000
+        recvWindow:60000
     })
 
 let finalSL = verify.find(o =>
@@ -1012,7 +1016,7 @@ async function safeSetTPSL(symbol, side, tp, sl){
     try{
 
     let posCheck = await binance.futuresPositionRisk({
-        recvWindow: 20000
+        recvWindow: 60000
     })
 
     let pos = posCheck.find(p =>
@@ -1817,7 +1821,7 @@ for (let best of filtered){
        // !x.waitingEntry
 //).length
 let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
 let realActive = positions.filter(p =>
@@ -1849,7 +1853,7 @@ if(existing){
     // verify position thật
     let positions =
         await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
     let realPos = positions.find(p =>
@@ -2152,7 +2156,7 @@ if(!pos){
     await new Promise(r => setTimeout(r, 1000))
 
 let verifyPos = await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
 let realPos = verifyPos.find(p =>
@@ -2347,7 +2351,7 @@ async function checkTrades(){
     console.log(`🚨 FORCE VERIFY ${t.symbol}`)
 
 let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
 let realPos = positions.find(p =>
@@ -2412,7 +2416,7 @@ if(isTimeout){
     console.log(`⏳ TIMEOUT CLOSE ${t.symbol}`)
     // ===== CHECK POSITION THẬT =====
     let positions = await binance.futuresPositionRisk({
-        recvWindow: 20000
+        recvWindow: 60000
     })
     let realPos = positions.find(p =>
         p.symbol === t.symbol &&
@@ -2458,7 +2462,7 @@ ${t.side}`
     continue
 }
 let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
 let stillOpen = positions.find(p =>
@@ -2471,7 +2475,7 @@ if(!stillOpen){
     await new Promise(r=>setTimeout(r,2000))
 
     let retryPos = await binance.futuresPositionRisk({
-        recvWindow: 20000
+        recvWindow: 60000
     })
 
     stillOpen = retryPos.find(p =>
@@ -2501,7 +2505,7 @@ if(!stillOpen){
 if(done){
 
     let positions = await binance.futuresPositionRisk({
-        recvWindow: 20000
+        recvWindow: 60000
     })
     let stillOpen = positions.find(p =>
         p.symbol === t.symbol &&
@@ -2566,7 +2570,7 @@ async function closePosition(symbol, side, qty){
         let order = await binance.futuresOrder({
 
             symbol,
-            recvWindow: 20000,
+            recvWindow: 60000,
             side: closeSide,
             type: "MARKET",
             quantity: qty,
@@ -2582,7 +2586,7 @@ async function closePosition(symbol, side, qty){
 
             let positions =
                 await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
             let pos = positions.find(p =>
@@ -2620,7 +2624,7 @@ async function watchdogTPSL(){
     WATCHDOG_RUNNING = true
     try{
         let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 let openOrdersCache = {}
         for(let p of positions){
@@ -2643,7 +2647,7 @@ if(!orders){
 
     orders = await binance.futuresOpenOrders({
         symbol,
-        recvWindow: 20000
+        recvWindow: 60000
     })
 
     openOrdersCache[symbol] = orders
@@ -2731,7 +2735,7 @@ if(hasSL || hasTP){
     let verify =
         await binance.futuresOpenOrders({
             symbol,
-            recvWindow: 20000
+            recvWindow: 60000
         })
     openOrdersCache[symbol] = verify
 
@@ -2993,7 +2997,7 @@ while(!TIME_SYNCED){
     await new Promise(r => setTimeout(r, 1000))
 }
 
-setInterval(syncTime, 60000)
+setInterval(syncTime, 30000)
         await updateBalance()
 setInterval(updateBalance, 60000)
         // 🔥 RESET UPDATE STATE TRÁNH 409
@@ -3050,7 +3054,7 @@ activeTrades = await trades.find({
 }).toArray()
 
 let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
+    recvWindow: 60000
 })
 
 let openSymbols = new Set(
