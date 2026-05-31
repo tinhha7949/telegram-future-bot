@@ -1017,16 +1017,24 @@ if(verified){
         ok:true
     }
 }
-console.log("TPSL COUNT", verify.length)
+// ===== DEBUG =====
+console.log(`🚨 TPSL VERIFY FAIL ${symbol}`)
+
+console.log(
+    "TPSL COUNT:",
+    verify.length
+)
 
 console.log(
     JSON.stringify(
-        verify.map(o=>({
-            type:o.type,
-            side:o.side,
-            closePosition:o.closePosition,
-            reduceOnly:o.reduceOnly,
-            positionSide:o.positionSide
+        verify.map(o => ({
+            orderId: o.orderId,
+            type: o.type,
+            side: o.side,
+            positionSide: o.positionSide,
+            closePosition: o.closePosition,
+            reduceOnly: o.reduceOnly,
+            stopPrice: o.stopPrice
         })),
         null,
         2
