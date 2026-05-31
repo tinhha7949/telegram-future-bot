@@ -652,6 +652,14 @@ async function cancelTPSLOrders(symbol){
         return false
     }
 }
+function isClosePositionOrder(o){
+
+    return (
+        o.closePosition === true ||
+        o.closePosition === "true" ||
+        String(o.closePosition).toLowerCase() === "true"
+    )
+}
 async function hasFullTPSL(symbol){
 
     try{
@@ -688,10 +696,7 @@ async function hasFullTPSL(symbol){
                 o.type === "STOP"
             ) &&
             o.side === closeSide &&
-            (
-                o.closePosition === true ||
-                String(o.closePosition) === "true"
-            )
+            isClosePositionOrder(o)
         )
 
         let hasTP = orders.find(o =>
@@ -701,10 +706,7 @@ async function hasFullTPSL(symbol){
                 o.type === "TAKE_PROFIT"
             ) &&
             o.side === closeSide &&
-            (
-                o.closePosition === true ||
-                String(o.closePosition) === "true"
-            )
+           isClosePositionOrder(o)
         )
 
         return !!(hasSL && hasTP)
@@ -971,30 +973,46 @@ if(!hasTP){
 }
 
         // ===== FINAL VERIFY =====
-await new Promise(r =>
-    setTimeout(r, 2500)
-)
+let verified = false
 
-let verify =
-    await binance.futuresOpenOrders({
-        symbol,
-        recvWindow:20000
-    })
+for(let i=0;i<10;i++){
 
-let finalSL = verify.find(o =>
-    o.side === closeSide &&
-    o.type.includes("STOP")
-)
+    await new Promise(r =>
+        setTimeout(r, 2000)
+    )
 
-let finalTP = verify.find(o =>
-    o.side === closeSide &&
-    o.type.includes("TAKE_PROFIT")
-)
+    let verify =
+        await binance.futuresOpenOrders({
+            symbol,
+            recvWindow:20000
+        })
 
-if(finalSL && finalTP){
+    let finalSL = verify.find(o =>
+        (
+            o.type === "STOP_MARKET" ||
+            o.type === "STOP"
+        ) &&
+        o.side === closeSide
+    )
+
+    let finalTP = verify.find(o =>
+        (
+            o.type === "TAKE_PROFIT_MARKET" ||
+            o.type === "TAKE_PROFIT"
+        ) &&
+        o.side === closeSide
+    )
+
+    if(finalSL && finalTP){
+
+        verified = true
+        break
+    }
+}
+
+if(verified){
     console.log(`✅ TPSL VERIFIED ${symbol}`)
     delete TPSL_MISSING[symbol]
-
     return {
         ok:true
     }
@@ -1156,22 +1174,22 @@ TPSL_LOCKS[symbol] = Date.now()
             : "BUY"
 
     let finalSL = verify.find(o =>
-        (
-            o.type === "STOP_MARKET" ||
-            o.type === "STOP"
-        ) &&
-        o.side === closeSide &&
-        String(o.closePosition) === "true"
-    )
+    (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
+    o.side === closeSide &&
+    isClosePositionOrder(o)
+)
 
-    let finalTP = verify.find(o =>
-        (
-            o.type === "TAKE_PROFIT_MARKET" ||
-            o.type === "TAKE_PROFIT"
-        ) &&
-        o.side === closeSide &&
-        String(o.closePosition) === "true"
-    )
+let finalTP = verify.find(o =>
+    (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
+    o.side === closeSide &&
+    isClosePositionOrder(o)
+)
 
     if(finalSL && finalTP){
 
@@ -2943,6 +2961,36 @@ if(hasSL && hasTP){
 }
 
 if(!TPSL_MISSING[symbol]){
+
+    await new Promise(r =>
+        setTimeout(r, 5000)
+    )
+
+    let recheck =
+        await binance.futuresOpenOrders({
+            symbol,
+            recvWindow:20000
+        })
+
+    let reSL = recheck.find(o =>
+        (
+            o.type === "STOP_MARKET" ||
+            o.type === "STOP"
+        ) &&
+        o.side === closeSide
+    )
+
+    let reTP = recheck.find(o =>
+        (
+            o.type === "TAKE_PROFIT_MARKET" ||
+            o.type === "TAKE_PROFIT"
+        ) &&
+        o.side === closeSide
+    )
+
+    if(reSL && reTP){
+        continue
+    }
 
     console.log(`🚨 FAKE TPSL CONFIRMED ${symbol}`)
 
