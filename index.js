@@ -742,8 +742,12 @@ async function cancelAllOrders(symbol){
 function getTPSLState(symbol){
     if(!TPSL_STATE[symbol]){
         TPSL_STATE[symbol] = {
-            status: "NONE",
-            lastCheck: 0
+            status: "NONE",      // NONE | CHECKING | PARTIAL | FULL | FIXED
+            firstMiss: 0,
+            partialTime: 0,
+            lastCheck: 0,
+            missingSince: 0,
+            alerted30m: false
         }
     }
     return TPSL_STATE[symbol]
@@ -2423,18 +2427,57 @@ async function watchdogTPSL(){
                     (o.type === "TAKE_PROFIT_MARKET" || o.type === "TAKE_PROFIT") &&
                     (o.closePosition === true || String(o.closePosition) === "true")
                 )
+                // =========================
+// 🚨 ORPHAN POSITION CHECK (NO TPSL ON BINANCE)
+// =========================
+let st = getTPSLState(symbol)
+
+let missingBoth = !hasSL && !hasTP
+
+if(missingBoth){
+
+    if(!st.missingSince){
+        st.missingSince = Date.now()
+    }
+
+    let duration = Date.now() - st.missingSince
+
+    if(duration < 30 * 60 * 1000){
+        continue
+    }
+
+    if(st.alerted30m){
+        continue
+    }
+
+    await sendTelegram2(
+        `🚨 TPSL ALERT\n` +
+        `Symbol: ${symbol}\n` +
+        `❌ No TP/SL on Binance\n` +
+        `⏱ Missing: ${Math.floor(duration / 60000)} minutes`
+    )
+
+    st.alerted30m = true
+    st.status = "NO_TPSL_ALERT"
+
+    continue
+}
 
                 // =========================
                 // CASE 1: OK FULL TPSL
                 // =========================
                 if(hasSL && hasTP){
 
-                    let st = getTPSLState(symbol)
-                    st.status = "OK"
-                    st.firstMiss = 0
-                    st.partialTime = 0
-                    continue
-                }
+    let st = getTPSLState(symbol)
+
+    st.status = "FULL"
+    st.firstMiss = 0
+    st.partialTime = 0
+    st.missingSince = 0
+st.alerted30m = false
+
+    continue
+}
 
                 // =========================
                 // CASE 2: PARTIAL → FIX ONCE ONLY
@@ -2451,88 +2494,95 @@ let isValidTP = orders.some(o =>
     (o.closePosition === true || String(o.closePosition) === "true")
 )
 
-if(isValidSL || isValidTP){
+if(hasSL || hasTP){
 
-                    let st = getTPSLState(symbol)
+    let st = getTPSLState(symbol)
 
-                    if(!st.partialTime){
-                        st.partialTime = Date.now()
-                        continue
-                    }
+    st.status = "PARTIAL"
 
-                    // chỉ retry sau 10s
-                    if(Date.now() - st.partialTime < 10000){
-                        continue
-                    }
+    if(!st.partialTime){
+        st.partialTime = Date.now()
+        continue
+    }
 
-                    let trade = activeTrades.find(x => x.symbol === symbol)
+    if(Date.now() - st.partialTime < 30000){
+        continue
+    }
 
-if(!trade || !trade.tp || !trade.sl){
-    trade = await trades.findOne({
+    let trade = activeTrades.find(x => x.symbol === symbol)
+        || await trades.findOne({ symbol, result: "PENDING" })
+
+    if(!trade || !trade.tp || !trade.sl){
+        console.log(`❌ NO TRADE DATA ${symbol}`)
+        continue
+    }
+
+    console.log(`⚠️ REBUILD TPSL ${symbol}`)
+
+    await ensureTPSL(
         symbol,
-        result: "PENDING"
-    })
-}
+        trade.side,
+        trade.tp,
+        trade.sl,
+        binance
+    )
 
-if(!trade || !trade.tp || !trade.sl){
-    console.log(`❌ NO TRADE DATA ${symbol}`)
+    st.partialTime = Date.now()
+    st.status = "FIXED"
+
     continue
 }
-
-                    if(trade){
-                        console.log(`⚠️ REBUILD TPSL ${symbol}`)
-
-                        await ensureTPSL(
-                            symbol,
-                            trade.side,
-                            trade.tp,
-                            trade.sl,
-                            binance
-                        )
-                    }
-
-                    st.partialTime = Date.now()
-                    continue
-                }
 
                 // =========================
                 // CASE 3: MISSING TPSL
                 // =========================
                 let st = getTPSLState(symbol)
 
-                if(!st.firstMiss){
-                    st.firstMiss = Date.now()
-                    st.status = "CHECKING"
-                    continue
-                }
+let missingBoth = !hasSL && !hasTP
+let partial = hasSL || hasTP
 
-                // chưa đủ thời gian thì KHÔNG làm gì
-                if(Date.now() - st.firstMiss < 15000){
-                    continue
-                }
+// ======================
+// CASE 0: CHƯA SYNC (KHÔNG FIX)
+// ======================
+if(missingBoth){
 
-                let trade = activeTrades.find(x => x.symbol === symbol)
+    // chưa từng check trước đó
+    if(!st.firstMiss){
+        st.firstMiss = Date.now()
+        st.status = "CHECKING"
+        continue
+    }
 
-if(!trade || !trade.tp || !trade.sl){
-    trade = await trades.findOne({
+    // 🔥 CHỐNG DELAY BINANCE
+    if(Date.now() - st.firstMiss < 30000){
+        continue
+    }
+
+    // ======================
+    // CASE 3: THỰC SỰ MẤT TPSL
+    // ======================
+    console.log(`🚨 REAL MISSING TPSL ${symbol}`)
+
+    let trade = activeTrades.find(x => x.symbol === symbol)
+        || await trades.findOne({ symbol, result: "PENDING" })
+
+    if(!trade || !trade.tp || !trade.sl){
+        console.log(`❌ SKIP NO TRADE DATA ${symbol}`)
+        continue
+    }
+
+    await ensureTPSL(
         symbol,
-        result: "PENDING"
-    })
-}
-                console.log(`🚨 FORCE FIX TPSL ${symbol}`)
-                if(!trade || !trade.tp || !trade.sl){
-    console.log(`❌ SKIP NO TRADE DATA ${symbol}`)
+        trade.side,
+        trade.tp,
+        trade.sl,
+        binance
+    )
+
+    st.status = "FIXED"
+    st.firstMiss = 0
     continue
 }
-
-                await ensureTPSL(
-                    symbol,
-                    trade.side,
-                    trade.tp,
-                    trade.sl,
-                    binance
-                )
-
             }catch(e){
                 console.log(`WATCHDOG ERROR ${symbol}:`, e.message)
 
