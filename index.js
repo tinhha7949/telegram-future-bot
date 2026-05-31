@@ -652,13 +652,19 @@ async function cancelTPSLOrders(symbol){
         return false
     }
 }
-function isClosePositionOrder(o){
+function isClosePositionOrder(o, closeSide){
 
-    return (
+    const type = String(o.type || "")
+
+    const isTPSL =
+        type.includes("STOP") ||
+        type.includes("TAKE_PROFIT")
+
+    const isClose =
         o.closePosition === true ||
-        o.closePosition === "true" ||
-        String(o.closePosition).toLowerCase() === "true"
-    )
+        String(o.closePosition) === "true"
+
+    return o.side === closeSide && isTPSL && isClose
 }
 async function hasFullTPSL(symbol){
 
@@ -689,25 +695,8 @@ async function hasFullTPSL(symbol){
                 recvWindow:20000
             })
 
-        let hasSL = orders.find(o =>
-
-            (
-                o.type === "STOP_MARKET" ||
-                o.type === "STOP"
-            ) &&
-            o.side === closeSide &&
-            isClosePositionOrder(o)
-        )
-
-        let hasTP = orders.find(o =>
-
-            (
-                o.type === "TAKE_PROFIT_MARKET" ||
-                o.type === "TAKE_PROFIT"
-            ) &&
-            o.side === closeSide &&
-           isClosePositionOrder(o)
-        )
+        let hasSL = orders.find(o => isClosePositionOrder(o, closeSide) && o.type.includes("STOP"))
+let hasTP = orders.find(o => isClosePositionOrder(o, closeSide) && o.type.includes("TAKE_PROFIT"))
 
         return !!(hasSL && hasTP)
 
@@ -739,6 +728,8 @@ async function setTPSL(symbol, side, tp, sl){
                 p.symbol === symbol &&
                 Math.abs(Number(p.positionAmt)) > 0
             )
+            await binance.futuresCancelAllOpenOrders({ symbol, recvWindow: 20000 })
+await new Promise(r => setTimeout(r, 1200))
 
             if(pos){
                 break
@@ -786,35 +777,20 @@ async function setTPSL(symbol, side, tp, sl){
                 symbol,
                 recvWindow: 20000
             })
+            await binance.futuresCancelAllOpenOrders({
+    symbol,
+    recvWindow: 20000
+})
+
+await new Promise(r => setTimeout(r, 1200))
 
         let closeSide =
             Number(pos.positionAmt) > 0
                 ? "SELL"
                 : "BUY"
 
-       let hasSL = openOrders.find(o =>
-    (
-        o.type === "STOP_MARKET" ||
-        o.type === "STOP"
-    ) &&
-    o.side === closeSide &&
-    (
-        o.closePosition === true ||
-        String(o.closePosition) === "true"
-    )
-)
-let hasTP = openOrders.find(o =>
-
-    (
-        o.type === "TAKE_PROFIT_MARKET" ||
-        o.type === "TAKE_PROFIT"
-    ) &&
-    o.side === closeSide &&
-    (
-        o.closePosition === true ||
-        String(o.closePosition) === "true"
-    )
-)
+       let hasSL = orders.find(o => isClosePositionOrder(o, closeSide) && o.type.includes("STOP"))
+let hasTP = orders.find(o => isClosePositionOrder(o, closeSide) && o.type.includes("TAKE_PROFIT"))
         // ===== ĐỦ TPSL =====
 let alreadyOK = await hasFullTPSL(symbol)
 
@@ -1005,6 +981,8 @@ for(let i=0;i<10;i++){
             symbol,
             recvWindow:20000
         })
+        console.log("TPSL VERIFY RAW:", verify.length)
+console.log(verify)
         // ===== DEBUG =====
 console.log(`🚨 TPSL VERIFY FAIL ${symbol}`)
 
@@ -1083,6 +1061,11 @@ async function safeSetTPSL(symbol, side, tp, sl){
         p.symbol === symbol &&
         Math.abs(Number(p.positionAmt)) > 0
     )
+    if(TPSL_LOCKS[symbol]){
+    return { ok:false, error:"LOCKED" }
+}
+
+TPSL_LOCKS[symbol] = Date.now()
 
     // ❌ không còn position
     if(!pos){
@@ -1104,31 +1087,8 @@ async function safeSetTPSL(symbol, side, tp, sl){
                 ? "SELL"
                 : "BUY"
 
-        let hasSL = verify.find(o =>
-
-    (
-        o.type === "STOP_MARKET" ||
-        o.type === "STOP"
-    ) &&
-    o.side === closeSide &&
-    (
-        o.closePosition === true ||
-        String(o.closePosition) === "true"
-    )
-)
-
-let hasTP = verify.find(o =>
-
-    (
-        o.type === "TAKE_PROFIT_MARKET" ||
-        o.type === "TAKE_PROFIT"
-    ) &&
-    o.side === closeSide &&
-    (
-        o.closePosition === true ||
-        String(o.closePosition) === "true"
-    )
-)
+        let hasSL = orders.find(o => isClosePositionOrder(o, closeSide) && o.type.includes("STOP"))
+let hasTP = orders.find(o => isClosePositionOrder(o, closeSide) && o.type.includes("TAKE_PROFIT"))
 
         // ✅ TPSL thật sự tồn tại
         if(hasSL && hasTP){
