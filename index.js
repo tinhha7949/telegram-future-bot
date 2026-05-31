@@ -756,6 +756,13 @@ async function setTPSL(symbol, side, tp, sl){
                 error:"NO_POSITION"
             }
         }
+        console.log({
+    symbol,
+    amt: pos.positionAmt,
+    entry: pos.entryPrice,
+    side,
+    positionSide: pos.positionSide
+})
 
         // ===== WAIT BINANCE SYNC =====
         await new Promise(r =>
