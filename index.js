@@ -2383,67 +2383,65 @@ async function closePosition(symbol, side, qty){
 /////////
 async function watchdogTPSL(){
 
-    if(!trades) return
-    if(WATCHDOG_RUNNING) return
-
+    if(!trades || WATCHDOG_RUNNING) return
     WATCHDOG_RUNNING = true
 
     try{
 
-        let positions = await binance.futuresPositionRisk({
+        const positions = await binance.futuresPositionRisk({
             recvWindow: 20000
         })
 
-        for(let p of positions){
+        for(const p of positions){
 
-            let amt = Math.abs(Number(p.positionAmt))
+            const amt = Math.abs(Number(p.positionAmt))
             if(amt <= 0) continue
 
-            let symbol = p.symbol
+            const symbol = p.symbol
 
             if(WATCHDOG_LOCKS[symbol]) continue
             WATCHDOG_LOCKS[symbol] = true
 
             try{
 
-                let closeSide = Number(p.positionAmt) > 0 ? "SELL" : "BUY"
+                const closeSide = Number(p.positionAmt) > 0 ? "SELL" : "BUY"
 
-                // ===== GET ORDERS =====
-                let orders = await binance.futuresOpenOrders({
+                const orders = await binance.futuresOpenOrders({
                     symbol,
                     recvWindow: 20000
                 })
 
-                let hasSL = orders.some(o =>
+                const hasSL = orders.some(o =>
                     o.side === closeSide &&
                     (o.type === "STOP_MARKET" || o.type === "STOP") &&
                     (o.closePosition === true || String(o.closePosition) === "true")
                 )
 
-                let hasTP = orders.some(o =>
+                const hasTP = orders.some(o =>
                     o.side === closeSide &&
                     (o.type === "TAKE_PROFIT_MARKET" || o.type === "TAKE_PROFIT") &&
                     (o.closePosition === true || String(o.closePosition) === "true")
                 )
 
-                let st = getTPSLState(symbol)
+                const st = getTPSLState(symbol)
 
                 // =========================
-                // CASE 1: FULL TPSL
+                // FULL
                 // =========================
                 if(hasSL && hasTP){
 
                     st.status = "FULL"
                     st.missingSince = 0
                     st.alerted30m = false
+                    st.partialTime = 0
 
                     continue
                 }
 
                 // =========================
-                // CASE 2: PARTIAL TPSL
+                // PARTIAL
                 // =========================
-                if((hasSL || hasTP) && !(hasSL && hasTP)){
+                if(hasSL || hasTP){
 
                     if(!st.partialTime){
                         st.partialTime = Date.now()
@@ -2455,68 +2453,129 @@ async function watchdogTPSL(){
                         continue
                     }
 
-                    let trade =
+                    const trade =
                         activeTrades.find(x => x.symbol === symbol)
                         || await trades.findOne({ symbol, result: "PENDING" })
 
-                    if(!trade || !trade.tp || !trade.sl){
-                        continue
-                    }
+                    if(!trade?.tp || !trade?.sl) continue
 
-                    console.log(`⚠️ REBUILD TPSL ${symbol}`)
+                    await ensureTPSL(symbol, trade.side, trade.tp, trade.sl, binance)
 
-                    await ensureTPSL(
-                        symbol,
-                        trade.side,
-                        trade.tp,
-                        trade.sl,
-                        binance
-                    )
-
-                    st.partialTime = Date.now()
                     st.status = "FIXED"
+                    st.partialTime = Date.now()
 
                     continue
                 }
 
                 // =========================
-                // CASE 3: MISSING TPSL (FULLY ORPHAN)
+                // MISSING FULL
                 // =========================
                 if(!hasSL && !hasTP){
 
+                    const now = Date.now()
+
                     if(!st.missingSince){
-                        st.missingSince = Date.now()
-                        st.status = "CHECKING"
+                        st.missingSince = now
+                        st.status = "MISSING"
                         continue
                     }
 
-                    let duration = Date.now() - st.missingSince
+                    const duration = now - st.missingSince
 
-                    // chống sync delay Binance
-                    if(duration < 30000){
-                        continue
-                    }
+                    // anti API delay
+                    if(duration < 30000) continue
 
-                    // chỉ alert 1 lần sau 30p
+                    const trade =
+                        activeTrades.find(x => x.symbol === symbol)
+                        || await trades.findOne({ symbol, result: "PENDING" })
+
+                    if(!trade?.tp || !trade?.sl) continue
+
+                    // =========================
+                    // 30 MIN ALERT
+                    // =========================
                     if(duration >= 30 * 60 * 1000 && !st.alerted30m){
 
-                        let trade =
-                            activeTrades.find(x => x.symbol === symbol)
-                            || await trades.findOne({ symbol, result: "PENDING" })
-
-                        if(!trade || !trade.tp || !trade.sl){
-                            continue
-                        }
-
                         await sendTelegram2(
-                            `🚨 TPSL ALERT\n` +
+                            `🚨 TPSL MISSING\n` +
                             `Symbol: ${symbol}\n` +
-                            `❌ No TP/SL on Binance\n` +
-                            `⏱ Missing: ${Math.floor(duration / 60000)} min`
+                            `⏱ ${Math.floor(duration / 60000)} min`
                         )
 
                         st.alerted30m = true
-                        st.status = "NO_TPSL_ALERT"
+                    }
+
+                    // =========================
+                    // 1 HOUR SAFETY CLOSE
+                    // =========================
+                    if(duration >= 60 * 60 * 1000){
+
+                        console.log(`🚨 FINAL CHECK ${symbol}`)
+
+                        const finalOrders = await binance.futuresOpenOrders({
+                            symbol,
+                            recvWindow: 20000
+                        })
+
+                        const finalHasSL = finalOrders.some(o =>
+                            o.side === closeSide &&
+                            (o.type === "STOP_MARKET" || o.type === "STOP") &&
+                            (o.closePosition === true || String(o.closePosition) === "true")
+                        )
+
+                        const finalHasTP = finalOrders.some(o =>
+                            o.side === closeSide &&
+                            (o.type === "TAKE_PROFIT_MARKET" || o.type === "TAKE_PROFIT") &&
+                            (o.closePosition === true || String(o.closePosition) === "true")
+                        )
+
+                        // recovered → skip
+                        if(finalHasSL || finalHasTP){
+                            st.missingSince = 0
+                            st.alerted30m = false
+                            continue
+                        }
+
+                        try{
+
+                            // ONLY cancel TPSL orders
+                            for(const o of finalOrders){
+
+                                const isTPSL =
+                                    (o.type.includes("STOP") || o.type.includes("TAKE_PROFIT")) &&
+                                    (o.closePosition === true || String(o.closePosition) === "true")
+
+                                if(isTPSL){
+                                    await binance.futuresCancelOrder({
+                                        symbol,
+                                        orderId: o.orderId
+                                    })
+                                }
+                            }
+
+                            // close position
+                            await binance.futuresOrder({
+                                symbol,
+                                side: closeSide,
+                                type: "MARKET",
+                                reduceOnly: true,
+                                quantity: Math.abs(Number(p.positionAmt))
+                            })
+
+                            await sendTelegram2(
+                                `🛑 AUTO CLOSE 1H\n` +
+                                `Symbol: ${symbol}\n` +
+                                `❌ No TPSL confirmed`
+                            )
+
+                            st.status = "CLOSED"
+                            st.missingSince = 0
+                            st.alerted30m = false
+                            st.partialTime = 0
+
+                        }catch(e){
+                            console.log("CLOSE ERROR", e.message)
+                        }
 
                         continue
                     }
@@ -2533,7 +2592,7 @@ async function watchdogTPSL(){
         }
 
     }catch(e){
-        console.log("WATCHDOG TPSL:", e.message)
+        console.log("WATCHDOG GLOBAL ERROR:", e.message)
 
     }finally{
         WATCHDOG_RUNNING = false
