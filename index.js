@@ -2548,6 +2548,21 @@ if(!trade || !trade.tp || !trade.sl){
         WATCHDOG_RUNNING = false
     }
 }
+async function watchdogLoop(){
+
+    while(true){
+
+        try{
+            await watchdogTPSL()
+        }catch(e){
+            console.log("WATCHDOG LOOP:", e.message)
+        }
+
+        await new Promise(r =>
+            setTimeout(r, 15000)
+        )
+    }
+}
 //////////////
 async function start(){
     try{
