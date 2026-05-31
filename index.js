@@ -1017,7 +1017,21 @@ if(verified){
         ok:true
     }
 }
+console.log("TPSL COUNT", verify.length)
 
+console.log(
+    JSON.stringify(
+        verify.map(o=>({
+            type:o.type,
+            side:o.side,
+            closePosition:o.closePosition,
+            reduceOnly:o.reduceOnly,
+            positionSide:o.positionSide
+        })),
+        null,
+        2
+    )
+)
 return {
     ok:false,
     error:"TPSL_VERIFY_FAIL"
