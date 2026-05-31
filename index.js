@@ -919,16 +919,24 @@ if(!hasSL){
 
     }catch(e){
 
-        const msg = String(e.message || e)
+    console.log("SL ERROR FULL:", e)
 
-        if(
-            msg.includes("already exists") ||
-            msg.includes("closePosition in the direction is existing")
-        ){
+    const msg = String(
+        e.body ||
+        e.message ||
+        JSON.stringify(e)
+    )
 
-            console.log(`⚠️ SL MAY EXIST ${symbol}`)
+    console.log("SL MSG:", msg)
 
-        }else{
+    if(
+        msg.includes("already exists") ||
+        msg.includes("closePosition in the direction is existing")
+    ){
+
+        console.log(`⚠️ SL MAY EXIST ${symbol}`)
+
+    }else{
 
             return {
                 ok:false,
@@ -960,16 +968,20 @@ if(!hasTP){
 
     }catch(e){
 
-        const msg = String(e.message || e)
+    console.log("TP ERROR FULL:", e)
 
-        if(
-            msg.includes("already exists") ||
-            msg.includes("closePosition in the direction is existing")
-        ){
+    const msg = String(
+        e.body ||
+        e.message ||
+        JSON.stringify(e)
+    )
 
-            console.log(`⚠️ TP MAY EXIST ${symbol}`)
+    console.log("TP MSG:", msg)
 
-        }else{
+    if(
+        msg.includes("already exists") ||
+        msg.includes("closePosition in the direction is existing")
+    ){
 
             return {
                 ok:false,
