@@ -1555,7 +1555,7 @@ let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.0025 // 0.0025
+let nearEma = distEma < 0.005 // 0.0025
 // ===== PULLBACK PHẢI CÓ LỰC =====
 //if(nearEma && volNow < volAvg){
    // return null
@@ -1583,7 +1583,7 @@ let nearEma = distEma < 0.0025 // 0.0025
 
     // ===== VOLUME =====
     let volNow = volumes.at(-1)
-    if(volNow < volAvg * 1.2)
+    if(volNow < volAvg)
     return null
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
 
@@ -1592,7 +1592,7 @@ let nearEma = distEma < 0.0025 // 0.0025
     let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(trendStrength < 0.002) return null // 0.002
+    if(trendStrength < 0.0015) return null // 0.002
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     if(candleMove > 0.03) return null
@@ -2053,11 +2053,6 @@ let filtered = candidates.filter(c => {
 
     // ❌ loại kèo quá xấu
     if(rr < RR_THRESHOLD) return false
-
-    // ❌ score quá thấp
-    if(c.finalScore < -20){
-    return false
-}
     return true
 })
 // ===== SORT LẠI =====
@@ -2097,9 +2092,10 @@ let realActive = positions.filter(p =>
     Math.abs(Number(p.positionAmt)) > 0
 ).length
 
-    let totalPending = activeTrades.filter(
-    x => x.result === "PENDING"
-).length
+    let totalPending =
+await trades.countDocuments({
+    result:"PENDING"
+})
 
     if(realActive >= 15){
         console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`)
