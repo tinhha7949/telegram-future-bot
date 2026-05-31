@@ -1386,11 +1386,11 @@ async function getTopSymbols(){
     .filter(c => {
         let change = Math.abs(Number(c.priceChangePercent))
         // coin chưa chạy nhưng có dấu hiệu tích lực
-        return change >= 1.5 && change <= 7 // 
+        return change >= 0.8 && change <= 12 // 
     })
     // 🔥 2. LIQUIDITY nhẹ (KHÔNG dùng minVol 24h nữa)
     .filter(c =>
-        Number(c.quoteVolume) > 3_000_000
+        Number(c.quoteVolume) > 1_500_000 //3_000_000
     )
     .filter(c => {
 
@@ -1402,7 +1402,7 @@ async function getTopSymbols(){
 
     let dayRange = (high - low) / last
 
-    return dayRange > 0.02
+    return dayRange > 0.015
 })
     // 🔥 3. SORT
     .sort((a,b)=>{
@@ -1424,7 +1424,7 @@ async function getTopSymbols(){
 
     return scoreB - scoreA
 })
-    .slice(0, 50)
+    .slice(0, 80)
 .map(c => c.symbol)
 .filter(s =>
     validFuturesSymbols &&
@@ -1518,6 +1518,22 @@ async function coreLogic(data15, data1h){
     let atrRatio = atrVal / price
 
     if(atrRatio < 0.0005) return null // market chết thật mới bỏ
+    let volAvg =
+    volumes.slice(-20)
+    .reduce((a,b)=>a+b,0) / 20
+
+let volAvgUSDT = volAvg * price
+
+let dynamicMinVol =
+    getDynamicMinVol(
+        volAvgUSDT,
+        price,
+        atrRatio
+    )
+
+if(volAvgUSDT < dynamicMinVol){
+    return null
+}
 
     // ================= EMA =================
     let ema20 = ema(closes.slice(-100), 20)
@@ -1525,8 +1541,23 @@ async function coreLogic(data15, data1h){
     let ema200 = ema(closes.slice(-500), 200)
 
     let ema20_1h = ema(closes1h.slice(-60),20)
+    let ema50_1h = ema(closes1h.slice(-120),50)
 
     let emaGap = Math.abs(ema20 - ema50) / price
+    let prevEma20 =
+    ema(closes.slice(-101,-1),20)
+
+let emaSlope =
+    Math.abs(
+        ema20 - prevEma20
+    ) / price
+
+if(
+    emaSlope <
+    atrRatio * 0.15
+){
+    return null
+}
 
     // ================= MARKET TYPE (KHÔNG KILL RANGE) =================
     let marketState =
@@ -1535,33 +1566,44 @@ async function coreLogic(data15, data1h){
         "RANGE"
 
     // ================= BIAS =================
-    let trendLong  = ema20 > ema50
-    let trendShort = ema20 < ema50
+    let trendLong =
+    ema20 > ema50 &&
+    ema20_1h > ema50_1h
+
+let trendShort =
+    ema20 < ema50 &&
+    ema20_1h < ema50_1h
 
     let r = rsi(closes.slice(-50))
 
     // ================= MOMENTUM =================
-    let momentum = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
+    let momentum =
+(closes.at(-1) - closes.at(-4))
+/
+closes.at(-4)
 
     // ================= SCORE ENGINE =================
     let scoreLong = 1   // base luôn có kèo
     let scoreShort = 1
 
-    if(trendLong) scoreLong += 1
-    if(trendShort) scoreShort += 1
+    if(trendLong) scoreLong += 1.2
+    if(trendShort) scoreShort += 1.2
 
-    if(momentum > atrRatio * 0.1) scoreLong += 1
-    if(momentum < -atrRatio * 0.1) scoreShort += 1
+    if(momentum > atrRatio * 0.15) scoreLong += 1
+    if(momentum < -atrRatio * 0.15) scoreShort += 1
 
-    if(r > 50) scoreLong += 0.5
-    if(r < 50) scoreShort += 0.5
+    if(r > 52) scoreLong += 0.5
+    if(r < 48) scoreShort += 0.5
 
     // volume
-    let volAvg = volumes.slice(-20).reduce((a,b)=>a+b,0)/20
     if(volumes.at(-1) > volAvg) {
         scoreLong += 0.3
         scoreShort += 0.3
     }
+    if(volumes.at(-1) > volAvg * 1.5){
+    scoreLong += 0.4
+    scoreShort += 0.4
+}
 
     // ================= STRUCTURE (KHÔNG BLOCK) =================
     let hArr = highs.slice(-30)
@@ -1591,9 +1633,9 @@ async function coreLogic(data15, data1h){
         Math.min(open, close) - low
     ) / candleRange
 
-    if(wickRatio > 0.7){
-        scoreLong -= 0.5
-        scoreShort -= 0.5
+    if(wickRatio > 0.8){
+        scoreLong -= 0.3
+        scoreShort -= 0.3
     }
 
     // ================= ENTRY DECISION =================
@@ -1620,12 +1662,12 @@ async function coreLogic(data15, data1h){
         : swingHigh + atrVal * 0.8
 
     let risk = Math.abs(price - sl)
-    if(risk / price < 0.001) return null
+    if(risk / price < 0.0015) return null
 
     // ================= TP =================
-    let rr = 1.05
+    let rr = 1.15
 
-    if(marketState === "TREND_STRONG") rr = 1.2
+    if(marketState === "TREND_STRONG") rr = 1.3
     if(atrRatio > 0.006) rr += 0.1
 
     let tp = side === "LONG"
@@ -1699,7 +1741,7 @@ async function scanner(){
         // ===== SCAN =====
         let results = []
 
-for(let i=0;i<symbols.length;i+=5){
+for(let i=0;i<symbols.length;i+=10){
 
     let chunk = symbols.slice(i,i+5)
 
@@ -1796,7 +1838,7 @@ let filtered = candidates.filter(c => {
     if(rr < RR_THRESHOLD) return false
 
     // ❌ score quá thấp
-    if(c.finalScore < -10){
+    if(c.finalScore < -20){
     return false
 }
     return true
