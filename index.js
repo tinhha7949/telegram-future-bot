@@ -1,6 +1,7 @@
 let WATCHDOG_LAST_RUN = 0
 const TPSL_LOCK = {}
 const TPSL_STATE = {}
+let TPSL_GRACE = {}
 let TIME_SYNCED = false
 let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
@@ -636,6 +637,14 @@ async function waitPosition(symbol){
 }
 async function ensureTPSL(symbol, side, tp, sl, binance){
     let pos = null
+    if(
+        TPSL_STATE[symbol]?.status === "CREATING"
+    ){
+        return {
+            ok:false,
+            error:"CREATING"
+        }
+    }
 
     if(TPSL_STATE[symbol]?.status === "OK"){
 
@@ -754,9 +763,9 @@ o.closePosition === true &&
         })
 
         // ===== VERIFY =====
-        for(let i=0;i<6;i++){
+        for(let i=0;i<20;i++){
 
-            await new Promise(r=>setTimeout(r,1500))
+            await new Promise(r=>setTimeout(r,2000))
 
             let check = await binance.futuresOpenOrders({
                 symbol,
@@ -2051,20 +2060,18 @@ if(!tpsl.ok){
 
     console.log(`⚠️ TPSL FAIL ${trade.symbol}`)
 
-    let realPos = await hasPosition(trade.symbol)
-
-    if(realPos){
-
-        await closePosition(
-            trade.symbol,
-            trade.side,
-            Math.abs(Number(realPos.positionAmt))
-        )
+    TPSL_STATE[trade.symbol] = {
+        status:"FAILED",
+        time:Date.now()
     }
+
+    await sendTelegram2(
+        `⚠️ TPSL FAIL\n${trade.symbol}`
+    )
 
     continue
 }
-
+TPSL_GRACE[trade.symbol] = Date.now()
     await new Promise(r => setTimeout(r, 1000))
 
 let verifyPos = await getPositionsCached()
@@ -2453,11 +2460,11 @@ async function closePosition(symbol, side, qty){
 
     try{
 
-        await cancelAllOrders(symbol)
+        let pos = await hasPosition(symbol)
 
-        await new Promise(r =>
-            setTimeout(r, 1000)
-        )
+        if(!pos){
+            return true
+        }
 
         let closeSide =
             side === "LONG"
@@ -2473,8 +2480,11 @@ async function closePosition(symbol, side, qty){
             quantity: qty,
             reduceOnly: true
         })
+
         POS_CACHE = null
-POS_CACHE_TIME = 0
+        POS_CACHE_TIME = 0
+
+        // phần verify phía dưới giữ nguyên để đảm bảo position thật đã đóng, tránh trường hợp API lag hoặc lỗi mà DB đã update nhưng position vẫn còn
 
         // ===== VERIFY CLOSED =====
         for(let i=0;i<30;i++){
@@ -2525,6 +2535,12 @@ async function watchdogTPSL(){
 if(amt <= 0) continue
 
             const symbol = p.symbol
+            if(
+    TPSL_GRACE[symbol] &&
+    Date.now() - TPSL_GRACE[symbol] < 300000
+){
+    continue
+}
 
             if(WATCHDOG_LOCKS[symbol]) continue
             WATCHDOG_LOCKS[symbol] = true
@@ -2617,7 +2633,7 @@ const hasTP = orders.some(o =>
                     const duration = now - st.missingSince
 
                     // anti API lag
-                    if(duration < 30000) continue
+                    if(duration < 180000) continue
 
                     const trade =
                         activeTrades.find(x => x.symbol === symbol)
