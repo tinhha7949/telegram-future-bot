@@ -570,6 +570,7 @@ async function waitPosition(symbol){
     return null
 }
 async function ensureTPSL(symbol, side, tp, sl, binance){
+    let pos = null
 
     if(TPSL_STATE[symbol]?.status === "OK"){
 
@@ -1929,27 +1930,72 @@ try{
 )
 
 if(!order){
+    await trades.updateOne(
+{
+    symbol: trade.symbol,
+    createdAt: trade.createdAt
+},
+{
+    $set:{
+        result:"ORDER_FAIL"
+    }
+}
+)
     console.log("❌ ORDER FAIL")
     continue
 }
 
-// 🔥 CHỜ POSITION THẬT
+// 🔥 CHỜ POSITION THẬT TRƯỚC
 let pos = await waitPosition(trade.symbol)
 
 if(!pos){
-    console.log("❌ NO POSITION AFTER OPEN → SKIP TPSL")
 
-    // lưu lại để retry sau
+    console.log("❌ NO POSITION AFTER OPEN")
+
     await trades.updateOne(
-        { symbol: trade.symbol, createdAt: trade.createdAt },
         {
-    $set:{
-        tpslMissing:true,
-        retryTPSL:true,
-        enteredAt: Date.now()
-    }
-}
+            symbol: trade.symbol,
+            createdAt: trade.createdAt
+        },
+        {
+            $set:{
+                tpslMissing:true,
+                retryTPSL:true,
+                enteredAt: Date.now()
+            }
+        }
     )
+
+    continue
+}
+
+// 🔥 CÓ POSITION RỒI MỚI SET TPSL
+let tpsl = await ensureTPSL(
+    trade.symbol,
+    trade.side,
+    trade.tp,
+    trade.sl,
+    binance
+)
+
+if(!tpsl.ok){
+
+    console.log(`❌ TPSL FAIL ${trade.symbol}`)
+
+    let realPos = await hasPosition(
+        trade.symbol
+    )
+
+    if(realPos){
+
+        await closePosition(
+            trade.symbol,
+            trade.side,
+            Math.abs(
+                Number(realPos.positionAmt)
+            )
+        )
+    }
 
     continue
 }
@@ -2430,12 +2476,18 @@ if(amt <= 0) continue
 
                 const hasSL = orders.some(o =>
     (o.type === "STOP_MARKET" || o.type === "STOP") &&
-    o.closePosition === true
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
 )
 
 const hasTP = orders.some(o =>
     (o.type === "TAKE_PROFIT_MARKET" || o.type === "TAKE_PROFIT") &&
-    o.closePosition === true
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
 )
 
                 const st = getState(symbol)
@@ -2446,12 +2498,13 @@ const hasTP = orders.some(o =>
                 // =========================
                 if(hasSL && hasTP){
 
-                    st.status = "FULL"
-st.missingSince = null
-st.partialSince = null
-                    st.alerted = false
-                    continue
-                }
+    st.status = "FULL"
+    st.missingSince = null
+    st.partialSince = null
+    st.alerted = false
+    st.closed = false
+    continue
+}
 
                 // =========================
                 // PARTIAL TPSL
