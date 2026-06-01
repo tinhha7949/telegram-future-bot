@@ -383,7 +383,7 @@ async function hasPosition(symbol){
 
         return positions.find(p =>
             p.symbol === symbol &&
-            Math.abs(Number(p.positionAmt)) > 0.00001
+            Math.abs(parseFloat(p.positionAmt || "0")) > 0
         )
 
     }catch(e){
@@ -557,7 +557,7 @@ async function waitPosition(symbol){
 
         let pos = positions.find(p =>
             p.symbol === symbol &&
-            Math.abs(Number(p.positionAmt)) > 0
+            Math.abs(parseFloat(p.positionAmt || "0")) > 0
         )
 
         if(pos){
@@ -594,8 +594,8 @@ async function ensureTPSL(symbol, side, tp, sl, binance){
     TPSL_STATE[symbol].status = "NONE"
 }
 
-    if(TPSL_STATE[symbol]?.status === "CREATING"){
-    return { ok:false, error:"IN_PROGRESS" }
+    if(TPSL_LOCK[symbol]){
+    return { ok:false, error:"LOCKED" }
 }
 
 if(TPSL_LOCK[symbol]){
@@ -611,15 +611,39 @@ TPSL_STATE[symbol] = { status:"CREATING", time:Date.now() }
         // ===== GET POSITION =====
         let positions = await binance.futuresPositionRisk({ recvWindow:20000 })
 
-        let pos = positions.find(p =>
+        let pos = null
+
+for(let i = 0; i < 5; i++){
+    let positions = await binance.futuresPositionRisk({ recvWindow:20000 })
+
+    pos = positions.find(p =>
+        p.symbol === symbol &&
+        Math.abs(parseFloat(p.positionAmt || "0")) > 0
+    )
+
+    if(pos) break
+    await new Promise(r => setTimeout(r, 500))
+}
+
+if(!pos){
+    for(let i = 0; i < 5; i++){
+        await new Promise(r => setTimeout(r, 500))
+
+        let positions = await binance.futuresPositionRisk({ recvWindow:20000 })
+
+        pos = positions.find(p =>
             p.symbol === symbol &&
-            Math.abs(Number(p.positionAmt)) > 0
+            Math.abs(parseFloat(p.positionAmt || "0")) > 0
         )
 
-        if(!pos){
-            TPSL_STATE[symbol] = { status:"FAILED", error:"NO_POSITION" }
-            return { ok:false, error:"NO_POSITION" }
-        }
+        if(pos) break
+    }
+
+    if(!pos){
+        TPSL_STATE[symbol] = { status:"FAILED", error:"NO_POSITION" }
+        return { ok:false, error:"NO_POSITION" }
+    }
+}
 
         let closeSide = Number(pos.positionAmt) > 0 ? "SELL" : "BUY"
 
@@ -1612,7 +1636,7 @@ let positions = await binance.futuresPositionRisk({
 })
 
 let realActive = positions.filter(p =>
-    Math.abs(Number(p.positionAmt)) > 0
+    Math.abs(parseFloat(p.positionAmt || "0")) > 0
 ).length
 
     let totalPending =
@@ -1646,7 +1670,7 @@ if(existing){
 
     let realPos = positions.find(p =>
         p.symbol === best.symbol &&
-        Math.abs(Number(p.positionAmt)) > 0
+        Math.abs(parseFloat(p.positionAmt || "0")) > 0
     )
 
     // không còn position -> clear DB
@@ -1941,7 +1965,7 @@ let verifyPos = await binance.futuresPositionRisk({
 
 let realPos = verifyPos.find(p =>
     p.symbol === trade.symbol &&
-    Math.abs(Number(p.positionAmt)) > 0
+    Math.abs(parseFloat(p.positionAmt || "0")) > 0
 )
 
 if(!realPos){
@@ -2123,7 +2147,7 @@ let positions = await binance.futuresPositionRisk({
 
 let realPos = positions.find(p =>
     p.symbol === t.symbol &&
-    Math.abs(Number(p.positionAmt)) > 0
+    Math.abs(parseFloat(p.positionAmt || "0")) > 0
 )
 
 // không còn position
@@ -2187,11 +2211,11 @@ if(isTimeout){
     })
     let realPos = positions.find(p =>
         p.symbol === t.symbol &&
-        Math.abs(Number(p.positionAmt)) > 0
+        Math.abs(parseFloat(p.positionAmt || "0")) > 0
     )
     // ===== NẾU CÒN POSITION -> CLOSE =====
     if(realPos){
-        let realQty = Math.abs(Number(realPos.positionAmt))
+        let realQty = Math.abs(parseFloat(realPos.positionAmt || "0"))
         let closed = await closePosition(
     t.symbol,
     t.side,
@@ -2234,7 +2258,7 @@ let positions = await binance.futuresPositionRisk({
 
 let stillOpen = positions.find(p =>
     p.symbol === t.symbol &&
-    Math.abs(Number(p.positionAmt)) > 0
+    Math.abs(parseFloat(p.positionAmt || "0")) > 0
 )
 
 if(!stillOpen){
@@ -2247,7 +2271,7 @@ if(!stillOpen){
 
     stillOpen = retryPos.find(p =>
         p.symbol === t.symbol &&
-        Math.abs(Number(p.positionAmt)) > 0
+        Math.abs(parseFloat(p.positionAmt || "0")) > 0
     )
 
     if(!stillOpen){
@@ -2276,7 +2300,7 @@ if(done){
     })
     let stillOpen = positions.find(p =>
         p.symbol === t.symbol &&
-        Math.abs(Number(p.positionAmt)) > 0
+        Math.abs(parseFloat(p.positionAmt || "0")) > 0
     )
     // còn position thật => chưa tính win/loss
     if(stillOpen){
@@ -2358,7 +2382,7 @@ async function closePosition(symbol, side, qty){
 
             let pos = positions.find(p =>
                 p.symbol === symbol &&
-                Math.abs(Number(p.positionAmt)) > 0
+                Math.abs(parseFloat(p.positionAmt || "0")) > 0
             )
 
             if(!pos){
@@ -2391,8 +2415,8 @@ async function watchdogTPSL(){
 
         for(const p of positions){
 
-            const amt = Math.abs(Number(p.positionAmt))
-            if(amt <= 0) continue
+            const amt = Math.abs(parseFloat(p.positionAmt || "0"))
+if(amt <= 0) continue
 
             const symbol = p.symbol
 
@@ -2409,16 +2433,14 @@ async function watchdogTPSL(){
                 })
 
                 const hasSL = orders.some(o =>
-                    o.side === closeSide &&
-                    (o.type.includes("STOP")) &&
-                    (o.closePosition === true || String(o.closePosition) === "true")
-                )
+    o.type === "STOP_MARKET" ||
+    o.type === "STOP"
+)
 
-                const hasTP = orders.some(o =>
-                    o.side === closeSide &&
-                    (o.type.includes("TAKE_PROFIT")) &&
-                    (o.closePosition === true || String(o.closePosition) === "true")
-                )
+const hasTP = orders.some(o =>
+    o.type === "TAKE_PROFIT_MARKET" ||
+    o.type === "TAKE_PROFIT"
+)
 
                 const st = getState(symbol)
                 const now = Date.now()
@@ -2429,8 +2451,8 @@ async function watchdogTPSL(){
                 if(hasSL && hasTP){
 
                     st.status = "FULL"
-                    st.missingSince = 0
-                    st.partialSince = 0
+st.missingSince = null
+st.partialSince = null
                     st.alerted = false
                     continue
                 }
@@ -2542,7 +2564,7 @@ async function watchdogTPSL(){
                                 side: closeSide,
                                 type: "MARKET",
                                 reduceOnly: true,
-                                quantity: Math.abs(Number(p.positionAmt))
+                                quantity: Math.abs(parseFloat(p.positionAmt || "0"))
                             })
 
                             await sendTelegram2(
@@ -2673,7 +2695,7 @@ let positions = await binance.futuresPositionRisk({
 let openSymbols = new Set(
     positions
         .filter(
-            p => Math.abs(Number(p.positionAmt)) > 0
+            p => Math.abs(parseFloat(p.positionAmt || "0")) > 0
         )
         .map(p => p.symbol)
 )
