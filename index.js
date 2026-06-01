@@ -562,10 +562,12 @@ if(data.status !== "FILLED"){
         await new Promise(r => setTimeout(r, 800))
 
         try{
+            await syncTime()
 
             let check = await binance.futuresGetOrder({
                 symbol,
-                orderId: data.orderId
+                orderId: data.orderId,
+                recvWindow: 60000
             })
 
             if(check.status === "FILLED"){
@@ -588,6 +590,7 @@ if(data.status !== "FILLED"){
             }
 
         }catch(e){
+            await checkTimeError(e)
             console.log(`❌ CHECK ORDER ${symbol}:`, e.message)
         }
     }
