@@ -2,6 +2,7 @@ let WATCHDOG_LAST_RUN = 0
 const TPSL_LOCK = {}
 const TPSL_STATE = {}
 let TIME_SYNCED = false
+let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
 const OPENING_POSITIONS = {}
@@ -130,11 +131,15 @@ console.log(
 }
 async function syncTime(){
 
+    if(SYNCING_TIME) return
+
+    SYNCING_TIME = true
+
     try{
 
         const start = Date.now()
 
-        let res = await safeFetch(
+        let res = await fetch(
             "https://fapi.binance.com/fapi/v1/time"
         )
 
@@ -147,28 +152,51 @@ async function syncTime(){
 
         const end = Date.now()
 
-        // latency compensation
         const latency = (end - start) / 2
 
-        serverTimeOffset = Math.floor(
-    data.serverTime - end + latency
-)
+        serverTimeOffset =
+            data.serverTime - end + latency
 
         TIME_SYNCED = true
 
-        console.log(
-            `🕒 TIME OFFSET: ${serverTimeOffset}ms`
-        )
+        if(
+    Date.now() - LAST_OFFSET_LOG >
+    60000
+){
+
+    console.log(
+        `🕒 TIME OFFSET: ${Math.round(serverTimeOffset)}ms`
+    )
+
+    LAST_OFFSET_LOG = Date.now()
+}
 
     }catch(e){
 
         TIME_SYNCED = false
 
-        console.log(
-            "❌ TIME SYNC FAIL:",
-            e.message
-        )
+    }finally{
+
+        SYNCING_TIME = false
     }
+}
+async function checkTimeError(err){
+
+    let msg = String(err?.message || err)
+
+    if(
+        msg.includes("-1021") ||
+        msg.includes("Timestamp") ||
+        msg.includes("recvWindow")
+    ){
+        console.log("🕒 AUTO RESYNC")
+
+        await syncTime()
+
+        return true
+    }
+
+    return false
 }
 ///////////
 function getTimestamp(){
@@ -186,8 +214,7 @@ const Binance = require('binance-api-node').default
 const binance = Binance({
     apiKey: process.env.BINANCE_KEY,
     apiSecret: process.env.BINANCE_SECRET,
-    recvWindow: 20000,
-    getTime: () => getTimestamp()
+    recvWindow: 60000
 })
 const crypto = require("crypto")
 
@@ -400,16 +427,16 @@ async function hasPosition(symbol){
     try{
 
         let positions =
-            await binance.futuresPositionRisk({
-                recvWindow: 20000
-            })
+            await getPositionsCached()
 
-        return positions.find(p =>
-            p.symbol === symbol &&
-            Math.abs(parseFloat(p.positionAmt || "0")) > 0
+        return positions.find(
+            p =>
+                p.symbol === symbol &&
+                Math.abs(Number(p.positionAmt)) > 0
         )
 
     }catch(e){
+
         return null
     }
 }
@@ -496,6 +523,18 @@ const query =
         }
 
         let data = await res.json()
+        if(
+    data.code === -1021 ||
+    String(data.msg || "").includes("Timestamp")
+){
+    console.log("🕒 BINANCE RESYNC")
+
+    await syncTime()
+
+    return null
+}
+        POS_CACHE = null
+POS_CACHE_TIME = 0
 
         if(data.code){
             console.log("❌ BINANCE REJECT:", data)
@@ -566,6 +605,7 @@ if(data.status !== "FILLED"){
         return data
 
     }catch(e){
+        await checkTimeError(e)
         console.log("❌ OPEN ORDER FAIL:", e.message)
         return null
     }
@@ -574,18 +614,20 @@ async function waitPosition(symbol){
 
     for(let i=0;i<15;i++){
 
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
+
         let positions = await getPositionsCached()
 
-        let pos = positions.find(p =>
-            p.symbol === symbol &&
-            Math.abs(parseFloat(p.positionAmt || "0")) > 0
+        let pos = positions.find(
+            p =>
+                p.symbol === symbol &&
+                Math.abs(parseFloat(p.positionAmt || "0")) > 0
         )
 
-        if(pos){
-            return pos
-        }
+        if(pos) return pos
 
-        await new Promise(r => setTimeout(r, 1000))
+        await new Promise(r=>setTimeout(r,1000))
     }
 
     return null
@@ -752,7 +794,7 @@ let hasTP2 = check.some(o =>
         TPSL_STATE[symbol] = { status:"FAILED", error:"VERIFY_FAIL" }
         return { ok:false, error:"VERIFY_FAIL" }
     }catch(e){
-
+        await checkTimeError(e)
         TPSL_STATE[symbol] = { status:"FAILED", error:e.message }
         return { ok:false, error:e.message }
     }finally{
@@ -787,7 +829,7 @@ async function cancelAllOrders(symbol){
         console.log(`🗑 CANCEL OLD TPSL ${symbol}`)
 
     }catch(e){
-
+        await checkTimeError(e)
         console.log(`❌ CANCEL TPSL ${symbol}:`, e.message)
     }
 }
@@ -2308,44 +2350,54 @@ ${t.side}`
 
     continue
 }
-let positions = await getPositionsCached()
+let stillOpen = null
 
-let stillOpen = positions.find(p =>
-    p.symbol === t.symbol &&
-    Math.abs(parseFloat(p.positionAmt || "0")) > 0
-)
+for(let retry = 0; retry < 5; retry++){
 
-if(!stillOpen){
+    POS_CACHE = null
+    POS_CACHE_TIME = 0
 
-    await new Promise(r=>setTimeout(r,2000))
+    let positions = await getPositionsCached()
 
-    let retryPos = await binance.futuresPositionRisk({
-        recvWindow: 20000
-    })
-
-    stillOpen = retryPos.find(p =>
+    stillOpen = positions.find(p =>
         p.symbol === t.symbol &&
         Math.abs(parseFloat(p.positionAmt || "0")) > 0
     )
 
-    if(!stillOpen){
-
-        await trades.updateOne(
-            {
-                symbol: t.symbol,
-                createdAt: t.createdAt
-            },
-            {
-                $set:{
-                    result:"AUTO_CLEAR_NO_POSITION"
-                }
-            }
-        )
-
-        activeTrades.splice(i,1)
-
-        continue
+    if(stillOpen){
+        break
     }
+
+    console.log(
+        `⚠️ VERIFY POSITION ${t.symbol} ${retry + 1}/5`
+    )
+
+    await new Promise(r =>
+        setTimeout(r, 2000)
+    )
+}
+
+if(!stillOpen){
+
+    console.log(
+        `🚨 AUTO CLEAR CONFIRMED ${t.symbol}`
+    )
+
+    await trades.updateOne(
+        {
+            symbol: t.symbol,
+            createdAt: t.createdAt
+        },
+        {
+            $set:{
+                result:"AUTO_CLEAR_NO_POSITION"
+            }
+        }
+    )
+
+    activeTrades.splice(i,1)
+
+    continue
 }
 if(done){
     await new Promise(r =>
@@ -2424,6 +2476,8 @@ async function closePosition(symbol, side, qty){
             quantity: qty,
             reduceOnly: true
         })
+        POS_CACHE = null
+POS_CACHE_TIME = 0
 
         // ===== VERIFY CLOSED =====
         for(let i=0;i<30;i++){
@@ -2449,7 +2503,7 @@ async function closePosition(symbol, side, qty){
         return false
 
     }catch(e){
-
+        await checkTimeError(e)
         console.log(
             `❌ FORCE CLOSE ${symbol}:`,
             e.message
@@ -2466,7 +2520,7 @@ async function watchdogTPSL(){
 
     try{
 
-        const positions = await binance.futuresPositionRisk({ recvWindow: 20000 })
+        const positions = await getPositionsCached()
 
         for(const p of positions){
 
@@ -2488,7 +2542,11 @@ if(amt <= 0) continue
                 })
 
                 const hasSL = orders.some(o =>
-    (o.type === "STOP_MARKET" || o.type === "STOP") &&
+    o.side === closeSide &&
+    (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
     (
         o.closePosition === true ||
         String(o.closePosition) === "true"
@@ -2496,7 +2554,11 @@ if(amt <= 0) continue
 )
 
 const hasTP = orders.some(o =>
-    (o.type === "TAKE_PROFIT_MARKET" || o.type === "TAKE_PROFIT") &&
+    o.side === closeSide &&
+    (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
     (
         o.closePosition === true ||
         String(o.closePosition) === "true"
@@ -2678,6 +2740,7 @@ if(!closed){
                 }
 
             }catch(e){
+                await checkTimeError(e)
                 console.log(`WATCHDOG ERROR ${symbol}:`, e.message)
 
             }finally{
@@ -3026,9 +3089,10 @@ async function syncActiveTrades(){
         result:"PENDING"
     }).toArray()
 
-    let positions = await binance.futuresPositionRisk({
-        recvWindow:20000
-    })
+    POS_CACHE = null
+POS_CACHE_TIME = 0
+
+let positions = await getPositionsCached()
 
     let openSymbols = new Set(
         positions
