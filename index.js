@@ -37,6 +37,29 @@ const agent = new https.Agent({
     maxFreeSockets: 5,
     timeout: 15000
 })
+let POS_CACHE = null
+let POS_CACHE_TIME = 0
+
+async function getPositionsCached(){
+
+    let now = Date.now()
+
+    if(
+        POS_CACHE &&
+        now - POS_CACHE_TIME < 5000
+    ){
+        return POS_CACHE
+    }
+
+    POS_CACHE =
+        await binance.futuresPositionRisk({
+            recvWindow:20000
+        })
+
+    POS_CACHE_TIME = now
+
+    return POS_CACHE
+}
 async function safeFetch(url, options = {}, retry = 3){
     for(let i = 0; i < retry; i++){
         let timeout
@@ -551,9 +574,7 @@ async function waitPosition(symbol){
 
     for(let i=0;i<15;i++){
 
-        let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
+        let positions = await getPositionsCached()
 
         let pos = positions.find(p =>
             p.symbol === symbol &&
@@ -703,14 +724,28 @@ o.closePosition === true &&
             })
 
             let hasSL2 = check.some(o =>
-                o.side === closeSide &&
-                (o.type === "STOP_MARKET" || o.type === "STOP")
-            )
+    o.side === closeSide &&
+    (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
+)
 
-            let hasTP2 = check.some(o =>
-                o.side === closeSide &&
-                (o.type === "TAKE_PROFIT_MARKET" || o.type === "TAKE_PROFIT")
-            )
+let hasTP2 = check.some(o =>
+    o.side === closeSide &&
+    (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
+    (
+        o.closePosition === true ||
+        String(o.closePosition) === "true"
+    )
+)
 
             if(hasSL2 && hasTP2){
                 TPSL_STATE[symbol] = { status:"OK", time:Date.now() }
@@ -1628,9 +1663,7 @@ for (let best of filtered){
         //x.result === "PENDING" &&
        // !x.waitingEntry
 //).length
-let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
+let positions = await getPositionsCached()
 
 let realActive = positions.filter(p =>
     Math.abs(parseFloat(p.positionAmt || "0")) > 0
@@ -1661,9 +1694,7 @@ if(existing){
 
     // verify position thật
     let positions =
-        await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
+        await getPositionsCached()
 
     let realPos = positions.find(p =>
         p.symbol === best.symbol &&
@@ -1980,30 +2011,29 @@ let tpsl = await ensureTPSL(
 
 if(!tpsl.ok){
 
-    console.log(`❌ TPSL FAIL ${trade.symbol}`)
-
-    let realPos = await hasPosition(
-        trade.symbol
-    )
+    let realPos = await hasPosition(trade.symbol)
 
     if(realPos){
 
-        await closePosition(
+        let closed = await closePosition(
             trade.symbol,
             trade.side,
-            Math.abs(
-                Number(realPos.positionAmt)
-            )
+            Math.abs(parseFloat(p.positionAmt || "0")) > 0
         )
+
+        if(!closed){
+
+            await sendTelegram2(
+                `🚨 TPSL FAIL + CLOSE FAIL\n${trade.symbol}`
+            )
+        }
     }
 
     continue
 }
     await new Promise(r => setTimeout(r, 1000))
 
-let verifyPos = await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
+let verifyPos = await getPositionsCached()
 
 let realPos = verifyPos.find(p =>
     p.symbol === trade.symbol &&
@@ -2030,7 +2060,7 @@ if(!existsActive){
     activeTrades.push(trade)
 }
 
-let realQty = Math.abs(Number(realPos.positionAmt))
+let realQty = Math.abs(parseFloat(p.positionAmt || "0")) > 0
 
     trade.waitingEntry = false
     trade.enteredAt = Date.now()
@@ -2183,9 +2213,7 @@ async function checkTrades(){
     }
     console.log(`🚨 FORCE VERIFY ${t.symbol}`)
 
-let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
+let positions = await getPositionsCached()
 
 let realPos = positions.find(p =>
     p.symbol === t.symbol &&
@@ -2248,9 +2276,7 @@ if(isTimeout){
 
     console.log(`⏳ TIMEOUT CLOSE ${t.symbol}`)
     // ===== CHECK POSITION THẬT =====
-    let positions = await binance.futuresPositionRisk({
-        recvWindow: 20000
-    })
+    let positions = await getPositionsCached()
     let realPos = positions.find(p =>
         p.symbol === t.symbol &&
         Math.abs(parseFloat(p.positionAmt || "0")) > 0
@@ -2294,9 +2320,7 @@ ${t.side}`
 
     continue
 }
-let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
+let positions = await getPositionsCached()
 
 let stillOpen = positions.find(p =>
     p.symbol === t.symbol &&
@@ -2336,6 +2360,9 @@ if(!stillOpen){
     }
 }
 if(done){
+    await new Promise(r =>
+        setTimeout(r,3000)
+    )
 
     let positions = await binance.futuresPositionRisk({
         recvWindow: 20000
@@ -2418,9 +2445,7 @@ async function closePosition(symbol, side, qty){
     )
 
             let positions =
-                await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
+                await getPositionsCached()
 
             let pos = positions.find(p =>
                 p.symbol === symbol &&
@@ -2551,8 +2576,21 @@ const hasTP = orders.some(o =>
                         activeTrades.find(x => x.symbol === symbol)
                         || await trades.findOne({ symbol, result: "PENDING" })
 
-                    if(!trade?.tp || !trade?.sl) continue
+                    if(!trade?.tp || !trade?.sl){
 
+    console.log(`🚨 NO TRADE DATA ${symbol}`)
+
+    if(duration >= 10 * 60 * 1000){
+
+        await closePosition(
+            symbol,
+            Number(p.positionAmt) > 0 ? "LONG" : "SHORT",
+            Math.abs(parseFloat(p.positionAmt || "0"))
+        )
+    }
+
+    continue
+}
                     // =========================
                     // 30 MIN ALERT
                     // =========================
@@ -2615,6 +2653,22 @@ const hasTP = orders.some(o =>
                                 reduceOnly: true,
                                 quantity: Math.abs(parseFloat(p.positionAmt || "0"))
                             })
+                            let closed = await closePosition(
+    symbol,
+    Number(p.positionAmt) > 0
+        ? "LONG"
+        : "SHORT",
+    Math.abs(parseFloat(p.positionAmt || "0"))
+)
+
+if(!closed){
+
+    await sendTelegram2(
+        `🚨 CLOSE FAIL ${symbol}`
+    )
+
+    continue
+}
 
                             await sendTelegram2(
                                 `🛑 AUTO CLOSE 1H\n` +
@@ -2737,9 +2791,7 @@ activeTrades = await trades.find({
     result: "PENDING"
 }).toArray()
 
-let positions = await binance.futuresPositionRisk({
-    recvWindow: 20000
-})
+let positions = await getPositionsCached()
 
 let openSymbols = new Set(
     positions
@@ -2851,38 +2903,37 @@ async function getDBStats(setup, market, side, volatility){
             result: { $ne: "PENDING" }
         })
 
-        let minSample = Math.min(Math.max(20, Math.floor(totalDB * 0.1)), 50)
+        let minSample = Math.min(Math.max(10, Math.floor(totalDB * 0.1)), 50)
 
         // ===== QUERY CHÍNH =====
         let data = await col.find({
-            setup,
-            marketState: market,
-            side,
-            result: { $ne: "PENDING" }
-        }).toArray()
+    setup,
+    marketState: market,
+    side,
+    result: { $in:["WIN","LOSS"] }
+}).toArray()
 
         // ===== FILTER VOL =====
         let filtered = data.filter(t => !t.volatility || t.volatility === volatility)
 
         // ===== ƯU TIÊN VOL =====
         if(filtered.length >= minSample){
-            data = filtered
-        }
-
-        // ===== FALLBACK 1 =====
+    data = filtered
+}
         if(data.length < minSample){
-            data = await col.find({
-                setup,
-                side,
-                result: { $ne: "PENDING" }
-            }).toArray()
-        }
+
+    data = await col.find({
+        setup,
+        side,
+        result: { $in:["WIN","LOSS"] }
+    }).toArray()
+}
 
         // ===== FALLBACK 2 =====
         if(data.length < minSample){
             data = await col.find({
                 side,
-                result: { $ne: "PENDING" }
+                result: { $in:["WIN","LOSS"] }
             }).toArray()
         }
 
@@ -2902,7 +2953,7 @@ async function getDBStats(setup, market, side, volatility){
                 : 999
 
             // 🔥 decay 48h
-            let weight = Math.exp(-ageHours / 120)
+            let weight = Math.exp(-ageHours / 48)
 
             if(t.result === "WIN"){
                 winScore += weight
@@ -2950,7 +3001,7 @@ async function getBestTPSL(setup, market, side){
         setup,
         marketState: market,
         side,
-        result: { $in: ["WIN","LOSS","TIMEOUT"] }
+        result: { $in:["WIN","LOSS","TIMEOUT_CLOSED"] }
     }).toArray()
 
     if(data.length < 30) return null
@@ -2983,9 +3034,26 @@ async function getBestTPSL(setup, market, side){
 start()
 async function syncActiveTrades(){
 
-    activeTrades = await trades.find({
+    let dbTrades = await trades.find({
         result:"PENDING"
     }).toArray()
+
+    let positions = await binance.futuresPositionRisk({
+        recvWindow:20000
+    })
+
+    let openSymbols = new Set(
+        positions
+        .filter(x =>
+            Math.abs(Number(x.positionAmt)) > 0
+        )
+        .map(x => x.symbol)
+    )
+
+    activeTrades = dbTrades.filter(t =>
+        t.waitingEntry ||
+        openSymbols.has(t.symbol)
+    )
 
     console.log(
         `♻️ SYNC ACTIVE: ${activeTrades.length}`
