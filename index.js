@@ -616,10 +616,6 @@ async function ensureTPSL(symbol, side, tp, sl, binance){
     TPSL_STATE[symbol].status = "NONE"
 }
 
-    if(TPSL_LOCK[symbol]){
-    return { ok:false, error:"LOCKED" }
-}
-
 if(TPSL_LOCK[symbol]){
     console.log(`⚠️ TPSL LOCKED STUCK ${symbol}`)
     return { ok:false, error:"LOCKED" }
@@ -2018,7 +2014,7 @@ if(!tpsl.ok){
         let closed = await closePosition(
             trade.symbol,
             trade.side,
-            Math.abs(parseFloat(p.positionAmt || "0")) > 0
+            Math.abs(parseFloat(realPos.positionAmt || "0"))
         )
 
         if(!closed){
@@ -2060,8 +2056,6 @@ if(!existsActive){
     activeTrades.push(trade)
 }
 
-let realQty = Math.abs(parseFloat(p.positionAmt || "0")) > 0
-
     trade.waitingEntry = false
     trade.enteredAt = Date.now()
 
@@ -2099,15 +2093,9 @@ trade.tp =
                 }
             }
         )
-        let ok = true
+        
 
-if(ok){
     console.log(`✅ TPSL SET ${trade.symbol}`)
-
-}else{
-
-    console.log(`❌ TPSL NOT SET ${trade.symbol}`)
-}
 
         console.log(`🔥 MARKET ENTER ${trade.symbol}`)
         let msg = `🔥 BEST SIGNAL
@@ -2427,7 +2415,7 @@ async function closePosition(symbol, side, qty){
                 ? "SELL"
                 : "BUY"
 
-        let order = await binance.futuresOrder({
+        await binance.futuresOrder({
 
             symbol,
             recvWindow: 20000,
