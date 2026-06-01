@@ -2124,19 +2124,6 @@ if(!realPos){
     continue
 }
 
-let existsActive = activeTrades.find(
-    x =>
-        x.symbol === trade.symbol &&
-        x.createdAt === trade.createdAt
-)
-
-if(!existsActive){
-    activeTrades.push(trade)
-}
-
-    trade.waitingEntry = false
-    trade.enteredAt = Date.now()
-
     // lấy entry thật từ position
     let realEntry = Number(realPos.entryPrice)
 
