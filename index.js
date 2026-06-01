@@ -609,10 +609,6 @@ TPSL_STATE[symbol] = { status:"CREATING", time:Date.now() }
     try{
 
         // ===== GET POSITION =====
-        let positions = await binance.futuresPositionRisk({ recvWindow:20000 })
-
-        let pos = null
-
 for(let i = 0; i < 5; i++){
     let positions = await binance.futuresPositionRisk({ recvWindow:20000 })
 
@@ -2433,13 +2429,13 @@ if(amt <= 0) continue
                 })
 
                 const hasSL = orders.some(o =>
-    o.type === "STOP_MARKET" ||
-    o.type === "STOP"
+    (o.type === "STOP_MARKET" || o.type === "STOP") &&
+    o.closePosition === true
 )
 
 const hasTP = orders.some(o =>
-    o.type === "TAKE_PROFIT_MARKET" ||
-    o.type === "TAKE_PROFIT"
+    (o.type === "TAKE_PROFIT_MARKET" || o.type === "TAKE_PROFIT") &&
+    o.closePosition === true
 )
 
                 const st = getState(symbol)
