@@ -562,7 +562,6 @@ if(data.status !== "FILLED"){
         await new Promise(r => setTimeout(r, 800))
 
         try{
-            await syncTime()
 
             let check = await binance.futuresGetOrder({
                 symbol,
@@ -1861,8 +1860,6 @@ waitingEntry: false,
 if(existingMem){
     continue
 }
-
-    await trades.insertOne(trade)
     // ===== BREAKOUT = MARKET ENTRY =====
 {
     console.log(`⚡ INSTANT ENTRY ${best.symbol}`)
@@ -2052,26 +2049,22 @@ let tpsl = await ensureTPSL(
 
 if(!tpsl.ok){
 
+    console.log(`⚠️ TPSL FAIL ${trade.symbol}`)
+
     let realPos = await hasPosition(trade.symbol)
 
     if(realPos){
 
-        let closed = await closePosition(
+        await closePosition(
             trade.symbol,
             trade.side,
-            Math.abs(parseFloat(realPos.positionAmt || "0"))
+            Math.abs(Number(realPos.positionAmt))
         )
-
-        if(!closed){
-
-            await sendTelegram2(
-                `🚨 TPSL FAIL + CLOSE FAIL\n${trade.symbol}`
-            )
-        }
     }
 
     continue
 }
+
     await new Promise(r => setTimeout(r, 1000))
 
 let verifyPos = await getPositionsCached()
@@ -2091,6 +2084,7 @@ if(!realPos){
 
     continue
 }
+await trades.insertOne(trade)
 let existsActive = activeTrades.find(
     x =>
         x.symbol === trade.symbol &&
