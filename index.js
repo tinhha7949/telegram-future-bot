@@ -733,16 +733,14 @@ if(!pos){
         })
 
         let hasSL = orders.some(o =>
-            o.side === closeSide &&
-o.closePosition === true &&
-            (o.type === "STOP_MARKET" || o.type === "STOP")
-        )
+    o.closePosition &&
+    o.type && o.type.includes("STOP")
+)
 
-        let hasTP = orders.some(o =>
-            o.side === closeSide &&
-            o.closePosition === true &&
-            (o.type === "TAKE_PROFIT_MARKET" || o.type === "TAKE_PROFIT")
-        )
+let hasTP = orders.some(o =>
+    o.closePosition &&
+    o.type && o.type.includes("TAKE_PROFIT")
+)
 
         // ===== ALREADY OK =====
         if(hasSL && hasTP){
@@ -828,6 +826,7 @@ let hasTP2 = check.some(o =>
         return { ok:false, error:e.message }
     }finally{
         delete TPSL_LOCK[symbol]
+        TPSL_STATE[symbol].time = Date.now()
     }
 }
 async function cancelAllOrders(symbol){
@@ -2045,7 +2044,6 @@ if(!order){
 let pos = await waitPosition(trade.symbol)
 
 if(!pos){
-
     console.log("❌ NO POSITION AFTER OPEN")
 
     await trades.updateOne(
@@ -2064,6 +2062,9 @@ if(!pos){
 
     continue
 }
+
+// 🔥 FIX QUAN TRỌNG: CHỜ BINANCE SYNC ORDER BOOK
+await new Promise(r => setTimeout(r, 2000))
 trade.waitingEntry = false
 trade.enteredAt = Date.now()
 
@@ -2088,20 +2089,32 @@ let tpsl = await ensureTPSL(
 )
 
 if(!tpsl.ok){
-    TPSL_GRACE[trade.symbol] = Date.now()
 
-    console.log(`⚠️ TPSL FAIL ${trade.symbol}`)
+    console.log(`⚠️ TPSL FAIL ${trade.symbol} → RETRY`)
 
-    TPSL_STATE[trade.symbol] = {
-        status:"FAILED",
-        time:Date.now()
+    for(let i = 0; i < 3; i++){
+
+        await new Promise(r => setTimeout(r, 2000))
+
+        let retry = await ensureTPSL(
+            trade.symbol,
+            trade.side,
+            trade.tp,
+            trade.sl,
+            binance
+        )
+
+        if(retry.ok){
+            console.log(`✅ TPSL RECOVERED ${trade.symbol}`)
+            tpsl = retry
+            break
+        }
     }
 
-    await sendTelegram2(
-        `⚠️ TPSL FAIL\n${trade.symbol}`
-    )
-
-    continue
+    if(!tpsl.ok){
+        await sendTelegram2(`⚠️ TPSL FAIL FINAL\n${trade.symbol}`)
+        continue
+    }
 }
 TPSL_GRACE[trade.symbol] = Date.now()
     await new Promise(r => setTimeout(r, 1000))
