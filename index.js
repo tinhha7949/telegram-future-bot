@@ -1924,14 +1924,6 @@ if(notional < minNotional || !isFinite(qty) || qty <= 0){
         continue
     }
 
-    //qty = roundStep(qty, stepSize)
-
-   // qty = Number(
-      //  qty.toFixed(
-            precisionFromStep(stepSize)
-       // )
-   // )
-
 if(OPENING_POSITIONS[trade.symbol]){
     console.log(`⛔ OPENING LOCK ${trade.symbol}`)
     continue
@@ -2092,6 +2084,7 @@ if(!realPos){
             }
         }
     )
+    delete DATA_FAILS[t.symbol]
 
     activeTrades.splice(i,1)
 
@@ -2173,6 +2166,7 @@ if(closed){
 ${t.symbol}
 ${t.side}`
     )
+    delete DATA_FAILS[t.symbol]
 
     activeTrades.splice(i,1)
 
@@ -2222,6 +2216,7 @@ if(!stillOpen){
             }
         }
     )
+    delete DATA_FAILS[t.symbol]
 
     activeTrades.splice(i,1)
 
@@ -2265,6 +2260,7 @@ ${t.side}
 ${win ? "✅ WIN" : "❌ LOSS"}
 💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
     )
+    delete DATA_FAILS[t.symbol]
 
     activeTrades.splice(i,1)
     continue
