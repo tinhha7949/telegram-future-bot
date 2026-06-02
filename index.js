@@ -1,5 +1,6 @@
 let WATCHDOG_LAST_RUN = 0
 let TIME_SYNCED = false
+const TPSL_PENDING = {}
 let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
@@ -745,65 +746,75 @@ async function openPositionWithTPSL(
 
     if(!pos){
 
-    let verifyPos =
-        await hasPosition(
-            trade.symbol
-        )
+        let verifyPos =
+            await hasPosition(
+                trade.symbol
+            )
 
-    if(verifyPos){
-        pos = verifyPos
-    }else{
-        return false
+        if(verifyPos){
+            pos = verifyPos
+        }else{
+            return false
+        }
     }
-}
 
-    await new Promise(r =>
-        setTimeout(r,3000)
-    )
+    TPSL_PENDING[trade.symbol] = true
 
-    let tpslOk =
-        await setTPSLAndVerify(
-            trade
+    try{
+
+        await new Promise(r =>
+            setTimeout(r,3000)
         )
 
-    if(!tpslOk){
-
-        console.log(
-            `🚨 TPSL FAIL -> CLOSE ${trade.symbol}`
-        )
-
-        let realQty =
-            Math.abs(
-                Number(
-                    pos.positionAmt
-                )
+        let tpslOk =
+            await setTPSLAndVerify(
+                trade
             )
 
-        let closed =
-            await closePosition(
-                trade.symbol,
-                trade.side,
-                realQty
-            )
-
-        if(!closed){
+        if(!tpslOk){
 
             console.log(
-                `🚨 CLOSE FAIL ${trade.symbol}`
+                `🚨 TPSL FAIL -> CLOSE ${trade.symbol}`
             )
 
-            await sendTelegram2(
+            let realQty =
+                Math.abs(
+                    Number(
+                        pos.positionAmt
+                    )
+                )
+
+            let closed =
+                await closePosition(
+                    trade.symbol,
+                    trade.side,
+                    realQty
+                )
+
+            if(!closed){
+
+                console.log(
+                    `🚨 CLOSE FAIL ${trade.symbol}`
+                )
+
+                await sendTelegram2(
 `🚨 CRITICAL
 ${trade.symbol}
 TPSL FAIL
 CLOSE FAIL`
-            )
+                )
+            }
+
+            return false
         }
 
-        return false
-    }
+        return true
 
-    return true
+    }finally{
+
+        delete TPSL_PENDING[trade.symbol]
+
+    }
 }
 async function cancelAllOrders(symbol){
 
@@ -2366,6 +2377,9 @@ async function watchdogTPSL(){
 
             let symbol =
                 p.symbol
+                if(TPSL_PENDING[symbol]){
+    continue
+}
 
             let closeSide =
                 Number(
