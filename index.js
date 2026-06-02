@@ -692,37 +692,49 @@ let tp =
 
         console.log(`SET SL ${trade.symbol}`)
 
-await binance.futuresOrder({
+let slRes =
+    await binance.futuresOrder({
 
-    symbol: trade.symbol,
-    side: closeSide,
-    type: "STOP_MARKET",
+        symbol: trade.symbol,
+        side: closeSide,
+        type: "STOP_MARKET",
 
-    stopPrice: sl,
+        stopPrice: sl,
 
-    closePosition: true,
+        closePosition: true,
 
-    workingType: "MARK_PRICE",
+        workingType: "MARK_PRICE",
 
-    recvWindow: 20000
-})
+        recvWindow: 20000
+    })
+
+console.log(
+    "SL RESPONSE:",
+    JSON.stringify(slRes,null,2)
+)
 
         console.log(`SET TP ${trade.symbol}`)
 
-await binance.futuresOrder({
+let tpRes =
+    await binance.futuresOrder({
 
-    symbol: trade.symbol,
-    side: closeSide,
-    type: "TAKE_PROFIT_MARKET",
+        symbol: trade.symbol,
+        side: closeSide,
+        type: "TAKE_PROFIT_MARKET",
 
-    stopPrice: tp,
+        stopPrice: tp,
 
-    closePosition: true,
+        closePosition: true,
 
-    workingType: "MARK_PRICE",
+        workingType: "MARK_PRICE",
 
-    recvWindow: 20000
-})
+        recvWindow: 20000
+    })
+
+console.log(
+    "TP RESPONSE:",
+    JSON.stringify(tpRes,null,2)
+)
 
         await new Promise(r =>
             setTimeout(r,3000)
@@ -2887,6 +2899,13 @@ async function getBestTPSL(setup, market, side){
 }
             
 start()
+let mode =
+    await binance.futuresPositionSideDual()
+
+console.log(
+    "POSITION MODE:",
+    mode
+)
 async function syncActiveTrades(){
 
     let dbTrades = await trades.find({
