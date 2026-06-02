@@ -722,6 +722,15 @@ await binance.futuresOrder({
         )
 
         return hasSL && hasTP
+        console.log("ORDERS:", JSON.stringify(
+    orders.map(o => ({
+        type:o.type,
+        side:o.side,
+        closePosition:o.closePosition
+    })),
+    null,
+    2
+))
 
     }catch(e){
 
