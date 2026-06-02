@@ -128,6 +128,42 @@ console.log(
 
     return null
 }
+async function getLastClosedPnl(symbol){
+
+    try{
+
+        let incomes =
+            await binance.futuresIncome({
+                incomeType: "REALIZED_PNL",
+                limit: 50,
+                recvWindow: 20000
+            })
+
+        let rows = incomes
+            .filter(x =>
+                x.symbol === symbol
+            )
+            .sort(
+                (a,b) =>
+                    Number(b.time) - Number(a.time)
+            )
+
+        if(rows.length === 0){
+            return null
+        }
+
+        return Number(rows[0].income)
+
+    }catch(e){
+
+        console.log(
+            `❌ PNL ERROR ${symbol}:`,
+            e.message
+        )
+
+        return null
+    }
+}
 async function syncTime(){
 
     if(SYNCING_TIME) return
@@ -1531,6 +1567,9 @@ if(Math.abs(price - sl) < minDistance || Math.abs(price - sl) > maxDistance){
 
 // ===== ROUND =====
 function round(n){ return Number(n.toFixed(4)) }
+if(!setupType){
+    setupType = "TREND"
+}
 
 return {
     side,
@@ -2240,68 +2279,68 @@ for(let retry = 0; retry < 5; retry++){
 
 if(!stillOpen){
 
-    console.log(
-        `🚨 AUTO CLEAR CONFIRMED ${t.symbol}`
-    )
+    let pnl =
+        await getLastClosedPnl(
+            t.symbol
+        )
 
-    await trades.updateOne(
-        {
-            symbol: t.symbol,
-            createdAt: t.createdAt
-        },
-        {
-            $set:{
-                result:"AUTO_CLEAR_NO_POSITION"
+    if(pnl !== null){
+
+        let isWin = pnl > 0
+
+        await trades.updateOne(
+            {
+                symbol: t.symbol,
+                createdAt: t.createdAt
+            },
+            {
+                $set:{
+                    result: isWin
+                        ? "WIN"
+                        : "LOSS",
+                    pnl
+                }
             }
+        )
+
+        let latestBalance =
+            await updateBalance()
+
+        if(latestBalance > 0){
+            ACCOUNT_BALANCE = latestBalance
         }
-    )
-    delete DATA_FAILS[t.symbol]
 
-    activeTrades.splice(i,1)
-
-    continue
-}
-if(done){
-    await new Promise(r =>
-        setTimeout(r,3000)
-    )
-
-    let positions = await binance.futuresPositionRisk({
-        recvWindow: 20000
-    })
-    let stillOpen = positions.find(p =>
-        p.symbol === t.symbol &&
-        Math.abs(parseFloat(p.positionAmt || "0")) > 0
-    )
-    // còn position thật => chưa tính win/loss
-    if(stillOpen){
-        continue
-    }
-    await trades.updateOne(
-        {
-            symbol: t.symbol,
-            createdAt: t.createdAt
-        },
-        {
-            $set:{
-                result: win ? "WIN" : "LOSS"
-            }
-        }
-    )
-    let latestBalance = await updateBalance()
-
-    if(latestBalance > 0){
-        ACCOUNT_BALANCE = latestBalance
-    }
-    await sendTelegram2(
+        await sendTelegram2(
 `📊 ${t.symbol}
 ${t.side}
-${win ? "✅ WIN" : "❌ LOSS"}
+${isWin ? "✅ WIN" : "❌ LOSS"}
+PnL: ${pnl.toFixed(4)}
 💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
-    )
+        )
+
+    }else{
+
+        console.log(
+            `🚨 AUTO CLEAR CONFIRMED ${t.symbol}`
+        )
+
+        await trades.updateOne(
+            {
+                symbol: t.symbol,
+                createdAt: t.createdAt
+            },
+            {
+                $set:{
+                    result:"AUTO_CLEAR_NO_POSITION"
+                }
+            }
+        )
+    }
+
     delete DATA_FAILS[t.symbol]
 
     activeTrades.splice(i,1)
+
     continue
 }
             }catch(e){
