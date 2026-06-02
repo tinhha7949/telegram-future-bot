@@ -648,31 +648,39 @@ async function setTPSLAndVerify(trade){
             trade.symbol
         )
 
-        await binance.futuresOrder({
+        console.log(`SET SL ${trade.symbol}`)
 
-            symbol: trade.symbol,
-            side: closeSide,
-            type: "STOP_MARKET",
+await binance.futuresOrder({
 
-            stopPrice: trade.sl,
+    symbol: trade.symbol,
+    side: closeSide,
+    type: "STOP_MARKET",
 
-            closePosition: true,
+    stopPrice: trade.sl,
 
-            workingType: "MARK_PRICE"
-        })
+    closePosition: true,
 
-        await binance.futuresOrder({
+    workingType: "MARK_PRICE",
 
-            symbol: trade.symbol,
-            side: closeSide,
-            type: "TAKE_PROFIT_MARKET",
+    recvWindow: 20000
+})
 
-            stopPrice: trade.tp,
+        console.log(`SET TP ${trade.symbol}`)
 
-            closePosition: true,
+await binance.futuresOrder({
 
-            workingType: "MARK_PRICE"
-        })
+    symbol: trade.symbol,
+    side: closeSide,
+    type: "TAKE_PROFIT_MARKET",
+
+    stopPrice: trade.tp,
+
+    closePosition: true,
+
+    workingType: "MARK_PRICE",
+
+    recvWindow: 20000
+})
 
         await new Promise(r =>
             setTimeout(r,3000)
@@ -717,13 +725,15 @@ async function setTPSLAndVerify(trade){
 
     }catch(e){
 
-        console.log(
-            `TPSL FAIL ${trade.symbol}`,
-            e.message
-        )
+    await checkTimeError(e)
 
-        return false
-    }
+    console.log(
+        `TPSL FAIL ${trade.symbol}`,
+        e.message
+    )
+
+    return false
+}
 }
 async function openPositionWithTPSL(
     trade,
