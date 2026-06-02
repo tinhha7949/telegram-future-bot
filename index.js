@@ -2750,6 +2750,13 @@ async function commandLoop(){
         watchdogLoop()
 
        await scanLoop()
+       let mode =
+    await binance.futuresPositionSideDual()
+
+console.log(
+    "POSITION MODE:",
+    mode
+)
 
     }catch(e){
         console.log("❌ Start error:", e.message)
@@ -2899,13 +2906,6 @@ async function getBestTPSL(setup, market, side){
 }
             
 start()
-let mode =
-    await binance.futuresPositionSideDual()
-
-console.log(
-    "POSITION MODE:",
-    mode
-)
 async function syncActiveTrades(){
 
     let dbTrades = await trades.find({
