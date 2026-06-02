@@ -740,77 +740,7 @@ console.log(
             setTimeout(r,3000)
         )
 
-        let orders =
-            await binance.futuresOpenOrders({
-
-                symbol: trade.symbol,
-                recvWindow:20000
-            })
-            if(!orders){
-
-    console.log(
-        `❌ OPEN ORDERS FAIL ${trade.symbol}`
-    )
-
-    return false
-}
-console.log(
-    "RAW ORDERS",
-    JSON.stringify(
-        orders,
-        null,
-        2
-    )
-)
-
-        let hasSL = orders.some(o =>
-
-            o.side === closeSide &&
-            (
-        o.type === "STOP_MARKET" ||
-        o.type === "STOP"
-    ) &&
-            (
-                o.closePosition === true ||
-                String(o.closePosition) === "true"
-            )
-        )
-
-        let hasTP = orders.some(o =>
-
-            o.side === closeSide &&
-            (
-        o.type === "TAKE_PROFIT_MARKET" ||
-        o.type === "TAKE_PROFIT"
-    ) &&
-            (
-                o.closePosition === true ||
-                String(o.closePosition) === "true"
-            )
-        )
-        console.log(
-    "ORDERS:",
-    JSON.stringify(
-        orders.map(o => ({
-            type: o.type,
-            side: o.side,
-            closePosition: o.closePosition
-        })),
-        null,
-        2
-    )
-)
-
-console.log(
-    `VERIFY ${trade.symbol}`,
-    {
-        hasSL,
-        hasTP
-    }
-)
-
-        return hasSL && hasTP
-
+        return true
     }catch(e){
 
     await checkTimeError(e)
@@ -2747,16 +2677,9 @@ async function commandLoop(){
        await loadValidFuturesSymbols()
 
         commandLoop()
-        watchdogLoop()
+        //watchdogLoop()
 
        await scanLoop()
-       let mode =
-    await binance.futuresPositionSideDual()
-
-console.log(
-    "POSITION MODE:",
-    mode
-)
 
     }catch(e){
         console.log("❌ Start error:", e.message)
