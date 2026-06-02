@@ -314,6 +314,22 @@ async function updateBalance(){
         return ACCOUNT_BALANCE
     }
 }
+function normalizePrice(price, tickSize){
+
+    if(!tickSize) return price
+
+    const precision =
+        (tickSize.toString().split(".")[1] || "")
+        .replace(/0+$/,"")
+        .length
+
+    const normalized =
+        Math.round(price / tickSize) * tickSize
+
+    return Number(
+        normalized.toFixed(precision)
+    )
+}
 function normalizeQty(qty, stepSize){
     return Number(
         (Math.floor(qty / stepSize) * stepSize)
@@ -641,6 +657,32 @@ async function setTPSLAndVerify(trade){
         Number(pos.positionAmt) > 0
             ? "SELL"
             : "BUY"
+            let info =
+    await getSymbolInfo(
+        trade.symbol
+    )
+
+let priceFilter =
+    info.filters.find(
+        f => f.filterType === "PRICE_FILTER"
+    )
+
+let tickSize =
+    parseFloat(
+        priceFilter?.tickSize || "0.01"
+    )
+
+let sl =
+    normalizePrice(
+        trade.sl,
+        tickSize
+    )
+
+let tp =
+    normalizePrice(
+        trade.tp,
+        tickSize
+    )
 
     try{
 
@@ -656,7 +698,7 @@ await binance.futuresOrder({
     side: closeSide,
     type: "STOP_MARKET",
 
-    stopPrice: trade.sl,
+    stopPrice: sl,
 
     closePosition: true,
 
@@ -673,7 +715,7 @@ await binance.futuresOrder({
     side: closeSide,
     type: "TAKE_PROFIT_MARKET",
 
-    stopPrice: trade.tp,
+    stopPrice: tp,
 
     closePosition: true,
 
@@ -700,11 +742,22 @@ await binance.futuresOrder({
 
     return false
 }
+console.log(
+    "RAW ORDERS",
+    JSON.stringify(
+        orders,
+        null,
+        2
+    )
+)
 
         let hasSL = orders.some(o =>
 
             o.side === closeSide &&
-            o.type.includes("STOP") &&
+            (
+        o.type === "STOP_MARKET" ||
+        o.type === "STOP"
+    ) &&
             (
                 o.closePosition === true ||
                 String(o.closePosition) === "true"
@@ -714,7 +767,10 @@ await binance.futuresOrder({
         let hasTP = orders.some(o =>
 
             o.side === closeSide &&
-            o.type.includes("TAKE_PROFIT") &&
+            (
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "TAKE_PROFIT"
+    ) &&
             (
                 o.closePosition === true ||
                 String(o.closePosition) === "true"
