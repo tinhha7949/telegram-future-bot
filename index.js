@@ -2600,6 +2600,26 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         trades = db.collection("trades")
 
         console.log("✅ MongoDB connected")
+        db = client.db("trading")
+trades = db.collection("trades")
+
+console.log("✅ MongoDB connected")
+
+import fs from "fs"
+
+let data = await trades.find({
+    result: {
+        $in: ["WIN", "LOSS"]
+    }
+}).toArray()
+
+fs.writeFileSync(
+    "./winloss.json",
+    JSON.stringify(data, null, 2)
+)
+
+console.log(`✅ EXPORTED ${data.length} TRADES`)
+process.exit()
         // 🔥 CLEAR DEAD LOCK
 await trades.updateMany(
     { opening:true },
