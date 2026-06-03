@@ -1245,8 +1245,8 @@ let nearEma = distEma < 0.005 // 0.0025
    // return null
 //}
     // ===== STRUCTURE =====
-    let prevHigh = Math.max(...highs.slice(-25,-5))
-    let prevLow  = Math.min(...lows.slice(-25,-5))
+    let prevHigh = Math.max(...highs.slice(-12,-2))
+    let prevLow  = Math.min(...lows.slice(-12,-2))
 
     let bosUp = price > prevHigh
     let bosDown = price < prevLow
@@ -1258,28 +1258,68 @@ let nearEma = distEma < 0.005 // 0.0025
     let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
 
     // ===== MOMENTUM =====
-    let last4 = closes.slice(-4)
-    let momentumUp = last4[3]>last4[2] && last4[2]>last4[1]
-    let momentumDown = last4[3]<last4[2] && last4[2]<last4[1]
+    //let momentumUp = closes.at(-1) > ema20 && closes.at(-2) > ema20
+    //let momentumDown = closes.at(-1) < ema20 && closes.at(-2) < ema20
+    let momentumUp =
+    closes.at(-1) > ema20 &&
+    closes.at(-2) > ema20 &&
+    closes.at(-1) > closes.at(-2)
+
+let momentumDown =
+    closes.at(-1) < ema20 &&
+    closes.at(-2) < ema20 &&
+    closes.at(-1) < closes.at(-2)
     // ===== CONTINUATION STRUCTURE =====
     let higherLow = lows.at(-2) > lows.at(-5)
     let lowerHigh = highs.at(-2) < highs.at(-5)
 
     // ===== VOLUME =====
     let volNow = volumes.at(-1)
-    if(volNow < volAvg)
+    if(volNow < volAvg * 1.1)
     return null
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
 
     // ===== FILTER =====
-    let trendLong = ema20>ema50 && ema50>ema200 && ema20_1h>ema50_1h
-    let trendShort = ema20<ema50 && ema50<ema200 && ema20_1h<ema50_1h
+    let trendLong = ema20 > ema50 && ema20_1h > ema50_1h
+let trendShort = ema20 < ema50 && ema20_1h < ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
     if(trendStrength < 0.0015) return null // 0.002
 
+    let ema20Prev =
+    ema(closes.slice(-61,-1),20)
+
+let emaSlope =
+    Math.abs(
+        ema20 - ema20Prev
+    ) / price
+    if(emaSlope < 0.001)
+    return null
+let emaGap =
+Math.abs(ema20 - ema50) / price
+
+if(emaGap < 0.0015)
+return null
+
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     if(candleMove > 0.03) return null
+    let candleBody =
+Math.abs(
+    closes.at(-1) -
+    opens.at(-1)
+)
+
+let candleRange =
+highs.at(-1) -
+lows.at(-1)
+
+if(
+    candleBody /
+    candleRange
+    < 0.5
+){
+    return null
+}
 
     let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.98
     let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.02
@@ -1294,14 +1334,22 @@ let nearEma = distEma < 0.005 // 0.0025
 
     // ===== BREAKOUT =====
 if(side==="LONG" && bosUp){
-    score += 30
-    setupType = "BREAKOUT"
-}
-if(side==="SHORT" && bosDown){
-    score += 30
+    score += 40
     setupType = "BREAKOUT"
 }
 
+if(side==="SHORT" && bosDown){
+    score += 40
+    setupType = "BREAKOUT"
+}
+let breakoutVol =
+    volNow > volAvg * 1.3
+    if(
+    setupType === "BREAKOUT" &&
+    !breakoutVol
+){
+    return null
+}
 // ===== PULLBACK =====
 if(side==="LONG" && nearEma){
     score += 20
@@ -1782,12 +1830,12 @@ await trades.countDocuments({
     result:"PENDING"
 })
 
-    if(realActive >= 15){
+    if(realActive >= 25){
         console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`)
         break
     }
 
-    if(totalPending >= 30){
+    if(totalPending >= 50){
         console.log(`⚠️ MAX TOTAL PENDING: ${totalPending}`)
         break
     }
@@ -2600,20 +2648,6 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         trades = db.collection("trades")
 
         console.log("✅ MongoDB connected")
-
-let data = await trades.find({
-    result: {
-        $in: ["WIN", "LOSS"]
-    }
-}).toArray()
-
-fs.writeFileSync(
-    "./winloss.json",
-    JSON.stringify(data, null, 2)
-)
-
-console.log(`✅ EXPORTED ${data.length} TRADES`)
-process.exit()
         // 🔥 CLEAR DEAD LOCK
 await trades.updateMany(
     { opening:true },
