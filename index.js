@@ -1187,6 +1187,7 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 // ================= CORE =================
 async function coreLogic(data15, data1h){
 
+    let opens = data15.map(x => +x[1])
     let closes = data15.map(x=>+x[4])
     let highs  = data15.map(x=>+x[2])
     let lows   = data15.map(x=>+x[3])
