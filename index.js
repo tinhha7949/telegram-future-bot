@@ -2600,12 +2600,6 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         trades = db.collection("trades")
 
         console.log("✅ MongoDB connected")
-        db = client.db("trading")
-trades = db.collection("trades")
-
-console.log("✅ MongoDB connected")
-
-import fs from "fs"
 
 let data = await trades.find({
     result: {
