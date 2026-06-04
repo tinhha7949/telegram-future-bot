@@ -1233,14 +1233,14 @@ if(volAvgUSDT < dynamicMinVol){
 let distEma = Math.abs(price - ema20) / price
 
 // không đu giá
-if(distEma > 0.012) return null // 0.006
+if(distEma > 0.018) return null // 0.006
 
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
 if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
-let nearEma = distEma < 0.003 // 0.0025
+let nearEma = distEma < 0.005 // 0.0025
 // ===== PULLBACK PHẢI CÓ LỰC =====
 //if(nearEma && volNow < volAvg){
    // return null
@@ -1249,8 +1249,10 @@ let nearEma = distEma < 0.003 // 0.0025
     let prevHigh = Math.max(...highs.slice(-12,-2))
     let prevLow  = Math.min(...lows.slice(-12,-2))
 
-    let bosUp = price > prevHigh
-    let bosDown = price < prevLow
+    //let bosUp = price > prevHigh
+    //let bosDown = price < prevLow
+    let bosUp = closes.at(-1)>prevHigh && volNow>volAvg*1.1 && closes.at(-1)>highs.at(-2)
+let bosDown = closes.at(-1)<prevLow && volNow>volAvg*1.1 && closes.at(-1)<lows.at(-2)
 
     let prevHigh50 = Math.max(...highs.slice(-51,-1))
     let prevLow50  = Math.min(...lows.slice(-51,-1))
@@ -1276,9 +1278,10 @@ let momentumDown =
 
     // ===== VOLUME =====
     let volNow = volumes.at(-1)
-    if(volNow < volAvg )
+    if(volNow < volAvg * 0.8 )
     return null
-    let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
+    //let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
+    let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 3
 
     // ===== FILTER =====
     let trendLong = ema20 > ema50 && ema20_1h > ema50_1h
@@ -1294,7 +1297,7 @@ let emaSlope =
     Math.abs(
         ema20 - ema20Prev
     ) / price
-    if(emaSlope < 0.001)
+    if(emaSlope < 0.0008)
     return null
 let emaGap =
 Math.abs(ema20 - ema50) / price
@@ -1358,7 +1361,7 @@ if(side==="SHORT" && bosDown){
     setupType = "BREAKOUT"
 }
 let breakoutVol =
-    volNow > volAvg * 1.2
+    volNow > volAvg * 1.1
     if(
     setupType === "BREAKOUT" &&
     !breakoutVol
