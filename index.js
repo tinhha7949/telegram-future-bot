@@ -1248,7 +1248,8 @@ let nearEma = distEma < 0.005 // 0.0025
     // ===== STRUCTURE =====
     let prevHigh = Math.max(...highs.slice(-12,-2))
     let prevLow  = Math.min(...lows.slice(-12,-2))
-
+    
+let volNow = volumes.at(-1)
     //let bosUp = price > prevHigh
     //let bosDown = price < prevLow
     let bosUp = closes.at(-1)>prevHigh && volNow>volAvg*1.1 && closes.at(-1)>highs.at(-2)
@@ -1277,7 +1278,7 @@ let momentumDown =
     let lowerHigh = highs.at(-2) < highs.at(-5)
 
     // ===== VOLUME =====
-    let volNow = volumes.at(-1)
+    
     if(volNow < volAvg * 0.8 )
     return null
     //let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
