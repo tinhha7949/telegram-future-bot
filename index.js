@@ -1237,7 +1237,7 @@ if(distEma > 0.018) return null // 0.006
 
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-if(lastMove > 0.025 || lastMove < -0.025) return null // 0.02
+if(lastMove > 0.03 || lastMove < -0.02) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.005 // 0.0025
@@ -1248,7 +1248,7 @@ let nearEma = distEma < 0.005 // 0.0025
     // ===== STRUCTURE =====
     let prevHigh = Math.max(...highs.slice(-12,-2))
     let prevLow  = Math.min(...lows.slice(-12,-2))
-    
+
 let volNow = volumes.at(-1)
     //let bosUp = price > prevHigh
     //let bosDown = price < prevLow
@@ -1339,7 +1339,7 @@ if(
     if(trendShort){ side="SHORT"; score+=50 }
     // ===== PULLBACK ZONE (ADD HERE) =====
 let pullbackZone =
-    distEma > 0.003 && distEma < 0.015
+    distEma > 0.002 && distEma < 0.02
 
 if(side==="LONG" && pullbackZone){
     score += 15
@@ -1394,8 +1394,8 @@ let breakoutVol =
     if(side==="LONG" && higherLow) score+=15
     if(side==="SHORT" && lowerHigh) score+=15
    
-    if(side==="LONG" && r>50 && r<65) score+=10
-    if(side==="SHORT" && r>35 && r<50) score+=10
+    if(side==="LONG" && r>50 && r<72) score+=10
+    if(side==="SHORT" && r>30 && r<48) score+=10
 
     if(atrVal/price > 0.004) score+=10
     if(!side) return null
@@ -1428,8 +1428,8 @@ let support = Math.min(...lows.slice(-30))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
-if(side === "LONG" && distToRes < 0.003) return null // 0.005 nếu mua đỉnh bán đáy
-if(side === "SHORT" && distToSup < 0.003) return null
+if(side === "LONG" && distToRes < 0.002) return null // 0.005 nếu mua đỉnh bán đáy
+if(side === "SHORT" && distToSup < 0.004) return null
 
 // ===== LIQUIDITY =====
 function findLiquidityHigh(highs){
