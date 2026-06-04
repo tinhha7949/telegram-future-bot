@@ -1276,7 +1276,7 @@ let momentumDown =
 
     // ===== VOLUME =====
     let volNow = volumes.at(-1)
-    if(volNow < volAvg * 1.1)
+    if(volNow < volAvg )
     return null
     let volTrendUp = volumes.slice(-5).every((v,i,a)=> i===0 || v>=a[i-1])
 
@@ -1285,7 +1285,7 @@ let momentumDown =
 let trendShort = ema20 < ema50 && ema20_1h < ema50_1h
 
     let trendStrength = Math.abs(ema20-ema50)/price
-    if(trendStrength < 0.0015) return null // 0.002
+    if(trendStrength < 0.0012) return null // 0.002
 
     let ema20Prev =
     ema(closes.slice(-61,-1),20)
@@ -1298,9 +1298,10 @@ let emaSlope =
     return null
 let emaGap =
 Math.abs(ema20 - ema50) / price
-
-if(emaGap < 0.0015)
-return null
+if(emaGap < 0.0012 && trendStrength < 0.002)
+    return null
+//if(emaGap < 0.0015)
+//return null
 
     let candleMove = Math.abs(closes.at(-1)-closes.at(-2))/price
     if(candleMove > 0.03) return null
@@ -1332,6 +1333,19 @@ if(
 
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
+    // ===== PULLBACK ZONE (ADD HERE) =====
+let pullbackZone =
+    distEma > 0.003 && distEma < 0.015
+
+if(side==="LONG" && pullbackZone){
+    score += 15
+    if(!setupType) setupType = "PULLBACK"
+}
+
+if(side==="SHORT" && pullbackZone){
+    score += 15
+    if(!setupType) setupType = "PULLBACK"
+}
 
     // ===== BREAKOUT =====
 if(side==="LONG" && bosUp){
@@ -1344,7 +1358,7 @@ if(side==="SHORT" && bosDown){
     setupType = "BREAKOUT"
 }
 let breakoutVol =
-    volNow > volAvg * 1.3
+    volNow > volAvg * 1.2
     if(
     setupType === "BREAKOUT" &&
     !breakoutVol
@@ -1352,14 +1366,14 @@ let breakoutVol =
     return null
 }
 // ===== PULLBACK =====
-if(side==="LONG" && nearEma){
-    score += 20
-    if(!setupType) setupType = "PULLBACK"
-}
-if(side==="SHORT" && nearEma){
-    score += 20
-    if(!setupType) setupType = "PULLBACK"
-}
+//if(side==="LONG" && nearEma){
+    //score += 20
+    //if(!setupType) setupType = "PULLBACK"
+//}
+//if(side==="SHORT" && nearEma){
+    //score += 20
+    //if(!setupType) setupType = "PULLBACK"
+//}
     if(bosUp || bosDown){
     setupType = "BREAKOUT"
 }
