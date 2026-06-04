@@ -1298,7 +1298,7 @@ let emaSlope =
     return null
 let emaGap =
 Math.abs(ema20 - ema50) / price
-if(emaGap < 0.0012 && trendStrength < 0.002)
+if(emaGap < 0.0012 && trendStrength < 0.0015)
     return null
 //if(emaGap < 0.0015)
 //return null
