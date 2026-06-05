@@ -1340,15 +1340,14 @@ Math.abs(
 let candleRange =
 highs.at(-1) -
 lows.at(-1)
-
+if(candleRange <= 0){
+    return null
+}
 if(
     candleBody /
     candleRange
     < 0.5
 ){
-    return null
-}
-if(candleRange <= 0){
     return null
 }
 
@@ -1371,7 +1370,7 @@ if(side==="SHORT" && !h1Bear){
 }
     // ===== PULLBACK ZONE (ADD HERE) =====
 let pullbackZone =
-    distEma > 0.002 && distEma < 0.02
+    distEma > 0.002 && distEma < 0.01
 
 if(side==="LONG" && pullbackZone){
     score += 15
@@ -1392,14 +1391,6 @@ if(side==="LONG" && bosUp){
 if(side==="SHORT" && bosDown){
     score += 40
     setupType = "BREAKOUT"
-}
-let breakoutVol =
-    volNow > volAvg * 1.1
-    if(
-    setupType === "BREAKOUT" &&
-    !breakoutVol
-){
-    return null
 }
 // ===== PULLBACK =====
 //if(side==="LONG" && nearEma){
@@ -1463,6 +1454,10 @@ if(
 }
 // ===== MARKET STATE =====
 let isTrending = trendStrength > 0.003 // 0.004 
+let marketState =
+    isTrending
+        ? "TREND_STRONG"
+        : "TREND_WEAK"
 
 // ===== SWING =====
 let swingLow = Math.min(...lows.slice(-20))
@@ -1684,17 +1679,21 @@ function round(n){ return Number(n.toFixed(4)) }
 if(!setupType){
     setupType = "TREND"
 }
-if(score < 70)
+if(score < 75){
     return null
+}
+if(
+    marketState === "TREND_WEAK" &&
+    score < 90
+){
+    return null
+}
 
 return {
     side,
     score,
     setup: setupType,
-    marketState:
-        trendStrength > 0.003
-        ? "TREND_STRONG"
-        : "TREND_WEAK",
+    marketState,
     volatility:
         atrVal / price > 0.004
         ? "HIGH"
@@ -2716,12 +2715,7 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         trades = db.collection("trades")
 
         console.log("✅ MongoDB connected")
-        let data = await trades.find({}).toArray()
-
-fs.writeFileSync(
-    "trades.json",
-    JSON.stringify(data,null,2)
-)
+        
         // 🔥 CLEAR DEAD LOCK
 await trades.updateMany(
     { opening:true },
