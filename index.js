@@ -1229,6 +1229,20 @@ if(volAvgUSDT < dynamicMinVol){
     let ema50_1h = ema(closes1h.slice(-120),50)
 
     let r = rsi(closes.slice(-50))
+    if(r > 75){
+    return null
+}
+
+if(r < 25){
+    return null
+}
+    let h1Bull =
+    closes1h.at(-1) >
+    closes1h.at(-2)
+
+let h1Bear =
+    closes1h.at(-1) <
+    closes1h.at(-2)
     // ===== ANTI CHASE + PULLBACK =====
 let distEma = Math.abs(price - ema20) / price
 
@@ -1273,6 +1287,14 @@ let momentumDown =
     closes.at(-1) < ema20 &&
     closes.at(-2) < ema20 &&
     closes.at(-1) < closes.at(-2)
+
+    let pullbackLongDone =
+    closes.at(-1) > closes.at(-2) &&
+    lows.at(-1) > lows.at(-2)
+
+let pullbackShortDone =
+    closes.at(-1) < closes.at(-2) &&
+    highs.at(-1) < highs.at(-2)
     // ===== CONTINUATION STRUCTURE =====
     let higherLow = lows.at(-2) > lows.at(-5)
     let lowerHigh = highs.at(-2) < highs.at(-5)
@@ -1326,6 +1348,9 @@ if(
 ){
     return null
 }
+if(candleRange <= 0){
+    return null
+}
 
     let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.98
     let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.02
@@ -1337,6 +1362,13 @@ if(
 
     if(trendLong){ side="LONG"; score+=50 }
     if(trendShort){ side="SHORT"; score+=50 }
+    if(side==="LONG" && !h1Bull){
+    return null
+}
+
+if(side==="SHORT" && !h1Bear){
+    return null
+}
     // ===== PULLBACK ZONE (ADD HERE) =====
 let pullbackZone =
     distEma > 0.002 && distEma < 0.02
@@ -1399,6 +1431,21 @@ let breakoutVol =
 
     if(atrVal/price > 0.004) score+=10
     if(!side) return null
+    if(
+    side==="LONG" &&
+    nearEma &&
+    !pullbackLongDone
+){
+    return null
+}
+
+if(
+    side==="SHORT" &&
+    nearEma &&
+    !pullbackShortDone
+){
+    return null
+}
     // ===== REQUIRE PULLBACK =====
 if(
     setupType !== "BREAKOUT" &&
@@ -1637,6 +1684,8 @@ function round(n){ return Number(n.toFixed(4)) }
 if(!setupType){
     setupType = "TREND"
 }
+if(score < 70)
+    return null
 
 return {
     side,
@@ -2667,6 +2716,12 @@ console.log("💰 BALANCE:", ACCOUNT_BALANCE)
         trades = db.collection("trades")
 
         console.log("✅ MongoDB connected")
+        let data = await trades.find({}).toArray()
+
+fs.writeFileSync(
+    "trades.json",
+    JSON.stringify(data,null,2)
+)
         // 🔥 CLEAR DEAD LOCK
 await trades.updateMany(
     { opening:true },
