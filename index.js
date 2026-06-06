@@ -1229,25 +1229,32 @@ if(volAvgUSDT < dynamicMinVol){
     let ema50_1h = ema(closes1h.slice(-120),50)
 
     let r = rsi(closes.slice(-50))
-    if(r > 75){
+    if(r > 80){
     return null
 }
 
-if(r < 25){
+if(r < 20){
     return null
 }
-    let h1Bull =
-    closes1h.at(-1) >
-    closes1h.at(-2)
+let h1Bull =
+    ema20_1h > ema50_1h &&
+    closes1h.at(-1) > ema20_1h
 
 let h1Bear =
-    closes1h.at(-1) <
-    closes1h.at(-2)
+    ema20_1h < ema50_1h &&
+    closes1h.at(-1) < ema20_1h
+    //let h1Bull =
+    //closes1h.at(-1) >
+    //closes1h.at(-2)
+
+//let h1Bear =
+    //closes1h.at(-1) <
+    //closes1h.at(-2)
     // ===== ANTI CHASE + PULLBACK =====
 let distEma = Math.abs(price - ema20) / price
 
 // không đu giá
-if(distEma > 0.018) return null // 0.006
+if(distEma > 0.021) return null // 0.006
 
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
@@ -1384,12 +1391,12 @@ if(side==="SHORT" && pullbackZone){
 
     // ===== BREAKOUT =====
 if(side==="LONG" && bosUp){
-    score += 40
+    score += 20
     setupType = "BREAKOUT"
 }
 
 if(side==="SHORT" && bosDown){
-    score += 40
+    score += 20
     setupType = "BREAKOUT"
 }
 // ===== PULLBACK =====
