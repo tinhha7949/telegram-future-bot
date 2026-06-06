@@ -298,8 +298,6 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const SCORE_THRESHOLD = 80
-const EARLY_THRESHOLD = 60
 const RR_THRESHOLD = 1.2 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.1  // 0.1 = 10% // 0.01 = 1% 
@@ -1075,7 +1073,7 @@ async function getTopSymbols(){
     })
     // 🔥 2. LIQUIDITY nhẹ (KHÔNG dùng minVol 24h nữa)
     .filter(c =>
-        Number(c.quoteVolume) > 1_500_000 //3_000_000
+        Number(c.quoteVolume) > 2_000_000 //3_000_000
     )
     .filter(c => {
 
@@ -1101,11 +1099,11 @@ async function getTopSymbols(){
     // ưu tiên move đẹp quanh 3-5%
     let scoreA =
         (volA / 1_000_000) -
-        Math.abs(moveA - 4) * 8
+        Math.abs(moveA - 5) * 4
 
     let scoreB =
         (volB / 1_000_000) -
-        Math.abs(moveB - 4) * 8
+        Math.abs(moveB - 5) * 4
 
     return scoreB - scoreA
 })
@@ -1252,7 +1250,7 @@ let h1Bear =
 let distEma = Math.abs(price - ema20) / price
 
 // không đu giá
-if(distEma > 0.020) return null // 0.006
+if(distEma > 0.018) return null // 0.006
 
 // không vào khi vừa pump/dump mạnh
 let lastMove = (closes.at(-1) - closes.at(-5)) / closes.at(-5)
@@ -2537,144 +2535,6 @@ async function closePosition(symbol, side, qty){
         return false
     }
 }
-/////////
-async function watchdogTPSL(){
-
-    if(WATCHDOG_RUNNING)
-        return
-
-    WATCHDOG_RUNNING = true
-
-    try{
-
-        let positions =
-            await getPositionsCached()
-
-        for(const p of positions){
-
-            let qty =
-                Math.abs(
-                    Number(
-                        p.positionAmt
-                    )
-                )
-
-            if(qty <= 0)
-                continue
-
-            let symbol =
-                p.symbol
-                if(TPSL_PENDING[symbol]){
-    continue
-}
-
-            let closeSide =
-                Number(
-                    p.positionAmt
-                ) > 0
-                    ? "SELL"
-                    : "BUY"
-
-            let orders =
-                await binance.futuresOpenOrders({
-
-                    symbol,
-                    recvWindow:20000
-                })
-
-            let hasSL =
-                orders.some(o =>
-
-                    o.side === closeSide &&
-
-                    (
-                        o.type === "STOP_MARKET" ||
-                        o.type === "STOP"
-                    ) &&
-
-                    (
-                        o.closePosition === true ||
-                        String(
-                            o.closePosition
-                        ) === "true"
-                    )
-                )
-
-            let hasTP =
-                orders.some(o =>
-
-                    o.side === closeSide &&
-
-                    (
-                        o.type === "TAKE_PROFIT_MARKET" ||
-                        o.type === "TAKE_PROFIT"
-                    ) &&
-
-                    (
-                        o.closePosition === true ||
-                        String(
-                            o.closePosition
-                        ) === "true"
-                    )
-                )
-
-            if(hasSL && hasTP)
-                continue
-
-            console.log(
-                `🚨 TPSL LOST ${symbol}`
-            )
-
-            let closed =
-                await closePosition(
-
-                    symbol,
-
-                    Number(
-                        p.positionAmt
-                    ) > 0
-                        ? "LONG"
-                        : "SHORT",
-
-                    qty
-                )
-
-            if(closed){
-
-                await sendTelegram2(
-
-                    `🚨 TPSL LOST\n${symbol}\nAUTO CLOSED`
-                )
-            }
-        }
-
-    }catch(e){
-
-        console.log(
-            "WATCHDOG ERROR:",
-            e.message
-        )
-
-    }finally{
-
-        WATCHDOG_RUNNING = false
-    }
-}
-async function watchdogLoop(){
-
-    while(true){
-
-        try{
-            await watchdogTPSL()
-        }catch(e){
-            console.log("WATCHDOG LOOP:", e.message)
-        }
-
-        await new Promise(r =>
-            setTimeout(r, 15000)
-        )
-    }
-}
 //////////////
 async function start(){
     try{
@@ -2837,8 +2697,6 @@ async function commandLoop(){
        await loadValidFuturesSymbols()
 
         commandLoop()
-        //watchdogLoop()
-
        await scanLoop()
 
     }catch(e){
