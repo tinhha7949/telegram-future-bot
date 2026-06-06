@@ -2431,11 +2431,11 @@ if(!stillOpen){
         }
 
         await sendTelegram2(
-`📊 ${t.symbol}
-${t.side}
+`📊 ${t.symbol} (${t.setup})
+${t.side} | ${t.marketState}
 ${isWin ? "✅ WIN" : "❌ LOSS"}
 PnL: ${pnl.toFixed(4)}
-💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
+💰: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
         )
 
     }else{
