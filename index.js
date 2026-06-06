@@ -1237,11 +1237,9 @@ if(r < 20){
     return null
 }
 let h1Bull =
-    ema20_1h > ema50_1h &&
     closes1h.at(-1) > ema20_1h
 
 let h1Bear =
-    ema20_1h < ema50_1h &&
     closes1h.at(-1) < ema20_1h
     //let h1Bull =
     //closes1h.at(-1) >
@@ -1254,11 +1252,11 @@ let h1Bear =
 let distEma = Math.abs(price - ema20) / price
 
 // không đu giá
-if(distEma > 0.021) return null // 0.006
+if(distEma > 0.020) return null // 0.006
 
 // không vào khi vừa pump/dump mạnh
-let lastMove = (closes.at(-1) - closes.at(-3)) / closes.at(-3)
-if(lastMove > 0.03 || lastMove < -0.02) return null // 0.02
+let lastMove = (closes.at(-1) - closes.at(-5)) / closes.at(-5)
+if(lastMove > 0.03 || lastMove < -0.03) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.005 // 0.0025
