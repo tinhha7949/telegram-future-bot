@@ -1273,8 +1273,8 @@ let nearEma = distEma < 0.005 // 0.0025
 let volNow = volumes.at(-1)
     //let bosUp = price > prevHigh
     //let bosDown = price < prevLow
-    let bosUp = closes.at(-1)>prevHigh && volNow>volAvg*1.1 && closes.at(-1)>highs.at(-2)
-let bosDown = closes.at(-1)<prevLow && volNow>volAvg*1.1 && closes.at(-1)<lows.at(-2)
+    let bosUp = closes.at(-1)>prevHigh && volNow>volAvg*1.2 && closes.at(-1)>highs.at(-2)
+let bosDown = closes.at(-1)<prevLow && volNow>volAvg*1.2 && closes.at(-1)<lows.at(-2)
 
     let prevHigh50 = Math.max(...highs.slice(-51,-1))
     let prevLow50  = Math.min(...lows.slice(-51,-1))
