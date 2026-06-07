@@ -1249,6 +1249,11 @@ else if(breakoutUp){
 else if(breakoutDown){
     phase = "BREAKDOWN_DOWN"
 }
+//let tradable =
+    //phase === "TREND" ||
+    //phase === "LIQUIDITY_GRAB"
+
+//if(!tradable) return null
 // ================= PHASE ENFORCEMENT CORE =================
 let allowLong = false
 let allowShort = false
@@ -1260,13 +1265,15 @@ switch(phase){
 case "TREND":
     allowLong = trendLong
     allowShort = trendShort
-
     entryMode = "CONTINUATION"
-    if(phase === "TREND" && nearEma){
-    if(sweepLow) allowLong = true
-    if(sweepHigh) allowShort = true
+
+// 🔥 SYMMETRY BOOST
+if(phase === "TREND" && nearEma){
+
+    if(sweepLow || bosUp) allowLong = true
+    if(sweepHigh || bosDown) allowShort = true
 }
-    break
+break
     
 
 case "ACCUMULATION":
@@ -1276,21 +1283,26 @@ case "ACCUMULATION":
     break
 
 case "LIQUIDITY_GRAB":
-    allowLong = sweepLow
-    allowShort = sweepHigh
+    allowLong =
+        sweepLow &&
+        volNow > volAvg * 1.1
+    allowShort =
+        sweepHigh &&
+        volNow > volAvg * 1.1
     entryMode = "SNIPER"
     break
 
 case "DISTRIBUTION":
+
     allowShort =
         (exhaustion || volNow > volAvg * 1.8) &&
         closes.at(-1) < ema20 &&
         r > 55
 
-    // thêm LONG reversal nhẹ
     allowLong =
-        sweepLow &&
-        volNow > volAvg * 1.3
+        (exhaustion || volNow > volAvg * 1.8) &&
+        closes.at(-1) > ema20 &&
+        r < 45
 
     entryMode = "DISTRIBUTION"
     break
@@ -1346,6 +1358,16 @@ if(lastMove > 0.03 || lastMove < -0.03) return null // 0.02
 
 // chỉ vào khi giá gần EMA (pullback)
 let nearEma = distEma < 0.005 // 0.0025
+//let candleQuality =
+    //Math.abs(closes.at(-1) - closes.at(-2)) / price
+
+//if(
+    //candleQuality < 0.0008 &&
+//    !sweepLow &&
+    //!sweepHigh
+//){
+    //return null
+//}
 // ===== PULLBACK PHẢI CÓ LỰC =====
 //if(nearEma && volNow < volAvg){
    // return null
@@ -1468,16 +1490,18 @@ let reversalBiasShort = false
 
 if(regime === "REVERSAL"){
     if(failBreakDown || sweepLow){
-        reversalBiasLong = true
-        score += 40
-    }
+    reversalBiasLong = true
+    score += 40
+}
 
-    if(failBreakUp || sweepHigh){
-        reversalBiasShort = true
-        score += 40
-    }
+if(failBreakUp || sweepHigh){
+    reversalBiasShort = true
+    score += 40
+}
 
-    score -= 10
+// balance correction
+if(reversalBiasLong) score += 10
+if(reversalBiasShort) score += 10
 }
     if(side==="LONG" && !h1Bull){
     return null
@@ -1556,11 +1580,22 @@ if(
     return null
 }
 // ================= PHASE HARD FILTER =================
-if(phase === "DISTRIBUTION" && side === "LONG") return null
-if(phase === "BREAKDOWN" && side === "LONG") return null
+// ================= PHASE HARD FILTER (SYMMETRIC) =================
+
+if(phase === "DISTRIBUTION"){
+    if(side === "LONG" && !sweepLow) return null
+    if(side === "SHORT" && !sweepHigh) return null
+}
+
+if(phase === "BREAKDOWN_DOWN"){
+    if(side === "LONG") return null
+}
+
+if(phase === "BREAKOUT_UP"){
+    if(side === "SHORT") return null
+}
 
 if(phase === "LIQUIDITY_GRAB"){
-    // chỉ trade khi có sweep rõ ràng
     if(side === "LONG" && !sweepLow) return null
     if(side === "SHORT" && !sweepHigh) return null
 }
@@ -1579,13 +1614,22 @@ if(allowShort && !allowLong){
 
 if(allowLong && allowShort){
 
-    if(reversalBiasLong) side = "LONG"
-    else if(reversalBiasShort) side = "SHORT"
-    else
-        side =
-            momentumUp ? "LONG" :
-            momentumDown ? "SHORT" :
-            null
+    let longScore = 0
+    let shortScore = 0
+
+    if(momentumUp) longScore += 1
+    if(momentumDown) shortScore += 1
+
+    if(sweepLow) longScore += 2
+    if(sweepHigh) shortScore += 2
+
+    if(reversalBiasLong) longScore += 3
+    if(reversalBiasShort) shortScore += 3
+
+    side =
+        longScore > shortScore ? "LONG" :
+        shortScore > longScore ? "SHORT" :
+        null
 }
 
 if(!side) return null
