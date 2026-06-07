@@ -1583,16 +1583,18 @@ if(
 // ================= PHASE HARD FILTER (SYMMETRIC) =================
 
 if(phase === "DISTRIBUTION"){
-    if(side === "LONG" && !sweepLow) return null
-    if(side === "SHORT" && !sweepHigh) return null
+    if(side === "LONG" && !sweepLow && r < 35) return null
+    if(side === "SHORT" && !sweepHigh && r > 65) return null
 }
 
 if(phase === "BREAKDOWN_DOWN"){
     if(side === "LONG") return null
+    if(side === "SHORT" && !sweepHigh && !bosDown) return null
 }
 
 if(phase === "BREAKOUT_UP"){
     if(side === "SHORT") return null
+    if(side === "LONG" && !bosUp) return null
 }
 
 if(phase === "LIQUIDITY_GRAB"){
