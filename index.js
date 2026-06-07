@@ -1182,8 +1182,6 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
     return base
 }
-Check xem đúng chưa
-
 // ================= CORE =================
 async function coreLogic(data15, data1h){
 
@@ -1245,8 +1243,11 @@ else if(range30 < 0.01 && volNow < volAvg){
 else if(exhaustion){
     phase = "DISTRIBUTION"
 }
-else if(breakoutUp || breakoutDown){
-    phase = "BREAKDOWN"
+else if(breakoutUp){
+    phase = "BREAKOUT_UP"
+}
+else if(breakoutDown){
+    phase = "BREAKDOWN_DOWN"
 }
 // ================= PHASE ENFORCEMENT CORE =================
 let allowLong = false
@@ -1259,8 +1260,14 @@ switch(phase){
 case "TREND":
     allowLong = trendLong
     allowShort = trendShort
+
     entryMode = "CONTINUATION"
+    if(phase === "TREND" && nearEma){
+    if(sweepLow) allowLong = true
+    if(sweepHigh) allowShort = true
+}
     break
+    
 
 case "ACCUMULATION":
     allowLong = sweepLow || nearEma
@@ -1280,16 +1287,25 @@ case "DISTRIBUTION":
         closes.at(-1) < ema20 &&
         r > 55
 
-    allowLong = false
-    entryMode = "DUMP_FOLLOW"
+    // thêm LONG reversal nhẹ
+    allowLong =
+        sweepLow &&
+        volNow > volAvg * 1.3
+
+    entryMode = "DISTRIBUTION"
     break
 
-case "BREAKDOWN":
+case "BREAKOUT_UP":
+    allowLong = true
+    allowShort = false
+    entryMode = "BREAKOUT_FOLLOW"
+    break
+
+case "BREAKDOWN_DOWN":
     allowShort = true
     allowLong = false
     entryMode = "BREAKDOWN_FOLLOW"
     break
-}
     // ===== EMA =====
     let ema20 = ema(closes.slice(-60),20)
     let ema50 = ema(closes.slice(-120),50)
@@ -1447,20 +1463,21 @@ if(
     
     let setupType = null // breakout | pullback
 
+let reversalBiasLong = false
+let reversalBiasShort = false
+
 if(regime === "REVERSAL"){
     if(failBreakDown || sweepLow){
-        allowLong = true
-        allowShort = false
-        score += 60
+        reversalBiasLong = true
+        score += 40
     }
 
     if(failBreakUp || sweepHigh){
-        allowShort = true
-        allowLong = false
-        score += 60
+        reversalBiasShort = true
+        score += 40
     }
 
-    score -= 20
+    score -= 10
 }
     if(side==="LONG" && !h1Bull){
     return null
@@ -1561,10 +1578,14 @@ if(allowShort && !allowLong){
 }
 
 if(allowLong && allowShort){
-    side =
-        momentumUp ? "LONG" :
-        momentumDown ? "SHORT" :
-        null
+
+    if(reversalBiasLong) side = "LONG"
+    else if(reversalBiasShort) side = "SHORT"
+    else
+        side =
+            momentumUp ? "LONG" :
+            momentumDown ? "SHORT" :
+            null
 }
 
 if(!side) return null
@@ -1819,13 +1840,11 @@ if(phase === "LIQUIDITY_GRAB") score += 25
 if(phase === "ACCUMULATION") score += 15
 if(phase === "DISTRIBUTION") score += 10
 if(phase === "BREAKDOWN") score += 20
-if(score < 75){
+if(score < 65){
     return null
 }
-if(
-    marketState === "TREND_WEAK" &&
-    score < 90
-){
+
+if(marketState === "TREND_WEAK" && score < 80){
     return null
 }
 
