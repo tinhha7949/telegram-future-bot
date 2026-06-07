@@ -1339,7 +1339,6 @@ let swingHigh = Math.max(...highs.slice(-20))
 let resistance = Math.max(...highs.slice(-25))
 let support = Math.min(...lows.slice(-25))
 
-// avoid bad entries near extremes
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
@@ -1444,21 +1443,18 @@ function round(n, d = 4){
     if(n === null || n === undefined) return null
     return Number(Number(n).toFixed(d))
 }
+
 // ================= OUTPUT =================
 return {
-    // ================= TRADE =================
     side,
     entry: round(price),
     sl: round(sl),
     tp: round(tp),
 
-    // ================= RESULT CONTEXT =================
     phase,
     marketState: isTrending ? "TREND_STRONG" : "TREND_WEAK",
-
     volatility: atrRatio > 0.004 ? "HIGH" : "NORMAL",
 
-    // ================= SCORE ENGINE =================
     score,
 
     scoreBreakdown: {
@@ -1476,7 +1472,6 @@ return {
         atrRatio: round(atrRatio, 6)
     },
 
-    // ================= INDICATORS SNAPSHOT =================
     indicators: {
         ema20: round(ema20),
         ema50: round(ema50),
@@ -1488,7 +1483,6 @@ return {
         volumeAvg: volAvg
     },
 
-    // ================= STRUCTURE =================
     structure: {
         prevHigh,
         prevLow,
@@ -1498,7 +1492,6 @@ return {
         swingHigh
     },
 
-    // ================= CONTEXT =================
     context: {
         distEma: round(distEma, 6),
         nearEma,
@@ -1508,13 +1501,11 @@ return {
         isTrending
     },
 
-    // ================= LIQUIDITY =================
     liquidity: {
         sweepHigh,
         sweepLow
     },
 
-    // ================= FLAGS =================
     flags: {
         fakePump,
         fakeDump,
@@ -1522,15 +1513,12 @@ return {
         volTrendUp
     },
 
-    // ================= DEBUG META =================
     debug: {
         reason:
             score >= 80 ? "HIGH_CONVICTION" :
             score >= 70 ? "GOOD" :
             "WEAK",
-
         timestamp: Date.now(),
-
         candle: {
             open: round(opens.at(-1)),
             high: round(highs.at(-1)),
@@ -1538,6 +1526,7 @@ return {
             close: round(closes.at(-1))
         }
     }
+}
 }
 // ================= SCAN =================
 async function scan(symbol){
