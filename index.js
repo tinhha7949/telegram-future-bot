@@ -1182,6 +1182,8 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
     return base
 }
+Check xem đúng chưa
+
 // ================= CORE =================
 async function coreLogic(data15, data1h){
 
@@ -1206,6 +1208,7 @@ let atrRatio = atrVal / price
     .reduce((a,b)=>a+b,0) / 30
 
 let volAvgUSDT = volAvg * price
+let volNow = volumes.at(-1)
 
 let dynamicMinVol =
     getDynamicMinVol(
@@ -1217,7 +1220,76 @@ let dynamicMinVol =
 if(volAvgUSDT < dynamicMinVol){
     return null
 }
+let range30 =
+    (Math.max(...highs.slice(-30)) -
+     Math.min(...lows.slice(-30))) / price
 
+let sweepHigh = highs.at(-2) > Math.max(...highs.slice(-50)) && closes.at(-2) < highs.at(-2)
+let sweepLow  = lows.at(-2) < Math.min(...lows.slice(-50)) && closes.at(-2) > lows.at(-2)
+
+let breakoutUp = closes.at(-1) > Math.max(...highs.slice(-20)) && volNow > volAvg * 1.3
+let breakoutDown = closes.at(-1) < Math.min(...lows.slice(-20)) && volNow > volAvg * 1.3
+
+let exhaustion =
+    volNow > volAvg * 2 &&
+    Math.abs(closes.at(-1) - closes.at(-2)) / price < 0.001
+
+let phase = "TREND"
+
+if(sweepHigh || sweepLow){
+    phase = "LIQUIDITY_GRAB"
+}
+else if(range30 < 0.01 && volNow < volAvg){
+    phase = "ACCUMULATION"
+}
+else if(exhaustion){
+    phase = "DISTRIBUTION"
+}
+else if(breakoutUp || breakoutDown){
+    phase = "BREAKDOWN"
+}
+// ================= PHASE ENFORCEMENT CORE =================
+let allowLong = false
+let allowShort = false
+let entryMode = "NONE"
+let score = 0
+
+switch(phase){
+
+case "TREND":
+    allowLong = trendLong
+    allowShort = trendShort
+    entryMode = "CONTINUATION"
+    break
+
+case "ACCUMULATION":
+    allowLong = sweepLow || nearEma
+    allowShort = sweepHigh || nearEma
+    entryMode = "REVERSION"
+    break
+
+case "LIQUIDITY_GRAB":
+    allowLong = sweepLow
+    allowShort = sweepHigh
+    entryMode = "SNIPER"
+    break
+
+case "DISTRIBUTION":
+    allowShort =
+        (exhaustion || volNow > volAvg * 1.8) &&
+        closes.at(-1) < ema20 &&
+        r > 55
+
+    allowLong = false
+    entryMode = "DUMP_FOLLOW"
+    break
+
+case "BREAKDOWN":
+    allowShort = true
+    allowLong = false
+    entryMode = "BREAKDOWN_FOLLOW"
+    break
+}
     // ===== EMA =====
     let ema20 = ema(closes.slice(-60),20)
     let ema50 = ema(closes.slice(-120),50)
@@ -1265,18 +1337,18 @@ let nearEma = distEma < 0.005 // 0.0025
     // ===== STRUCTURE =====
     let prevHigh = Math.max(...highs.slice(-12,-2))
     let prevLow  = Math.min(...lows.slice(-12,-2))
-
-let volNow = volumes.at(-1)
     //let bosUp = price > prevHigh
     //let bosDown = price < prevLow
     let bosUp = closes.at(-1)>prevHigh && volNow>volAvg*1.2 && closes.at(-1)>highs.at(-2)
 let bosDown = closes.at(-1)<prevLow && volNow>volAvg*1.2 && closes.at(-1)<lows.at(-2)
+let failBreakUp =
+    closes.at(-1) < prevHigh && highs.at(-2) > prevHigh
+
+let failBreakDown =
+    closes.at(-1) > prevLow && lows.at(-2) < prevLow
 
     let prevHigh50 = Math.max(...highs.slice(-51,-1))
     let prevLow50  = Math.min(...lows.slice(-51,-1))
-
-    let sweepHigh = highs.at(-2) > prevHigh50 && closes.at(-2) < prevHigh50
-    let sweepLow  = lows.at(-2) < prevLow50 && closes.at(-2) > prevLow50
 
     // ===== MOMENTUM =====
     //let momentumUp = closes.at(-1) > ema20 && closes.at(-2) > ema20
@@ -1290,6 +1362,11 @@ let momentumDown =
     closes.at(-1) < ema20 &&
     closes.at(-2) < ema20 &&
     closes.at(-1) < closes.at(-2)
+    
+    let exhaustion =
+    (trendLong && !momentumUp && volNow > volAvg * 1.8) ||
+    (trendShort && !momentumDown && volNow > volAvg * 1.8) ||
+    (volNow > volAvg * 2.5 && Math.abs(closes.at(-1) - closes.at(-2)) / price < 0.001)
 
     let pullbackLongDone =
     closes.at(-1) > closes.at(-2) &&
@@ -1310,8 +1387,16 @@ let pullbackShortDone =
     let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 3
 
     // ===== FILTER =====
-    let trendLong = ema20 > ema50 && ema20_1h > ema50_1h
-let trendShort = ema20 < ema50 && ema20_1h < ema50_1h
+if(phase === "TREND"){
+    allowLong = trendLong
+    allowShort = trendShort
+    entryMode = "CONTINUATION"
+}
+let regime = "TREND"
+
+if(exhaustion || failBreakUp || failBreakDown){
+    regime = "REVERSAL"
+}
 
     let trendStrength = Math.abs(ema20-ema50)/price
     if(trendStrength < 0.0012) return null // 0.002
@@ -1359,11 +1444,24 @@ if(
     if(fakePump || fakeDump) return null
 
     // ===== SCORE =====
-    let side=null, score=0
+    
     let setupType = null // breakout | pullback
 
-    if(trendLong){ side="LONG"; score+=50 }
-    if(trendShort){ side="SHORT"; score+=50 }
+if(regime === "REVERSAL"){
+    if(failBreakDown || sweepLow){
+        allowLong = true
+        allowShort = false
+        score += 60
+    }
+
+    if(failBreakUp || sweepHigh){
+        allowShort = true
+        allowLong = false
+        score += 60
+    }
+
+    score -= 20
+}
     if(side==="LONG" && !h1Bull){
     return null
 }
@@ -1440,6 +1538,36 @@ if(
 ){
     return null
 }
+// ================= PHASE HARD FILTER =================
+if(phase === "DISTRIBUTION" && side === "LONG") return null
+if(phase === "BREAKDOWN" && side === "LONG") return null
+
+if(phase === "LIQUIDITY_GRAB"){
+    // chỉ trade khi có sweep rõ ràng
+    if(side === "LONG" && !sweepLow) return null
+    if(side === "SHORT" && !sweepHigh) return null
+}
+// ================= SIDE SELECTION (PHASE CONTROLLED) =================
+if(!allowLong && !allowShort) return null
+
+let side = null
+
+if(allowLong && !allowShort){
+    side = "LONG"
+}
+
+if(allowShort && !allowLong){
+    side = "SHORT"
+}
+
+if(allowLong && allowShort){
+    side =
+        momentumUp ? "LONG" :
+        momentumDown ? "SHORT" :
+        null
+}
+
+if(!side) return null
     // ===== REQUIRE PULLBACK =====
 if(
     setupType !== "BREAKOUT" &&
@@ -1455,6 +1583,11 @@ if(
 ){
     score -= 25
 }
+// ================= PHASE SCORE BOOST =================
+if(phase === "LIQUIDITY_GRAB") score += 20
+if(phase === "ACCUMULATION") score += 10
+if(phase === "DISTRIBUTION") score += 5
+if(phase === "BREAKDOWN") score += 20
 // ===== MARKET STATE =====
 let isTrending = trendStrength > 0.003 // 0.004 
 let marketState =
@@ -1682,6 +1815,10 @@ function round(n){ return Number(n.toFixed(4)) }
 if(!setupType){
     setupType = "TREND"
 }
+if(phase === "LIQUIDITY_GRAB") score += 25
+if(phase === "ACCUMULATION") score += 15
+if(phase === "DISTRIBUTION") score += 10
+if(phase === "BREAKDOWN") score += 20
 if(score < 75){
     return null
 }
