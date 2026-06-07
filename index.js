@@ -1197,219 +1197,347 @@ let price = closes.at(-1)
 // ================= INDICATORS =================
 let atrVal = atr(data15.slice(-100))
 if(!atrVal || atrVal <= 0) atrVal = price * 0.003
+
 let atrRatio = atrVal / price
 
 let ema20  = ema(closes.slice(-60),20)
 let ema50  = ema(closes.slice(-120),50)
+let ema200 = ema(closes.slice(-250),200)
 
 let ema20_1h = ema(closes1h.slice(-60),20)
+let ema50_1h = ema(closes1h.slice(-120),50)
 
 let r = rsi(closes.slice(-50))
-if(r > 82 || r < 18) return null   // relaxed so more trades
+if(r > 82 || r < 18) return null
 
-// ================= VOLUME =================
+// ================= VOLUME ENGINE (FULL RESTORED) =================
 let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
 let volNow = volumes.at(-1)
 
 let volAvgUSDT = volAvg * price
 let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
+// market participation filter
 if(volAvgUSDT < dynamicMinVol) return null
-
-// relaxed volume filter (KEY CHANGE)
 if(volNow < volAvg * 0.75) return null
 
 let volImpulse = volNow > volAvg * 1.6
-let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2.7
+let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2.5
 
 // ================= STRUCTURE =================
 let prevHigh = Math.max(...highs.slice(-12,-2))
 let prevLow  = Math.min(...lows.slice(-12,-2))
 
-let bosUp   = closes.at(-1)>prevHigh && volNow>volAvg*1.1
-let bosDown = closes.at(-1)<prevLow  && volNow>volAvg*1.1
+let bosUp   = closes.at(-1) > prevHigh && volNow > volAvg*1.1
+let bosDown = closes.at(-1) < prevLow  && volNow > volAvg*1.1
 
 let sweepHigh = highs.at(-2) > Math.max(...highs.slice(-40)) && closes.at(-2) < highs.at(-2)
 let sweepLow  = lows.at(-2) < Math.min(...lows.slice(-40)) && closes.at(-2) > lows.at(-2)
 
-let failBreakUp   = closes.at(-1) < prevHigh && highs.at(-2) > prevHigh
-let failBreakDown = closes.at(-1) > prevLow  && lows.at(-2) < prevLow
+// liquidity sweep confirmation (stronger version)
+let sweepConfirmLong  = sweepLow  && closes.at(-1) > closes.at(-2)
+let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 
-// ================= EMA FILTER (SOFTENED) =================
-let distEma = Math.abs(price - ema20)/price
+// ================= TREND =================
+let trendStrength = Math.abs(ema20 - ema50) / price
+let isTrending = trendStrength > 0.0025
+
+let h1Bull = ema20_1h > ema50_1h
+let h1Bear = ema20_1h < ema50_1h
+
+// ================= EMA DIST =================
+let distEma = Math.abs(price - ema20) / price
 if(distEma > 0.02) return null
 
-let nearEma = distEma < 0.007   // MORE TRADE ZONES
+let nearEma = distEma < 0.007
 
-// ================= MARKET MOVE =================
-let lastMove = (closes.at(-1)-closes.at(-5))/closes.at(-5)
+// ================= MARKET MOVE FILTER =================
+let lastMove = (closes.at(-1) - closes.at(-5)) / closes.at(-5)
 if(lastMove > 0.04 || lastMove < -0.04) return null
 
-// ================= PHASE =================
-let range30 = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30)))/price
+// ================= MARKET REGIME ENGINE =================
+let range30 = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
 let breakoutUp = closes.at(-1) > Math.max(...highs.slice(-18)) && volImpulse
 let breakoutDown = closes.at(-1) < Math.min(...lows.slice(-18)) && volImpulse
 
-let exhaustion =
-    volNow > volAvg*2 &&
-    Math.abs(closes.at(-1)-closes.at(-2))/price < 0.0012
-
 let phase = "TREND"
 
-if(sweepHigh || sweepLow) phase = "LIQUIDITY_GRAB"
-else if(range30 < 0.012) phase = "ACCUMULATION"
-else if(exhaustion) phase = "DISTRIBUTION"
+if(sweepHigh || sweepLow) phase = "LIQUIDITY"
+else if(range30 < 0.012) phase = "RANGE"
 else if(breakoutUp) phase = "BREAKOUT_UP"
 else if(breakoutDown) phase = "BREAKDOWN_DOWN"
 
-// ================= TREND =================
-let trendStrength = Math.abs(ema20-ema50)/price
-if(trendStrength < 0.001) return null
-
-let emaSlope = Math.abs(ema20 - ema(closes.slice(-61,-1),20))/price
-if(emaSlope < 0.0006) return null
-
-let h1Bull = closes1h.at(-1) > ema20_1h
-let h1Bear = closes1h.at(-1) < ema20_1h
-
 // ================= MOMENTUM =================
 let momentumUp =
-    closes.at(-1)>ema20 &&
-    closes.at(-1)>closes.at(-2)
+    closes.at(-1) > ema20 &&
+    closes.at(-1) > closes.at(-2)
 
 let momentumDown =
-    closes.at(-1)<ema20 &&
-    closes.at(-1)<closes.at(-2)
+    closes.at(-1) < ema20 &&
+    closes.at(-1) < closes.at(-2)
 
-// ================= CONTEXT =================
-let higherLow = lows.at(-2) > lows.at(-4)
-let lowerHigh = highs.at(-2) < highs.at(-4)
+// ================= CONTEXT STRUCTURE =================
+let higherLow = lows.at(-2) > lows.at(-5)
+let lowerHigh = highs.at(-2) < highs.at(-5)
 
-// ================= FAKE FILTER (SOFT) =================
-let fakePump = volNow > volAvg*2.8 && closes.at(-1) < highs.at(-1)*0.985
-let fakeDump = volNow > volAvg*2.8 && closes.at(-1) > lows.at(-1)*1.015
+// ================= FAKE MOVE FILTER =================
+let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.985
+let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.015
 if(fakePump || fakeDump) return null
 
-// ================= MARKET STATE =================
-let isTrending = trendStrength > 0.0025
-let marketState = isTrending ? "TREND_STRONG" : "TREND_WEAK"
-
-// ================= PHASE ENGINE =================
-let allowLong = false
-let allowShort = false
-
-switch(phase){
-
-case "TREND":
-    allowLong = true
-    allowShort = true
-    break
-
-case "ACCUMULATION":
-    allowLong = sweepLow || nearEma
-    allowShort = sweepHigh || nearEma
-    break
-
-case "LIQUIDITY_GRAB":
-    allowLong = sweepLow
-    allowShort = sweepHigh
-    break
-
-case "DISTRIBUTION":
-    allowLong = exhaustion && r < 48
-    allowShort = exhaustion && r > 52
-    break
-
-case "BREAKOUT_UP":
-    allowLong = true
-    break
-
-case "BREAKDOWN_DOWN":
-    allowShort = true
-    break
-}
-
-// ================= SIDE =================
+// ================= SIDE ENGINE =================
 let side = null
 
-if(allowLong && !allowShort) side = "LONG"
-else if(allowShort && !allowLong) side = "SHORT"
-else if(allowLong && allowShort){
-    side =
-        momentumUp ? "LONG" :
-        momentumDown ? "SHORT" : null
+if(phase === "TREND"){
+    if(ema20 > ema50 && h1Bull) side = "LONG"
+    if(ema20 < ema50 && h1Bear) side = "SHORT"
+}
+
+if(phase === "LIQUIDITY"){
+    if(sweepConfirmLong) side = "LONG"
+    if(sweepConfirmShort) side = "SHORT"
+}
+
+if(phase === "RANGE"){
+    if(nearEma && momentumUp) side = "LONG"
+    if(nearEma && momentumDown) side = "SHORT"
+}
+
+if(phase.includes("BREAKOUT")){
+    side = breakoutUp ? "LONG" : breakoutDown ? "SHORT" : null
 }
 
 if(!side) return null
 
-// ================= SCORE (BALANCED FOR 20–40 TRADES) =================
+// ================= SCORE ENGINE (FULL) =================
 let score = 0
-let setupType = null
 
-if(bosUp || bosDown){ score += 15; setupType="BREAKOUT" }
-
-if(sweepLow && side==="LONG") score += 25
-if(sweepHigh && side==="SHORT") score += 25
-
-if(volImpulse) score += 12
-if(volTrendUp) score += 15
+if(bosUp || bosDown) score += 15
+if(volImpulse) score += 15
+if(volTrendUp) score += 10
 
 if(momentumUp && side==="LONG") score += 20
 if(momentumDown && side==="SHORT") score += 20
 
+if(sweepConfirmLong) score += 25
+if(sweepConfirmShort) score += 25
+
 if(higherLow && side==="LONG") score += 10
 if(lowerHigh && side==="SHORT") score += 10
 
-if(r>50 && r<72 && side==="LONG") score += 8
-if(r>30 && r<48 && side==="SHORT") score += 8
+if(nearEma) score += 10
+if(trendStrength > 0.0025) score += 10
+if(atrRatio > 0.004) score += 8
 
-if(atrVal/price > 0.004) score += 8
+if(score < 60) return null
 
-// KEY CHANGE: LOWER THRESHOLD
-if(score < 55) return null
-
-// ================= STRUCTURE =================
+// ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
 let swingHigh = Math.max(...highs.slice(-20))
 
 let resistance = Math.max(...highs.slice(-25))
 let support = Math.min(...lows.slice(-25))
 
-// ================= RISK =================
+// avoid bad entries near extremes
+let distToRes = (resistance - price) / price
+let distToSup = (price - support) / price
+
+if(side === "LONG" && distToRes < 0.002) return null
+if(side === "SHORT" && distToSup < 0.004) return null
+
+// ================= LIQUIDITY ZONES =================
+function findLiquidityHigh(highs){
+    let zone = highs.slice(-25)
+    let max = Math.max(...zone)
+    let count = zone.filter(h => Math.abs(h - max) / max < 0.002).length
+    return count >= 2 ? max : null
+}
+
+function findLiquidityLow(lows){
+    let zone = lows.slice(-25)
+    let min = Math.min(...zone)
+    let count = zone.filter(l => Math.abs(l - min) / min < 0.002).length
+    return count >= 2 ? min : null
+}
+
+let liqHigh = findLiquidityHigh(highs)
+let liqLow = findLiquidityLow(lows)
+
+// ================= TP ENGINE =================
+function pickBestTP(candidates, price, risk, side){
+
+    let valid = []
+
+    for(let c of candidates){
+
+        let rr = side==="LONG"
+            ? (c.price - price) / risk
+            : (price - c.price) / risk
+
+        let dist = side==="LONG"
+            ? (c.price - price)
+            : (price - c.price)
+
+        if(rr >= 1.2 && dist >= atrVal*0.7 && dist <= atrVal*4.5){
+            valid.push({...c, rr, dist})
+        }
+    }
+
+    if(valid.length === 0) return null
+
+    valid.sort((a,b)=>{
+        if(isTrending) return b.rr - a.rr
+        return side==="LONG" ? a.price - b.price : b.price - a.price
+    })
+
+    return valid[0].price
+}
+
+// ================= RISK ENGINE =================
 let sl = null
 let tp = null
 
-if(side==="LONG"){
-    sl = swingLow - atrVal*0.7
+if(side === "LONG"){
+
+    sl = swingLow - atrVal * 0.7
+    if(sl >= price) sl = price - atrVal * 1.5
+
     let risk = price - sl
 
-    tp = resistance > price ? resistance : price + atrVal*2.2
+    let candidates = []
+    if(resistance > price) candidates.push({price: resistance, type:"res"})
+    if(liqHigh && liqHigh > price) candidates.push({price: liqHigh, type:"liq"})
 
-    if((tp-price)/risk < 1.15) return null
+    if(candidates.length === 0){
+        candidates.push({price: price + atrVal*2, type:"atr"})
+    }
+
+    tp = pickBestTP(candidates, price, risk, "LONG")
+    if(!tp) tp = price + atrVal*2
+
+    if((tp-price)/risk < 1.2) return null
 }
 
-if(side==="SHORT"){
-    sl = swingHigh + atrVal*0.7
+if(side === "SHORT"){
+
+    sl = swingHigh + atrVal * 0.7
+    if(sl <= price) sl = price + atrVal * 1.5
+
     let risk = sl - price
 
-    tp = support < price ? support : price - atrVal*2.2
+    let candidates = []
+    if(support < price) candidates.push({price: support, type:"sup"})
+    if(liqLow && liqLow < price) candidates.push({price: liqLow, type:"liq"})
 
-    if((price-tp)/risk < 1.15) return null
+    if(candidates.length === 0){
+        candidates.push({price: price - atrVal*2, type:"atr"})
+    }
+
+    tp = pickBestTP(candidates, price, risk, "SHORT")
+    if(!tp) tp = price - atrVal*2
+
+    if((price-tp)/risk < 1.2) return null
 }
 
+function round(n, d = 4){
+    if(n === null || n === undefined) return null
+    return Number(Number(n).toFixed(d))
+}
 // ================= OUTPUT =================
 return {
+    // ================= TRADE =================
     side,
+    entry: round(price),
+    sl: round(sl),
+    tp: round(tp),
+
+    // ================= RESULT CONTEXT =================
+    phase,
+    marketState: isTrending ? "TREND_STRONG" : "TREND_WEAK",
+
+    volatility: atrRatio > 0.004 ? "HIGH" : "NORMAL",
+
+    // ================= SCORE ENGINE =================
     score,
-    setup: setupType || "HYBRID",
-    marketState,
-    price,
-    sl,
-    tp,
-    atr: atrVal,
-    volatility: atrVal/price > 0.004 ? "HIGH" : "NORMAL"
-}
+
+    scoreBreakdown: {
+        bosUp,
+        bosDown,
+        sweepHigh,
+        sweepLow,
+        volImpulse,
+        volTrendUp,
+        momentumUp,
+        momentumDown,
+        nearEma,
+        trendStrength: round(trendStrength, 6),
+        rsi: round(r, 2),
+        atrRatio: round(atrRatio, 6)
+    },
+
+    // ================= INDICATORS SNAPSHOT =================
+    indicators: {
+        ema20: round(ema20),
+        ema50: round(ema50),
+        ema20_1h: round(ema20_1h),
+        price: round(price),
+        atr: round(atrVal),
+        rsi: round(r),
+        volumeNow: volNow,
+        volumeAvg: volAvg
+    },
+
+    // ================= STRUCTURE =================
+    structure: {
+        prevHigh,
+        prevLow,
+        resistance,
+        support,
+        swingLow,
+        swingHigh
+    },
+
+    // ================= CONTEXT =================
+    context: {
+        distEma: round(distEma, 6),
+        nearEma,
+        lastMove: round(lastMove, 6),
+        higherLow,
+        lowerHigh,
+        isTrending
+    },
+
+    // ================= LIQUIDITY =================
+    liquidity: {
+        sweepHigh,
+        sweepLow
+    },
+
+    // ================= FLAGS =================
+    flags: {
+        fakePump,
+        fakeDump,
+        volImpulse,
+        volTrendUp
+    },
+
+    // ================= DEBUG META =================
+    debug: {
+        reason:
+            score >= 80 ? "HIGH_CONVICTION" :
+            score >= 70 ? "GOOD" :
+            "WEAK",
+
+        timestamp: Date.now(),
+
+        candle: {
+            open: round(opens.at(-1)),
+            high: round(highs.at(-1)),
+            low: round(lows.at(-1)),
+            close: round(closes.at(-1))
+        }
+    }
 }
 // ================= SCAN =================
 async function scan(symbol){
