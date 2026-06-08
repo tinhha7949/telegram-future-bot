@@ -1454,7 +1454,7 @@ function round(n, d = 4){
 // ================= OUTPUT =================
 return {
     side,
-    entry: round(price),
+    price: round(price),
     sl: round(sl),
     tp: round(tp),
 
