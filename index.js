@@ -1337,7 +1337,7 @@ if(nearEma) score += 10
 if(trendStrength > 0.0018) score += 10
 if(atrRatio > 0.004) score += 8
 
-if(score < 50) return null
+if(score < 55) return null
 
 // ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
