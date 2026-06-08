@@ -1182,6 +1182,7 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
     return base
 }
+// ============== CORE LOGIC =================
 async function coreLogic(data15, data1h){
 
 // ================= DATA =================
@@ -1231,8 +1232,8 @@ let prevLow  = Math.min(...lows.slice(-12,-2))
 let bosUp   = closes.at(-1) > prevHigh && volNow > volAvg*1.1
 let bosDown = closes.at(-1) < prevLow  && volNow > volAvg*1.1
 
-let sweepHigh = highs.at(-2) > Math.max(...highs.slice(-40)) && closes.at(-2) < highs.at(-2)
-let sweepLow  = lows.at(-2) < Math.min(...lows.slice(-40)) && closes.at(-2) > lows.at(-2)
+let sweepHigh = highs.at(-2) > Math.max(...highs.slice(-40, -2)) && closes.at(-2) < highs.at(-2)
+let sweepLow  = lows.at(-2) < Math.min(...lows.slice(-40, -2)) && closes.at(-2) > lows.at(-2)
 
 // liquidity sweep confirmation (stronger version)
 let sweepConfirmLong  = sweepLow  && closes.at(-1) > closes.at(-2)
@@ -1258,8 +1259,8 @@ if(lastMove > 0.04 || lastMove < -0.04) return null
 // ================= MARKET REGIME ENGINE =================
 let range30 = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-let breakoutUp = closes.at(-1) > Math.max(...highs.slice(-18)) && volImpulse
-let breakoutDown = closes.at(-1) < Math.min(...lows.slice(-18)) && volImpulse
+let breakoutUp = closes.at(-1) > Math.max(...highs.slice(-18, -1)) && volImpulse
+let breakoutDown = closes.at(-1) < Math.min(...lows.slice(-18, -1)) && volImpulse
 
 let phase = "TREND"
 
@@ -1304,8 +1305,14 @@ if(phase === "RANGE"){
     if(nearEma && momentumDown) side = "SHORT"
 }
 
-if(phase.includes("BREAKOUT")){
-    side = breakoutUp ? "LONG" : breakoutDown ? "SHORT" : null
+if( phase === "BREAKOUT_UP" ||
+    phase === "BREAKDOWN_DOWN"
+){
+    side = breakoutUp
+        ? "LONG"
+        : breakoutDown
+            ? "SHORT"
+            : null
 }
 
 if(!side) return null
