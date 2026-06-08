@@ -1458,7 +1458,7 @@ return {
     sl: round(sl),
     tp: round(tp),
 
-    phase,
+    setup: phase,
     marketState: isTrending ? "TREND_STRONG" : "TREND_WEAK",
     volatility: atrRatio > 0.004 ? "HIGH" : "NORMAL",
 
