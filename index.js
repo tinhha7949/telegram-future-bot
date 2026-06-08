@@ -1229,8 +1229,8 @@ let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2.5
 let prevHigh = Math.max(...highs.slice(-12,-2))
 let prevLow  = Math.min(...lows.slice(-12,-2))
 
-let bosUp   = closes.at(-1) > prevHigh && volNow > volAvg*1.1
-let bosDown = closes.at(-1) < prevLow  && volNow > volAvg*1.1
+let bosUp   = closes.at(-1) > prevHigh && volNow > volAvg*1.2
+let bosDown = closes.at(-1) < prevLow  && volNow > volAvg*1.2
 
 let sweepHigh = highs.at(-2) > Math.max(...highs.slice(-40, -2)) && closes.at(-2) < highs.at(-2)
 let sweepLow  = lows.at(-2) < Math.min(...lows.slice(-40, -2)) && closes.at(-2) > lows.at(-2)
@@ -1241,20 +1241,20 @@ let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 
 // ================= TREND =================
 let trendStrength = Math.abs(ema20 - ema50) / price
-let isTrending = trendStrength > 0.0025
+let isTrending = trendStrength > 0.0018
 
 let h1Bull = ema20_1h > ema50_1h
 let h1Bear = ema20_1h < ema50_1h
 
 // ================= EMA DIST =================
 let distEma = Math.abs(price - ema20) / price
-if(distEma > 0.02) return null
+if(distEma > 0.18) return null
 
-let nearEma = distEma < 0.007
+let nearEma = distEma < 0.005
 
 // ================= MARKET MOVE FILTER =================
 let lastMove = (closes.at(-1) - closes.at(-5)) / closes.at(-5)
-if(lastMove > 0.04 || lastMove < -0.04) return null
+if(lastMove > 0.03 || lastMove < -0.03) return null
 
 // ================= MARKET REGIME ENGINE =================
 let range30 = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
@@ -1334,10 +1334,10 @@ if(higherLow && side==="LONG") score += 10
 if(lowerHigh && side==="SHORT") score += 10
 
 if(nearEma) score += 10
-if(trendStrength > 0.0025) score += 10
+if(trendStrength > 0.0018) score += 10
 if(atrRatio > 0.004) score += 8
 
-if(score < 60) return null
+if(score < 50) return null
 
 // ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
