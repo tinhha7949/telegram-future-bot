@@ -1209,7 +1209,7 @@ let ema20_1h = ema(closes1h.slice(-60),20)
 let ema50_1h = ema(closes1h.slice(-120),50)
 
 let r = rsi(closes.slice(-50))
-if(r > 82 || r < 18) return null
+if(r > 80 || r < 20) return null
 
 // ================= VOLUME ENGINE (FULL RESTORED) =================
 let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
@@ -1241,14 +1241,14 @@ let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 
 // ================= TREND =================
 let trendStrength = Math.abs(ema20 - ema50) / price
-let isTrending = trendStrength > 0.0021
+let isTrending = trendStrength > 0.0026
 
 let h1Bull = ema20_1h > ema50_1h
 let h1Bear = ema20_1h < ema50_1h
 
 // ================= EMA DIST =================
 let distEma = Math.abs(price - ema20) / price
-if(distEma > 0.018) return null
+if(distEma > 0.014) return null
 
 let nearEma = distEma < 0.005
 
@@ -1296,8 +1296,10 @@ if(phase === "TREND"){
 }
 
 if(phase === "LIQUIDITY"){
-    if(sweepConfirmLong) side = "LONG"
-    if(sweepConfirmShort) side = "SHORT"
+    if(sweepConfirmLong && h1Bull)
+        side = "LONG"
+    if(sweepConfirmShort && h1Bear)
+        side = "SHORT"
 }
 
 if(phase === "RANGE"){
@@ -1333,11 +1335,11 @@ if(sweepConfirmShort) score += 25
 if(higherLow && side==="LONG") score += 10
 if(lowerHigh && side==="SHORT") score += 10
 
-if(nearEma) score += 10
+if(nearEma) score += 20
 if(trendStrength > 0.0018) score += 10
 if(atrRatio > 0.004) score += 8
 
-if(score < 60) return null
+if(score < 55) return null
 
 // ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
