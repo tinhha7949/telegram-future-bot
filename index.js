@@ -1296,12 +1296,30 @@ if(phase === "TREND"){
 }
 
 if(phase === "LIQUIDITY"){
-    if(sweepConfirmLong && h1Bull)
+    // LONG đảo chiều thật
+    if(
+        sweepConfirmLong &&
+        bosUp &&
+        momentumUp &&
+        higherLow &&
+        volImpulse &&
+        r < 40
+    ){
         side = "LONG"
-    if(sweepConfirmShort && h1Bear)
+    }
+    // SHORT đảo chiều thật
+    if(
+        sweepConfirmShort &&
+        bosDown &&
+        momentumDown &&
+        lowerHigh &&
+        volImpulse &&
+        r > 60
+    ){
         side = "SHORT"
-}
+    }
 
+}
 if(phase === "RANGE"){
     if(nearEma && momentumUp) side = "LONG"
     if(nearEma && momentumDown) side = "SHORT"
