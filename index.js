@@ -1288,15 +1288,15 @@ let fakeDump = volNow > volAvg*2.5 && closes.at(-1) > lows.at(-1)*1.015
 if(fakePump || fakeDump) return null
 
 // ================= SIDE ENGINE =================
+let setupType = phase
 let side = null
 
 if(phase === "TREND"){
     if(ema20 > ema50 && h1Bull) side = "LONG"
     if(ema20 < ema50 && h1Bear) side = "SHORT"
 }
-
 if(phase === "LIQUIDITY"){
-    // LONG đảo chiều thật
+    // ===== REVERSAL LONG =====
     if(
         sweepConfirmLong &&
         bosUp &&
@@ -1306,9 +1306,10 @@ if(phase === "LIQUIDITY"){
         r < 40
     ){
         side = "LONG"
+        setupType = "LIQUIDITY"
     }
-    // SHORT đảo chiều thật
-    if(
+    // ===== REVERSAL SHORT =====
+    else if(
         sweepConfirmShort &&
         bosDown &&
         momentumDown &&
@@ -1317,8 +1318,16 @@ if(phase === "LIQUIDITY"){
         r > 60
     ){
         side = "SHORT"
+        setupType = "LIQUIDITY"
     }
-
+    // ===== Sweep giả → quay lại TREND =====
+    else{
+        setupType = "TREND"
+        if(ema20 > ema50 && h1Bull)
+            side = "LONG"
+        if(ema20 < ema50 && h1Bear)
+            side = "SHORT"
+    }
 }
 if(phase === "RANGE"){
     if(nearEma && momentumUp) side = "LONG"
@@ -1347,14 +1356,16 @@ if(volTrendUp) score += 10
 if(momentumUp && side==="LONG") score += 20
 if(momentumDown && side==="SHORT") score += 20
 
-if(sweepConfirmLong) score += 25
-if(sweepConfirmShort) score += 25
+if(setupType === "LIQUIDITY"){
+    if(sweepConfirmLong) score += 25
+    if(sweepConfirmShort) score += 25
+}
 
 if(higherLow && side==="LONG") score += 10
 if(lowerHigh && side==="SHORT") score += 10
 
 if(nearEma) score += 20
-if(trendStrength > 0.0018) score += 10
+if(trendStrength > 0.0026) score += 10
 if(atrRatio > 0.004) score += 8
 
 if(score < 58) return null
@@ -1477,13 +1488,10 @@ return {
     price: round(price),
     sl: round(sl),
     tp: round(tp),
-
-    setup: phase,
+    setup: setupType,
     marketState: isTrending ? "TREND_STRONG" : "TREND_WEAK",
     volatility: atrRatio > 0.004 ? "HIGH" : "NORMAL",
-
     score,
-
     scoreBreakdown: {
         bosUp,
         bosDown,
@@ -1498,7 +1506,6 @@ return {
         rsi: round(r, 2),
         atrRatio: round(atrRatio, 6)
     },
-
     indicators: {
         ema20: round(ema20),
         ema50: round(ema50),
@@ -1509,7 +1516,6 @@ return {
         volumeNow: volNow,
         volumeAvg: volAvg
     },
-
     structure: {
         prevHigh,
         prevLow,
@@ -1518,7 +1524,6 @@ return {
         swingLow,
         swingHigh
     },
-
     context: {
         distEma: round(distEma, 6),
         nearEma,
@@ -1527,19 +1532,16 @@ return {
         lowerHigh,
         isTrending
     },
-
     liquidity: {
         sweepHigh,
         sweepLow
     },
-
     flags: {
         fakePump,
         fakeDump,
         volImpulse,
         volTrendUp
     },
-
     debug: {
         reason:
             score >= 80 ? "HIGH_CONVICTION" :
