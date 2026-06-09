@@ -1241,14 +1241,14 @@ let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 
 // ================= TREND =================
 let trendStrength = Math.abs(ema20 - ema50) / price
-let isTrending = trendStrength > 0.0018
+let isTrending = trendStrength > 0.0021
 
 let h1Bull = ema20_1h > ema50_1h
 let h1Bear = ema20_1h < ema50_1h
 
 // ================= EMA DIST =================
 let distEma = Math.abs(price - ema20) / price
-if(distEma > 0.18) return null
+if(distEma > 0.018) return null
 
 let nearEma = distEma < 0.005
 
