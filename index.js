@@ -1737,16 +1737,27 @@ for (let best of filtered){
         //x.result === "PENDING" &&
        // !x.waitingEntry
 //).length
-let positions = await getPositionsCached()
+let positions = []
+
+try{
+    positions = await getPositionsCached()
+}catch(e){
+    console.log("⚠ POSITION CACHE FAIL")
+}
 
 let realActive = positions.filter(p =>
     Math.abs(parseFloat(p.positionAmt || "0")) > 0
 ).length
 
-    let totalPending =
-await trades.countDocuments({
-    result:"PENDING"
-})
+    let totalPending = 0
+
+try{
+    totalPending = await trades.countDocuments({
+        result:"PENDING"
+    })
+}catch(e){
+    console.log("⚠ COUNT PENDING FAIL")
+}
 
     if(realActive >= 25){
         console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`)
@@ -2107,7 +2118,13 @@ async function checkTrades(){
     }
     console.log(`🚨 FORCE VERIFY ${t.symbol}`)
 
-let positions = await getPositionsCached()
+let positions = []
+
+try{
+    positions = await getPositionsCached()
+}catch(e){
+    console.log("⚠ POSITION VERIFY FAIL")
+}
 
 let realPos = positions.find(p =>
     p.symbol === t.symbol &&
