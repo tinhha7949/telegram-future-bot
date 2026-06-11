@@ -2478,7 +2478,13 @@ activeTrades = await trades.find({
     result: "PENDING"
 }).toArray()
 
-let positions = await getPositionsCached()
+let positions = []
+
+try{
+    positions = await getPositionsCached()
+}catch(e){
+    console.log("⚠ LOAD POSITION FAIL:", e.message)
+}
 
 let openSymbols = new Set(
     positions
