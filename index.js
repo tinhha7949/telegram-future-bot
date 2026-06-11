@@ -1242,7 +1242,6 @@ let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 // ================= TREND =================
 let trendStrength = Math.abs(ema20 - ema50) / price
 let isTrending = trendStrength > 0.0026
-if(!isTrending) return null
 
 let h1Bull = ema20_1h > ema50_1h
 let h1Bear = ema20_1h < ema50_1h
@@ -1293,6 +1292,7 @@ let setupType = phase
 let side = null
 let emaGap = Math.abs(ema20 - ema50) / price
 if(phase === "TREND"){
+    if(!isTrending) return null
     if(emaGap < 0.002)
         return null
     if(ema20 > ema50 && h1Bull)
