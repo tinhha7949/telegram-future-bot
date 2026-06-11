@@ -1209,7 +1209,7 @@ let ema20_1h = ema(closes1h.slice(-60),20)
 let ema50_1h = ema(closes1h.slice(-120),50)
 
 let r = rsi(closes.slice(-50))
-if(r > 80 || r < 20) return null
+if(r > 75 || r < 25) return null
 
 // ================= VOLUME ENGINE (FULL RESTORED) =================
 let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
@@ -1222,7 +1222,7 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 if(volAvgUSDT < dynamicMinVol) return null
 if(volNow < volAvg * 0.75) return null
 
-let volImpulse = volNow > volAvg * 1.6
+let volImpulse = volNow > volAvg * 1.8
 let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2.5
 
 // ================= STRUCTURE =================
@@ -1242,13 +1242,14 @@ let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 // ================= TREND =================
 let trendStrength = Math.abs(ema20 - ema50) / price
 let isTrending = trendStrength > 0.0026
+if(!isTrending) return null
 
 let h1Bull = ema20_1h > ema50_1h
 let h1Bear = ema20_1h < ema50_1h
 
 // ================= EMA DIST =================
 let distEma = Math.abs(price - ema20) / price
-if(distEma > 0.014) return null
+if(distEma > 0.01) return null
 
 let nearEma = distEma < 0.005
 
@@ -1290,10 +1291,14 @@ if(fakePump || fakeDump) return null
 // ================= SIDE ENGINE =================
 let setupType = phase
 let side = null
-
+let emaGap = Math.abs(ema20 - ema50) / price
 if(phase === "TREND"){
-    if(ema20 > ema50 && h1Bull) side = "LONG"
-    if(ema20 < ema50 && h1Bear) side = "SHORT"
+    if(emaGap < 0.002)
+        return null
+    if(ema20 > ema50 && h1Bull)
+        side = "LONG"
+    if(ema20 < ema50 && h1Bear)
+        side = "SHORT"
 }
 if(phase === "LIQUIDITY"){
     // ===== REVERSAL LONG =====
@@ -1323,15 +1328,16 @@ if(phase === "LIQUIDITY"){
     // ===== Sweep giả → quay lại TREND =====
     else{
         setupType = "TREND"
-        if(ema20 > ema50 && h1Bull)
-            side = "LONG"
-        if(ema20 < ema50 && h1Bear)
-            side = "SHORT"
+    if(emaGap < 0.002)
+        return null
+    if(ema20 > ema50 && h1Bull)
+        side = "LONG"
+    if(ema20 < ema50 && h1Bear)
+        side = "SHORT"
     }
 }
 if(phase === "RANGE"){
-    if(nearEma && momentumUp) side = "LONG"
-    if(nearEma && momentumDown) side = "SHORT"
+    return null
 }
 
 if( phase === "BREAKOUT_UP" ||
