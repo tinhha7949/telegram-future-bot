@@ -1328,6 +1328,7 @@ if(phase === "LIQUIDITY"){
     // ===== Sweep giả → quay lại TREND =====
     else{
         setupType = "TREND"
+        if(!isTrending) return null
     if(emaGap < 0.002)
         return null
     if(ema20 > ema50 && h1Bull)
