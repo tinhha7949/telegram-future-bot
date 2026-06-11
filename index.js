@@ -2188,7 +2188,12 @@ if(isTimeout){
 
     console.log(`⏳ TIMEOUT CLOSE ${t.symbol}`)
     // ===== CHECK POSITION THẬT =====
-    let positions = await getPositionsCached()
+    let positions = []
+    try{
+        positions = await getPositionsCached()
+    }catch(e){
+        console.log("⚠ TIMEOUT POSITION FAIL")
+    }
     let realPos = positions.find(p =>
         p.symbol === t.symbol &&
         Math.abs(parseFloat(p.positionAmt || "0")) > 0
