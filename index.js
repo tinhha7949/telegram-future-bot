@@ -1209,7 +1209,7 @@ let ema20_1h = ema(closes1h.slice(-60),20)
 let ema50_1h = ema(closes1h.slice(-120),50)
 
 let r = rsi(closes.slice(-50))
-if(r > 75 || r < 25) return null
+if(r > 65 || r < 35) return null
 
 // ================= VOLUME ENGINE (FULL RESTORED) =================
 let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
@@ -1222,7 +1222,7 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 if(volAvgUSDT < dynamicMinVol) return null
 if(volNow < volAvg * 0.75) return null
 
-let volImpulse = volNow > volAvg * 1.8
+let volImpulse = volNow > volAvg * 2.2
 let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2.5
 
 // ================= STRUCTURE =================
@@ -1241,20 +1241,24 @@ let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 
 // ================= TREND =================
 let trendStrength = Math.abs(ema20 - ema50) / price
-let isTrending = trendStrength > 0.0026
+let isTrending = trendStrength > 0.0035
 
-let h1Bull = ema20_1h > ema50_1h
-let h1Bear = ema20_1h < ema50_1h
+let h1Bull =
+    ema20_1h > ema50_1h &&
+    closes1h.at(-1) > ema20_1h
+let h1Bear =
+    ema20_1h < ema50_1h &&
+    closes1h.at(-1) < ema20_1h
 
 // ================= EMA DIST =================
 let distEma = Math.abs(price - ema20) / price
-if(distEma > 0.01) return null
+if(distEma > 0.005) return null
 
 let nearEma = distEma < 0.005
 
 // ================= MARKET MOVE FILTER =================
 let lastMove = (closes.at(-1) - closes.at(-5)) / closes.at(-5)
-if(lastMove > 0.03 || lastMove < -0.03) return null
+if(lastMove > 0.02 || lastMove < -0.02) return null
 
 // ================= MARKET REGIME ENGINE =================
 let range30 = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
@@ -1293,12 +1297,27 @@ let side = null
 let emaGap = Math.abs(ema20 - ema50) / price
 if(phase === "TREND"){
     if(!isTrending) return null
-    if(emaGap < 0.002)
-        return null
-    if(ema20 > ema50 && h1Bull)
+    if(emaGap < 0.003) return null
+    if(
+        ema20 > ema50 &&
+        h1Bull &&
+        momentumUp &&
+        higherLow &&
+        nearEma &&
+        bosUp
+    ){
         side = "LONG"
-    if(ema20 < ema50 && h1Bear)
+    }
+    if(
+        ema20 < ema50 &&
+        h1Bear &&
+        momentumDown &&
+        lowerHigh &&
+        nearEma &&
+        bosDown
+    ){
         side = "SHORT"
+    }
 }
 if(phase === "LIQUIDITY"){
     // ===== REVERSAL LONG =====
@@ -1327,32 +1346,53 @@ if(phase === "LIQUIDITY"){
     }
     // ===== Sweep giả → quay lại TREND =====
     else{
-        setupType = "TREND"
-        if(!isTrending) return null
-    if(emaGap < 0.002)
-        return null
-    if(ema20 > ema50 && h1Bull)
+    setupType = "TREND"
+    if(!isTrending) return null
+    if(emaGap < 0.003) return null
+    if(
+        ema20 > ema50 &&
+        h1Bull &&
+        momentumUp &&
+        higherLow &&
+        nearEma &&
+        bosUp
+    ){
         side = "LONG"
-    if(ema20 < ema50 && h1Bear)
+    }
+    if(
+        ema20 < ema50 &&
+        h1Bear &&
+        momentumDown &&
+        lowerHigh &&
+        nearEma &&
+        bosDown
+    ){
         side = "SHORT"
     }
+}
 }
 if(phase === "RANGE"){
     return null
 }
-
-if( phase === "BREAKOUT_UP" ||
-    phase === "BREAKDOWN_DOWN"
-){
-    side = breakoutUp
-        ? "LONG"
-        : breakoutDown
-            ? "SHORT"
-            : null
+if(phase==="BREAKOUT_UP"){
+    if(
+        h1Bull &&
+        momentumUp &&
+        nearEma
+    ){
+        side = "LONG"
+    }
 }
-
+if(phase==="BREAKDOWN_DOWN"){
+    if(
+        h1Bear &&
+        momentumDown &&
+        nearEma
+    ){
+        side = "SHORT"
+    }
+}
 if(!side) return null
-
 // ================= SCORE ENGINE (FULL) =================
 let score = 0
 
@@ -1372,10 +1412,10 @@ if(higherLow && side==="LONG") score += 10
 if(lowerHigh && side==="SHORT") score += 10
 
 if(nearEma) score += 20
-if(trendStrength > 0.0026) score += 10
+if(trendStrength > 0.0035) score += 10
 if(atrRatio > 0.004) score += 8
 
-if(score < 58) return null
+if(score < 68) return null
 
 // ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
