@@ -1209,7 +1209,7 @@ let ema20_1h = ema(closes1h.slice(-60),20)
 let ema50_1h = ema(closes1h.slice(-120),50)
 
 let r = rsi(closes.slice(-50))
-if(r > 65 || r < 35) return null
+if(r > 70 || r < 30) return null
 
 // ================= VOLUME ENGINE (FULL RESTORED) =================
 let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
@@ -1222,7 +1222,7 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 if(volAvgUSDT < dynamicMinVol) return null
 if(volNow < volAvg * 0.75) return null
 
-let volImpulse = volNow > volAvg * 2.2
+let volImpulse = volNow > volAvg * 2
 let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2.5
 
 // ================= STRUCTURE =================
@@ -1241,7 +1241,7 @@ let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 
 // ================= TREND =================
 let trendStrength = Math.abs(ema20 - ema50) / price
-let isTrending = trendStrength > 0.0035
+let isTrending = trendStrength > 0.0028
 
 let h1Bull =
     ema20_1h > ema50_1h &&
@@ -1252,9 +1252,9 @@ let h1Bear =
 
 // ================= EMA DIST =================
 let distEma = Math.abs(price - ema20) / price
-if(distEma > 0.005) return null
+if(distEma > 0.008) return null
 
-let nearEma = distEma < 0.005
+let nearEma = distEma < 0.008
 
 // ================= MARKET MOVE FILTER =================
 let lastMove = (closes.at(-1) - closes.at(-5)) / closes.at(-5)
@@ -1263,15 +1263,15 @@ if(lastMove > 0.02 || lastMove < -0.02) return null
 // ================= MARKET REGIME ENGINE =================
 let range30 = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
 
-let breakoutUp = closes.at(-1) > Math.max(...highs.slice(-18, -1)) && volImpulse
-let breakoutDown = closes.at(-1) < Math.min(...lows.slice(-18, -1)) && volImpulse
+//let breakoutUp = closes.at(-1) > Math.max(...highs.slice(-18, -1)) && volImpulse
+//let breakoutDown = closes.at(-1) < Math.min(...lows.slice(-18, -1)) && volImpulse
 
 let phase = "TREND"
 
 if(sweepHigh || sweepLow) phase = "LIQUIDITY"
 else if(range30 < 0.012) phase = "RANGE"
-else if(breakoutUp) phase = "BREAKOUT_UP"
-else if(breakoutDown) phase = "BREAKDOWN_DOWN"
+//else if(breakoutUp) phase = "BREAKOUT_UP"
+//else if(breakoutDown) phase = "BREAKDOWN_DOWN"
 
 // ================= MOMENTUM =================
 let momentumUp =
@@ -1297,7 +1297,7 @@ let side = null
 let emaGap = Math.abs(ema20 - ema50) / price
 if(phase === "TREND"){
     if(!isTrending) return null
-    if(emaGap < 0.003) return null
+    if(emaGap < 0.002) return null
     if(
         ema20 > ema50 &&
         h1Bull &&
@@ -1348,7 +1348,7 @@ if(phase === "LIQUIDITY"){
     else{
     setupType = "TREND"
     if(!isTrending) return null
-    if(emaGap < 0.003) return null
+    if(emaGap < 0.002) return null
     if(
         ema20 > ema50 &&
         h1Bull &&
@@ -1374,24 +1374,24 @@ if(phase === "LIQUIDITY"){
 if(phase === "RANGE"){
     return null
 }
-if(phase==="BREAKOUT_UP"){
-    if(
-        h1Bull &&
-        momentumUp &&
-        nearEma
-    ){
-        side = "LONG"
-    }
-}
-if(phase==="BREAKDOWN_DOWN"){
-    if(
-        h1Bear &&
-        momentumDown &&
-        nearEma
-    ){
-        side = "SHORT"
-    }
-}
+//if(phase==="BREAKOUT_UP"){
+   // if(
+       // h1Bull &&
+       // momentumUp &&
+       // nearEma
+    //){
+       // side = "LONG"
+    //}
+//}
+//if(phase==="BREAKDOWN_DOWN"){
+    //if(
+        //h1Bear &&
+        //momentumDown &&
+        //nearEma
+    //){
+       // side = "SHORT"
+   // }
+//}
 if(!side) return null
 // ================= SCORE ENGINE (FULL) =================
 let score = 0
@@ -1412,10 +1412,10 @@ if(higherLow && side==="LONG") score += 10
 if(lowerHigh && side==="SHORT") score += 10
 
 if(nearEma) score += 20
-if(trendStrength > 0.0035) score += 10
+if(trendStrength > 0.0028) score += 10
 if(atrRatio > 0.004) score += 8
 
-if(score < 68) return null
+if(score < 60) return null
 
 // ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
@@ -1463,7 +1463,7 @@ function pickBestTP(candidates, price, risk, side){
             ? (c.price - price)
             : (price - c.price)
 
-        if(rr >= 1.2 && dist >= atrVal*0.7 && dist <= atrVal*4.5){
+        if(rr >= RR_THRESHOLD && dist >= atrVal*0.7 && dist <= atrVal*4.5){
             valid.push({...c, rr, dist})
         }
     }
@@ -1500,7 +1500,7 @@ if(side === "LONG"){
     tp = pickBestTP(candidates, price, risk, "LONG")
     if(!tp) tp = price + atrVal*2
 
-    if((tp-price)/risk < 1.2) return null
+    if((tp-price)/risk < RR_THRESHOLD) return null
 }
 
 if(side === "SHORT"){
@@ -1521,7 +1521,7 @@ if(side === "SHORT"){
     tp = pickBestTP(candidates, price, risk, "SHORT")
     if(!tp) tp = price - atrVal*2
 
-    if((price-tp)/risk < 1.2) return null
+    if((price-tp)/risk < RR_THRESHOLD) return null
 }
 
 function round(n, d = 4){
@@ -1776,8 +1776,8 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-//let picks = filtered.slice(0, 3)
-for (let best of filtered){
+let picks = filtered.slice(0, 3)
+for (let best of picks){
 
     //let realActive = activeTrades.filter(
     //x =>
