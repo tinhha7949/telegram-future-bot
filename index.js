@@ -1252,9 +1252,9 @@ let h1Bear =
 
 // ================= EMA DIST =================
 let distEma = Math.abs(price - ema20) / price
-if(distEma > 0.008) return null
+if(distEma > 0.01) return null
 
-let nearEma = distEma < 0.008
+let nearEma = distEma < 0.01
 
 // ================= MARKET MOVE FILTER =================
 let lastMove = (closes.at(-1) - closes.at(-5)) / closes.at(-5)
@@ -1297,7 +1297,7 @@ let side = null
 let emaGap = Math.abs(ema20 - ema50) / price
 if(phase === "TREND"){
     if(!isTrending) return null
-    if(emaGap < 0.002) return null
+    if(emaGap < 0.0018) return null
     if(
         ema20 > ema50 &&
         h1Bull &&
@@ -1348,7 +1348,7 @@ if(phase === "LIQUIDITY"){
     else{
     setupType = "TREND"
     if(!isTrending) return null
-    if(emaGap < 0.002) return null
+    if(emaGap < 0.0018) return null
     if(
         ema20 > ema50 &&
         h1Bull &&
