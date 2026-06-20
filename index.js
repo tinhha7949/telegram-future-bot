@@ -1229,10 +1229,8 @@ let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2
 let prevHigh = Math.max(...highs.slice(-12,-2))
 let prevLow  = Math.min(...lows.slice(-12,-2))
 
-let bosUp = closes.at(-1) > prevHigh
+let bosUp   = closes.at(-1) > prevHigh
 let bosDown = closes.at(-1) < prevLow
-//let bosUp   = closes.at(-1) > prevHigh && volNow > volAvg*1.2
-//let bosDown = closes.at(-1) < prevLow  && volNow > volAvg*1.2
 
 let sweepHigh = highs.at(-2) > Math.max(...highs.slice(-40, -2)) && closes.at(-2) < highs.at(-2)
 let sweepLow  = lows.at(-2) < Math.min(...lows.slice(-40, -2)) && closes.at(-2) > lows.at(-2)
