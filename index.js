@@ -1398,14 +1398,14 @@ if(setupType === "LIQUIDITY"){
     if(sweepConfirmShort) score += 25
 }
 
-if(higherLow && side==="LONG") score += 10
-if(lowerHigh && side==="SHORT") score += 10
+//if(higherLow && side==="LONG") score += 10
+//if(lowerHigh && side==="SHORT") score += 10
 
 if(nearEma) score += 20
 if(trendStrength > 0.0028) score += 10
 if(atrRatio > 0.004) score += 8
 
-if(score < 60) return null
+if(score < 55) return null
 
 // ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
