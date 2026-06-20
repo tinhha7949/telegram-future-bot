@@ -1222,15 +1222,17 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 if(volAvgUSDT < dynamicMinVol) return null
 if(volNow < volAvg * 0.75) return null
 
-let volImpulse = volNow > volAvg * 2
-let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2.5
+let volImpulse = volNow > volAvg * 1.6
+let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2
 
 // ================= STRUCTURE =================
 let prevHigh = Math.max(...highs.slice(-12,-2))
 let prevLow  = Math.min(...lows.slice(-12,-2))
 
-let bosUp   = closes.at(-1) > prevHigh && volNow > volAvg*1.2
-let bosDown = closes.at(-1) < prevLow  && volNow > volAvg*1.2
+let bosUp = closes.at(-1) > prevHigh
+let bosDown = closes.at(-1) < prevLow
+//let bosUp   = closes.at(-1) > prevHigh && volNow > volAvg*1.2
+//let bosDown = closes.at(-1) < prevLow  && volNow > volAvg*1.2
 
 let sweepHigh = highs.at(-2) > Math.max(...highs.slice(-40, -2)) && closes.at(-2) < highs.at(-2)
 let sweepLow  = lows.at(-2) < Math.min(...lows.slice(-40, -2)) && closes.at(-2) > lows.at(-2)
@@ -1258,7 +1260,7 @@ let nearEma = distEma < 0.01
 
 // ================= MARKET MOVE FILTER =================
 let lastMove = (closes.at(-1) - closes.at(-5)) / closes.at(-5)
-if(lastMove > 0.02 || lastMove < -0.02) return null
+if(lastMove > 0.03 || lastMove < -0.03) return null
 
 // ================= MARKET REGIME ENGINE =================
 let range30 = (Math.max(...highs.slice(-30)) - Math.min(...lows.slice(-30))) / price
@@ -1302,7 +1304,6 @@ if(phase === "TREND"){
         ema20 > ema50 &&
         h1Bull &&
         momentumUp &&
-        higherLow &&
         nearEma &&
         bosUp
     ){
@@ -1312,7 +1313,6 @@ if(phase === "TREND"){
         ema20 < ema50 &&
         h1Bear &&
         momentumDown &&
-        lowerHigh &&
         nearEma &&
         bosDown
     ){
@@ -1323,11 +1323,8 @@ if(phase === "LIQUIDITY"){
     // ===== REVERSAL LONG =====
     if(
         sweepConfirmLong &&
-        bosUp &&
         momentumUp &&
-        higherLow &&
-        volImpulse &&
-        r < 40
+        r < 45
     ){
         side = "LONG"
         setupType = "LIQUIDITY"
@@ -1335,11 +1332,8 @@ if(phase === "LIQUIDITY"){
     // ===== REVERSAL SHORT =====
     else if(
         sweepConfirmShort &&
-        bosDown &&
         momentumDown &&
-        lowerHigh &&
-        volImpulse &&
-        r > 60
+        r > 55
     ){
         side = "SHORT"
         setupType = "LIQUIDITY"
@@ -1353,7 +1347,6 @@ if(phase === "LIQUIDITY"){
         ema20 > ema50 &&
         h1Bull &&
         momentumUp &&
-        higherLow &&
         nearEma &&
         bosUp
     ){
@@ -1363,7 +1356,6 @@ if(phase === "LIQUIDITY"){
         ema20 < ema50 &&
         h1Bear &&
         momentumDown &&
-        lowerHigh &&
         nearEma &&
         bosDown
     ){
@@ -1427,8 +1419,8 @@ let support = Math.min(...lows.slice(-25))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
-if(side === "LONG" && distToRes < 0.002) return null
-if(side === "SHORT" && distToSup < 0.004) return null
+if(side === "LONG" && !bosUp && distToRes < 0.002) return null
+if(side === "SHORT" && !bosDown && distToSup < 0.002) return null
 
 // ================= LIQUIDITY ZONES =================
 function findLiquidityHigh(highs){
