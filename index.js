@@ -1220,7 +1220,7 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
 // market participation filter
 if(volAvgUSDT < dynamicMinVol) return null
-if(volNow < volAvg * 0.75) return null
+if(volNow < volAvg * 0.65) return null
 
 let volImpulse = volNow > volAvg * 1.6
 let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2
