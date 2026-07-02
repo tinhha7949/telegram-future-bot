@@ -1209,7 +1209,7 @@ let ema20_1h = ema(closes1h.slice(-60),20)
 let ema50_1h = ema(closes1h.slice(-120),50)
 
 let r = rsi(closes.slice(-50))
-if(r > 70 || r < 30) return null
+if(r > 72 || r < 28) return null
 
 // ================= VOLUME ENGINE (FULL RESTORED) =================
 let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
@@ -1220,7 +1220,7 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
 // market participation filter
 if(volAvgUSDT < dynamicMinVol) return null
-if(volNow < volAvg * 0.65) return null
+if(volNow < volAvg * 0.55) return null
 
 let volImpulse = volNow > volAvg * 1.3
 let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2
@@ -1235,7 +1235,7 @@ let bosDown = false
 let bosAgeLong = 999
 let bosAgeShort = 999
 
-for(let i=1;i<=4;i++){
+for(let i=1;i<=6;i++){
     let highRef = Math.max(...highs.slice(-(20+i),-i))
     if(closes.at(-i) > highRef){
         bosUp = true
@@ -1243,7 +1243,7 @@ for(let i=1;i<=4;i++){
         break
     }
 }
-for(let i=1;i<=4;i++){
+for(let i=1;i<=6;i++){
     let lowRef = Math.min(...lows.slice(-(20+i),-i))
     if(closes.at(-i) < lowRef){
         bosDown = true
@@ -1275,7 +1275,7 @@ let h1Bear =
 let distEma = Math.abs(price - ema20) / price
 if(distEma > 0.015) return null
 
-let nearEma = distEma < 0.015
+let nearEma = distEma < 0.005
 
 // ================= MARKET MOVE FILTER =================
 let lastMove = (closes.at(-1) - closes.at(-5)) / closes.at(-5)
@@ -1301,19 +1301,19 @@ Math.abs(closes.at(-1)-opens.at(-1))
 let momentumUp =
     closes.at(-1)>ema20 &&
     closes.at(-1)>highs.at(-2) &&
-    body>atrVal*0.25
+    body>atrVal*0.30
 
 let momentumDown =
     closes.at(-1)<ema20 &&
     closes.at(-1)<lows.at(-2) &&
-    body>atrVal*0.25
+    body>atrVal*0.30
 // ================= CONTEXT STRUCTURE =================
 let higherLow =
-lows.at(-3) > lows.at(-6) &&
-lows.at(-2) > lows.at(-3)
+Math.min(...lows.slice(-3)) >
+Math.min(...lows.slice(-6,-3))
 let lowerHigh =
-highs.at(-3) < highs.at(-6) &&
-highs.at(-2) < highs.at(-3)
+Math.max(...highs.slice(-3)) <
+Math.max(...highs.slice(-6,-3))
 
 // ================= FAKE MOVE FILTER =================
 let fakePump = volNow > volAvg*2.5 && closes.at(-1) < highs.at(-1)*0.985
@@ -1323,50 +1323,56 @@ if(fakePump || fakeDump) return null
 // LONG
 let pullbackLong =
 (
-    lows.at(-1)<=ema20 ||
-    lows.at(-2)<=ema20
+    Math.min(
+lows.at(-1),
+lows.at(-2)
+)<=ema20*1.001
 )
 &&
 closes.at(-1)>ema20 &&
 closes.at(-1)>opens.at(-1) &&
-body>atrVal*0.25
+body>atrVal*0.20
 // SHORT
 let pullbackShort =
 (
-    highs.at(-1)>=ema20 ||
-    highs.at(-2)>=ema20
+    Math.max(
+highs.at(-1),
+highs.at(-2)
+)>=ema20*0.999
 )
 &&
 closes.at(-1)<ema20 &&
 closes.at(-1)<opens.at(-1) &&
-body>atrVal*0.25
+body>atrVal*0.20
 // ================= SIDE ENGINE =================
 let setupType = phase
 let side = null
-let emaGap = Math.abs(ema20 - ema50) / price
-if(phase === "TREND"){
+if(phase==="TREND"){
     if(!isTrending) return null
-    if(emaGap < 0.0018) return null
+    // ===== LONG =====
     if(
-ema20 > ema50 &&
-h1Bull &&
-bosUp &&
-bosAgeLong >= 1 &&
-bosAgeLong <= 4 &&
-pullbackLong
-){
-side="LONG"
-}
+        ema20>ema50 &&
+        h1Bull &&
+        pullbackLong &&
+        (
+    (bosUp && bosAgeLong<=6) ||
+    momentumUp
+)
+    ){
+        side="LONG"
+    }
+    // ===== SHORT =====
     if(
-ema20 < ema50 &&
-h1Bear &&
-bosDown &&
-bosAgeShort >= 1 &&
-bosAgeShort <= 4 &&
-pullbackShort
-){
-side="SHORT"
-}
+        ema20<ema50 &&
+        h1Bear &&
+        pullbackShort &&
+        (
+            (bosDown && bosAgeShort<=6) ||
+            momentumDown
+        )
+    ){
+        side="SHORT"
+    }
 }
 if(phase === "LIQUIDITY"){
     // ===== REVERSAL LONG =====
@@ -1397,52 +1403,50 @@ r>55
 if(phase === "RANGE"){
     return null
 }
-//if(phase==="BREAKOUT_UP"){
-   // if(
-       // h1Bull &&
-       // momentumUp &&
-       // nearEma
-    //){
-       // side = "LONG"
-    //}
-//}
-//if(phase==="BREAKDOWN_DOWN"){
-    //if(
-        //h1Bear &&
-        //momentumDown &&
-        //nearEma
-    //){
-       // side = "SHORT"
-   // }
-//}
 if(!side) return null
 // ================= SCORE ENGINE (FULL) =================
 let score = 0
-
-//if(bosUp || bosDown) score += 15
-if(volImpulse) score += 15
-if(volTrendUp) score += 10
-
-//if(momentumUp && side==="LONG") score += 20
-//if(momentumDown && side==="SHORT") score += 20
-
-if(setupType === "LIQUIDITY"){
-    if(sweepConfirmLong) score += 25
-    if(sweepConfirmShort) score += 25
+//================ TREND =================
+if(side==="LONG"){
+    if(ema20>ema50) score+=10
+    if(h1Bull) score+=15
+    if(isTrending) score+=10
 }
-
-if(higherLow && side==="LONG") score += 10
-if(lowerHigh && side==="SHORT") score += 10
-
-//if(nearEma) score += 20
-if(trendStrength > 0.0035) score += 10
+if(side==="SHORT"){
+    if(ema20<ema50) score+=10
+    if(h1Bear) score+=15
+    if(isTrending) score+=10
+}
+//================ STRUCTURE =================
+if(side==="LONG" && bosUp) score+=20
+if(side==="SHORT" && bosDown) score+=20
+//================ PULLBACK =================
+if(side==="LONG" && pullbackLong) score+=10
+if(side==="SHORT" && pullbackShort) score+=10
+//================ MOMENTUM =================
+if(side==="LONG" && momentumUp) score+=5
+if(side==="SHORT" && momentumDown) score+=5
+//================ VOLUME =================
+if(volImpulse) score+=10
+if(volTrendUp) score+=5
+//================ EMA =================
+if(nearEma) score+=5
+//================ CONTEXT =================
+if(side==="LONG" && higherLow) score+=5
+if(side==="SHORT" && lowerHigh) score+=5
+//================ ATR =================
 if(
 atrRatio>0.004 &&
 atrRatio<0.012
-)
-score+=8
-
-if(score < 30) return null
+){
+score+=5
+}
+//================ LIQUIDITY =================
+if(setupType==="LIQUIDITY"){
+if(sweepConfirmLong) score+=10
+if(sweepConfirmShort) score+=10
+}
+if(score < 60) return null
 
 // ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
