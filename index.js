@@ -128,39 +128,54 @@ console.log(
 
     return null
 }
-async function getLastClosedPnl(symbol){
+async function getClosedTradeResult(t) {
+        if (!t.tpOrderId || !t.slOrderId) {
+        return { legacy: true }
+    }
+    try {
+        const exits = [
+            { orderId: t.tpOrderId, reason: "TP" },
+            { orderId: t.slOrderId, reason: "SL" }
+        ].filter(x => x.orderId)
 
-    try{
-
-        let incomes =
-            await binance.futuresIncome({
-                incomeType: "REALIZED_PNL",
-                limit: 50,
+        for (const exit of exits) {
+            const order = await binance.futuresGetOrder({
+                symbol: t.symbol,
+                orderId: exit.orderId,
                 recvWindow: 20000
             })
 
-        let rows = incomes
-            .filter(x =>
-                x.symbol === symbol
-            )
-            .sort(
-                (a,b) =>
-                    Number(b.time) - Number(a.time)
+            if (order.status !== "FILLED") {
+                continue
+            }
+
+            const fills = await binance.futuresUserTrades({
+                symbol: t.symbol,
+                orderId: exit.orderId,
+                recvWindow: 20000
+            })
+
+            if (!fills || fills.length === 0) {
+                return null
+            }
+
+            // Chỉ cộng các fill của đúng một TP hoặc SL order.
+            const pnl = fills.reduce(
+                (sum, fill) => sum + Number(fill.realizedPnl || 0),
+                0
             )
 
-        if(rows.length === 0){
-            return null
+            return {
+                pnl,
+                exitReason: exit.reason,
+                exitOrderId: exit.orderId,
+                closedAt: Number(order.updateTime || Date.now())
+            }
         }
 
-        return Number(rows[0].income)
-
-    }catch(e){
-
-        console.log(
-            `❌ PNL ERROR ${symbol}:`,
-            e.message
-        )
-
+        return null
+    } catch (e) {
+        console.log(`❌ CHECK EXIT ${t.symbol}:`, e.message)
         return null
     }
 }
@@ -774,7 +789,11 @@ console.log(
             setTimeout(r,3000)
         )
 
-        return true
+        return {
+    ok: true,
+    slOrderId: String(slRes.orderId),
+    tpOrderId: String(tpRes.orderId)
+}
     }catch(e){
 
     await checkTimeError(e)
@@ -828,12 +847,9 @@ async function openPositionWithTPSL(
             setTimeout(r,3000)
         )
 
-        let tpslOk =
-            await setTPSLAndVerify(
-                trade
-            )
+        let tpslResult = await setTPSLAndVerify(trade)
 
-        if(!tpslOk){
+if(!tpslResult?.ok){
 
             console.log(
                 `🚨 TPSL FAIL -> CLOSE ${trade.symbol}`
@@ -870,7 +886,12 @@ CLOSE FAIL`
             return false
         }
 
-        return true
+        return {
+    ok: true,
+    entryOrderId: String(order.orderId),
+    tpOrderId: tpslResult.tpOrderId,
+    slOrderId: tpslResult.slOrderId
+}
 
     }finally{
 
@@ -1184,6 +1205,14 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 }
 // ============== CORE LOGIC =================
 async function coreLogic(data15, data1h){
+
+    // Bỏ nến đang chạy, chỉ dùng nến đã đóng.
+    data15 = data15.slice(0, -1)
+    data1h = data1h.slice(0, -1)
+
+    if (data15.length < 250 || data1h.length < 60) {
+        return null
+    }
 
 // ================= DATA =================
 let opens   = data15.map(x => +x[1])
@@ -2066,13 +2095,13 @@ if(OPENING_POSITIONS[trade.symbol]){
 
 OPENING_POSITIONS[trade.symbol] = true
 try{
-    let ok =
+    let execution =
     await openPositionWithTPSL(
         trade,
         qty
     )
 
-if(!ok){
+if(!execution?.ok){
 
     console.log(
         `❌ ENTRY FAIL ${trade.symbol}`
@@ -2080,7 +2109,9 @@ if(!ok){
 
     continue
 }
-
+trade.entryOrderId = execution.entryOrderId
+trade.tpOrderId = execution.tpOrderId
+trade.slOrderId = execution.slOrderId
 trade.waitingEntry = false
 trade.enteredAt = Date.now()
 
@@ -2347,69 +2378,63 @@ for(let retry = 0; retry < 5; retry++){
 
 if(!stillOpen){
 
-    let pnl =
-        await getLastClosedPnl(
-            t.symbol
-        )
+    const closed = await getClosedTradeResult(t)
 
-    if(pnl !== null){
-
-        let isWin = pnl > 0
-
-        await trades.updateOne(
-            {
-                symbol: t.symbol,
-                createdAt: t.createdAt
-            },
-            {
-                $set:{
-                    result: isWin
-                        ? "WIN"
-                        : "LOSS",
-                    pnl
-                }
+if (closed?.legacy) {
+    await trades.updateOne(
+        { _id: t._id },
+        {
+            $set: {
+                result: "LEGACY_NEEDS_REVIEW"
             }
-        )
-
-        let latestBalance =
-            await updateBalance()
-
-        if(latestBalance > 0){
-            ACCOUNT_BALANCE = latestBalance
         }
+    )
 
-        await sendTelegram2(
+    activeTrades.splice(i, 1)
+    continue
+}
+
+if (!closed) {
+    console.log(`⏳ WAIT TP/SL FILL: ${t.symbol}`)
+    continue
+}
+
+const isWin = closed.pnl > 0
+
+await trades.updateOne(
+    { _id: t._id },
+    {
+        $set: {
+            result: isWin ? "WIN" : "LOSS",
+            pnl: closed.pnl,
+            exitReason: closed.exitReason,
+            exitOrderId: closed.exitOrderId,
+            closedAt: closed.closedAt
+        }
+    }
+)
+
+const latestBalance = await updateBalance()
+
+if (latestBalance > 0) {
+    ACCOUNT_BALANCE = latestBalance
+}
+
+const tele2Ok = await sendTelegram2(
 `📊 ${t.symbol} (${t.setup})
 ${t.side} | ${t.marketState}
-${isWin ? "✅ WIN" : "❌ LOSS"}
-PnL: ${pnl.toFixed(4)}
+${isWin ? "✅ WIN" : "❌ LOSS"} (${closed.exitReason})
+PnL: ${closed.pnl.toFixed(4)}
 💰: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
-        )
+)
 
-    }else{
+if (!tele2Ok) {
+    console.log(`❌ TELEGRAM 2 REPORT FAIL: ${t.symbol}`)
+}
 
-        console.log(
-            `🚨 AUTO CLEAR CONFIRMED ${t.symbol}`
-        )
-
-        await trades.updateOne(
-            {
-                symbol: t.symbol,
-                createdAt: t.createdAt
-            },
-            {
-                $set:{
-                    result:"AUTO_CLEAR_NO_POSITION"
-                }
-            }
-        )
-    }
-
-    delete DATA_FAILS[t.symbol]
-
-    activeTrades.splice(i,1)
-
-    continue
+delete DATA_FAILS[t.symbol]
+activeTrades.splice(i, 1)
+continue
 }
             }catch(e){
                 console.log(`❌ checkTrades ${t.symbol}:`, e.message)
@@ -2554,58 +2579,13 @@ console.log("✅ DEAD LOCK CLEARED")
         }
     }
 )
+// Không tự clear lệnh đã đóng.
+// checkTrades() sẽ đọc tpOrderId/slOrderId để chốt đúng WIN hoặc LOSS.
 activeTrades = await trades.find({
     result: "PENDING"
 }).toArray()
 
-let positions = []
-
-try{
-    positions = await getPositionsCached()
-}catch(e){
-    console.log("⚠ LOAD POSITION FAIL:", e.message)
-}
-
-let openSymbols = new Set(
-    positions
-        .filter(
-            p => Math.abs(parseFloat(p.positionAmt || "0")) > 0
-        )
-        .map(p => p.symbol)
-)
-let cleaned = []
-for(let t of activeTrades){
-    // giữ waiting entry
-    if(t.waitingEntry){
-
-        cleaned.push(t)
-
-        continue
-    }
-    // còn position thật
-    if(openSymbols.has(t.symbol)){
-
-        cleaned.push(t)
-
-        continue
-    }
-    // ===== GHOST TRADE =====
-    await trades.updateOne(
-        {
-            _id: t._id
-        },
-        {
-            $set:{
-                result:"AUTO_CLEAR_NO_POSITION"
-            }
-        }
-    )
-    console.log(
-        `🧹 CLEAR GHOST ${t.symbol}`
-    )
-}
-activeTrades = cleaned
-        console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
+console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
 
         // ================= LOOP =================
         
@@ -2809,23 +2789,7 @@ async function syncActiveTrades(){
         result:"PENDING"
     }).toArray()
 
-    POS_CACHE = null
-POS_CACHE_TIME = 0
-
-let positions = await getPositionsCached()
-
-    let openSymbols = new Set(
-        positions
-        .filter(x =>
-            Math.abs(Number(x.positionAmt)) > 0
-        )
-        .map(x => x.symbol)
-    )
-
-    activeTrades = dbTrades.filter(t =>
-        t.waitingEntry ||
-        openSymbols.has(t.symbol)
-    )
+    activeTrades = dbTrades
 
     console.log(
         `♻️ SYNC ACTIVE: ${activeTrades.length}`
