@@ -341,6 +341,8 @@ let telegramPolling = false
 let TELEGRAM_LOCK = 0
 let DATA_FAILS = {}
 let WATCHDOG_RUNNING = false
+let BTC_REGIME_CACHE = null
+let BTC_REGIME_CACHE_TIME = 0
 
 async function updateBalance(){
 
@@ -1090,7 +1092,7 @@ async function getTopSymbols(){
     .filter(c => {
         let change = Math.abs(Number(c.priceChangePercent))
         // coin chưa chạy nhưng có dấu hiệu tích lực
-        return change >= 0.8 && change <= 12 // 
+        return change >= 0.5 && change <= 15 // 
     })
     // 🔥 2. LIQUIDITY nhẹ (KHÔNG dùng minVol 24h nữa)
     .filter(c =>
@@ -1128,7 +1130,7 @@ async function getTopSymbols(){
 
     return scoreB - scoreA
 })
-    .slice(0, 50)
+    .slice(0, 100)
 .map(c => c.symbol)
 .filter(s =>
     validFuturesSymbols &&
@@ -1679,7 +1681,57 @@ async function scan(symbol){
 
     return { symbol, ...r }
 }
+async function getBtcRegime() {
+    if (
+        BTC_REGIME_CACHE &&
+        Date.now() - BTC_REGIME_CACHE_TIME < 120000
+    ) {
+        return BTC_REGIME_CACHE
+    }
 
+    const raw15 = await getData("BTCUSDT", "15m", 100)
+    const raw1h = await getData("BTCUSDT", "1h", 100)
+
+    if (!raw15 || !raw1h) {
+        return "NEUTRAL"
+    }
+
+    // Chỉ dùng nến đã đóng.
+    const data15 = raw15.slice(0, -1)
+    const data1h = raw1h.slice(0, -1)
+
+    const close15 = data15.map(x => Number(x[4]))
+    const close1h = data1h.map(x => Number(x[4]))
+
+    const ema20_15 = ema(close15.slice(-60), 20)
+    const ema50_15 = ema(close15.slice(-100), 50)
+
+    const ema20_1h = ema(close1h.slice(-60), 20)
+    const ema50_1h = ema(close1h.slice(-100), 50)
+
+    let regime = "NEUTRAL"
+
+    if (
+        close15.at(-1) > ema20_15 &&
+        ema20_15 > ema50_15 &&
+        close1h.at(-1) > ema20_1h &&
+        ema20_1h > ema50_1h
+    ) {
+        regime = "BULL"
+    } else if (
+        close15.at(-1) < ema20_15 &&
+        ema20_15 < ema50_15 &&
+        close1h.at(-1) < ema20_1h &&
+        ema20_1h < ema50_1h
+    ) {
+        regime = "BEAR"
+    }
+
+    BTC_REGIME_CACHE = regime
+    BTC_REGIME_CACHE_TIME = Date.now()
+
+    return regime
+}
 // ================= SCANNER ================
 async function scanner(){
     
@@ -1693,7 +1745,16 @@ async function scanner(){
     try{
         console.log("🚀 SMART SCAN...")
 
-        let now = Date.now()
+const btcRegime = await getBtcRegime()
+
+if (btcRegime === "NEUTRAL") {
+    console.log("⛔ BTC NEUTRAL — bỏ qua scan này")
+    return
+}
+
+console.log(`₿ BTC REGIME: ${btcRegime}`)
+
+let now = Date.now()
 
         // ===== UPDATE SYMBOL =====
         if(!cachedSymbols || now - lastSymbolsUpdate > 900000){
@@ -1794,6 +1855,11 @@ for (let s of signals){
         })
     }
 }
+// BTC tăng chỉ đánh LONG; BTC giảm chỉ đánh SHORT.
+candidates = candidates.filter(c =>
+    (btcRegime === "BULL" && c.side === "LONG") ||
+    (btcRegime === "BEAR" && c.side === "SHORT")
+)
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
             console.log("❌ No signal")
@@ -1895,26 +1961,15 @@ if(existing){
         Math.abs(parseFloat(p.positionAmt || "0")) > 0
     )
 
-    // không còn position -> clear DB
     if(!realPos){
+    console.log(
+        `⏳ ${best.symbol} đã đóng — chờ checkTrades chốt TP/SL`
+    )
+    continue
+}
 
-        await trades.updateOne(
-            {
-                _id: existing._id
-            },
-            {
-                $set:{
-                    result:"AUTO_CLEAR_NO_POSITION"
-                }
-            }
-        )
-        existing = null // 🔥 QUAN TRỌNG
-
-    }else{
-
-        console.log(`⛔ ${best.symbol} đang có lệnh`)
-        continue
-    }
+console.log(`⛔ ${best.symbol} đang có lệnh`)
+continue
 }
 
     if(existing){
