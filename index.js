@@ -128,53 +128,53 @@ console.log(
 
     return null
 }
-async function getClosedTradeResult(t) {
-        if (!t.tpOrderId || !t.slOrderId) {
-        return { legacy: true }
-    }
-    try {
-        const exits = [
-            { orderId: t.tpOrderId, reason: "TP" },
-            { orderId: t.slOrderId, reason: "SL" }
-        ].filter(x => x.orderId)
+async function getClosedTradeResult(t){
 
-        for (const exit of exits) {
-            const order = await binance.futuresGetOrder({
-                symbol: t.symbol,
-                orderId: exit.orderId,
-                recvWindow: 20000
-            })
+    try{
 
-            if (order.status !== "FILLED") {
-                continue
-            }
+        const trades = await binance.futuresUserTrades({
+            symbol: t.symbol,
+            limit: 50,
+            recvWindow: 20000
+        })
 
-            const fills = await binance.futuresUserTrades({
-                symbol: t.symbol,
-                orderId: exit.orderId,
-                recvWindow: 20000
-            })
-
-            if (!fills || fills.length === 0) {
-                return null
-            }
-
-            // Chỉ cộng các fill của đúng một TP hoặc SL order.
-            const pnl = fills.reduce(
-                (sum, fill) => sum + Number(fill.realizedPnl || 0),
-                0
-            )
-
-            return {
-                pnl,
-                exitReason: exit.reason,
-                exitOrderId: exit.orderId,
-                closedAt: Number(order.updateTime || Date.now())
-            }
+        if(!trades || trades.length === 0){
+            return null
         }
 
-        return null
-    } catch (e) {
+        // Chỉ lấy các fill có realized PnL (lệnh đóng vị thế)
+        const openTime = t.enteredAt || t.createdAt || 0
+
+const exits = trades.filter(x =>
+    Number(x.realizedPnl || 0) !== 0 &&
+    Number(x.time || 0) >= openTime
+)
+
+        if(exits.length === 0){
+            return null
+        }
+
+        // orderId của lệnh đóng mới nhất
+        const latestOrderId = exits.at(-1).orderId
+
+        // Gom toàn bộ fill của cùng order đó
+        const fills = exits.filter(x => x.orderId === latestOrderId)
+
+        const pnl = fills.reduce(
+            (sum, x) => sum + Number(x.realizedPnl || 0),
+            0
+        )
+
+        const lastFill = fills.at(-1)
+
+        return {
+            pnl,
+            exitOrderId: String(latestOrderId),
+            closedAt: Number(lastFill.time || Date.now())
+        }
+
+    }catch(e){
+
         console.log(`❌ CHECK EXIT ${t.symbol}:`, e.message)
         return null
     }
@@ -792,9 +792,7 @@ console.log(
         )
 
         return {
-    ok: true,
-    slOrderId: String(slRes.orderId),
-    tpOrderId: String(tpRes.orderId)
+    ok: true
 }
     }catch(e){
 
@@ -889,10 +887,7 @@ CLOSE FAIL`
         }
 
         return {
-    ok: true,
-    entryOrderId: String(order.orderId),
-    tpOrderId: tpslResult.tpOrderId,
-    slOrderId: tpslResult.slOrderId
+    ok: true
 }
 
     }finally{
@@ -2164,13 +2159,12 @@ if(!execution?.ok){
 
     continue
 }
-trade.entryOrderId = execution.entryOrderId
-trade.tpOrderId = execution.tpOrderId
-trade.slOrderId = execution.slOrderId
 trade.waitingEntry = false
 trade.enteredAt = Date.now()
 
-await trades.insertOne(trade)
+const insertResult = await trades.insertOne(trade)
+
+trade._id = insertResult.insertedId
 
 let existsActive = activeTrades.find(
     x =>
@@ -2330,19 +2324,6 @@ continue
 // ===== RESULT CHECK =====
 if(!t.entry) continue
 
-let win = false
-let done = false
-
-if(t.side === "LONG"){
-    if(price >= t.tp){ win = true; done = true }
-    if(price <= t.sl){ done = true }
-}
-
-if(t.side === "SHORT"){
-    if(price <= t.tp){ win = true; done = true }
-    if(price >= t.sl){ done = true }
-}
-
 if(!t.enteredAt){
     t.enteredAt = Date.now()
 }
@@ -2435,20 +2416,6 @@ if(!stillOpen){
 
     const closed = await getClosedTradeResult(t)
 
-if (closed?.legacy) {
-    await trades.updateOne(
-        { _id: t._id },
-        {
-            $set: {
-                result: "LEGACY_NEEDS_REVIEW"
-            }
-        }
-    )
-
-    activeTrades.splice(i, 1)
-    continue
-}
-
 if (!closed) {
     console.log(`⏳ WAIT TP/SL FILL: ${t.symbol}`)
     continue
@@ -2462,7 +2429,6 @@ await trades.updateOne(
         $set: {
             result: isWin ? "WIN" : "LOSS",
             pnl: closed.pnl,
-            exitReason: closed.exitReason,
             exitOrderId: closed.exitOrderId,
             closedAt: closed.closedAt
         }
@@ -2478,7 +2444,7 @@ if (latestBalance > 0) {
 const tele2Ok = await sendTelegram2(
 `📊 ${t.symbol} (${t.setup})
 ${t.side} | ${t.marketState}
-${isWin ? "✅ WIN" : "❌ LOSS"} (${closed.exitReason})
+${isWin ? "✅ WIN" : "❌ LOSS"}
 PnL: ${closed.pnl.toFixed(4)}
 💰: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
 )
