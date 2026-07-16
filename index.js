@@ -1742,11 +1742,6 @@ async function scanner(){
 
 const btcRegime = await getBtcRegime()
 
-if (btcRegime === "NEUTRAL") {
-    console.log("⛔ BTC NEUTRAL — bỏ qua scan này")
-    return
-}
-
 console.log(`₿ BTC REGIME: ${btcRegime}`)
 
 let now = Date.now()
@@ -1850,11 +1845,16 @@ for (let s of signals){
         })
     }
 }
-// BTC tăng chỉ đánh LONG; BTC giảm chỉ đánh SHORT.
-candidates = candidates.filter(c =>
-    (btcRegime === "BULL" && c.side === "LONG") ||
-    (btcRegime === "BEAR" && c.side === "SHORT")
-)
+candidates = candidates.filter(c => {
+    if (btcRegime === "BULL") {
+        return c.side === "LONG"
+    }
+    if (btcRegime === "BEAR") {
+        return c.side === "SHORT"
+    }
+    // BTC đi ngang
+    return true
+})
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
             console.log("❌ No signal")
@@ -1895,6 +1895,12 @@ for(let c of filtered){
 }
 
 filtered = unique
+if (btcRegime === "NEUTRAL") {
+    filtered = filtered.filter(c =>
+        c.marketState === "TREND_STRONG" &&
+        c.score >= 75
+    )
+}
 if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
