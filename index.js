@@ -1246,9 +1246,9 @@ let dynamicMinVol = getDynamicMinVol(volAvgUSDT, price, atrRatio)
 
 // market participation filter
 if(volAvgUSDT < dynamicMinVol) return null
-if(volNow < volAvg * 0.55) return null
+if(volNow < volAvg * 0.5) return null //0.55
 
-let volImpulse = volNow > volAvg * 1.3
+let volImpulse = volNow > volAvg * 1.25 //1.3
 let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 2
 
 // ================= STRUCTURE =================
@@ -1287,7 +1287,7 @@ let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 
 // ================= TREND =================
 let trendStrength = Math.abs(ema20 - ema50) / price
-let isTrending = trendStrength > 0.0028
+let isTrending = trendStrength > 0.0025 //0.0028
 
 let h1Bull =
     ema20_1h>ema50_1h &&
@@ -1299,7 +1299,7 @@ let h1Bear =
 
 // ================= EMA DIST =================
 let distEma = Math.abs(price - ema20) / price
-if(distEma > 0.015) return null
+if(distEma > 0.016) return null //0.015
 
 let nearEma = distEma < 0.005
 
@@ -2770,43 +2770,6 @@ async function getDBStats(setup, market, side, volatility){
         console.log("❌ DB ERROR:", e.message)
         return { winrate: 0.5, total: 0 }
     }
-}
-async function getBestTPSL(setup, market, side){
-
-    if(!trades) return null
-
-    let data = await trades.find({
-        setup,
-        marketState: market,
-        side,
-        result: { $in:["WIN","LOSS","TIMEOUT_CLOSED"] }
-    }).toArray()
-
-    if(data.length < 30) return null
-
-    let rrArr = []
-
-    for(let t of data){
-
-        let risk = Math.abs(t.entry - t.sl)
-        if(!risk || risk === 0) continue
-
-        let rr = t.side === "LONG"
-            ? (t.tp - t.entry) / risk
-            : (t.entry - t.tp) / risk
-
-        if(rr > 0.5 && rr < 5){
-            rrArr.push(rr)
-        }
-    }
-
-    if(rrArr.length === 0) return null
-
-    rrArr.sort((a,b)=>a-b)
-
-    let best = rrArr[Math.floor(rrArr.length * 0.6)]
-
-    return { rr: best }
 }
             
 start()
