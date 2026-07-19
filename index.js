@@ -1478,7 +1478,7 @@ if(
 if(setupType==="LIQUIDITY"){
     score+=15
 }
-if(score < 70) return null
+if(score < 65) return null
 
 // ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
