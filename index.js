@@ -2200,18 +2200,12 @@ if(!existsActive){
 
 ${best.symbol} (${best.setup})
 ${best.side} | ${best.marketState}
-
 ₿ BTC: ${btcRegime}
-
 Score: ${best.score}
 AI: ${best.finalScore.toFixed(1)}
-
 Entry: ${(trade.entry || best.price).toFixed(4)}
-
 TP: ${trade.tp.toFixed(4)}
-
 SL: ${trade.sl.toFixed(4)}
-
 Size: ${qty.toFixed(2)}
 `  //Score: ${t.score || 0}
 console.log(msg)
