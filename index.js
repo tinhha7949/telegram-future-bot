@@ -1249,7 +1249,7 @@ if(volAvgUSDT < dynamicMinVol) return null
 if(volNow < volAvg * 0.45) return null //0.55
 
 let volImpulse = volNow > volAvg * 1.25 //1.3
-let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 1.8
+let volTrendUp = volumes.slice(-3).reduce((a,b)=>a+b,0) > volAvg * 1.8 //2
 
 // ================= STRUCTURE =================
 let prevHigh = Math.max(...highs.slice(-20,-2))
@@ -1287,7 +1287,7 @@ let sweepConfirmShort = sweepHigh && closes.at(-1) < closes.at(-2)
 
 // ================= TREND =================
 let trendStrength = Math.abs(ema20 - ema50) / price
-let isTrending = trendStrength > 0.0022 //0.0028
+let isTrending = trendStrength > 0.0024 //0.0028
 
 let h1Bull =
     ema20_1h>ema50_1h &&
@@ -1299,7 +1299,7 @@ let h1Bear =
 
 // ================= EMA DIST =================
 let distEma = Math.abs(price - ema20) / price
-if(distEma > 0.018) return null //0.015
+if(distEma > 0.017) return null //0.015
 
 let nearEma = distEma < 0.005
 
@@ -1352,24 +1352,24 @@ let pullbackLong =
     Math.min(
 lows.at(-1),
 lows.at(-2)
-)<=ema20*1.002
+)<=ema20*1.001
 )
 &&
 closes.at(-1)>ema20 &&
 closes.at(-1)>opens.at(-1) &&
-body>atrVal*0.15
+body>atrVal*0.20
 // SHORT
 let pullbackShort =
 (
     Math.max(
 highs.at(-1),
 highs.at(-2)
-)>=ema20*0.998
+)>=ema20*0.999
 )
 &&
 closes.at(-1)<ema20 &&
 closes.at(-1)<opens.at(-1) &&
-body>atrVal*0.15
+body>atrVal*0.20
 // ================= SIDE ENGINE =================
 let setupType = phase
 let side = null
@@ -1377,20 +1377,28 @@ if(phase==="TREND"){
     if(!isTrending) return null
     // ===== LONG =====
     if(
-    ema20>ema50 &&
-    h1Bull &&
-    pullbackLong
-){
-    side="LONG"
-}
+        ema20>ema50 &&
+        h1Bull &&
+        pullbackLong &&
+        (
+    (bosUp && bosAgeLong<=6) ||
+    momentumUp
+)
+    ){
+        side="LONG"
+    }
     // ===== SHORT =====
     if(
-    ema20<ema50 &&
-    h1Bear &&
-    pullbackShort
-){
-    side="SHORT"
-}
+        ema20<ema50 &&
+        h1Bear &&
+        pullbackShort &&
+        (
+            (bosDown && bosAgeShort<=6) ||
+            momentumDown
+        )
+    ){
+        side="SHORT"
+    }
 }
 if(phase === "LIQUIDITY"){
     // ===== REVERSAL LONG =====
@@ -1426,59 +1434,45 @@ if(!side) return null
 let score = 0
 //================ TREND =================
 if(side==="LONG"){
-    if(ema20>ema50) score+=20
+    if(ema20>ema50) score+=10
     if(h1Bull) score+=15
     if(isTrending) score+=10
 }
 if(side==="SHORT"){
-    if(ema20<ema50) score+=20
+    if(ema20<ema50) score+=10
     if(h1Bear) score+=15
     if(isTrending) score+=10
 }
-//================ BOS =================
-if(side==="LONG" && bosUp){
-    score+=20
-    if(bosAgeLong<=3) score+=10
-}
-if(side==="SHORT" && bosDown){
-    score+=20
-    if(bosAgeShort<=3) score+=10
-}
-//================ MOMENTUM =================
-if(side==="LONG" && momentumUp)
-    score+=15
-if(side==="SHORT" && momentumDown)
-    score+=15
-//================ PULLBACK =================
-if(side==="LONG" && pullbackLong)
-    score+=15
-if(side==="SHORT" && pullbackShort)
-    score+=15
-//================ VOLUME =================
-if(volImpulse)
-    score+=15
-if(volTrendUp)
-    score+=10
-//================ EMA =================
-if(nearEma)
-    score+=10
 //================ STRUCTURE =================
-if(side==="LONG" && higherLow)
-    score+=10
-if(side==="SHORT" && lowerHigh)
-    score+=10
+if(side==="LONG" && bosUp) score+=20
+if(side==="SHORT" && bosDown) score+=20
+//================ PULLBACK =================
+if(side==="LONG" && pullbackLong) score+=10
+if(side==="SHORT" && pullbackShort) score+=10
+//================ MOMENTUM =================
+if(side==="LONG" && momentumUp) score+=5
+if(side==="SHORT" && momentumDown) score+=5
+//================ VOLUME =================
+if(volImpulse) score+=10
+if(volTrendUp) score+=5
+//================ EMA =================
+if(nearEma) score+=5
+//================ CONTEXT =================
+if(side==="LONG" && higherLow) score+=5
+if(side==="SHORT" && lowerHigh) score+=5
 //================ ATR =================
 if(
-    atrRatio>0.004 &&
-    atrRatio<0.012
+atrRatio>0.004 &&
+atrRatio<0.012
 ){
-    score+=5
+score+=5
 }
 //================ LIQUIDITY =================
 if(setupType==="LIQUIDITY"){
-    score+=15
+if(sweepConfirmLong) score+=10
+if(sweepConfirmShort) score+=10
 }
-if(score < 65) return null
+if(score < 60) return null
 
 // ================= STRUCTURE ZONES =================
 let swingLow = Math.min(...lows.slice(-20))
@@ -1851,20 +1845,16 @@ for (let s of signals){
         })
     }
 }
-for(let c of candidates){
-    if(
-        btcRegime==="BULL" &&
-        c.side==="LONG"
-    ){
-        c.finalScore+=10
+candidates = candidates.filter(c => {
+    if (btcRegime === "BULL") {
+        return c.side === "LONG"
     }
-    if(
-        btcRegime==="BEAR" &&
-        c.side==="SHORT"
-    ){
-        c.finalScore+=10
+    if (btcRegime === "BEAR") {
+        return c.side === "SHORT"
     }
-}
+    // BTC đi ngang
+    return true
+})
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
             console.log("❌ No signal")
@@ -1874,16 +1864,10 @@ for(let c of candidates){
         // ===== SORT =====
       candidates.sort((a,b)=>{
 
-    if(b.finalScore !== a.finalScore)
-        return b.finalScore-a.finalScore
+    if(a.marketState === "TREND_STRONG" && b.marketState !== "TREND_STRONG") return -1
+    if(b.marketState === "TREND_STRONG" && a.marketState !== "TREND_STRONG") return 1
 
-    if(b.score !== a.score)
-        return b.score-a.score
-
-    let rrA=Math.abs(a.tp-a.price)/Math.abs(a.price-a.sl)
-    let rrB=Math.abs(b.tp-b.price)/Math.abs(b.price-b.sl)
-
-    return rrB-rrA
+    return b.finalScore - a.finalScore
 })
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
@@ -1913,6 +1897,7 @@ for(let c of filtered){
 filtered = unique
 if (btcRegime === "NEUTRAL") {
     filtered = filtered.filter(c =>
+        c.marketState === "TREND_STRONG" &&
         c.score >= 75
     )
 }
@@ -2199,8 +2184,7 @@ if(!existsActive){
         let msg = `🔥 BEST SIGNAL
 
 ${best.symbol} (${best.setup})
-${best.side} | ${best.marketState}
-₿ BTC: ${btcRegime}
+${best.side} | ₿ : ${btcRegime}
 Score: ${best.score}
 AI: ${best.finalScore.toFixed(1)}
 Entry: ${(trade.entry || best.price).toFixed(4)}
@@ -2227,6 +2211,7 @@ if(!teleSent){
 `🚨 TELE FAIL
 ${best.symbol}
 ${best.side}
+₿ BTC: ${btcRegime}
 Entry: ${best.entry}
 
 TP: ${best.tp}
@@ -2462,7 +2447,7 @@ if (latestBalance > 0) {
 
 const tele2Ok = await sendTelegram2(
 `📊 ${t.symbol} (${t.setup})
-${t.side} | ${t.marketState}
+${t.side} | ₿ : ${btcRegime}
 ${isWin ? "✅ WIN" : "❌ LOSS"}
 PnL: ${closed.pnl.toFixed(4)}
 💰: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
