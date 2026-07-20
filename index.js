@@ -1898,7 +1898,7 @@ filtered = unique
 if (btcRegime === "NEUTRAL") {
     filtered = filtered.filter(c =>
         c.marketState === "TREND_STRONG" &&
-        c.score >= 75
+        c.score >= 70
     )
 }
 if(filtered.length === 0){
@@ -2034,23 +2034,41 @@ risk = Math.max(risk, ACCOUNT_BALANCE * 0.005)
     if(!diff) continue
 
 let trade = {
+    // ================= BASIC =================
     symbol: best.symbol,
     side: best.side,
-    risk,
+
     entry: best.price,
+    tp: best.tp,
+    sl: best.sl,
 
-tp: best.tp,
-sl: best.sl,
-score: best.score,
+    risk,
+    rr,
 
-waitingEntry: false,
+    score: best.score,
+    finalScore: best.finalScore,
+
+    setup: best.setup,
+    volatility: best.volatility,
+    btcRegime,
+
+    scannerVersion: 1,
+
+    // ================= ANALYSIS =================
+    scoreBreakdown: best.scoreBreakdown,
+    indicators: best.indicators,
+    structure: best.structure,
+    context: best.context,
+    liquidity: best.liquidity,
+    flags: best.flags,
+
+    // ================= TRADE =================
+    waitingEntry: false,
+    breakoutTriggered: false,
 
     createdAt: Date.now(),
-    breakoutTriggered: false,
-    setup: best.setup,
-    marketState: best.marketState,
-    volatility: best.volatility,
-    atr: best.atr,
+    enteredAt: null,
+    closedAt: null,
     result: "PENDING"
 }
 
