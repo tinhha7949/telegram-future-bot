@@ -2465,7 +2465,7 @@ if (latestBalance > 0) {
 
 const tele2Ok = await sendTelegram2(
 `📊 ${t.symbol} (${t.setup})
-${t.side} | ₿ : ${btcRegime}
+${t.side} | ₿ : ${t.btcRegime}
 ${isWin ? "✅ WIN" : "❌ LOSS"}
 PnL: ${closed.pnl.toFixed(4)}
 💰: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
