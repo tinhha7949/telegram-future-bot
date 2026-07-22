@@ -1687,8 +1687,8 @@ let support = Math.min(...lows.slice(-25))
 let distToRes = (resistance - price) / price
 let distToSup = (price - support) / price
 
-if(side === "LONG" && !bosUp && distToRes < 0.002) return null
-if(side === "SHORT" && !bosDown && distToSup < 0.002) return null
+if(side === "LONG" && !bosUp && distToRes < 0.0015) return null
+if(side === "SHORT" && !bosDown && distToSup < 0.0015) return null
 
 // ================= LIQUIDITY ZONES =================
 function findLiquidityHigh(highs){
