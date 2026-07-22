@@ -1445,13 +1445,15 @@ ema20>ema50 &&
 emaSlopeUp &&
 higherLow &&
 volNow>volAvg*0.8 &&
-closes.at(-1)>ema20
+closes.at(-1)>ema20  &&
+(bosUp || volImpulse)
 let trendContinueShort =
 ema20<ema50 &&
 emaSlopeDown &&
 lowerHigh &&
 volNow>volAvg*0.8 &&
-closes.at(-1)<ema20
+closes.at(-1)<ema20 &&
+(bosDown || volImpulse)
 // ================= BREAKOUT RETEST =================
 let breakoutLong =
 bosUp &&
