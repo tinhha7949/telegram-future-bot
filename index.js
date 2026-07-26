@@ -1235,7 +1235,7 @@ let ema20_1h = ema(closes1h.slice(-60),20)
 let ema50_1h = ema(closes1h.slice(-120),50)
 
 let r = rsi(closes.slice(-50))
-if(r > 72 || r < 28) return null
+if(r > 75 || r < 25) return null // 72 28
 
 // ================= VOLUME ENGINE (FULL RESTORED) =================
 let volAvg = volumes.slice(-30).reduce((a,b)=>a+b,0)/30
