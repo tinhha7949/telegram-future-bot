@@ -1054,7 +1054,6 @@ async function getData(symbol, interval, limit){
     return null
 }
 // ================= SYMBOL (PRO) =================
-// ================= SYMBOL (PRO) =================
 async function getTopSymbols(){
 
     const urls = [
@@ -1088,7 +1087,7 @@ async function getTopSymbols(){
     .filter(c => {
         let change = Math.abs(Number(c.priceChangePercent))
         // coin chưa chạy nhưng có dấu hiệu tích lực
-        return change >= 1 && change <= 25 // 
+        return change >= 1 && change <= 15 // 
     })
     // 🔥 2. LIQUIDITY nhẹ (KHÔNG dùng minVol 24h nữa)
     .filter(c =>
@@ -1117,11 +1116,12 @@ async function getTopSymbols(){
 
     // ưu tiên move đẹp quanh 3-5%
     let scoreA =
-    (volA / 1_000_000) +
-    moveA * 2
-let scoreB =
-    (volB / 1_000_000) +
-    moveB * 2
+        (volA / 1_000_000) -
+        Math.abs(moveA - 5) * 4
+
+    let scoreB =
+        (volB / 1_000_000) -
+        Math.abs(moveB - 5) * 4
 
     return scoreB - scoreA
 })
