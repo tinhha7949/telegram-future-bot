@@ -1415,6 +1415,35 @@ try{
     ){
         return
     }
+    // =============================================
+// DYNAMIC TPSL COOLDOWN 60S AFTER ENTRY
+// =============================================
+
+const entryTime =
+    Number(
+        trade.enteredAt ||
+        trade.createdAt
+    )
+
+if(!entryTime){
+    console.log(
+        `⚠️ NO ENTRY TIME ${trade.symbol}`
+    )
+    return
+}
+
+const elapsedSinceEntry =
+    Date.now() - entryTime
+
+if(elapsedSinceEntry < 60000){
+
+    console.log(
+        `⏳ DYNAMIC TPSL WAIT ${trade.symbol} ` +
+        `${Math.ceil((60000 - elapsedSinceEntry) / 1000)}s`
+    )
+
+    return
+}
 
     // Không update TPSL đồng thời.
 
@@ -1563,6 +1592,18 @@ if(
 
             trade.initialRisk =
                 initialRisk
+                await trades.updateOne(
+    {
+        _id: trade._id,
+        result: "PENDING"
+    },
+    {
+        $set: {
+            initialRisk: initialRisk,
+            updatedAt: Date.now()
+        }
+    }
+)
 
             console.log(
                 `🔧 INITIAL RISK RECOVERED ${trade.symbol} ` +
@@ -1882,24 +1923,28 @@ if(
     }
 
     const dynamicTP =
-        trade.side === "LONG"
-            ? currentEntry +
-              initialRisk * targetR
-            : currentEntry -
-              initialRisk * targetR
+    trade.side === "LONG"
+        ? currentEntry + initialRisk * targetR
+        : currentEntry - initialRisk * targetR
 
-    if(trade.side === "LONG"){
+if(trade.side === "LONG"){
 
-        if(dynamicTP > newTP){
-            newTP = dynamicTP
-        }
-
-    }else{
-
-        if(dynamicTP < newTP){
-            newTP = dynamicTP
-        }
+    if(
+        dynamicTP > current &&
+        dynamicTP > newTP
+    ){
+        newTP = dynamicTP
     }
+
+}else{
+
+    if(
+        dynamicTP < current &&
+        dynamicTP < newTP
+    ){
+        newTP = dynamicTP
+    }
+}
 
     // =====================================================
     // APPROACHING STRUCTURE
@@ -5671,21 +5716,72 @@ try{
         )
     }
 
+    // ===== FINAL TRADE STATE =====
+
+    trade.entry =
+        Number(trade.entry)
+
+    trade.sl =
+        Number(trade.sl)
+
+    trade.tp =
+        Number(trade.tp)
+
+    // ===== INITIAL RISK CỐ ĐỊNH =====
+
+    trade.initialRisk =
+        Number(
+            execution.initialRisk ||
+            Math.abs(
+                trade.entry -
+                trade.sl
+            )
+        )
+
+    if(
+        !Number.isFinite(trade.initialRisk) ||
+        trade.initialRisk <= 0
+    ){
+        throw new Error(
+            `INVALID INITIAL RISK ${trade.symbol}`
+        )
+    }
+
+    // ===== FILLED TIME =====
+
+    trade.enteredAt =
+        Number(
+            trade.enteredAt ||
+            Date.now()
+        )
+
+    trade.openedAt =
+        trade.enteredAt
+
+    trade.updatedAt =
+        Date.now()
+
+    // ===== INSERT DB =====
+
     insertResult =
-    await trades.insertOne(trade)
+        await trades.insertOne(trade)
 
-trade._id =
-    insertResult.insertedId
+    trade._id =
+        insertResult.insertedId
 
-activeTrades.push(trade)
+    activeTrades.push(trade)
 
-console.log(
-    `💾 DB SAVED ${trade.symbol}`
-)
+    console.log(
+        `💾 DB SAVED ${trade.symbol} ` +
+        `INITIAL_RISK=${trade.initialRisk} ` +
+        `ENTRY=${trade.entry} ` +
+        `SL=${trade.sl} ` +
+        `TP=${trade.tp}`
+    )
 
-console.log(
-    `🟢 ACTIVE TRADE ADDED ${trade.symbol}`
-)
+    console.log(
+        `🟢 ACTIVE TRADE ADDED ${trade.symbol}`
+    )
 
 }catch(dbErr){
 
@@ -5695,9 +5791,6 @@ console.log(
         `🚨 CRITICAL DB SAVE FAIL ${trade.symbol}:`,
         dbErr?.message || dbErr
     )
-
-    // Binance đã mở position nhưng DB chưa lưu.
-    // KHÔNG được coi như entry thất bại.
 
     activeTrades.push({
         ...trade,
@@ -5710,7 +5803,6 @@ console.log(
 
     continue
 }
-
         let msg =
             `🔥 BEST SIGNAL\n\n` +
             `📊 ${trade.symbol}\n` +
