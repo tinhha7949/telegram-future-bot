@@ -1480,6 +1480,13 @@ const bear15 =
     const ema9_5 = ema(c5.slice(-40),9)
     const ema20_5 = ema(c5.slice(-60),20)
     const ema50_5 = ema(c5.slice(-80),50)
+    const ema9_5Prev =
+    ema(c5.slice(-41,-1),9)
+
+const slope9_5 =
+    ema9_5Prev
+        ? (ema9_5-ema9_5Prev)/ema9_5Prev
+        : 0
 
             // ================= SHORT-TERM TREND ENGINE =================
 
