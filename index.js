@@ -597,169 +597,331 @@ async function hasPosition(symbol){
 }
 async function openPosition(symbol, side, qty){
 
-    try{
-        let existingPos = await hasPosition(symbol)
-
-if(existingPos){
-
-    console.log(`⛔ SKIP OPEN ${symbol}: POSITION EXISTS`)
-
-    return null
-}
-let openOrders = await binance.futuresOpenOrders({
-    symbol,
-    recvWindow:20000
-})
-
-let pendingMarket = openOrders.find(o =>
-    o.type === "MARKET"
-)
-
-if(pendingMarket){
-
-    console.log(`⛔ MARKET ORDER EXISTS ${symbol}`)
-
-    return null
-}
-         let info = await getSymbolInfo(symbol)
-
-        let lotFilter = info.filters.find(
-            f => f.filterType === "LOT_SIZE"
-        )
-
-        let stepSize = parseFloat(
-            lotFilter?.stepSize || 0.001
-        )
-
-        // ===== NORMALIZE FINAL =====
-        qty = normalizeQtyFinal(qty, stepSize)
-
-        if(!qty || qty <= 0 || !isFinite(qty)){
-            console.log("❌ INVALID FINAL QTY")
-            return null
-        }
-
-        const baseUrl = "https://fapi.binance.com"
-        const path = "/fapi/v1/order"
-
-        // 🔥 FIX TIME
-        const timestamp = getTimestamp()
-
-const query =
-    `symbol=${symbol}` +
-    `&side=${side === "LONG" ? "BUY" : "SELL"}` +
-    `&type=MARKET` +
-    `&quantity=${qty}` +
-    `&timestamp=${timestamp}` +
-    `&recvWindow=10000`
-
-        const signature = crypto
-            .createHmac("sha256", process.env.BINANCE_SECRET)
-            .update(query)
-            .digest("hex")
-
-        const url = `${baseUrl}${path}?${query}&signature=${signature}`
-
-        let res = await safeFetch(url, {
-            method: "POST",
-            headers: {
-                "X-MBX-APIKEY": process.env.BINANCE_KEY
-            }
-        })
-
-        if(!res || !res.ok){
-            console.log("❌ ORDER HTTP FAIL", res?.status)
-            return null
-        }
-
-        let data = await res.json()
-        if(
-    data.code === -1021 ||
-    String(data.msg || "").includes("Timestamp")
-){
-    console.log("🕒 BINANCE RESYNC")
-
-    await syncTime()
-
-    return null
-}
-        POS_CACHE = null
-POS_CACHE_TIME = 0
-
-        if(data.code){
-            console.log("❌ BINANCE REJECT:", data)
-            return null
-        }
-
-        // ===== WAIT FILL =====
-if(data.status !== "FILLED"){
-
-    let verifyPos = await waitPosition(symbol)
-
-    if(verifyPos){
-
-        console.log(`✅ POSITION EXISTS ${symbol}`)
-
-        data.status = "FILLED"
-
-    }else{
-
-        console.log(`⏳ WAIT FILL ${symbol}: ${data.status}`)
+    if(!symbol){
+        console.log("❌ OPEN NO SYMBOL")
+        return null
     }
 
-    for(let i = 0; i < 10; i++){
+    if(OPEN_POSITION_LOCK[symbol]){
+        console.log(
+            `⛔ OPEN LOCK ${symbol}`
+        )
+        return null
+    }
 
-        await new Promise(r => setTimeout(r, 800))
+    OPEN_POSITION_LOCK[symbol] = true
+
+    try{
+
+        // =========================================
+        // LUÔN INVALIDATE CACHE TRƯỚC KHI CHECK
+        // =========================================
+
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
+
+        const existingPos =
+            await hasPosition(symbol)
+
+        if(existingPos){
+
+            console.log(
+                `⛔ SKIP OPEN ${symbol}: POSITION EXISTS`
+            )
+
+            return {
+                skipped: true,
+                reason: "POSITION_EXISTS",
+                position: existingPos
+            }
+        }
+
+        // =========================================
+        // CHECK OPEN ORDERS
+        // =========================================
+
+        let openOrders
 
         try{
 
-            let check = await binance.futuresGetOrder({
-                symbol,
-                orderId: data.orderId,
-                recvWindow: 60000
-            })
-
-            if(check.status === "FILLED"){
-
-                data = check
-
-                console.log(`✅ FILLED ${symbol}`)
-
-                break
-            }
-
-            // cancel nếu quá lâu
-            if(
-                check.status === "CANCELED" ||
-                check.status === "REJECTED" ||
-                check.status === "EXPIRED"
-            ){
-                console.log(`❌ ORDER DEAD ${symbol}`)
-                return null
-            }
+            openOrders =
+                await binance.futuresOpenOrders({
+                    symbol,
+                    recvWindow: 20000
+                })
 
         }catch(e){
+
             await checkTimeError(e)
-            console.log(`❌ CHECK ORDER ${symbol}:`, e.message)
+
+            console.log(
+                `❌ CHECK OPEN ORDERS ${symbol}:`,
+                e.message
+            )
+
+            return null
         }
-    }
-}
 
-// ===== FINAL VERIFY =====
-if(data.status !== "FILLED"){
-    
+        const pendingMarket =
+            openOrders.find(o =>
+                o.type === "MARKET" &&
+                (
+                    o.status === "NEW" ||
+                    o.status === "PARTIALLY_FILLED"
+                )
+            )
 
-    console.log(`❌ NOT FILLED FINAL ${symbol}`)
+        if(pendingMarket){
 
-    return null
-}
+            console.log(
+                `⛔ MARKET ORDER EXISTS ${symbol}`
+            )
 
-        return data
+            return {
+                skipped: true,
+                reason: "MARKET_ORDER_EXISTS"
+            }
+        }
+
+        // =========================================
+        // SYMBOL INFO
+        // =========================================
+
+        const info =
+            await getSymbolInfo(symbol)
+
+        if(!info || !info.filters){
+
+            console.log(
+                `❌ SYMBOL INFO FAIL ${symbol}`
+            )
+
+            return null
+        }
+
+        const lotFilter =
+            info.filters.find(
+                f => f.filterType === "LOT_SIZE"
+            )
+
+        const stepSize =
+            parseFloat(
+                lotFilter?.stepSize || "0.001"
+            )
+
+        qty =
+            normalizeQtyFinal(
+                qty,
+                stepSize
+            )
+
+        if(
+            !qty ||
+            qty <= 0 ||
+            !Number.isFinite(qty)
+        ){
+
+            console.log(
+                `❌ INVALID FINAL QTY ${symbol}`
+            )
+
+            return null
+        }
+
+        // =========================================
+        // SEND MARKET
+        // =========================================
+
+        const baseUrl =
+            "https://fapi.binance.com"
+
+        const path =
+            "/fapi/v1/order"
+
+        const timestamp =
+            getTimestamp()
+
+        const query =
+            `symbol=${symbol}` +
+            `&side=${side === "LONG" ? "BUY" : "SELL"}` +
+            `&type=MARKET` +
+            `&quantity=${qty}` +
+            `&timestamp=${timestamp}` +
+            `&recvWindow=10000`
+
+        const signature =
+            crypto
+                .createHmac(
+                    "sha256",
+                    process.env.BINANCE_SECRET
+                )
+                .update(query)
+                .digest("hex")
+
+        const url =
+            `${baseUrl}${path}?${query}&signature=${signature}`
+
+        const res =
+            await safeFetch(
+                url,
+                {
+                    method: "POST",
+                    headers: {
+                        "X-MBX-APIKEY":
+                            process.env.BINANCE_KEY
+                    }
+                }
+            )
+
+        if(!res || !res.ok){
+
+            console.log(
+                `❌ ORDER HTTP FAIL ${symbol}`,
+                res?.status
+            )
+
+            return null
+        }
+
+        let data =
+            await res.json()
+
+        if(
+            data.code === -1021 ||
+            String(data.msg || "")
+                .includes("Timestamp")
+        ){
+
+            console.log(
+                `🕒 BINANCE RESYNC ${symbol}`
+            )
+
+            await syncTime()
+
+            return null
+        }
+
+        if(data.code){
+
+            console.log(
+                `❌ BINANCE REJECT ${symbol}:`,
+                data
+            )
+
+            return null
+        }
+
+        // =========================================
+        // MARKET FILLED / VERIFY POSITION
+        // =========================================
+
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
+
+        const verifyPos =
+            await waitPosition(symbol)
+
+        if(verifyPos){
+
+            console.log(
+                `✅ POSITION EXISTS ${symbol}`
+            )
+
+            data.status =
+                "FILLED"
+
+            console.log(
+                `✅ FILLED ${symbol}`
+            )
+
+            return data
+        }
+
+        // =========================================
+        // FINAL ORDER STATUS
+        // =========================================
+
+        for(let i = 0; i < 10; i++){
+
+            await new Promise(r =>
+                setTimeout(r, 800)
+            )
+
+            try{
+
+                const check =
+                    await binance.futuresGetOrder({
+                        symbol,
+                        orderId: data.orderId,
+                        recvWindow: 60000
+                    })
+
+                if(check.status === "FILLED"){
+
+                    data = check
+
+                    POS_CACHE = null
+                    POS_CACHE_TIME = 0
+
+                    const finalPos =
+                        await waitPosition(symbol)
+
+                    if(finalPos){
+
+                        console.log(
+                            `✅ FILLED ${symbol}`
+                        )
+
+                        return data
+                    }
+
+                    continue
+                }
+
+                if(
+                    check.status === "CANCELED" ||
+                    check.status === "REJECTED" ||
+                    check.status === "EXPIRED"
+                ){
+
+                    console.log(
+                        `❌ ORDER DEAD ${symbol}`
+                    )
+
+                    return null
+                }
+
+            }catch(e){
+
+                await checkTimeError(e)
+
+                console.log(
+                    `❌ CHECK ORDER ${symbol}:`,
+                    e.message
+                )
+            }
+        }
+
+        console.log(
+            `❌ NOT FILLED FINAL ${symbol}`
+        )
+
+        return null
 
     }catch(e){
+
         await checkTimeError(e)
-        console.log("❌ OPEN ORDER FAIL:", e.message)
+
+        console.log(
+            `❌ OPEN ORDER FAIL ${symbol}:`,
+            e.message
+        )
+
         return null
+
+    }finally{
+
+        delete OPEN_POSITION_LOCK[symbol]
     }
 }
 async function setDynamicTPSL(trade){
@@ -1380,12 +1542,9 @@ async function setInitialTPSL(trade){
         return false
     }
 }
-async function openPositionWithTPSL(
-    trade,
-    qty
-){
+async function openPositionWithTPSL(trade, qty){
 
-    let order =
+    const order =
         await openPosition(
             trade.symbol,
             trade.side,
@@ -1393,8 +1552,60 @@ async function openPositionWithTPSL(
         )
 
     if(!order){
+
+        console.log(
+            `❌ ENTRY FAIL ${trade.symbol}`
+        )
+
         return false
     }
+
+    // =========================================
+    // POSITION ALREADY EXISTS
+    // =========================================
+
+    if(order.skipped){
+
+        if(
+            order.reason ===
+            "POSITION_EXISTS"
+        ){
+
+            console.log(
+                `⛔ ENTRY SKIPPED ${trade.symbol}: ` +
+                `POSITION ALREADY OPEN`
+            )
+
+            return {
+                ok: false,
+                skipped: true,
+                reason: "POSITION_EXISTS"
+            }
+        }
+
+        if(
+            order.reason ===
+            "MARKET_ORDER_EXISTS"
+        ){
+
+            console.log(
+                `⛔ ENTRY SKIPPED ${trade.symbol}: ` +
+                `MARKET ORDER EXISTS`
+            )
+
+            return {
+                ok: false,
+                skipped: true,
+                reason: "MARKET_ORDER_EXISTS"
+            }
+        }
+
+        return false
+    }
+
+    // =========================================
+    // WAIT REAL POSITION
+    // =========================================
 
     let pos =
         await waitPosition(
@@ -1403,13 +1614,15 @@ async function openPositionWithTPSL(
 
     if(!pos){
 
-        let verifyPos =
+        const verifyPos =
             await hasPosition(
                 trade.symbol
             )
 
         if(verifyPos){
+
             pos = verifyPos
+
         }else{
 
             console.log(
@@ -1420,6 +1633,7 @@ async function openPositionWithTPSL(
         }
     }
 
+    // phần còn lại giữ nguyên...
     // =========================================
     // REAL ENTRY
     // =========================================
@@ -1737,7 +1951,7 @@ async function updateTradeTPSLData(trade){
 // =====================================================
 // DYNAMIC TPSL MANAGER
 // =====================================================
-
+const TPSL_CLOSING = {}
 async function manageDynamicTPSL(trade){
 
 
@@ -1757,6 +1971,9 @@ try{
     ){
         return
     }
+    if(TPSL_CLOSING[trade.symbol]){
+    return
+}
     if(
     TPSL_PHASE[trade.symbol] !== "ACTIVE"
 ){
@@ -2634,12 +2851,41 @@ if(!result?.ok){
         `🚨 DYNAMIC TPSL UPDATE FAIL ${trade.symbol} -> CLOSE`
     )
 
-    const realQty =
-        Math.abs(
-            Number(pos.positionAmt)
+    // =============================================
+    // CLOSE LOCK
+    // =============================================
+
+    if(TPSL_CLOSING[trade.symbol]){
+
+        console.log(
+            `⛔ CLOSE ALREADY RUNNING ${trade.symbol}`
         )
 
-    if(realQty > 0){
+        return
+    }
+
+    TPSL_CLOSING[trade.symbol] = true
+
+    try{
+
+        const realQty =
+            Math.abs(
+                Number(pos.positionAmt)
+            )
+
+        if(realQty <= 0){
+
+            console.log(
+                `⚠️ NO POSITION TO CLOSE ${trade.symbol}`
+            )
+
+            return
+        }
+
+        console.log(
+            `🚨 EMERGENCY CLOSE ${trade.symbol} ` +
+            `QTY=${realQty}`
+        )
 
         const closed =
             await closePosition(
@@ -2655,9 +2901,30 @@ if(!result?.ok){
             )
 
             await sendTelegram2(
-                `🚨 CRITICAL TPSL UPDATE FAIL\n${trade.symbol}\nPOSITION STILL OPEN`
+                `🚨 CRITICAL TPSL UPDATE FAIL\n` +
+                `${trade.symbol}\n` +
+                `POSITION STILL OPEN`
+            )
+
+        }else{
+
+            console.log(
+                `✅ EMERGENCY CLOSE SUCCESS ${trade.symbol}`
             )
         }
+
+    }catch(e){
+
+        await checkTimeError(e)
+
+        console.log(
+            `🚨 EMERGENCY CLOSE ERROR ${trade.symbol}:`,
+            e.message
+        )
+
+    }finally{
+
+        delete TPSL_CLOSING[trade.symbol]
     }
 
     return
