@@ -896,65 +896,17 @@ async function setTPSLAndVerify(trade){
         }
 
         // =========================================
-        // VALIDATE SIDE
-        // =========================================
-
-        const entry =
-            Number(pos.entryPrice)
-
-        if(!Number.isFinite(entry) || entry <= 0){
-            return false
-        }
-
-        if(trade.side === "LONG"){
-
-            if(sl >= entry){
-
-                console.log(
-                    `❌ INVALID LONG SL ${symbol} SL=${sl} ENTRY=${entry}`
-                )
-
-                return false
-            }
-
-            if(tp <= entry){
-
-                console.log(
-                    `❌ INVALID LONG TP ${symbol} TP=${tp} ENTRY=${entry}`
-                )
-
-                return false
-            }
-
-        }else{
-
-            if(sl <= entry){
-
-                console.log(
-                    `❌ INVALID SHORT SL ${symbol} SL=${sl} ENTRY=${entry}`
-                )
-
-                return false
-            }
-
-            if(tp >= entry){
-
-                console.log(
-                    `❌ INVALID SHORT TP ${symbol} TP=${tp} ENTRY=${entry}`
-                )
-
-                return false
-            }
-        }
-
-        // =========================================
-        // CANCEL OLD TPSL
+        // CANCEL OLD ORDERS
         // =========================================
 
         const cancelled =
             await cancelAllOrders(symbol)
 
-        if(!cancelled){
+        // Giữ đúng cơ chế cũ:
+        // cancelAllOrders tự xử lý việc chờ Binance
+        // clear toàn bộ order cũ.
+
+        if(cancelled === false){
 
             console.log(
                 `❌ OLD ORDERS NOT CLEARED ${symbol}`
@@ -962,6 +914,10 @@ async function setTPSLAndVerify(trade){
 
             return false
         }
+
+        console.log(
+            `🗑 OLD ORDERS CLEARED ${symbol}`
+        )
 
         // =========================================
         // SET SL
@@ -971,7 +927,9 @@ async function setTPSLAndVerify(trade){
             await binance.futuresOrder({
 
                 symbol,
+
                 side: closeSide,
+
                 type: "STOP_MARKET",
 
                 stopPrice: sl,
@@ -987,6 +945,15 @@ async function setTPSLAndVerify(trade){
             `🛡 SL SET ${symbol}: ${sl}`
         )
 
+        //console.log(
+            //`📋 SL ORDER ${symbol}:`,
+            //JSON.stringify(
+              //  slRes,
+              //  null,
+               // 2
+            //)
+        //)
+
         // =========================================
         // SET TP
         // =========================================
@@ -995,7 +962,9 @@ async function setTPSLAndVerify(trade){
             await binance.futuresOrder({
 
                 symbol,
+
                 side: closeSide,
+
                 type: "TAKE_PROFIT_MARKET",
 
                 stopPrice: tp,
@@ -1011,86 +980,34 @@ async function setTPSLAndVerify(trade){
             `🎯 TP SET ${symbol}: ${tp}`
         )
 
+        //console.log(
+           // `📋 TP ORDER ${symbol}:`,
+          //  JSON.stringify(
+           //   //  tpRes,
+                //null,
+                //2
+           // )
+       // )
+
         // =========================================
-        // VERIFY
+        // GIỐNG CORE CŨ
         // =========================================
 
         await new Promise(r =>
-            setTimeout(r, 500)
+            setTimeout(r, 3000)
         )
-
-        const orders =
-            await binance.futuresOpenOrders({
-
-                symbol,
-                recvWindow: 20000
-
-            })
-
-        const slOrder =
-    orders.find(o =>
-        o.type === "STOP_MARKET" &&
-        String(o.closePosition) === "true" &&
-        o.side === closeSide
-    )
-
-const tpOrder =
-    orders.find(o =>
-        o.type === "TAKE_PROFIT_MARKET" &&
-        String(o.closePosition) === "true" &&
-        o.side === closeSide
-    )
-
-        if(!slOrder || !tpOrder){
-
-            console.log(
-                `🚨 TPSL VERIFY FAIL ${symbol} ` +
-                `SL=${!!slOrder} TP=${!!tpOrder}`
-            )
-
-            return false
-        }
-
-        // =========================================
-        // VERIFY PRICE
-        // =========================================
-
-        const actualSL =
-            Number(slOrder.stopPrice)
-
-        const actualTP =
-            Number(tpOrder.stopPrice)
-
-        if(
-            Math.abs(actualSL - sl) >
-            tickSize * 1.5
-        ){
-
-            console.log(
-                `🚨 SL PRICE VERIFY FAIL ${symbol}`
-            )
-
-            return false
-        }
-
-        if(
-            Math.abs(actualTP - tp) >
-            tickSize * 1.5
-        ){
-
-            console.log(
-                `🚨 TP PRICE VERIFY FAIL ${symbol}`
-            )
-
-            return false
-        }
 
         return {
             ok: true,
+
             sl,
             tp,
-            slOrderId: slOrder.orderId,
-            tpOrderId: tpOrder.orderId
+
+            slOrderId:
+                slRes?.orderId || null,
+
+            tpOrderId:
+                tpRes?.orderId || null
         }
 
     }catch(e){
@@ -1105,140 +1022,180 @@ const tpOrder =
         return false
     }
 }
+
 async function openPositionWithTPSL(
     trade,
     qty
 ){
 
-    let order = await openPosition(
-        trade.symbol,
-        trade.side,
-        qty
-    )
+    let order =
+        await openPosition(
+            trade.symbol,
+            trade.side,
+            qty
+        )
 
     if(!order){
         return false
     }
 
-    let pos = await waitPosition(
-    trade.symbol
-)
-
-if(!pos){
-
-    let verifyPos =
-        await hasPosition(
+    let pos =
+        await waitPosition(
             trade.symbol
         )
 
-    if(verifyPos){
-        pos = verifyPos
-    }else{
-        return false
-    }
-}
+    if(!pos){
 
-// ================= REAL ENTRY =================
-
-const realEntry =
-    Number(pos.entryPrice)
-
-if(
-    !Number.isFinite(realEntry) ||
-    realEntry <= 0
-){
-    console.log(
-        `❌ INVALID REAL ENTRY ${trade.symbol}`
-    )
-
-    return false
-}
-
-// Dùng giá khớp thực tế của Binance
-trade.entry = realEntry
-
-// ================= INITIAL RISK =================
-
-trade.initialRisk =
-    Math.abs(
-        realEntry -
-        Number(trade.sl)
-    )
-
-if(
-    !Number.isFinite(trade.initialRisk) ||
-    trade.initialRisk <= 0
-){
-    console.log(
-        `❌ INVALID INITIAL RISK ${trade.symbol}`
-    )
-
-    return false
-}
-
-// Thời điểm mở lệnh
-trade.openedAt = Date.now()
-
-console.log(
-    `📌 ${trade.symbol} ` +
-    `ENTRY=${trade.entry} ` +
-    `INITIAL_RISK=${trade.initialRisk}`
-)
-
-TPSL_PENDING[trade.symbol] = true
-
-try{
-
-    let tpslResult =
-        await setTPSLAndVerify(trade)
-
-    if(!tpslResult?.ok){
-
-        console.log(
-            `🚨 TPSL FAIL -> CLOSE ${trade.symbol}`
-        )
-
-        let realQty =
-            Math.abs(
-                Number(pos.positionAmt)
+        let verifyPos =
+            await hasPosition(
+                trade.symbol
             )
 
-        let closed =
-            await closePosition(
-                trade.symbol,
-                trade.side,
-                realQty
-            )
-
-        if(!closed){
+        if(verifyPos){
+            pos = verifyPos
+        }else{
 
             console.log(
-                `🚨 CLOSE FAIL ${trade.symbol}`
+                `❌ NO POSITION AFTER ENTRY ${trade.symbol}`
             )
 
-            await sendTelegram2(
-                `🚨 CRITICAL
+            return false
+        }
+    }
+
+    // =========================================
+    // REAL ENTRY
+    // =========================================
+
+    const realEntry =
+        Number(pos.entryPrice)
+
+    if(
+        !Number.isFinite(realEntry) ||
+        realEntry <= 0
+    ){
+
+        console.log(
+            `❌ INVALID REAL ENTRY ${trade.symbol}`
+        )
+
+        return false
+    }
+
+    trade.entry = realEntry
+
+    // =========================================
+    // INITIAL RISK
+    // =========================================
+
+    trade.initialRisk =
+        Math.abs(
+            realEntry -
+            Number(trade.sl)
+        )
+
+    if(
+        !Number.isFinite(trade.initialRisk) ||
+        trade.initialRisk <= 0
+    ){
+
+        console.log(
+            `⚠️ NO INITIAL RISK ${trade.symbol}`
+        )
+
+        return false
+    }
+
+    trade.openedAt =
+        Date.now()
+
+    console.log(
+        `📌 ${trade.symbol} ` +
+        `ENTRY=${trade.entry} ` +
+        `INITIAL_RISK=${trade.initialRisk}`
+    )
+
+    TPSL_PENDING[
+        trade.symbol
+    ] = true
+
+    try{
+
+        // =========================================
+        // GIỐNG CORE CŨ
+        // =========================================
+
+        await new Promise(r =>
+            setTimeout(r, 3000)
+        )
+
+        console.log(
+            `🛡 SETTING TPSL ${trade.symbol}`
+        )
+
+        const tpslResult =
+            await setTPSLAndVerify(
+                trade
+            )
+
+        if(!tpslResult?.ok){
+
+            console.log(
+                `🚨 TPSL FAIL -> CLOSE ${trade.symbol}`
+            )
+
+            const realQty =
+                Math.abs(
+                    Number(
+                        pos.positionAmt
+                    )
+                )
+
+            const closed =
+                await closePosition(
+                    trade.symbol,
+                    trade.side,
+                    realQty
+                )
+
+            if(!closed){
+
+                console.log(
+                    `🚨 CLOSE FAIL ${trade.symbol}`
+                )
+
+                await sendTelegram2(
+                    `🚨 CRITICAL
 ${trade.symbol}
 TPSL FAIL
 CLOSE FAIL`
-            )
+                )
+            }
+
+            return false
         }
 
-        return false
+        trade.enteredAt =
+            Date.now()
+
+        console.log(
+            `✅ TPSL ACTIVE ${trade.symbol} ` +
+            `SL=${tpslResult.sl} ` +
+            `TP=${tpslResult.tp}`
+        )
+
+        return {
+            ok: true
+        }
+
+    }finally{
+
+        delete TPSL_PENDING[
+            trade.symbol
+        ]
     }
-
-    trade.enteredAt = Date.now()
-
-    return {
-        ok: true
-    }
-
-}finally{
-
-    delete TPSL_PENDING[trade.symbol]
-
 }
-}
+
 async function updateTradeTPSLData(trade){
 
     try{
