@@ -1417,12 +1417,12 @@ async function coreLogic(data15, data1h, data5, data1m){
     const bull1h =
     ema20_1h > ema50_1h &&
     price1h > ema20_1h &&
-    slope1h > 0
+    slope1h > 0.0002
 
 const bear1h =
     ema20_1h < ema50_1h &&
     price1h < ema20_1h &&
-    slope1h < 0
+    slope1h < 0.0002
 
     // ================= 15M STRUCTURE =================
 
@@ -1450,12 +1450,12 @@ const bear1h =
     const bull15 =
     ema20_15 > ema50_15 &&
     price15 > ema20_15 &&
-    slope15 > 0
+    slope15 > 0.0002
 
 const bear15 =
     ema20_15 < ema50_15 &&
     price15 < ema20_15 &&
-    slope15 < 0
+    slope15 < 0.0002
 
     // Không bắt buộc 1H + 15M cùng hướng.
     // Chỉ tạo bias.
@@ -1469,8 +1469,8 @@ const bear15 =
     if(bull15) longBias += 3
     if(bear15) shortBias += 3
 
-    if(slope15 > 0) longBias += 1
-    if(slope15 < 0) shortBias += 1
+    if(slope15 > 0.0002) longBias += 1
+    if(slope15 < -0.0002) shortBias += 1
 
     // ================= 5M DATA =================
 
@@ -1681,8 +1681,8 @@ const retestShort =
     pullbackLong
 ) &&
 c0 > o0 &&
-br0 >= 0.40 &&
-closeLong(h0,l0,c0) >= 0.58
+br0 >= 0.35 &&
+closeLong(h0,l0,c0) >= 0.55
 
 const confirmShort =
 (
@@ -1693,8 +1693,8 @@ const confirmShort =
     pullbackShort
 ) &&
 c0 < o0 &&
-br0 >= 0.40 &&
-closeShort(h0,l0,c0) >= 0.58
+br0 >= 0.35 &&
+closeShort(h0,l0,c0) >= 0.55
 
     // ================= SETUP SELECTION =================
 
@@ -1902,7 +1902,7 @@ if(Math.abs(move5) > 0.025){
 }
 
     // Score thấp chỉ bỏ setup thực sự yếu.
-    if(score < 65){
+    if(score < 60){
         return null
     }
     
@@ -1968,7 +1968,7 @@ if(side === "SHORT" && closeShort(h0,l0,c0) >= 0.65){
     quality += 1
 }
 
-if(quality < 3){
+if(quality < 2){
     return null
 }
 
@@ -2030,7 +2030,7 @@ if(quality < 3){
         risk = entry-sl
 
         // Không cho SL quá rộng đối với scalp
-        if(risk > atr5*1.10){
+        if(risk > atr5*1.25){
             return null
         }
 
@@ -2059,7 +2059,7 @@ if(quality < 3){
 
         risk = sl-entry
 
-        if(risk > atr5*1.10){
+        if(risk > atr5*1.25){
             return null
         }
 
