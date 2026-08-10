@@ -1463,11 +1463,11 @@ const bear15 =
     let longBias = 0
     let shortBias = 0
 
-    if(bull1h) longBias += 2
-    if(bear1h) shortBias += 2
+    if(bull1h) longBias += 3
+    if(bear1h) shortBias += 3
 
-    if(bull15) longBias += 2
-    if(bear15) shortBias += 2
+    if(bull15) longBias += 3
+    if(bear15) shortBias += 3
 
     if(slope15 > 0) longBias += 1
     if(slope15 < 0) shortBias += 1
@@ -1729,24 +1729,38 @@ const confirmShort =
 
     // ================= SIDE =================
 
-    let side = null
-    let setup = null
+    // ================= SIDE =================
 
-    if(longSetup && !shortSetup){
+let side = null
+let setup = null
+
+// Ưu tiên hướng có context lớn hơn.
+// 1M/5M chỉ dùng để xác nhận entry,
+// không được tự ý đảo hướng 15M/1H.
+
+if(longSetup && !shortSetup){
+
+    if(longBias >= 2){
         side = "LONG"
         setup = longSetup
     }
-    else if(shortSetup && !longSetup){
+
+}
+else if(shortSetup && !longSetup){
+
+    if(shortBias >= 2){
         side = "SHORT"
         setup = shortSetup
     }
-    else if(longSetup && shortSetup){
 
-    if(longBias > shortBias){
+}
+else if(longSetup && shortSetup){
+
+    if(longBias > shortBias && longBias >= 2){
         side = "LONG"
         setup = longSetup
     }
-    else if(shortBias > longBias){
+    else if(shortBias > longBias && shortBias >= 2){
         side = "SHORT"
         setup = shortSetup
     }
@@ -1755,9 +1769,28 @@ const confirmShort =
     }
 }
 
-    if(!side){
-        return null
-    }
+if(!side){
+    return null
+}
+// ================= HARD DIRECTION FILTER =================
+
+// Không LONG khi cả 1H + 15M đều bearish
+if(
+    side === "LONG" &&
+    bear1h &&
+    bear15
+){
+    return null
+}
+
+// Không SHORT khi cả 1H + 15M đều bullish
+if(
+    side === "SHORT" &&
+    bull1h &&
+    bull15
+){
+    return null
+}
     // ================= ANTI COUNTER-MOVE =================
 
 if(
