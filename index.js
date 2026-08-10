@@ -2663,71 +2663,74 @@ let now = Date.now()
         }
 
         // ===== SCAN =====
-        let results = []
+let results = []
 
-for(let i=0;i<symbols.length;i+=10){
+for(let i=0; i<symbols.length; i+=10){
 
     let chunk = symbols.slice(i,i+10)
 
-    let r = []
+    let r = await Promise.all(
+        chunk.map(async s => {
 
-let r = await Promise.all(
-    chunk.map(async s => {
+            try{
 
-        try{
-
-            let result =
-                await Promise.race([
-                    scan(s),
-                    new Promise(resolve =>
-                        setTimeout(
-                            () => resolve(null),
-                            20000
+                let result =
+                    await Promise.race([
+                        scan(s),
+                        new Promise(resolve =>
+                            setTimeout(
+                                () => resolve(null),
+                                20000
+                            )
                         )
-                    )
-                ])
+                    ])
 
-            if(result){
+                if(result){
+                    return {
+                        status:"fulfilled",
+                        value:result
+                    }
+                }
+
                 return {
-                    status:"fulfilled",
-                    value:result
+                    status:"rejected",
+                    value:null
+                }
+
+            }catch(e){
+
+                console.log(
+                    "SCAN ERROR:",
+                    s,
+                    e.message
+                )
+
+                return {
+                    status:"rejected",
+                    value:null
                 }
             }
-
-            return {
-                status:"rejected",
-                value:null
-            }
-
-        }catch(e){
-
-            console.log(
-                "SCAN ERROR:",
-                s,
-                e.message
-            )
-
-            return {
-                status:"rejected",
-                value:null
-            }
-        }
-    })
-)
+        })
+    )
 
     results.push(...r)
 
-    await new Promise(r=>setTimeout(r,300))
+    await new Promise(r =>
+        setTimeout(r,300)
+    )
 }
 
-        let signals = results
-            .filter(r => r.status === "fulfilled" && r.value)
-            .map(r => r.value)
+let signals = results
+    .filter(r =>
+        r.status === "fulfilled" &&
+        r.value
+    )
+    .map(r => r.value)
 
-        if(!signals || signals.length === 0){
-            console.log("❌ No signal")
-            return
-        }
+if(!signals || signals.length === 0){
+    console.log("❌ No signal")
+    return
+}
 
         // ===== BUILD CANDIDATES + AI =====
 let candidates = []
