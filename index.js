@@ -3561,6 +3561,7 @@ try{
 }
 }
 ///////////////////
+const CLOSED_RESULT_FAILS = global.CLOSED_RESULT_FAILS ||= {}
 async function checkTrades(){
 
     if(checkingTrades) return
@@ -3783,46 +3784,90 @@ if(!stillOpen){
 
     const closed = await getClosedTradeResult(t)
 
-if (!closed) {
-    console.log(`⏳ WAIT TP/SL FILL: ${t.symbol}`)
-    continue
-}
+    // ===== ĐÃ TÌM THẤY RESULT =====
+    if(closed){
 
-const isWin = closed.pnl > 0
+        delete CLOSED_RESULT_FAILS[t.symbol]
 
-await trades.updateOne(
-    { _id: t._id },
-    {
-        $set: {
-            result: isWin ? "WIN" : "LOSS",
-            pnl: closed.pnl,
-            exitOrderId: closed.exitOrderId,
-            closedAt: closed.closedAt
+        const isWin = closed.pnl > 0
+
+        await trades.updateOne(
+            { _id:t._id },
+            {
+                $set:{
+                    result:isWin ? "WIN" : "LOSS",
+                    pnl:closed.pnl,
+                    exitOrderId:closed.exitOrderId,
+                    closedAt:closed.closedAt
+                }
+            }
+        )
+
+        const latestBalance = await updateBalance()
+
+        if(latestBalance > 0){
+            ACCOUNT_BALANCE = latestBalance
         }
-    }
-)
 
-const latestBalance = await updateBalance()
-
-if (latestBalance > 0) {
-    ACCOUNT_BALANCE = latestBalance
-}
-
-const tele2Ok = await sendTelegram2(
-`📊 ${t.symbol} (${t.setup})
+        const tele2Ok = await sendTelegram2(
+            `📊 ${t.symbol} (${t.setup})
 ${t.side} | ₿ : ${t.btcRegime}
 ${isWin ? "✅ WIN" : "❌ LOSS"}
 PnL: ${closed.pnl.toFixed(4)}
 💰: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
-)
+        )
 
-if (!tele2Ok) {
-    console.log(`❌ TELEGRAM 2 REPORT FAIL: ${t.symbol}`)
-}
+        if(!tele2Ok){
+            console.log(
+                `❌ TELEGRAM 2 REPORT FAIL: ${t.symbol}`
+            )
+        }
 
-delete DATA_FAILS[t.symbol]
-activeTrades.splice(i, 1)
-continue
+        delete DATA_FAILS[t.symbol]
+        activeTrades.splice(i,1)
+
+        continue
+    }
+
+    // ===== KHÔNG CÓ RESULT =====
+
+    CLOSED_RESULT_FAILS[t.symbol] =
+        (CLOSED_RESULT_FAILS[t.symbol] || 0) + 1
+
+    console.log(
+        `⏳ CLOSED RESULT NOT FOUND ${t.symbol} ` +
+        `${CLOSED_RESULT_FAILS[t.symbol]}/3`
+    )
+
+    // Cho Binance/API thêm thời gian
+    if(CLOSED_RESULT_FAILS[t.symbol] < 3){
+        continue
+    }
+
+    // ===== ORPHAN =====
+
+    console.log(
+        `🧹 CLEAR ORPHAN TRADE ${t.symbol}`
+    )
+
+    await trades.updateOne(
+        { _id:t._id },
+        {
+            $set:{
+                result:"CLOSED_UNRESOLVED",
+                closedAt:Date.now(),
+                debugReason:
+                    "NO_POSITION_AFTER_VERIFY_AND_NO_CLOSED_RESULT"
+            }
+        }
+    )
+
+    delete CLOSED_RESULT_FAILS[t.symbol]
+    delete DATA_FAILS[t.symbol]
+
+    activeTrades.splice(i,1)
+
+    continue
 }
             }catch(e){
                 console.log(`❌ checkTrades ${t.symbol}:`, e.message)
