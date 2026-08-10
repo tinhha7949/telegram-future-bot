@@ -1,4 +1,6 @@
-let WATCHDOG_LAST_RUN = 0
+let DB_READY = false
+let DB_RECONNECTING = false
+let DB_LAST_ERROR = 0
 let TIME_SYNCED = false
 const TPSL_PENDING = {}
 let SYNCING_TIME = false
@@ -39,7 +41,60 @@ const agent = new https.Agent({
 })
 let POS_CACHE = null
 let POS_CACHE_TIME = 0
+async function ensureDB(){
 
+    if(DB_READY){
+        try{
+            await db.command({ ping: 1 })
+            return true
+        }catch(e){
+            DB_READY = false
+            console.log("⚠️ MongoDB ping failed")
+        }
+    }
+
+    if(DB_RECONNECTING){
+        return false
+    }
+
+    DB_RECONNECTING = true
+
+    try{
+
+        console.log("🔄 MongoDB reconnect...")
+
+        await client.connect()
+
+        db = client.db("trading")
+        trades = db.collection("trades")
+
+        await db.command({
+            ping: 1
+        })
+
+        DB_READY = true
+
+        console.log("🟢 MongoDB READY")
+
+        return true
+
+    }catch(e){
+
+        DB_READY = false
+
+        console.log(
+            "🔴 MongoDB reconnect FAIL:",
+            e?.message || e
+        )
+
+        return false
+
+    }finally{
+
+        DB_RECONNECTING = false
+
+    }
+}
 async function getPositionsCached(){
 
     let now = Date.now()
@@ -258,7 +313,15 @@ function getTimestamp(){
 //////////////
 require("dotenv").config()
 const { MongoClient } = require("mongodb")
-const client = new MongoClient(process.env.MONGO_URI)
+const client = new MongoClient(process.env.MONGO_URI, {
+    connectTimeoutMS: 10000,
+    serverSelectionTimeoutMS: 10000,
+    socketTimeoutMS: 30000,
+    maxPoolSize: 20,
+    minPoolSize: 1,
+    retryWrites: true,
+    retryReads: true
+})
 const Binance = require('binance-api-node').default
 
 const binance = Binance({
@@ -313,7 +376,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
 
-const RR_THRESHOLD = 1.15 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.20 // 1.3 hoặc 1.4 nếu muốn 
 
 const RISK_PER_TRADE = 0.1  // 0.1 = 10% // 0.01 = 1% 
 const POSITION_SIZE_PERCENT = 0.15 // 0.05 5% vốn // 0.1 =10%
@@ -1352,14 +1415,14 @@ async function coreLogic(data15, data1h, data5, data1m){
             : 0
 
     const bull1h =
-        ema20_1h > ema50_1h &&
-        price1h > ema20_1h &&
-        slope1h > -0.0002
+    ema20_1h > ema50_1h &&
+    price1h > ema20_1h &&
+    slope1h > 0
 
-    const bear1h =
-        ema20_1h < ema50_1h &&
-        price1h < ema20_1h &&
-        slope1h < 0.0002
+const bear1h =
+    ema20_1h < ema50_1h &&
+    price1h < ema20_1h &&
+    slope1h < 0
 
     // ================= 15M STRUCTURE =================
 
@@ -1385,12 +1448,14 @@ async function coreLogic(data15, data1h, data5, data1m){
             : 0
 
     const bull15 =
-        ema20_15 > ema50_15 &&
-        price15 > ema50_15
+    ema20_15 > ema50_15 &&
+    price15 > ema20_15 &&
+    slope15 > 0
 
-    const bear15 =
-        ema20_15 < ema50_15 &&
-        price15 < ema50_15
+const bear15 =
+    ema20_15 < ema50_15 &&
+    price15 < ema20_15 &&
+    slope15 < 0
 
     // Không bắt buộc 1H + 15M cùng hướng.
     // Chỉ tạo bias.
@@ -1550,20 +1615,16 @@ async function coreLogic(data15, data1h, data5, data1m){
     // ================= PULLBACK =================
 
     const pullbackLong =
-        (
-            p5 > ema20_5 ||
-            p5 > ema50_5
-        ) &&
-        l5.at(-2) <= ema20_5*1.008 &&
-        c0 > cPrev
+    p5 > ema20_5 &&
+    ema20_5 > ema50_5 &&
+    l5.at(-2) <= ema20_5*1.006 &&
+    c0 > cPrev
 
-    const pullbackShort =
-        (
-            p5 < ema20_5 ||
-            p5 < ema50_5
-        ) &&
-        h5.at(-2) >= ema20_5*0.992 &&
-        c0 < cPrev
+const pullbackShort =
+    p5 < ema20_5 &&
+    ema20_5 < ema50_5 &&
+    h5.at(-2) >= ema20_5*0.994 &&
+    c0 < cPrev
 
     // ================= BREAKOUT / RETEST =================
 
@@ -1612,26 +1673,26 @@ const retestShort =
     // ================= 1M CONFIRMATION =================
 
     const confirmLong =
-        (
-            microBreakLong ||
-            sweepLow ||
-            reclaimEmaLong ||
-            retestLong
-        ) &&
-        c0 > o0 &&
-        br0 >= 0.35 &&
-        closeLong(h0,l0,c0) >= 0.55
+    (
+        microBreakLong ||
+        sweepLow ||
+        reclaimEmaLong ||
+        retestLong
+    ) &&
+    c0 > o0 &&
+    br0 >= 0.40 &&
+    closeLong(h0,l0,c0) >= 0.58
 
-    const confirmShort =
-        (
-            microBreakShort ||
-            sweepHigh ||
-            reclaimEmaShort ||
-            retestShort
-        ) &&
-        c0 < o0 &&
-        br0 >= 0.35 &&
-        closeShort(h0,l0,c0) >= 0.55
+const confirmShort =
+    (
+        microBreakShort ||
+        sweepHigh ||
+        reclaimEmaShort ||
+        retestShort
+    ) &&
+    c0 < o0 &&
+    br0 >= 0.40 &&
+    closeShort(h0,l0,c0) >= 0.58
 
     // ================= SETUP SELECTION =================
 
@@ -1681,21 +1742,37 @@ const retestShort =
     }
     else if(longSetup && shortSetup){
 
-        // Nếu cả hai xuất hiện cùng lúc,
-        // chọn bên có bias mạnh hơn.
-
-        if(longBias >= shortBias){
-            side = "LONG"
-            setup = longSetup
-        }else{
-            side = "SHORT"
-            setup = shortSetup
-        }
+    if(longBias > shortBias){
+        side = "LONG"
+        setup = longSetup
     }
+    else if(shortBias > longBias){
+        side = "SHORT"
+        setup = shortSetup
+    }
+    else{
+        return null
+    }
+}
 
     if(!side){
         return null
     }
+    // ================= ANTI COUNTER-MOVE =================
+
+if(
+    side === "LONG" &&
+    move1 < -0.004
+){
+    return null
+}
+
+if(
+    side === "SHORT" &&
+    move1 > 0.004
+){
+    return null
+}
 
     // ================= SCORE =================
 
@@ -1714,20 +1791,20 @@ const retestShort =
 
     // Setup quality
     if(setup === "SWEEP_RECLAIM"){
-        score += 15
-    }
+    score += 18
+}
 
-    if(setup === "BREAKOUT_RETEST"){
-        score += 13
-    }
+if(setup === "BREAKOUT_RETEST"){
+    score += 15
+}
 
-    if(setup === "PULLBACK_RECLAIM"){
-        score += 11
-    }
+if(setup === "PULLBACK_RECLAIM"){
+    score += 7
+}
 
-    if(setup === "MOMENTUM_CONTINUATION"){
-        score += 8
-    }
+if(setup === "MOMENTUM_CONTINUATION"){
+    score += 9
+}
 
     // Entry quality
     if(side === "LONG" && microBreakLong){
@@ -1757,24 +1834,106 @@ const retestShort =
     else if(vol1Ratio >= 1.15 || vol5Ratio >= 1.15){
         score += 3
     }
+    if(
+    vol1Ratio < 0.55 &&
+    vol5Ratio < 0.65
+){
+    score -= 5
+}
 
     // RSI context
     if(side === "LONG"){
-        if(rsi5 >= 50 && rsi5 <= 68){
-            score += 4
-        }
-    }else{
-        if(rsi5 <= 50 && rsi5 >= 32){
-            score += 4
-        }
+
+    if(rsi5 >= 48 && rsi5 <= 68){
+        score += 4
     }
 
+    if(rsi5 > 72){
+        score -= 5
+    }
+
+}else{
+
+    if(rsi5 <= 52 && rsi5 >= 32){
+        score += 4
+    }
+
+    if(rsi5 < 28){
+        score -= 5
+    }
+}
+
     // Score thấp chỉ bỏ setup thực sự yếu.
-    if(score < 58){
+    if(score < 65){
         return null
     }
     if(Math.abs(move5) > 0.025){
     score -= 5
+}
+if(
+    side === "LONG" &&
+    move5 > 0.018 &&
+    !sweepLow &&
+    !retestLong
+){
+    return null
+}
+
+if(
+    side === "SHORT" &&
+    move5 < -0.018 &&
+    !sweepHigh &&
+    !retestShort
+){
+    return null
+}
+// ================= QUALITY =================
+
+let quality = 0
+
+// Direction
+if(side === "LONG"){
+    if(bull15) quality += 2
+    if(bull1h) quality += 1
+    if(slope15 > 0) quality += 1
+}else{
+    if(bear15) quality += 2
+    if(bear1h) quality += 1
+    if(slope15 < 0) quality += 1
+}
+
+// Setup
+if(setup === "SWEEP_RECLAIM"){
+    quality += 2
+}
+
+if(setup === "BREAKOUT_RETEST"){
+    quality += 2
+}
+
+if(setup === "PULLBACK_RECLAIM"){
+    quality += 1
+}
+
+if(setup === "MOMENTUM_CONTINUATION"){
+    quality += 1
+}
+
+// Candle
+if(br0 >= 0.55){
+    quality += 1
+}
+
+if(side === "LONG" && closeLong(h0,l0,c0) >= 0.65){
+    quality += 1
+}
+
+if(side === "SHORT" && closeShort(h0,l0,c0) >= 0.65){
+    quality += 1
+}
+
+if(quality < 4){
+    return null
 }
 
     // ================= MARKET STATE =================
@@ -1835,7 +1994,7 @@ const retestShort =
         risk = entry-sl
 
         // Không cho SL quá rộng đối với scalp
-        if(risk > atr5*1.25){
+        if(risk > atr5*1.10){
             return null
         }
 
@@ -1864,7 +2023,7 @@ const retestShort =
 
         risk = sl-entry
 
-        if(risk > atr5*1.25){
+        if(risk > atr5*1.10){
             return null
         }
 
@@ -1939,7 +2098,7 @@ const retestShort =
             ? (tp-entry)/risk
             : (entry-tp)/risk
 
-    if(finalRR < 1.15){
+    if(finalRR < RR_THRESHOLD){
         return null
     }
 
@@ -2429,7 +2588,14 @@ async function scanner(){
 
     isScanning = true
 
-    try{
+     try{
+
+        // ===== DB HEALTH =====
+        if(!await ensureDB()){
+            console.log("⛔ SCAN STOP: MONGODB OFFLINE")
+            return
+        }
+
         console.log("🚀 SMART SCAN...")
 
 const btcRegime = await getBtcRegime()
@@ -2522,16 +2688,37 @@ for (let s of signals){
 
     let dbMain = dbCache[keyMain]
 
-    let weightMain =
-    Math.min(dbMain.total / 50, 1)
+if(!dbMain){
+    console.log(
+        `⛔ DB unavailable - skip ${s.symbol}`
+    )
+    continue
+}
 
-let aiMain =
-    dbMain.total >= 15
-        ? (dbMain.winrate - 0.5) * 80 * weightMain
-        : 0
+let aiMain = 0
+
+if(dbMain.total >= 30){
+
+    const edge =
+        dbMain.winrate - 0.50
+
+    const confidence =
+        Math.min(dbMain.total / 100, 1)
+
+    aiMain =
+        edge * 60 * confidence
+}
+
+if(
+    dbMain.total >= 30 &&
+    dbMain.winrate < 0.42
+){
+    continue
+}
 
 let finalMain =
-    aiMain + (s.score * 0.15)
+    (s.score * 0.45) +
+    aiMain
 
 if(finalMain >= -5){
     candidates.push({
@@ -2546,30 +2733,31 @@ if(finalMain >= -5){
 
 candidates = candidates.filter(c => {
 
-    // Cùng hướng BTC: ưu tiên
     if(btcRegime === "BULL"){
-        if(c.side === "LONG"){
-            c.finalScore += 5
-        }
 
-        if(c.side === "SHORT"){
-            c.finalScore -= 2
-        }
-
-        return true
+    if(c.side === "LONG"){
+        c.finalScore += 4
     }
 
-    if(btcRegime === "BEAR"){
-        if(c.side === "SHORT"){
-            c.finalScore += 5
-        }
-
-        if(c.side === "LONG"){
-            c.finalScore -= 2
-        }
-
-        return true
+    if(c.side === "SHORT"){
+        c.finalScore -= 1
     }
+
+    return true
+}
+
+if(btcRegime === "BEAR"){
+
+    if(c.side === "SHORT"){
+        c.finalScore += 4
+    }
+
+    if(c.side === "LONG"){
+        c.finalScore -= 1
+    }
+
+    return true
+}
 
     // BTC neutral: không can thiệp
     return true
@@ -3284,22 +3472,51 @@ let trade = {
         trade.finalRisk =
             finalRisk
 
-        const insertResult =
-            await trades.insertOne(trade)
+        // ===== SAVE TRADE TO DB =====
 
-        trade._id =
-            insertResult.insertedId
+let insertResult = null
 
-        let existsActive =
-            activeTrades.find(
-                x =>
-                    x.symbol === trade.symbol &&
-                    x.createdAt === trade.createdAt
-            )
+try{
 
-        if(!existsActive){
-            activeTrades.push(trade)
-        }
+    if(!await ensureDB()){
+        throw new Error(
+            "MONGODB OFFLINE AFTER ENTRY"
+        )
+    }
+
+    insertResult =
+        await trades.insertOne(trade)
+
+    trade._id =
+        insertResult.insertedId
+
+    console.log(
+        `💾 DB SAVED ${trade.symbol}`
+    )
+
+}catch(dbErr){
+
+    DB_READY = false
+
+    console.error(
+        `🚨 CRITICAL DB SAVE FAIL ${trade.symbol}:`,
+        dbErr?.message || dbErr
+    )
+
+    // Binance đã mở position nhưng DB chưa lưu.
+    // KHÔNG được coi như entry thất bại.
+
+    activeTrades.push({
+        ...trade,
+        dbSaveFailed: true
+    })
+
+    console.log(
+        `🚨 ${trade.symbol} ACTIVE IN RAM — DB SAVE FAILED`
+    )
+
+    continue
+}
 
         let msg =
             `🔥 BEST SIGNAL\n\n` +
@@ -3350,6 +3567,12 @@ async function checkTrades(){
     checkingTrades = true
 
     try{
+        if(!await ensureDB()){
+        console.log(
+            "⛔ CHECK TRADES SKIP: MONGODB OFFLINE"
+        )
+        return
+    }
 
         if(activeTrades.length === 0){
             return
@@ -3495,31 +3718,65 @@ ${t.side} | ₿ : ${t.btcRegime}`
 
     continue
 }
+// ===== VERIFY POSITION =====
+
 let stillOpen = null
+let verifyOK = false
 
 for(let retry = 0; retry < 5; retry++){
 
-    POS_CACHE = null
-    POS_CACHE_TIME = 0
+    try{
 
-    let positions = await getPositionsCached()
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
 
-    stillOpen = positions.find(p =>
-        p.symbol === t.symbol &&
-        Math.abs(parseFloat(p.positionAmt || "0")) > 0
-    )
+        let positions =
+            await getPositionsCached()
 
-    if(stillOpen){
-        break
+        if(!Array.isArray(positions)){
+            throw new Error("POSITION RESPONSE INVALID")
+        }
+
+        verifyOK = true
+
+        stillOpen = positions.find(p =>
+            p.symbol === t.symbol &&
+            Math.abs(
+                parseFloat(p.positionAmt || "0")
+            ) > 0
+        )
+
+        if(stillOpen){
+            break
+        }
+
+        console.log(
+            `⚠️ VERIFY POSITION ${t.symbol} ${retry + 1}/5`
+        )
+
+    }catch(e){
+
+        console.log(
+            `❌ VERIFY API FAIL ${t.symbol} ${retry + 1}/5:`,
+            e?.message || e
+        )
+
+        verifyOK = false
     }
-
-    console.log(
-        `⚠️ VERIFY POSITION ${t.symbol} ${retry + 1}/5`
-    )
 
     await new Promise(r =>
         setTimeout(r, 2000)
     )
+}
+
+// ===== API VERIFY FAILED =====
+if(!verifyOK){
+
+    console.log(
+        `⛔ VERIFY ABORT ${t.symbol} — API unavailable`
+    )
+
+    continue
 }
 
 if(!stillOpen){
@@ -3642,135 +3899,231 @@ async function closePosition(symbol, side, qty){
     }
 }
 //////////////
+
 async function start(){
     try{
-
+        // ==================================================
+        // 1. CHECK CONFIG
+        // ==================================================
         if(!process.env.MONGO_URI){
             throw new Error("❌ Thiếu MONGO_URI")
         }
-
-        await client.connect()
-        await syncTime()
-// ⛔ CHẶN CHO TỚI KHI SYNC OK
-while(!TIME_SYNCED){
-    console.log("⏳ Waiting time sync...")
-    await new Promise(r => setTimeout(r, 1000))
-}
-
-setInterval(syncTime, 60000)
-        await updateBalance()
-setInterval(updateBalance, 60000)
-        // 🔥 RESET UPDATE STATE TRÁNH 409
-await safeFetch(
-  `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=-1`
-)
-
-await safeFetch(
-  `https://api.telegram.org/bot${BOT_TOKEN_2}/getUpdates?offset=-1`
-)
-
-        let newBalance = await updateBalance()
-if(newBalance > 0){
-    ACCOUNT_BALANCE = newBalance
-}
-console.log("💰 BALANCE:", ACCOUNT_BALANCE)
-
+        console.log("🚀 START BOT...")
+        // ==================================================
+        // 2. CONNECT + VERIFY MONGODB
+        // ==================================================
+        let dbOK = false
         try{
-    await client.db("admin").command({ ping: 1 })
-    console.log("🟢 DB CONNECTED OK")
-}catch(e){
-    console.log("🔴 DB CONNECT FAIL:", e.message)
-}
-
-        db = client.db("trading")
-        trades = db.collection("trades")
-
-        console.log("✅ MongoDB connected")
-        
-        // 🔥 CLEAR DEAD LOCK
-await trades.updateMany(
-    { opening:true },
-    {
-        $unset:{ opening:"" }
-    }
-)
-
-console.log("✅ DEAD LOCK CLEARED")
-/////////////////
-        await trades.updateMany(
-    {
-        result: "PENDING",
-        createdAt: {
-            $lt: Date.now() - 24 * 60 * 60 * 1000
-        }
-    },
-    {
-        $set: {
-            result: "EXPIRED"
-        }
-    }
-)
-// Không tự clear lệnh đã đóng.
-// checkTrades() sẽ đọc tpOrderId/slOrderId để chốt đúng WIN hoặc LOSS.
-activeTrades = await trades.find({
-    result: "PENDING"
-}).toArray()
-
-console.log(`♻️ Load lại ${activeTrades.length} lệnh`)
-
-        // ================= LOOP =================
-        
-async function scanLoop(){
-    while(true){
-
-        if(scanning){
-            await new Promise(r => setTimeout(r, 5000))
-            continue
-        }
-
-        scanning = true
-
-        try{
-            await scanner()
-        } finally {
-            scanning = false
-        }
-
-        await new Promise(r => setTimeout(r, 120000))
-    }
-}
-let TELEGRAM_RUNNING = false
-async function commandLoop(){
-    if(TELEGRAM_RUNNING) return
-    TELEGRAM_RUNNING = true
-    while(true){
-        try{
-            await checkCommand()
-            await checkTrades()
+            console.log("🔌 Connecting MongoDB...")
+            await client.connect()
+            await client.db("admin").command({
+                ping: 1
+            })
+            db = client.db("trading")
+            trades = db.collection("trades")
+            // TEST DB THỰC SỰ ĐỌC ĐƯỢC
+            await trades.findOne(
+                {},
+                {
+                    projection: { _id: 1 }
+                }
+            )
+            dbOK = true
+            console.log("🟢 MongoDB CONNECTED + VERIFIED")
         }catch(e){
-            console.log(
-                "CMD LOOP:",
+            console.error(
+                "🔴 MongoDB CONNECTION FAILED:",
                 e.message
             )
+            dbOK = false
+        }
+        // ==================================================
+        // 3. KHÔNG CÓ DB -> KHÔNG CHẠY BOT
+        // ==================================================
+        if(!dbOK){
+            console.log(
+                "🛑 BOT STOPPED: MongoDB unavailable"
+            )
+            return
+        }
+        // =================================================
+        // 4. SYNC BINANCE TIME
+        // ==================================================
+        await syncTime()
+        while(!TIME_SYNCED){
+            console.log(
+                "⏳ Waiting time sync..."
+            )
             await new Promise(r =>
-                setTimeout(r, 5000)
+                setTimeout(r, 1000)
             )
         }
-        await new Promise(r =>
-            setTimeout(r, 2000)
+        setInterval(
+            syncTime,
+            60000
         )
-    }
-}
-       await loadValidFuturesSymbols()
-
+        // ==================================================
+        // 5. LOAD BALANCE
+        // ==================================================
+        let newBalance =
+            await updateBalance()
+        if(newBalance > 0){
+            ACCOUNT_BALANCE =
+                newBalance
+        }
+        console.log(
+            "💰 BALANCE:",
+            ACCOUNT_BALANCE
+        )
+        setInterval(
+            updateBalance,
+            60000
+        )
+        // ==================================================
+        // 6. RESET TELEGRAM UPDATE STATE
+        // ==================================================
+        await safeFetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=-1`
+        )
+        await safeFetch(
+            `https://api.telegram.org/bot${BOT_TOKEN_2}/getUpdates?offset=-1`
+        )
+        // ==================================================
+        // 7. CLEAR DEAD OPENING LOCK
+        // ==================================================
+        await trades.updateMany(
+            {
+                opening: true
+            },
+            {
+                $unset: {
+                    opening: ""
+                }
+            }
+        )
+        console.log(
+            "✅ DEAD LOCK CLEARED"
+        )
+        // ==================================================
+        // 8. EXPIRE PENDING QUÁ 24H
+        // ==================================================
+        await trades.updateMany(
+            {
+                result: "PENDING",
+                createdAt: {
+                    $lt:
+                        Date.now() -
+                        24 * 60 * 60 * 1000
+                }
+            },
+            {
+                $set: {
+                    result: "EXPIRED"
+                }
+            }
+        )
+        // ==================================================
+        // 9. LOAD PENDING TRADES TỪ DB
+        // ==================================================
+        activeTrades =
+            await trades.find({
+                result: "PENDING"
+            }).toArray()
+        console.log(
+            `♻️ Load lại ${activeTrades.length} lệnh`
+        )
+        // ==================================================
+        // 10. LOAD BINANCE SYMBOLS
+        // ==================================================
+        await loadValidFuturesSymbols()
+        console.log(
+            "🟢 FUTURES SYMBOLS READY"
+        )
+        // ==================================================
+        // 11. CHECK TRADE LOOP
+        // ==================================================
+        let TELEGRAM_RUNNING = false
+        async function commandLoop(){
+            if(TELEGRAM_RUNNING){
+                return
+            }
+            TELEGRAM_RUNNING = true
+            console.log(
+                "🟢 CHECK/COMMAND LOOP STARTED"
+            )
+            while(true){
+                try{
+                    // Telegram command
+                    await checkCommand()
+                    // TP / SL / position watchdog
+                    await checkTrades()
+                }catch(e){
+                    console.error(
+                        "❌ CMD LOOP:",
+                        e.message
+                    )
+                    await new Promise(r =>
+                        setTimeout(r, 5000)
+                    )
+                }
+                await new Promise(r =>
+                    setTimeout(r, 2000)
+                )
+            }
+        }
+        // ==================================================
+        // 12. SCANNER LOOP
+        // ==================================================
+        async function scanLoop(){
+            console.log(
+                "🟢 SCANNER LOOP STARTED"
+            )
+            while(true){
+                if(scanning){
+                    console.log(
+                        "⛔ Scanner already running"
+                    )
+                    await new Promise(r =>
+                        setTimeout(r, 5000)
+                    )
+                    continue
+                }
+                scanning = true
+                try{
+                    await scanner()
+                }catch(e){
+                    console.error(
+                        "❌ SCANNER LOOP:",
+                        e.message
+                    )
+                }finally{
+                    scanning = false
+                }
+                // scan mỗi 2 phút
+                await new Promise(r =>
+                    setTimeout(r, 120000)
+                )
+            }
+        }
+        // ==================================================
+        // 13. START CHECK LOOP TRƯỚC
+        // ==================================================
         commandLoop()
-       await scanLoop()
-
+        // ==================================================
+        // 14. SAU ĐÓ MỚI START SCANNER
+        // ==================================================
+        await scanLoop()
     }catch(e){
-        console.log("❌ Start error:", e.message)
+
+        console.error(
+            "❌ START ERROR:",
+            e.message
+        )
+        // Quan trọng:
+        // Không chạy scanner nếu start thất bại.
+        return
     }
 }
-
 async function getDBStats(setup, market, side, volatility){
 
     if(!trades){
@@ -3871,23 +4224,50 @@ async function getDBStats(setup, market, side, volatility){
         }
 
     }catch(e){
-        console.log("❌ DB ERROR:", e.message)
-        return { winrate: 0.5, total: 0 }
-    }
+
+    DB_READY = false
+
+    console.log(
+        "❌ DB ERROR:",
+        e?.message || e
+    )
+
+    return null
+}
 }
             
 start()
 async function syncActiveTrades(){
 
-    let dbTrades = await trades.find({
-        result:"PENDING"
-    }).toArray()
+    try{
 
-    activeTrades = dbTrades
+        if(!await ensureDB()){
+            console.log(
+                "⛔ SYNC ACTIVE SKIP: DB OFFLINE"
+            )
+            return
+        }
 
-    console.log(
-        `♻️ SYNC ACTIVE: ${activeTrades.length}`
-    )
+        let dbTrades =
+            await trades.find({
+                result:"PENDING"
+            }).toArray()
+
+        activeTrades = dbTrades
+
+        console.log(
+            `♻️ SYNC ACTIVE: ${activeTrades.length}`
+        )
+
+    }catch(e){
+
+        DB_READY = false
+
+        console.log(
+            "❌ SYNC ACTIVE ERROR:",
+            e?.message || e
+        )
+    }
 }
 
 setInterval(syncActiveTrades, 3600000)
