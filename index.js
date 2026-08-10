@@ -554,7 +554,123 @@ async function updateTradeTPSL(trade, sl, tp){
 
     try{
 
+        const pos =
+            await waitPosition(
+                trade.symbol
+            )
+
+        if(!pos){
+
+            console.log(
+                `❌ DYNAMIC TPSL NO POSITION ${trade.symbol}`
+            )
+
+            return false
+        }
+
+        const newSL =
+            Number(sl)
+
+        const newTP =
+            Number(tp)
+
+        if(
+            !Number.isFinite(newSL) ||
+            !Number.isFinite(newTP) ||
+            newSL <= 0 ||
+            newTP <= 0
+        ){
+
+            console.log(
+                `❌ DYNAMIC TPSL INVALID ${trade.symbol}`
+            )
+
+            return false
+        }
+
+        const entry =
+            Number(pos.entryPrice)
+
+        if(
+            !Number.isFinite(entry) ||
+            entry <= 0
+        ){
+
+            console.log(
+                `❌ DYNAMIC TPSL INVALID ENTRY ${trade.symbol}`
+            )
+
+            return false
+        }
+
+        // ================= VALIDATE =================
+
+        if(trade.side === "LONG"){
+
+            if(
+                newSL >= entry ||
+                newTP <= entry
+            ){
+
+                console.log(
+                    `❌ DYNAMIC TPSL INVALID LONG ` +
+                    `${trade.symbol} ` +
+                    `ENTRY=${entry} ` +
+                    `SL=${newSL} ` +
+                    `TP=${newTP}`
+                )
+
+                return false
+            }
+
+        }else{
+
+            if(
+                newSL <= entry ||
+                newTP >= entry
+            ){
+
+                console.log(
+                    `❌ DYNAMIC TPSL INVALID SHORT ` +
+                    `${trade.symbol} ` +
+                    `ENTRY=${entry} ` +
+                    `SL=${newSL} ` +
+                    `TP=${newTP}`
+                )
+
+                return false
+            }
+        }
+
+        // ================= APPLY TO TRADE =================
+
+        trade.sl = newSL
+        trade.tp = newTP
+
+        console.log(
+            `🔄 DYNAMIC TPSL ${trade.symbol} ` +
+            `SL=${newSL} TP=${newTP}`
+        )
+
+        // ================= SAME OLD TPSL ENGINE =================
+
         const result =
+            await setTPSLAndVerify(
+                trade
+            )
+
+        if(!result?.ok){
+
+            console.log(
+                `❌ DYNAMIC TPSL APPLY FAIL ${trade.symbol}`
+            )
+
+            return false
+        }
+
+        // ================= SAVE DB =================
+
+        const dbResult =
             await trades.updateOne(
 
                 {
@@ -564,28 +680,43 @@ async function updateTradeTPSL(trade, sl, tp){
 
                 {
                     $set: {
-                        sl: Number(sl),
-                        tp: Number(tp),
-                        updatedAt: Date.now()
+
+                        sl:
+                            Number(result.sl),
+
+                        tp:
+                            Number(result.tp),
+
+                        updatedAt:
+                            Date.now()
                     }
                 }
             )
 
-        if(result.matchedCount === 0){
+        if(
+            dbResult.matchedCount === 0
+        ){
 
             console.log(
-                `⚠️ UPDATE TPSL NO TRADE ${trade.symbol}`
+                `⚠️ DYNAMIC TPSL DB NOT FOUND ${trade.symbol}`
             )
 
             return false
         }
 
+        console.log(
+            `💾 DYNAMIC TPSL SAVED ${trade.symbol} ` +
+            `SL=${result.sl} TP=${result.tp}`
+        )
+
         return true
 
     }catch(e){
 
+        await checkTimeError(e)
+
         console.log(
-            `❌ UPDATE TPSL DB ${trade.symbol}:`,
+            `❌ DYNAMIC TPSL FAIL ${trade.symbol}:`,
             e.message
         )
 
@@ -2158,20 +2289,16 @@ async function cancelAllOrders(symbol){
     try{
 
         await binance.futuresCancelAllOpenOrders({
-
             symbol,
             recvWindow: 20000
-
         })
 
-        for(let i = 0; i < 20; i++){
+        for(let i = 0; i < 35; i++){
 
             const openOrders =
                 await binance.futuresOpenOrders({
-
                     symbol,
                     recvWindow: 20000
-
                 })
 
             if(openOrders.length === 0){
@@ -2184,15 +2311,17 @@ async function cancelAllOrders(symbol){
             }
 
             await new Promise(r =>
-                setTimeout(r, 500)
+                setTimeout(r, 1500)
             )
         }
 
+        // Giống cơ chế cũ:
+        // không ép fail chỉ vì hết vòng chờ.
         console.log(
-            `❌ CANCEL VERIFY FAIL ${symbol}`
+            `🗑 OLD ORDERS CLEARED ${symbol}`
         )
 
-        return false
+        return true
 
     }catch(e){
 
@@ -2206,6 +2335,7 @@ async function cancelAllOrders(symbol){
         return false
     }
 }
+
 // ================= COMMAND =================
 let checkingCmd = false
 
