@@ -1150,7 +1150,7 @@ async function getTopSymbols(){
     .filter(c => {
         let change = Math.abs(Number(c.priceChangePercent))
         // coin chưa chạy nhưng có dấu hiệu tích lực
-        return change >= 1 && change <= 15 // 
+        return change >= 1 && change <= 35 // 
     })
     // 🔥 2. LIQUIDITY nhẹ (KHÔNG dùng minVol 24h nữa)
     .filter(c =>
@@ -1171,30 +1171,31 @@ async function getTopSymbols(){
     // 🔥 3. SORT
     .sort((a,b)=>{
 
-    let volA = Number(a.quoteVolume)
-    let volB = Number(b.quoteVolume)
+    const volA = Number(a.quoteVolume)
+    const volB = Number(b.quoteVolume)
 
-    let moveA = Math.abs(Number(a.priceChangePercent))
-    let moveB = Math.abs(Number(b.priceChangePercent))
+    const moveA = Math.abs(Number(a.priceChangePercent))
+    const moveB = Math.abs(Number(b.priceChangePercent))
 
-    // ưu tiên move đẹp quanh 3-5%
-    let scoreA =
-        (volA / 1_000_000) -
-        Math.abs(moveA - 5) * 4
+    // Ưu tiên coin đang chuyển động,
+    // nhưng vẫn giữ thanh khoản đủ tốt.
+    const scoreA =
+        moveA * 3 +
+        Math.log10(Math.max(volA,1)) * 2
 
-    let scoreB =
-        (volB / 1_000_000) -
-        Math.abs(moveB - 5) * 4
+    const scoreB =
+        moveB * 3 +
+        Math.log10(Math.max(volB,1)) * 2
 
     return scoreB - scoreA
 })
-    .slice(0, 100)
-.map(c => c.symbol)
-.filter(s =>
+    .filter(c =>
     validFuturesSymbols &&
     validFuturesSymbols.size > 0 &&
-    validFuturesSymbols.has(s)
+    validFuturesSymbols.has(c.symbol)
 )
+.slice(0, 120)
+.map(c => c.symbol)
                 }
             }catch(e){
                 if(attempt===1){
@@ -1667,24 +1668,26 @@ const trendContinuationLong =
     trendLong5 &&
     (
         bull15 ||
-        slope15 > 0.0002
+        slope15 > 0.00015
     ) &&
     c0 > cPrev &&
     (
         microBreakLong ||
-        accelerationLong
+        accelerationLong ||
+        reclaimEmaLong
     )
 
 const trendContinuationShort =
     trendShort5 &&
     (
         bear15 ||
-        slope15 < -0.0002
+        slope15 < -0.00015
     ) &&
     c0 < cPrev &&
     (
         microBreakShort ||
-        accelerationShort
+        accelerationShort ||
+        reclaimEmaShort
     )
     // ================= REVERSAL ENGINE =================
 
@@ -1740,16 +1743,16 @@ const retestShort =
     // ================= MOMENTUM =================
 
     const momentumLong =
-        c5.at(-1) > c5.at(-2) &&
-        c5.at(-2) > c5.at(-3) &&
-        slope9_5 > 0 &&
-        c0 > cPrev
+    p5 > ema9_5 &&
+    ema9_5 > ema20_5 &&
+    slope9_5 > 0.00010 &&
+    c0 > cPrev
 
-    const momentumShort =
-        c5.at(-1) < c5.at(-2) &&
-        c5.at(-2) < c5.at(-3) &&
-        slope9_5 < 0 &&
-        c0 < cPrev
+const momentumShort =
+    p5 < ema9_5 &&
+    ema9_5 < ema20_5 &&
+    slope9_5 < -0.00010 &&
+    c0 < cPrev
 
 const strongBullContext =
     bull15 &&
@@ -1763,11 +1766,12 @@ const strongBearContext =
 
     const validReversalLong =
     reversalLong &&
-    !strongBearContext
+    !strongBearContext 
 
 const validReversalShort =
     reversalShort &&
     !strongBullContext
+    
     // ================= 1M CONFIRMATION =================
 const longTrigger =
     microBreakLong ||
@@ -1775,7 +1779,8 @@ const longTrigger =
     reclaimEmaLong ||
     retestLong ||
     pullbackLong ||
-    trendContinuationLong
+    trendContinuationLong ||
+    momentumLong
 
 const shortTrigger =
     microBreakShort ||
@@ -1783,7 +1788,8 @@ const shortTrigger =
     reclaimEmaShort ||
     retestShort ||
     pullbackShort ||
-    trendContinuationShort
+    trendContinuationShort ||
+    momentumShort
 
 const longMomentumConfirm =
     c0 > cPrev ||
@@ -1817,7 +1823,7 @@ let shortSetup = null
 
 // LONG
 
-if(validReversalLong){
+if(validReversalLong && confirmLong){
     longSetup = "REVERSAL_LONG"
 }
 else if(retestLong && confirmLong){
@@ -1835,7 +1841,7 @@ else if(momentumLong && confirmLong){
 
 // SHORT
 
-if(validReversalShort){
+if(validReversalShort && confirmShort){
     shortSetup = "REVERSAL_SHORT"
 }
 else if(retestShort && confirmShort){
@@ -1858,7 +1864,7 @@ let setup = null
 
 if(longSetup && !shortSetup){
 
-    if(longBias >= 2){
+    if(longBias >= 1){
         side = "LONG"
         setup = longSetup
     }
@@ -1866,7 +1872,7 @@ if(longSetup && !shortSetup){
 }
 else if(shortSetup && !longSetup){
 
-    if(shortBias >= 2){
+    if(shortBias >= 1){
         side = "SHORT"
         setup = shortSetup
     }
@@ -1874,13 +1880,13 @@ else if(shortSetup && !longSetup){
 }
 else if(longSetup && shortSetup){
 
-    if(longBias > shortBias && longBias >= 2){
+    if(longBias > shortBias && longBias >= 1){
 
         side = "LONG"
         setup = longSetup
 
     }
-    else if(shortBias > longBias && shortBias >= 2){
+    else if(shortBias > longBias && shortBias >= 1){
 
         side = "SHORT"
         setup = shortSetup
@@ -2194,7 +2200,7 @@ if(
     }
 }
 
-if(quality < 3){
+if(quality < 2){
     return null
 }
 
