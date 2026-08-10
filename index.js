@@ -1740,7 +1740,7 @@ let setup = null
 
 if(longSetup && !shortSetup){
 
-    if(longBias >= 2){
+    if(longBias >= 1){
         side = "LONG"
         setup = longSetup
     }
@@ -1748,7 +1748,7 @@ if(longSetup && !shortSetup){
 }
 else if(shortSetup && !longSetup){
 
-    if(shortBias >= 2){
+    if(shortBias >= 1){
         side = "SHORT"
         setup = shortSetup
     }
