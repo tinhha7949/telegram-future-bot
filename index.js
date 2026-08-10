@@ -1422,7 +1422,7 @@ async function coreLogic(data15, data1h, data5, data1m){
 const bear1h =
     ema20_1h < ema50_1h &&
     price1h < ema20_1h &&
-    slope1h < 0.0002
+    slope1h < -0.0002
 
     // ================= 15M STRUCTURE =================
 
@@ -1455,7 +1455,7 @@ const bear1h =
 const bear15 =
     ema20_15 < ema50_15 &&
     price15 < ema20_15 &&
-    slope15 < 0.0002
+    slope15 < -0.0002
 
     // Không bắt buộc 1H + 15M cùng hướng.
     // Chỉ tạo bias.
@@ -1481,13 +1481,42 @@ const bear15 =
     const ema20_5 = ema(c5.slice(-60),20)
     const ema50_5 = ema(c5.slice(-80),50)
 
-    const ema9_5Prev =
-        ema(c5.slice(-41,-1),9)
+            // ================= SHORT-TERM TREND ENGINE =================
 
-    const slope9_5 =
-        ema9_5Prev
-            ? (ema9_5-ema9_5Prev)/ema9_5Prev
-            : 0
+const ema9_5Prev2 =
+    ema(c5.slice(-42,-2),9)
+
+const slope9_5_fast =
+    ema9_5Prev2
+        ? (ema9_5-ema9_5Prev2)/ema9_5Prev2/2
+        : 0
+
+const move5m =
+    pct(p5,p5Prev)
+
+const move15m =
+    pct(
+        c15.at(-1),
+        c15.at(-2)
+    )
+
+const trendLong5 =
+    p5 > ema9_5 &&
+    ema9_5 > ema20_5 &&
+    slope9_5 > 0.00015
+
+const trendShort5 =
+    p5 < ema9_5 &&
+    ema9_5 < ema20_5 &&
+    slope9_5 < -0.00015
+
+const accelerationLong =
+    slope9_5 > 0.00015 &&
+    slope9_5 > slope9_5_fast
+
+const accelerationShort =
+    slope9_5 < -0.00015 &&
+    slope9_5 < slope9_5_fast
 
     const recent5Low =
         Math.min(...l5.slice(-12,-2))
@@ -1625,7 +1654,52 @@ const pullbackShort =
     ema20_5 < ema50_5 &&
     h5.at(-2) >= ema20_5*0.994 &&
     c0 < cPrev
+// ================= TREND CONTINUATION =================
 
+const trendContinuationLong =
+    trendLong5 &&
+    (
+        bull15 ||
+        slope15 > 0.0002
+    ) &&
+    c0 > cPrev &&
+    (
+        microBreakLong ||
+        accelerationLong
+    )
+
+const trendContinuationShort =
+    trendShort5 &&
+    (
+        bear15 ||
+        slope15 < -0.0002
+    ) &&
+    c0 < cPrev &&
+    (
+        microBreakShort ||
+        accelerationShort
+    )
+    // ================= REVERSAL ENGINE =================
+
+const reversalLong =
+    sweepLow &&
+    c0 > recent5Low &&
+    c0 > cPrev &&
+    (
+        microBreakLong ||
+        reclaimEmaLong
+    ) &&
+    closeLong(h0,l0,c0) >= 0.55
+
+const reversalShort =
+    sweepHigh &&
+    c0 < recent5High &&
+    c0 < cPrev &&
+    (
+        microBreakShort ||
+        reclaimEmaShort
+    ) &&
+    closeShort(h0,l0,c0) >= 0.55
     // ================= BREAKOUT / RETEST =================
 
 // Breakout phải xảy ra trước đó.
@@ -1670,79 +1744,114 @@ const retestShort =
         slope9_5 < 0 &&
         c0 < cPrev
 
-    // ================= 1M CONFIRMATION =================
+const strongBullContext =
+    bull15 &&
+    slope15 > 0.0008 &&
+    p5 > ema20_5
 
-    const confirmLong =
-(
+const strongBearContext =
+    bear15 &&
+    slope15 < -0.0008 &&
+    p5 < ema20_5
+
+    const validReversalLong =
+    reversalLong &&
+    !strongBearContext
+
+const validReversalShort =
+    reversalShort &&
+    !strongBullContext
+    // ================= 1M CONFIRMATION =================
+const longTrigger =
     microBreakLong ||
     sweepLow ||
     reclaimEmaLong ||
     retestLong ||
-    pullbackLong
-) &&
-c0 > o0 &&
-br0 >= 0.35 &&
-closeLong(h0,l0,c0) >= 0.55
+    pullbackLong ||
+    trendContinuationLong
 
-const confirmShort =
-(
+const shortTrigger =
     microBreakShort ||
     sweepHigh ||
     reclaimEmaShort ||
     retestShort ||
-    pullbackShort
-) &&
-c0 < o0 &&
-br0 >= 0.35 &&
-closeShort(h0,l0,c0) >= 0.55
+    pullbackShort ||
+    trendContinuationShort
+
+const longMomentumConfirm =
+    c0 > cPrev ||
+    accelerationLong ||
+    trendLong5
+
+const shortMomentumConfirm =
+    c0 < cPrev ||
+    accelerationShort ||
+    trendShort5
+
+
+    const confirmLong =
+    longTrigger &&
+    longMomentumConfirm &&
+    c0 > o0 &&
+    br0 >= 0.35 &&
+    closeLong(h0,l0,c0) >= 0.52
+
+const confirmShort =
+    shortTrigger &&
+    shortMomentumConfirm &&
+    c0 < o0 &&
+    br0 >= 0.35 &&
+    closeShort(h0,l0,c0) >= 0.52
 
     // ================= SETUP SELECTION =================
 
-    let longSetup = null
-    let shortSetup = null
+let longSetup = null
+let shortSetup = null
 
-    // Ưu tiên setup có structure rõ hơn.
+// LONG
 
-    if(sweepLow && confirmLong){
-        longSetup = "SWEEP_RECLAIM"
-    }
-    else if(retestLong && confirmLong){
-        longSetup = "BREAKOUT_RETEST"
-    }
-    else if(pullbackLong && confirmLong){
-        longSetup = "PULLBACK_RECLAIM"
-    }
-    else if(momentumLong && confirmLong){
-        longSetup = "MOMENTUM_CONTINUATION"
-    }
+if(validReversalLong){
+    longSetup = "REVERSAL_LONG"
+}
+else if(retestLong && confirmLong){
+    longSetup = "BREAKOUT_RETEST"
+}
+else if(pullbackLong && confirmLong){
+    longSetup = "PULLBACK_RECLAIM"
+}
+else if(trendContinuationLong && confirmLong){
+    longSetup = "TREND_CONTINUATION"
+}
+else if(momentumLong && confirmLong){
+    longSetup = "MOMENTUM_CONTINUATION"
+}
 
-    if(sweepHigh && confirmShort){
-        shortSetup = "SWEEP_RECLAIM"
-    }
-    else if(retestShort && confirmShort){
-        shortSetup = "BREAKOUT_RETEST"
-    }
-    else if(pullbackShort && confirmShort){
-        shortSetup = "PULLBACK_RECLAIM"
-    }
-    else if(momentumShort && confirmShort){
-        shortSetup = "MOMENTUM_CONTINUATION"
-    }
+// SHORT
 
-    // ================= SIDE =================
+if(validReversalShort){
+    shortSetup = "REVERSAL_SHORT"
+}
+else if(retestShort && confirmShort){
+    shortSetup = "BREAKOUT_RETEST"
+}
+else if(pullbackShort && confirmShort){
+    shortSetup = "PULLBACK_RECLAIM"
+}
+else if(trendContinuationShort && confirmShort){
+    shortSetup = "TREND_CONTINUATION"
+}
+else if(momentumShort && confirmShort){
+    shortSetup = "MOMENTUM_CONTINUATION"
+}
 
     // ================= SIDE =================
 
 let side = null
 let setup = null
 
-// Ưu tiên hướng có context lớn hơn.
-// 1M/5M chỉ dùng để xác nhận entry,
-// không được tự ý đảo hướng 15M/1H.
-
 if(longSetup && !shortSetup){
 
-    if(longBias >= 1){
+    if(longBias >= 2){
         side = "LONG"
         setup = longSetup
     }
@@ -1750,7 +1859,7 @@ if(longSetup && !shortSetup){
 }
 else if(shortSetup && !longSetup){
 
-    if(shortBias >= 1){
+    if(shortBias >= 2){
         side = "SHORT"
         setup = shortSetup
     }
@@ -1759,37 +1868,59 @@ else if(shortSetup && !longSetup){
 else if(longSetup && shortSetup){
 
     if(longBias > shortBias && longBias >= 2){
+
         side = "LONG"
         setup = longSetup
+
     }
     else if(shortBias > longBias && shortBias >= 2){
+
         side = "SHORT"
         setup = shortSetup
-    }
-    else{
-        return null
+
     }
 }
 
 if(!side){
     return null
 }
-// ================= HARD DIRECTION FILTER =================
+// ================= DIRECTION FILTER =================
 
-// Không LONG khi cả 1H + 15M đều bearish
+// LONG ngược bearish lớn -> chỉ cho nếu reversal thật
 if(
     side === "LONG" &&
     bear1h &&
-    bear15
+    bear15 &&
+    setup !== "REVERSAL_LONG"
 ){
     return null
 }
 
-// Không SHORT khi cả 1H + 15M đều bullish
+// SHORT ngược bullish lớn -> chỉ cho nếu reversal thật
 if(
     side === "SHORT" &&
     bull1h &&
-    bull15
+    bull15 &&
+    setup !== "REVERSAL_SHORT"
+){
+    return null
+}
+
+// Reversal counter-trend phải có sweep
+if(
+    side === "LONG" &&
+    bear15 &&
+    setup === "REVERSAL_LONG" &&
+    !sweepLow
+){
+    return null
+}
+
+if(
+    side === "SHORT" &&
+    bull15 &&
+    setup === "REVERSAL_SHORT" &&
+    !sweepHigh
 ){
     return null
 }
@@ -1809,23 +1940,31 @@ if(
     return null
 }
 
-    // ================= SCORE =================
+   // ================= SCORE =================
 
-    let score = 50
+let score = 50
 
-    // Context
-    if(side === "LONG"){
-        if(bull1h) score += 8
-        if(bull15) score += 8
-        if(slope15 > 0) score += 4
-    }else{
-        if(bear1h) score += 8
-        if(bear15) score += 8
-        if(slope15 < 0) score += 4
-    }
+// ===== DIRECTION =====
 
-    // Setup quality
-    if(setup === "SWEEP_RECLAIM"){
+if(side === "LONG"){
+
+    if(bull1h) score += 8
+    if(bull15) score += 8
+    if(slope15 > 0.0002) score += 4
+
+}else{
+
+    if(bear1h) score += 8
+    if(bear15) score += 8
+    if(slope15 < -0.0002) score += 4
+}
+
+// ===== SETUP =====
+
+if(
+    setup === "REVERSAL_LONG" ||
+    setup === "REVERSAL_SHORT"
+){
     score += 18
 }
 
@@ -1834,92 +1973,126 @@ if(setup === "BREAKOUT_RETEST"){
 }
 
 if(setup === "PULLBACK_RECLAIM"){
-    score += 7
+    score += 10
+}
+
+if(setup === "TREND_CONTINUATION"){
+    score += 13
 }
 
 if(setup === "MOMENTUM_CONTINUATION"){
     score += 9
 }
 
-    // Entry quality
-    if(side === "LONG" && microBreakLong){
-        score += 8
-    }
+// ===== MICRO STRUCTURE =====
 
-    if(side === "SHORT" && microBreakShort){
-        score += 8
-    }
+if(side === "LONG" && microBreakLong){
+    score += 7
+}
 
-    if(side === "LONG" && sweepLow){
-        score += 8
-    }
+if(side === "SHORT" && microBreakShort){
+    score += 7
+}
 
-    if(side === "SHORT" && sweepHigh){
-        score += 8
-    }
+// ===== SWEEP =====
 
-    if(br0 >= 0.55){
-        score += 5
-    }
+if(side === "LONG" && sweepLow){
+    score += 7
+}
 
-    // Volume = bonus, không phải gate
-    if(vol1Ratio >= 1.5 || vol5Ratio >= 1.5){
-        score += 6
-    }
-    else if(vol1Ratio >= 1.15 || vol5Ratio >= 1.15){
-        score += 3
-    }
-    if(
-    vol1Ratio < 0.55 &&
-    vol5Ratio < 0.65
+if(side === "SHORT" && sweepHigh){
+    score += 7
+}
+
+// ===== TREND SPEED =====
+
+if(side === "LONG" && accelerationLong){
+    score += 6
+}
+
+if(side === "SHORT" && accelerationShort){
+    score += 6
+}
+
+// ===== VOLUME =====
+
+if(
+    vol1Ratio >= 1.5 ||
+    vol5Ratio >= 1.5
+){
+    score += 6
+}
+else if(
+    vol1Ratio >= 1.15 ||
+    vol5Ratio >= 1.15
+){
+    score += 3
+}
+
+if(
+    vol1Ratio < 0.45 &&
+    vol5Ratio < 0.55
 ){
     score -= 5
 }
 
-    // RSI context
-    if(side === "LONG"){
+// ===== CANDLE =====
 
-    if(rsi5 >= 48 && rsi5 <= 68){
-        score += 4
+if(br0 >= 0.55){
+    score += 5
+}
+
+// ===== RSI =====
+
+if(side === "LONG"){
+
+    if(rsi5 >= 45 && rsi5 <= 70){
+        score += 3
     }
 
-    if(rsi5 > 72){
+    if(rsi5 > 78){
         score -= 5
     }
 
 }else{
 
-    if(rsi5 <= 52 && rsi5 >= 32){
-        score += 4
+    if(rsi5 <= 55 && rsi5 >= 30){
+        score += 3
     }
 
-    if(rsi5 < 28){
+    if(rsi5 < 22){
         score -= 5
     }
 }
+
+// ===== EXTENSION =====
+
 if(Math.abs(move5) > 0.025){
-    score -= 5
+    score -= 4
 }
 
-    // Score thấp chỉ bỏ setup thực sự yếu.
-    if(score < 60){
-        return null
-    }
+if(score < 58){
+    return null
+}
     
+// ================= EXTENSION FILTER =================
+
 if(
     side === "LONG" &&
-    move5 > 0.018 &&
-    !sweepLow &&
-    !retestLong
+    move5 > 0.03 &&
+    !retestLong &&
+    !pullbackLong &&
+    !sweepLow
 ){
     return null
 }
 
 if(
     side === "SHORT" &&
-    move5 < -0.018 &&
-    !sweepHigh &&
-    !retestShort
+    move5 < -0.03 &&
+    !retestShort &&
+    !pullbackShort &&
+    !sweepHigh
 ){
     return null
 }
@@ -1929,17 +2102,23 @@ let quality = 0
 
 // Direction
 if(side === "LONG"){
+
     if(bull15) quality += 2
     if(bull1h) quality += 1
-    if(slope15 > 0) quality += 1
+    if(slope15 > 0.0002) quality += 1
+
 }else{
+
     if(bear15) quality += 2
     if(bear1h) quality += 1
-    if(slope15 < 0) quality += 1
+    if(slope15 < -0.0002) quality += 1
 }
 
 // Setup
-if(setup === "SWEEP_RECLAIM"){
+if(
+    setup === "REVERSAL_LONG" ||
+    setup === "REVERSAL_SHORT"
+){
     quality += 2
 }
 
@@ -1951,7 +2130,20 @@ if(setup === "PULLBACK_RECLAIM"){
     quality += 1
 }
 
+if(setup === "TREND_CONTINUATION"){
+    quality += 2
+}
+
 if(setup === "MOMENTUM_CONTINUATION"){
+    quality += 1
+}
+
+// Momentum
+if(side === "LONG" && accelerationLong){
+    quality += 1
+}
+
+if(side === "SHORT" && accelerationShort){
     quality += 1
 }
 
@@ -1960,15 +2152,42 @@ if(br0 >= 0.55){
     quality += 1
 }
 
-if(side === "LONG" && closeLong(h0,l0,c0) >= 0.65){
+if(
+    side === "LONG" &&
+    closeLong(h0,l0,c0) >= 0.62
+){
     quality += 1
 }
 
-if(side === "SHORT" && closeShort(h0,l0,c0) >= 0.65){
+if(
+    side === "SHORT" &&
+    closeShort(h0,l0,c0) >= 0.62
+){
     quality += 1
 }
 
-if(quality < 2){
+// Volume
+if(
+    vol1Ratio >= 1.2 ||
+    vol5Ratio >= 1.2
+){
+    quality += 1
+}
+
+// Reversal bonus
+if(
+    setup === "REVERSAL_LONG" ||
+    setup === "REVERSAL_SHORT"
+){
+    if(
+        (side === "LONG" && sweepLow) ||
+        (side === "SHORT" && sweepHigh)
+    ){
+        quality += 1
+    }
+}
+
+if(quality < 3){
     return null
 }
 
@@ -2030,7 +2249,7 @@ if(quality < 2){
         risk = entry-sl
 
         // Không cho SL quá rộng đối với scalp
-        if(risk > atr5*1.25){
+        if(risk > atr5*1.35){
             return null
         }
 
@@ -2040,7 +2259,7 @@ if(quality < 2){
             risk = entry-sl
         }
 
-        tp = entry + risk*1.35
+        tp = entry + risk*1.45
 
     }else{
 
@@ -2059,7 +2278,7 @@ if(quality < 2){
 
         risk = sl-entry
 
-        if(risk > atr5*1.25){
+        if(risk > atr5*1.35){
             return null
         }
 
@@ -2068,7 +2287,7 @@ if(quality < 2){
             risk = sl-entry
         }
 
-        tp = entry-risk*1.35
+        tp = entry-risk*1.45
     }
 
     if(!risk || risk <= 0){
@@ -2140,7 +2359,7 @@ if(quality < 2){
 
     // TP không quá xa đối với short-term
     if(
-        Math.abs(tp-entry) > atr5*1.9
+        Math.abs(tp-entry) > atr5*2.8
     ){
         return null
     }
