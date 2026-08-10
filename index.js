@@ -550,6 +550,72 @@ function normalizeQtyFinal(qty, stepSize){
 
    // return Number(fixed.toFixed(precision))
 //}
+async function updateTradeTPSL(trade, sl, tp){
+
+    try{
+
+        const result =
+            await trades.updateOne(
+
+                {
+                    _id: trade._id,
+                    result: "PENDING"
+                },
+
+                {
+                    $set: {
+                        sl: Number(sl),
+                        tp: Number(tp),
+                        updatedAt: Date.now()
+                    }
+                }
+            )
+
+        if(result.matchedCount === 0){
+
+            console.log(
+                `⚠️ UPDATE TPSL NO TRADE ${trade.symbol}`
+            )
+
+            return false
+        }
+
+        return true
+
+    }catch(e){
+
+        console.log(
+            `❌ UPDATE TPSL DB ${trade.symbol}:`,
+            e.message
+        )
+
+        return false
+    }
+}
+async function getOpenTrade(symbol){
+
+    try{
+
+        const trade =
+            await trades.findOne({
+
+                symbol: symbol,
+                result: "PENDING"
+
+            })
+
+        return trade || null
+
+    }catch(e){
+
+        console.log(
+            `❌ GET OPEN TRADE ${symbol}:`,
+            e.message
+        )
+
+        return null
+    }
+}
 async function hasPosition(symbol){
 
     try{
@@ -759,115 +825,285 @@ async function waitPosition(symbol){
 }
 async function setTPSLAndVerify(trade){
 
-    let pos = await waitPosition(
-        trade.symbol
-    )
-
-    if(!pos){
-        return false
-    }
-
-    let closeSide =
-        Number(pos.positionAmt) > 0
-            ? "SELL"
-            : "BUY"
-            let info =
-    await getSymbolInfo(
-        trade.symbol
-    )
-
-let priceFilter =
-    info.filters.find(
-        f => f.filterType === "PRICE_FILTER"
-    )
-
-let tickSize =
-    parseFloat(
-        priceFilter?.tickSize || "0.01"
-    )
-
-let sl =
-    normalizePrice(
-        trade.sl,
-        tickSize
-    )
-
-let tp =
-    normalizePrice(
-        trade.tp,
-        tickSize
-    )
+    const symbol = trade.symbol
 
     try{
 
-        await cancelAllOrders(
-            trade.symbol
+        const pos =
+            await waitPosition(symbol)
+
+        if(!pos){
+
+            console.log(
+                `❌ NO POSITION FOR TPSL ${symbol}`
+            )
+
+            return false
+        }
+
+        const closeSide =
+            Number(pos.positionAmt) > 0
+                ? "SELL"
+                : "BUY"
+
+        const info =
+            await getSymbolInfo(symbol)
+
+        if(!info || !info.filters){
+
+            console.log(
+                `❌ SYMBOL INFO FAIL ${symbol}`
+            )
+
+            return false
+        }
+
+        const priceFilter =
+            info.filters.find(
+                f =>
+                    f.filterType === "PRICE_FILTER"
+            )
+
+        const tickSize =
+            parseFloat(
+                priceFilter?.tickSize || "0.01"
+            )
+
+        const sl =
+            normalizePrice(
+                Number(trade.sl),
+                tickSize
+            )
+
+        const tp =
+            normalizePrice(
+                Number(trade.tp),
+                tickSize
+            )
+
+        if(
+            !Number.isFinite(sl) ||
+            !Number.isFinite(tp) ||
+            sl <= 0 ||
+            tp <= 0
+        ){
+
+            console.log(
+                `❌ INVALID TPSL ${symbol}`
+            )
+
+            return false
+        }
+
+        // =========================================
+        // VALIDATE SIDE
+        // =========================================
+
+        const entry =
+            Number(pos.entryPrice)
+
+        if(!Number.isFinite(entry) || entry <= 0){
+            return false
+        }
+
+        if(trade.side === "LONG"){
+
+            if(sl >= entry){
+
+                console.log(
+                    `❌ INVALID LONG SL ${symbol} SL=${sl} ENTRY=${entry}`
+                )
+
+                return false
+            }
+
+            if(tp <= entry){
+
+                console.log(
+                    `❌ INVALID LONG TP ${symbol} TP=${tp} ENTRY=${entry}`
+                )
+
+                return false
+            }
+
+        }else{
+
+            if(sl <= entry){
+
+                console.log(
+                    `❌ INVALID SHORT SL ${symbol} SL=${sl} ENTRY=${entry}`
+                )
+
+                return false
+            }
+
+            if(tp >= entry){
+
+                console.log(
+                    `❌ INVALID SHORT TP ${symbol} TP=${tp} ENTRY=${entry}`
+                )
+
+                return false
+            }
+        }
+
+        // =========================================
+        // CANCEL OLD TPSL
+        // =========================================
+
+        const cancelled =
+            await cancelAllOrders(symbol)
+
+        if(!cancelled){
+
+            console.log(
+                `❌ OLD ORDERS NOT CLEARED ${symbol}`
+            )
+
+            return false
+        }
+
+        // =========================================
+        // SET SL
+        // =========================================
+
+        const slRes =
+            await binance.futuresOrder({
+
+                symbol,
+                side: closeSide,
+                type: "STOP_MARKET",
+
+                stopPrice: sl,
+
+                closePosition: true,
+
+                workingType: "MARK_PRICE",
+
+                recvWindow: 20000
+            })
+
+        console.log(
+            `🛡 SL SET ${symbol}: ${sl}`
         )
 
-        console.log(`SET SL ${trade.symbol}`)
+        // =========================================
+        // SET TP
+        // =========================================
 
-let slRes =
-    await binance.futuresOrder({
+        const tpRes =
+            await binance.futuresOrder({
 
-        symbol: trade.symbol,
-        side: closeSide,
-        type: "STOP_MARKET",
+                symbol,
+                side: closeSide,
+                type: "TAKE_PROFIT_MARKET",
 
-        stopPrice: sl,
+                stopPrice: tp,
 
-        closePosition: true,
+                closePosition: true,
 
-        workingType: "MARK_PRICE",
+                workingType: "MARK_PRICE",
 
-        recvWindow: 20000
-    })
+                recvWindow: 20000
+            })
 
-console.log(
-    "SL RESPONSE:",
-    JSON.stringify(slRes,null,2)
-)
+        console.log(
+            `🎯 TP SET ${symbol}: ${tp}`
+        )
 
-        console.log(`SET TP ${trade.symbol}`)
-
-let tpRes =
-    await binance.futuresOrder({
-
-        symbol: trade.symbol,
-        side: closeSide,
-        type: "TAKE_PROFIT_MARKET",
-
-        stopPrice: tp,
-
-        closePosition: true,
-
-        workingType: "MARK_PRICE",
-
-        recvWindow: 20000
-    })
-
-console.log(
-    "TP RESPONSE:",
-    JSON.stringify(tpRes,null,2)
-)
+        // =========================================
+        // VERIFY
+        // =========================================
 
         await new Promise(r =>
-            setTimeout(r,3000)
+            setTimeout(r, 500)
         )
 
-        return {
-    ok: true
-}
-    }catch(e){
+        const orders =
+            await binance.futuresOpenOrders({
 
-    await checkTimeError(e)
+                symbol,
+                recvWindow: 20000
 
-    console.log(
-        `TPSL FAIL ${trade.symbol}`,
-        e.message
+            })
+
+        const slOrder =
+    orders.find(o =>
+        o.type === "STOP_MARKET" &&
+        String(o.closePosition) === "true" &&
+        o.side === closeSide
     )
 
-    return false
-}
+const tpOrder =
+    orders.find(o =>
+        o.type === "TAKE_PROFIT_MARKET" &&
+        String(o.closePosition) === "true" &&
+        o.side === closeSide
+    )
+
+        if(!slOrder || !tpOrder){
+
+            console.log(
+                `🚨 TPSL VERIFY FAIL ${symbol} ` +
+                `SL=${!!slOrder} TP=${!!tpOrder}`
+            )
+
+            return false
+        }
+
+        // =========================================
+        // VERIFY PRICE
+        // =========================================
+
+        const actualSL =
+            Number(slOrder.stopPrice)
+
+        const actualTP =
+            Number(tpOrder.stopPrice)
+
+        if(
+            Math.abs(actualSL - sl) >
+            tickSize * 1.5
+        ){
+
+            console.log(
+                `🚨 SL PRICE VERIFY FAIL ${symbol}`
+            )
+
+            return false
+        }
+
+        if(
+            Math.abs(actualTP - tp) >
+            tickSize * 1.5
+        ){
+
+            console.log(
+                `🚨 TP PRICE VERIFY FAIL ${symbol}`
+            )
+
+            return false
+        }
+
+        return {
+            ok: true,
+            sl,
+            tp,
+            slOrderId: slOrder.orderId,
+            tpOrderId: tpOrder.orderId
+        }
+
+    }catch(e){
+
+        await checkTimeError(e)
+
+        console.log(
+            `❌ TPSL FAIL ${symbol}:`,
+            e.message
+        )
+
+        return false
+    }
 }
 async function openPositionWithTPSL(
     trade,
@@ -885,110 +1121,1132 @@ async function openPositionWithTPSL(
     }
 
     let pos = await waitPosition(
-        trade.symbol
+    trade.symbol
+)
+
+if(!pos){
+
+    let verifyPos =
+        await hasPosition(
+            trade.symbol
+        )
+
+    if(verifyPos){
+        pos = verifyPos
+    }else{
+        return false
+    }
+}
+
+// ================= REAL ENTRY =================
+
+const realEntry =
+    Number(pos.entryPrice)
+
+if(
+    !Number.isFinite(realEntry) ||
+    realEntry <= 0
+){
+    console.log(
+        `❌ INVALID REAL ENTRY ${trade.symbol}`
     )
 
-    if(!pos){
+    return false
+}
 
-        let verifyPos =
-            await hasPosition(
-                trade.symbol
+// Dùng giá khớp thực tế của Binance
+trade.entry = realEntry
+
+// ================= INITIAL RISK =================
+
+trade.initialRisk =
+    Math.abs(
+        realEntry -
+        Number(trade.sl)
+    )
+
+if(
+    !Number.isFinite(trade.initialRisk) ||
+    trade.initialRisk <= 0
+){
+    console.log(
+        `❌ INVALID INITIAL RISK ${trade.symbol}`
+    )
+
+    return false
+}
+
+// Thời điểm mở lệnh
+trade.openedAt = Date.now()
+
+console.log(
+    `📌 ${trade.symbol} ` +
+    `ENTRY=${trade.entry} ` +
+    `INITIAL_RISK=${trade.initialRisk}`
+)
+
+TPSL_PENDING[trade.symbol] = true
+
+try{
+
+    let tpslResult =
+        await setTPSLAndVerify(trade)
+
+    if(!tpslResult?.ok){
+
+        console.log(
+            `🚨 TPSL FAIL -> CLOSE ${trade.symbol}`
+        )
+
+        let realQty =
+            Math.abs(
+                Number(pos.positionAmt)
             )
 
-        if(verifyPos){
-            pos = verifyPos
-        }else{
+        let closed =
+            await closePosition(
+                trade.symbol,
+                trade.side,
+                realQty
+            )
+
+        if(!closed){
+
+            console.log(
+                `🚨 CLOSE FAIL ${trade.symbol}`
+            )
+
+            await sendTelegram2(
+                `🚨 CRITICAL
+${trade.symbol}
+TPSL FAIL
+CLOSE FAIL`
+            )
+        }
+
+        return false
+    }
+
+    trade.enteredAt = Date.now()
+
+    return {
+        ok: true
+    }
+
+}finally{
+
+    delete TPSL_PENDING[trade.symbol]
+
+}
+}
+async function updateTradeTPSLData(trade){
+
+    try{
+
+        const result =
+            await trades.updateOne(
+
+                {
+                    _id: trade._id,
+                    result: "PENDING"
+                },
+
+                {
+                    $set: {
+
+                        entry:
+                            Number(trade.entry),
+
+                        sl:
+                            Number(trade.sl),
+
+                        tp:
+                            Number(trade.tp),
+
+                        initialRisk:
+                            Number(trade.initialRisk),
+
+                        openedAt:
+                            Number(trade.openedAt),
+
+                        enteredAt:
+                            Number(trade.enteredAt || Date.now()),
+
+                        updatedAt:
+                            Date.now()
+
+                    }
+                }
+            )
+
+        if(result.matchedCount === 0){
+
+            console.log(
+                `❌ TRADE NOT FOUND DB ${trade.symbol}`
+            )
+
             return false
         }
+
+        console.log(
+            `💾 TRADE STATE SAVED ${trade.symbol}`
+        )
+
+        return true
+
+    }catch(e){
+
+        console.log(
+            `❌ SAVE TRADE STATE ${trade.symbol}:`,
+            e.message
+        )
+
+        return false
+    }
+}
+// =====================================================
+// DYNAMIC TPSL MANAGER
+// =====================================================
+
+async function manageDynamicTPSL(trade){
+
+
+try{
+
+    // =============================================
+    // SAFETY
+    // =============================================
+
+    if(!trade){
+        return
+    }
+
+    if(
+        !trade.symbol ||
+        !trade.side
+    ){
+        return
+    }
+
+    // Không update TPSL đồng thời.
+
+    if(TPSL_PENDING[trade.symbol]){
+        return
     }
 
     TPSL_PENDING[trade.symbol] = true
 
-    try{
+    // =============================================
+    // CHECK POSITION
+    // =============================================
 
-        await new Promise(r =>
-            setTimeout(r,3000)
+    let pos =
+        await hasPosition(
+            trade.symbol
         )
 
-        let tpslResult = await setTPSLAndVerify(trade)
+    if(!pos){
+        return
+    }
 
-if(!tpslResult?.ok){
+    // =============================================
+    // GET DATA
+    // =============================================
 
-            console.log(
-                `🚨 TPSL FAIL -> CLOSE ${trade.symbol}`
-            )
+    const [
+        data15,
+        data5
+    ] = await Promise.all([
 
-            let realQty =
-                Math.abs(
-                    Number(
-                        pos.positionAmt
-                    )
-                )
+        getData(
+            trade.symbol,
+            "15m",
+            160
+        ),
 
-            let closed =
-                await closePosition(
-                    trade.symbol,
-                    trade.side,
-                    realQty
-                )
+        getData(
+            trade.symbol,
+            "5m",
+            160
+        )
+    ])
 
-            if(!closed){
+    if(
+        !data15 ||
+        !data5
+    ){
+        return
+    }
 
-                console.log(
-                    `🚨 CLOSE FAIL ${trade.symbol}`
-                )
+    if(
+        data15.length < 30 ||
+        data5.length < 30
+    ){
+        return
+    }
 
-                await sendTelegram2(
-`🚨 CRITICAL
-${trade.symbol}
-TPSL FAIL
-CLOSE FAIL`
-                )
+    // =====================================================
+    // STRUCTURE DATA
+    // =====================================================
+
+    const h5 = data5.map(x => +x[2])
+    const l5 = data5.map(x => +x[3])
+    const c5 = data5.map(x => +x[4])
+
+    const current =
+        c5.at(-1)
+
+    if(
+        !Number.isFinite(current) ||
+        current <= 0
+    ){
+        return
+    }
+
+    // Vùng cản gần
+    const resistance =
+        Math.max(
+            ...h5.slice(-24,-1)
+        )
+
+    const support =
+        Math.min(
+            ...l5.slice(-24,-1)
+        )
+
+    // Vùng cản xa
+    const resistanceFar =
+        Math.max(
+            ...h5.slice(-48,-24)
+        )
+
+    const supportFar =
+        Math.min(
+            ...l5.slice(-48,-24)
+        )
+
+    // =============================================
+    // CURRENT POSITION PRICE
+    // =============================================
+
+    const currentEntry =
+        Number(
+            pos.entryPrice ||
+            trade.entry
+        )
+
+    if(
+        !Number.isFinite(currentEntry) ||
+        currentEntry <= 0
+    ){
+        return
+    }
+
+    // =============================================
+    // INITIAL RISK
+    // =============================================
+
+    const initialRisk =
+        Number(
+            trade.initialRisk
+        )
+
+    if(
+        !Number.isFinite(initialRisk) ||
+        initialRisk <= 0
+    ){
+        console.log(
+            `⚠️ NO INITIAL RISK ${trade.symbol}`
+        )
+
+        return
+    }
+
+    // =============================================
+    // ATR 15M
+    // =============================================
+
+    const atrRaw =
+        atr(
+            data15.slice(-80)
+        )
+
+    const atr15 =
+        Number.isFinite(atrRaw) &&
+        atrRaw > 0
+            ? atrRaw
+            : current * 0.003
+
+    // =============================================
+    // PROFIT / R
+    // =============================================
+
+    const profit =
+        trade.side === "LONG"
+            ? current - currentEntry
+            : currentEntry - current
+
+    const R =
+        profit / initialRisk
+
+    // =============================================
+    // OPEN TIME
+    // =============================================
+
+    const openedAt =
+        Number(
+            trade.openedAt
+        )
+
+    if(!openedAt){
+
+        console.log(
+            `⚠️ NO openedAt ${trade.symbol}`
+        )
+
+        return
+    }
+
+    const elapsedHours =
+        (
+            Date.now() -
+            openedAt
+        ) / 3600000
+
+    // =============================================
+    // CURRENT SL / TP
+    // =============================================
+
+    let newSL =
+        Number(trade.sl)
+
+    let newTP =
+        Number(trade.tp)
+
+    // =====================================================
+    // FIND NEAREST STRUCTURE
+    // =====================================================
+
+    let resistanceCandidates = [
+        resistance,
+        resistanceFar
+    ].filter(
+        x =>
+            Number.isFinite(x) &&
+            x > current
+    )
+
+    let supportCandidates = [
+        support,
+        supportFar
+    ].filter(
+        x =>
+            Number.isFinite(x) &&
+            x < current
+    )
+
+    let nextResistance =
+        resistanceCandidates.length
+            ? Math.min(...resistanceCandidates)
+            : null
+
+    let nextSupport =
+        supportCandidates.length
+            ? Math.max(...supportCandidates)
+            : null
+
+    const breakoutLong =
+        trade.side === "LONG" &&
+        current > resistance
+
+    const breakoutShort =
+        trade.side === "SHORT" &&
+        current < support
+
+    if(
+        !Number.isFinite(newSL) ||
+        !Number.isFinite(newTP)
+    ){
+        return
+    }
+
+    // =================================================
+    // 0 → 0.60R
+    // NO TRAILING
+    // =================================================
+
+    if(R < 0.60){
+
+        // Giữ SL nguyên.
+    }
+
+    // =================================================
+    // 0.60R → 0.90R
+    // REDUCE RISK
+    // =================================================
+
+    if(
+        R >= 0.60 &&
+        R < 0.90
+    ){
+
+        if(
+            trade.side === "LONG"
+        ){
+
+            const candidate =
+                currentEntry -
+                atr15 * 0.20
+
+            if(candidate > newSL){
+                newSL = candidate
             }
 
-            return false
+        }else{
+
+            const candidate =
+                currentEntry +
+                atr15 * 0.20
+
+            if(candidate < newSL){
+                newSL = candidate
+            }
+        }
+    }
+
+    // =================================================
+    // >= 0.90R
+    // BREAK EVEN
+    // =================================================
+
+    if(R >= 0.90){
+
+        const buffer =
+            Math.max(
+                atr15 * 0.05,
+                currentEntry * 0.0002
+            )
+
+        if(
+            trade.side === "LONG"
+        ){
+
+            const candidate =
+                currentEntry + buffer
+
+            if(candidate > newSL){
+                newSL = candidate
+            }
+
+        }else{
+
+            const candidate =
+                currentEntry - buffer
+
+            if(candidate < newSL){
+                newSL = candidate
+            }
+        }
+    }
+
+    // =================================================
+    // >= 1.20R
+    // LOCK PROFIT
+    // =================================================
+
+    if(R >= 1.20){
+
+        let lockR = 0.30
+
+        if(R >= 2.00){
+            lockR = 0.75
+        }
+        else if(R >= 1.60){
+            lockR = 0.55
         }
 
-        return {
-    ok: true
-}
+        if(
+            trade.side === "LONG"
+        ){
 
-    }finally{
+            const candidate =
+                currentEntry +
+                initialRisk * lockR
 
-        delete TPSL_PENDING[trade.symbol]
+            if(candidate > newSL){
+                newSL = candidate
+            }
 
+        }else{
+
+            const candidate =
+                currentEntry -
+                initialRisk * lockR
+
+            if(candidate < newSL){
+                newSL = candidate
+            }
+        }
     }
+
+    // =================================================
+    // >= 1.40R
+    // ATR 15M TRAILING
+    // =================================================
+
+    if(R >= 1.40){
+
+        let multiplier = 1.20
+
+        if(R >= 2.50){
+            multiplier = 0.90
+        }
+        else if(R >= 2.00){
+            multiplier = 1.05
+        }
+
+        if(
+            trade.side === "LONG"
+        ){
+
+            const candidate =
+                current -
+                atr15 * multiplier
+
+            if(candidate > newSL){
+                newSL = candidate
+            }
+
+        }else{
+
+            const candidate =
+                current +
+                atr15 * multiplier
+
+            if(candidate < newSL){
+                newSL = candidate
+            }
+        }
+    }
+
+    // =================================================
+    // DYNAMIC TP BY R
+    // =================================================
+
+    let targetR = 1.45
+
+    if(R >= 0.80){
+        targetR = 1.70
+    }
+
+    if(R >= 1.20){
+        targetR = 2.00
+    }
+
+    if(R >= 1.60){
+        targetR = 2.30
+    }
+
+    if(R >= 2.00){
+        targetR = 2.60
+    }
+
+    if(R >= 2.50){
+        targetR = 3.00
+    }
+
+    const dynamicTP =
+        trade.side === "LONG"
+            ? currentEntry +
+              initialRisk * targetR
+            : currentEntry -
+              initialRisk * targetR
+
+    if(trade.side === "LONG"){
+
+        if(dynamicTP > newTP){
+            newTP = dynamicTP
+        }
+
+    }else{
+
+        if(dynamicTP < newTP){
+            newTP = dynamicTP
+        }
+    }
+
+    // =====================================================
+    // APPROACHING STRUCTURE
+    // =====================================================
+
+    const structureBuffer =
+        atr15 * 0.35
+
+    // ================= LONG =================
+
+    if(
+        trade.side === "LONG" &&
+        nextResistance &&
+        nextResistance > current
+    ){
+
+        const distance =
+            nextResistance - current
+
+        if(
+            distance <= structureBuffer
+        ){
+
+            // Đã có lời -> khóa lợi nhuận
+            if(R >= 0.70){
+
+                const lock =
+                    currentEntry +
+                    initialRisk * 0.40
+
+                if(lock > newSL){
+                    newSL = lock
+                }
+            }
+
+            // TP đặt ngay trước resistance
+            const target =
+                nextResistance -
+                atr15 * 0.10
+
+            if(
+                target > current &&
+                target < newTP
+            ){
+                newTP = target
+            }
+        }
+    }
+
+    // ================= SHORT =================
+
+    if(
+        trade.side === "SHORT" &&
+        nextSupport &&
+        nextSupport < current
+    ){
+
+        const distance =
+            current - nextSupport
+
+        if(
+            distance <= structureBuffer
+        ){
+
+            if(R >= 0.70){
+
+                const lock =
+                    currentEntry -
+                    initialRisk * 0.40
+
+                if(lock < newSL){
+                    newSL = lock
+                }
+            }
+
+            const target =
+                nextSupport +
+                atr15 * 0.10
+
+            if(
+                target < current &&
+                target > newTP
+            ){
+                newTP = target
+            }
+        }
+    }
+
+    // =====================================================
+    // STRUCTURE EXIT
+    // =====================================================
+
+    if(
+        trade.side === "LONG" &&
+        nextResistance &&
+        nextResistance > current
+    ){
+
+        const distance =
+            nextResistance - current
+
+        if(
+            distance <= atr15 * 0.15 &&
+            R >= 0.50
+        ){
+
+            const qty =
+                Math.abs(
+                    Number(pos.positionAmt)
+                )
+
+            if(qty > 0){
+
+                console.log(
+                    `🏁 RESISTANCE EXIT ${trade.symbol} ` +
+                    `R=${R.toFixed(2)} ` +
+                    `DIST=${distance}`
+                )
+
+                const closed =
+                    await closePosition(
+                        trade.symbol,
+                        trade.side,
+                        qty
+                    )
+
+                if(closed){
+                    return
+                }
+            }
+        }
+    }
+
+    // =====================================================
+    // AFTER BREAKOUT
+    // =====================================================
+
+    if(
+        breakoutLong &&
+        R >= 1.00
+    ){
+
+        // SL xuống dưới vùng vừa phá
+        const candidateSL =
+            resistance -
+            atr15 * 0.35
+
+        if(candidateSL > newSL){
+            newSL = candidateSL
+        }
+
+        // Tìm resistance tiếp theo
+        if(
+            resistanceFar > current
+        ){
+
+            const candidateTP =
+                resistanceFar -
+                atr15 * 0.10
+
+            if(candidateTP > newTP){
+                newTP = candidateTP
+            }
+        }
+    }
+
+    if(
+        breakoutShort &&
+        R >= 1.00
+    ){
+
+        const candidateSL =
+            support +
+            atr15 * 0.35
+
+        if(candidateSL < newSL){
+            newSL = candidateSL
+        }
+
+        if(
+            supportFar < current
+        ){
+
+            const candidateTP =
+                supportFar +
+                atr15 * 0.10
+
+            if(candidateTP < newTP){
+                newTP = candidateTP
+            }
+        }
+    }
+
+    // =====================================================
+    // TIME EXIT
+    // =====================================================
+
+    // Không đóng lệnh chỉ vì đã 12h.
+    //
+    // Chỉ đóng nếu:
+    // 1. Đã giữ >= 8h
+    // 2. Lệnh gần như không chạy
+    // 3. R < 0.30
+
+    if(
+        elapsedHours >= 8 &&
+        R < 0.30
+    ){
+
+        const qty =
+            Math.abs(
+                Number(
+                    pos.positionAmt
+                )
+            )
+
+        console.log(
+            `⏰ STALE TRADE EXIT ${trade.symbol} ` +
+            `R=${R.toFixed(2)} ` +
+            `H=${elapsedHours.toFixed(2)}`
+        )
+
+        await closePosition(
+            trade.symbol,
+            trade.side,
+            qty
+        )
+
+        return
+    }
+
+    // Safety cực xa.
+    // Chỉ dùng để tránh position bị treo vô hạn.
+
+    if(
+        elapsedHours >= 24
+    ){
+
+        const qty =
+            Math.abs(
+                Number(
+                    pos.positionAmt
+                )
+            )
+
+        console.log(
+            `🚨 MAX TIME EXIT ${trade.symbol} ` +
+            `R=${R.toFixed(2)} ` +
+            `H=${elapsedHours.toFixed(2)}`
+        )
+
+        await closePosition(
+            trade.symbol,
+            trade.side,
+            qty
+        )
+
+        return
+    }
+
+    // =================================================
+    // NEVER MOVE SL BACKWARD
+    // =================================================
+
+    const oldSL =
+        Number(trade.sl)
+
+    if(
+        trade.side === "LONG" &&
+        newSL < oldSL
+    ){
+        newSL = oldSL
+    }
+
+    if(
+        trade.side === "SHORT" &&
+        newSL > oldSL
+    ){
+        newSL = oldSL
+    }
+
+    // =================================================
+    // CHECK WHETHER CHANGE IS REAL
+    // =================================================
+
+    const slChanged =
+        Math.abs(
+            newSL - oldSL
+        ) >
+        Math.max(
+            currentEntry * 0.00001,
+            atr15 * 0.01
+        )
+
+    const tpChanged =
+        Math.abs(
+            newTP -
+            Number(trade.tp)
+        ) >
+        Math.max(
+            currentEntry * 0.00001,
+            atr15 * 0.01
+        )
+
+    if(
+        !slChanged &&
+        !tpChanged
+    ){
+        return
+    }
+
+    // =================================================
+    // UPDATE BINANCE
+    // =================================================
+
+    try{
+
+        const updateTrade = {
+
+            ...trade,
+
+            entry:
+                currentEntry,
+
+            sl:
+                newSL,
+
+            tp:
+                newTP
+        }
+
+        const result =
+            await setTPSLAndVerify(
+                updateTrade
+            )
+
+        if(!result?.ok){
+
+            console.log(
+                `🚨 DYNAMIC TPSL UPDATE FAIL ${trade.symbol} -> CLOSE`
+            )
+
+            const realQty =
+                Math.abs(
+                    Number(pos.positionAmt)
+                )
+
+            if(realQty > 0){
+
+                const closed =
+                    await closePosition(
+                        trade.symbol,
+                        trade.side,
+                        realQty
+                    )
+
+                if(!closed){
+
+                    console.log(
+                        `🚨 CRITICAL CLOSE FAIL ${trade.symbol}`
+                    )
+
+                    await sendTelegram2(
+                        `🚨 CRITICAL TPSL UPDATE FAIL\n${trade.symbol}\nPOSITION STILL OPEN`
+                    )
+                }
+            }
+
+            return
+        }
+
+        // =================================================
+        // UPDATE LOCAL TRADE OBJECT
+        // =================================================
+
+        trade.sl = newSL
+        trade.tp = newTP
+
+        await updateTradeTPSL(
+            trade,
+            newSL,
+            newTP
+        )
+
+        console.log(
+            `🔄 DYNAMIC ${trade.symbol} ` +
+            `${trade.side} ` +
+            `R=${R.toFixed(2)} ` +
+            `SL=${newSL} ` +
+            `TP=${newTP}`
+        )
+
+    }catch(e){
+
+        await checkTimeError(e)
+
+        console.log(
+            `❌ DYNAMIC TPSL ERROR ${trade.symbol}:`,
+            e.message
+        )
+    }
+
+}catch(e){
+
+    await checkTimeError(e)
+
+    console.log(
+        `❌ MANAGE DYNAMIC TPSL ERROR ${trade?.symbol || "UNKNOWN"}:`,
+        e.message
+    )
+
+}finally{
+
+    if(trade?.symbol){
+        delete TPSL_PENDING[trade.symbol]
+    }
+
 }
+
+
+}
+
 async function cancelAllOrders(symbol){
 
     try{
 
         await binance.futuresCancelAllOpenOrders({
+
             symbol,
             recvWindow: 20000
+
         })
-        for(let i=0;i<35;i++){
 
-    let openOrders =
-        await binance.futuresOpenOrders({
-    symbol,
-    recvWindow: 20000
-})
+        for(let i = 0; i < 20; i++){
 
-    if(openOrders.length === 0){
-        break
-    }
+            const openOrders =
+                await binance.futuresOpenOrders({
 
-    await new Promise(r =>
-        setTimeout(r, 1500)
-    )
-}
+                    symbol,
+                    recvWindow: 20000
 
-        console.log(`🗑 CANCEL OLD TPSL ${symbol}`)
+                })
+
+            if(openOrders.length === 0){
+
+                console.log(
+                    `🗑 OLD ORDERS CLEARED ${symbol}`
+                )
+
+                return true
+            }
+
+            await new Promise(r =>
+                setTimeout(r, 500)
+            )
+        }
+
+        console.log(
+            `❌ CANCEL VERIFY FAIL ${symbol}`
+        )
+
+        return false
 
     }catch(e){
+
         await checkTimeError(e)
-        console.log(`❌ CANCEL TPSL ${symbol}:`, e.message)
+
+        console.log(
+            `❌ CANCEL TPSL ${symbol}:`,
+            e.message
+        )
+
+        return false
     }
 }
 // ================= COMMAND =================
@@ -1464,14 +2722,14 @@ const bear15 =
     let longBias = 0
     let shortBias = 0
 
-    if(bull1h) longBias += 3
-    if(bear1h) shortBias += 3
+    if(bull1h) longBias += 2
+    if(bear1h) shortBias += 2
 
-    if(bull15) longBias += 3
-    if(bear15) shortBias += 3
+    if(bull15) longBias += 2
+    if(bear15) shortBias += 2
 
-    if(slope15 > 0.0002) longBias += 1
-    if(slope15 < -0.0002) shortBias += 1
+    if(slope15 > 0.00015) longBias += 1
+    if(slope15 < -0.00015) shortBias += 1
 
     // ================= 5M DATA =================
 
@@ -1654,40 +2912,78 @@ const accelerationShort =
     const pullbackLong =
     p5 > ema20_5 &&
     ema20_5 > ema50_5 &&
-    l5.at(-2) <= ema20_5*1.006 &&
+    (
+        bull15 ||
+        bull1h ||
+        slope15 > 0.00015
+    ) &&
+    (
+        l5.at(-2) <= ema9_5 * 1.008 ||
+        l5.at(-2) <= ema20_5 * 1.015
+    ) &&
     c0 > cPrev
 
 const pullbackShort =
     p5 < ema20_5 &&
     ema20_5 < ema50_5 &&
-    h5.at(-2) >= ema20_5*0.994 &&
+    (
+        bear15 ||
+        bear1h ||
+        slope15 < -0.00015
+    ) &&
+    (
+        h5.at(-2) >= ema9_5 * 0.992 ||
+        h5.at(-2) >= ema20_5 * 0.985
+    ) &&
     c0 < cPrev
+
+    const pullbackReclaimLong =
+    pullbackLong &&
+    (
+        reclaimEmaLong ||
+        microBreakLong ||
+        c0 > hPrev
+    )
+
+const pullbackReclaimShort =
+    pullbackShort &&
+    (
+        reclaimEmaShort ||
+        microBreakShort ||
+        c0 < lPrev
+    )
 // ================= TREND CONTINUATION =================
 
 const trendContinuationLong =
     trendLong5 &&
     (
         bull15 ||
+        bull1h ||
         slope15 > 0.00015
     ) &&
     c0 > cPrev &&
     (
         microBreakLong ||
+        reclaimEmaLong ||
+        pullbackReclaimLong ||
         accelerationLong ||
-        reclaimEmaLong
+        c0 > hPrev
     )
 
 const trendContinuationShort =
     trendShort5 &&
     (
         bear15 ||
+        bear1h ||
         slope15 < -0.00015
     ) &&
     c0 < cPrev &&
     (
         microBreakShort ||
+        reclaimEmaShort ||
+        pullbackReclaimShort ||
         accelerationShort ||
-        reclaimEmaShort
+        c0 < lPrev
     )
     // ================= REVERSAL ENGINE =================
 
@@ -1774,47 +3070,45 @@ const validReversalShort =
     
     // ================= 1M CONFIRMATION =================
 const longTrigger =
-    microBreakLong ||
-    sweepLow ||
-    reclaimEmaLong ||
-    retestLong ||
     pullbackLong ||
     trendContinuationLong ||
-    momentumLong
+    retestLong ||
+    momentumLong ||
+    reversalLong ||
+    microBreakLong ||
+    reclaimEmaLong
 
 const shortTrigger =
-    microBreakShort ||
-    sweepHigh ||
-    reclaimEmaShort ||
-    retestShort ||
     pullbackShort ||
     trendContinuationShort ||
-    momentumShort
+    retestShort ||
+    momentumShort ||
+    reversalShort ||
+    microBreakShort ||
+    reclaimEmaShort
 
 const longMomentumConfirm =
     c0 > cPrev ||
-    accelerationLong ||
-    trendLong5
+    accelerationLong
 
 const shortMomentumConfirm =
     c0 < cPrev ||
-    accelerationShort ||
-    trendShort5
+    accelerationShort
 
 
     const confirmLong =
     longTrigger &&
     longMomentumConfirm &&
     c0 > o0 &&
-    br0 >= 0.35 &&
-    closeLong(h0,l0,c0) >= 0.52
+    br0 >= 0.30 &&
+    closeLong(h0,l0,c0) >= 0.50
 
 const confirmShort =
     shortTrigger &&
     shortMomentumConfirm &&
     c0 < o0 &&
-    br0 >= 0.35 &&
-    closeShort(h0,l0,c0) >= 0.52
+    br0 >= 0.30 &&
+    closeShort(h0,l0,c0) >= 0.50
 
     // ================= SETUP SELECTION =================
 
@@ -2080,10 +3374,6 @@ if(side === "LONG"){
 
 // ===== EXTENSION =====
 
-if(Math.abs(move5) > 0.025){
-    score -= 4
-}
-
 if(score < 58){
     return null
 }
@@ -2092,7 +3382,7 @@ if(score < 58){
 
 if(
     side === "LONG" &&
-    move5 > 0.03 &&
+    move5 > 0.04 &&
     !retestLong &&
     !pullbackLong &&
     !sweepLow
@@ -2102,7 +3392,7 @@ if(
 
 if(
     side === "SHORT" &&
-    move5 < -0.03 &&
+    move5 < -0.04 &&
     !retestShort &&
     !pullbackShort &&
     !sweepHigh
@@ -2236,147 +3526,582 @@ if(quality < 2){
         Math.max(
             ...h1.slice(-8)
         )
+// ================= DYNAMIC RISK / TP / SL =================
 
-    // ================= RISK =================
+// Mục tiêu:
+// - Không dùng SL quá sát theo 1M.
+// - Ưu tiên cấu trúc 5M + ATR15.
+// - TP thích nghi theo volatility + structure.
+// - Giữ lệnh đủ lâu để bắt move vài giờ.
+// - Không cho target quá xa khiến lệnh kéo dài vô lý.
 
-    let sl = null
-    let risk = null
-    let tp = null
+// ATR15 được dùng cho swing/hold nhiều giờ.
+// ATR5 dùng để tinh chỉnh entry.
+// ATR1 chỉ dùng làm buffer nhỏ.
 
-    if(side === "LONG"){
+const atr15Safe =
+    Number.isFinite(atr15) && atr15 > 0
+        ? atr15
+        : entry * 0.003
 
-        sl =
-            Math.min(
-                microLow,
-                structureLow,
-                sweepLow ? l0 : Infinity
-            )
+const atr5Safe =
+    Number.isFinite(atr5) && atr5 > 0
+        ? atr5
+        : entry * 0.002
 
-        // Buffer nhỏ theo ATR 1M
-        sl -= atr1*0.35
+const atr1Safe =
+    Number.isFinite(atr1) && atr1 > 0
+        ? atr1
+        : entry * 0.0008
 
-        if(sl >= entry){
-            return null
-        }
+// ================= VOLATILITY FACTOR =================
 
-        risk = entry-sl
+// ATR15 / price cho biết biên độ thực tế của thị trường.
+// Volatility càng cao -> cho lệnh rộng hơn.
+// Volatility thấp -> không cho SL quá rộng.
 
-        // Không cho SL quá rộng đối với scalp
-        if(risk > atr5*1.35){
-            return null
-        }
+const atr15Ratio =
+    atr15Safe / entry
 
-        // Không cho SL quá nhỏ vì dễ bị noise
-        if(risk < atr1*0.45){
-            sl = entry-atr1*0.45
-            risk = entry-sl
-        }
+let volFactor = 1.0
 
-        tp = entry + risk*1.45
+if(atr15Ratio >= 0.008){
+    volFactor = 1.35
+}
+else if(atr15Ratio >= 0.005){
+    volFactor = 1.20
+}
+else if(atr15Ratio >= 0.003){
+    volFactor = 1.05
+}
+else if(atr15Ratio <= 0.0015){
+    volFactor = 0.85
+}
 
-    }else{
+// ================= STRUCTURE =================
 
-        sl =
-            Math.max(
-                microHigh,
-                structureHigh,
-                sweepHigh ? h0 : -Infinity
-            )
+// Structure 5M quan trọng hơn micro structure 1M.
+// Micro structure chỉ dùng làm buffer.
 
-        sl += atr1*0.35
+const swingLow5 =
+    Math.min(
+        ...l5.slice(-24,-1)
+    )
 
-        if(sl <= entry){
-            return null
-        }
+const swingHigh5 =
+    Math.max(
+        ...h5.slice(-24,-1)
+    )
 
-        risk = sl-entry
+const swingLow15 =
+    Math.min(
+        ...l15.slice(-12,-1)
+    )
 
-        if(risk > atr5*1.35){
-            return null
-        }
+const swingHigh15 =
+    Math.max(
+        ...h15.slice(-12,-1)
+    )
 
-        if(risk < atr1*0.45){
-            sl = entry+atr1*0.45
-            risk = sl-entry
-        }
+// Dùng cấu trúc gần nhất nhưng không để một wick 1M quá nhỏ
+// quyết định toàn bộ SL.
 
-        tp = entry-risk*1.45
-    }
+let sl = null
+let risk = null
+let tp = null
 
-    if(!risk || risk <= 0){
-        return null
-    }
+// ================= LONG =================
 
-    // ================= NEAREST STRUCTURE =================
+if(side === "LONG"){
 
-    const resistance =
-        Math.max(
-            ...h5.slice(-12,-1)
-        )
+    // SL chính:
+    // - swing 5M
+    // - swing 15M nếu cần
+    // - sweep low
+    //
+    // Không dùng microLow 1M làm SL chính nữa.
 
-    const support =
+    let structuralSL =
         Math.min(
-            ...l5.slice(-12,-1)
+            swingLow5,
+            structureLow
         )
 
-    // Nếu target đâm thẳng vào structure quá gần,
-    // không trade.
-
-    if(side === "LONG"){
-
-        if(
-            resistance > entry &&
-            resistance < tp
-        ){
-            const available =
-                resistance-entry
-
-            if(
-                available/risk < 1.10
-            ){
-                return null
-            }
-
-            tp = resistance
-        }
-
-    }else{
-
-        if(
-            support < entry &&
-            support > tp
-        ){
-            const available =
-                entry-support
-
-            if(
-                available/risk < 1.10
-            ){
-                return null
-            }
-
-            tp = support
-        }
-    }
-
-    // ================= FINAL RR =================
-
-    const finalRR =
-        side === "LONG"
-            ? (tp-entry)/risk
-            : (entry-tp)/risk
-
-    if(finalRR < RR_THRESHOLD){
-        return null
-    }
-
-    // TP không quá xa đối với short-term
     if(
-        Math.abs(tp-entry) > atr5*2.8
+        sweepLow &&
+        Number.isFinite(l0)
     ){
+        structuralSL =
+            Math.min(
+                structuralSL,
+                l0
+            )
+    }
+
+    // Nếu structure 15M quá xa thì không dùng trực tiếp,
+    // nhưng vẫn đảm bảo SL có khoảng thở theo ATR15.
+
+    const atrBasedSL =
+        entry -
+        atr15Safe *
+        (0.80 * volFactor)
+
+    // Chọn mức rộng hơn giữa structure và ATR.
+    // Mục tiêu tránh SL bị wick 1M quét quá dễ.
+
+    sl =
+        Math.min(
+            structuralSL,
+            atrBasedSL
+        )
+
+    // Buffer nhỏ sau structure.
+    sl -= atr5Safe * 0.12
+
+    if(sl >= entry){
         return null
     }
 
+    risk =
+        entry - sl
+
+    // ================= SL BOUNDARIES =================
+
+    // SL tối thiểu.
+    // Không dùng ATR1 quá thấp làm SL.
+
+    const minRisk =
+        Math.max(
+            atr5Safe * 0.55,
+            atr1Safe * 2.0
+        )
+
+    if(risk < minRisk){
+
+        sl =
+            entry - minRisk
+
+        risk =
+            entry - sl
+    }
+
+    // SL tối đa dựa trên ATR15.
+    // Nếu structure quá xa, bỏ lệnh thay vì đặt SL vô lý.
+
+    const maxRisk =
+        atr15Safe *
+        (1.35 * volFactor)
+
+    if(risk > maxRisk){
+
+        const fallbackSL =
+            entry - maxRisk
+
+        // Nếu fallback SL nằm trên structure,
+        // nghĩa là structure đang quá gần / không đẹp.
+
+        if(
+            fallbackSL >
+            structuralSL
+        ){
+            return null
+        }
+
+        sl =
+            fallbackSL
+
+        risk =
+            entry - sl
+    }
+
+    // ================= LONG TARGET =================
+
+    // Target cơ bản theo ATR15.
+    // Đây là target cho move vài giờ,
+    // không phải scalp vài phút.
+
+    let targetATR =
+        atr15Safe *
+        (1.45 * volFactor)
+
+    let rawTP =
+        entry + targetATR
+
+    // Resistance 5M / 15M gần nhất.
+
+    const resistance5 =
+        Math.max(
+            ...h5.slice(-24,-1)
+        )
+
+    const resistance15 =
+        Math.max(
+            ...h15.slice(-12,-1)
+        )
+
+    // Ưu tiên target structure nếu nó nằm hợp lý.
+    // Không đặt TP ngay trước resistance quá sát.
+
+    let structureTP =
+        Infinity
+
+    if(
+        resistance5 > entry
+    ){
+        structureTP =
+            Math.min(
+                structureTP,
+                resistance5
+            )
+    }
+
+    if(
+        resistance15 > entry
+    ){
+        structureTP =
+            Math.min(
+                structureTP,
+                resistance15
+            )
+    }
+
+    if(
+        Number.isFinite(structureTP)
+    ){
+
+        const structureDistance =
+            structureTP - entry
+
+        if(
+            structureDistance >= risk * 1.25
+        ){
+            rawTP =
+                Math.min(
+                    rawTP,
+                    structureTP
+                )
+        }
+    }
+
+    tp = rawTP
+
+// ================= SHORT =================
+
+}else{
+
+    let structuralSL =
+        Math.max(
+            swingHigh5,
+            structureHigh
+        )
+
+    if(
+        sweepHigh &&
+        Number.isFinite(h0)
+    ){
+        structuralSL =
+            Math.max(
+                structuralSL,
+                h0
+            )
+    }
+
+    const atrBasedSL =
+        entry +
+        atr15Safe *
+        (0.80 * volFactor)
+
+    sl =
+        Math.max(
+            structuralSL,
+            atrBasedSL
+        )
+
+    sl += atr5Safe * 0.12
+
+    if(sl <= entry){
+        return null
+    }
+
+    risk =
+        sl - entry
+
+    // ================= SL BOUNDARIES =================
+
+    const minRisk =
+        Math.max(
+            atr5Safe * 0.55,
+            atr1Safe * 2.0
+        )
+
+    if(risk < minRisk){
+
+        sl =
+            entry + minRisk
+
+        risk =
+            sl - entry
+    }
+
+    const maxRisk =
+        atr15Safe *
+        (1.35 * volFactor)
+
+    if(risk > maxRisk){
+
+        const fallbackSL =
+            entry + maxRisk
+
+        if(
+            fallbackSL <
+            structuralSL
+        ){
+            return null
+        }
+
+        sl =
+            fallbackSL
+
+        risk =
+            sl - entry
+    }
+
+    // ================= SHORT TARGET =================
+
+    let targetATR =
+        atr15Safe *
+        (1.45 * volFactor)
+
+    let rawTP =
+        entry - targetATR
+
+    const support5 =
+        Math.min(
+            ...l5.slice(-24,-1)
+        )
+
+    const support15 =
+        Math.min(
+            ...l15.slice(-12,-1)
+        )
+
+    let structureTP =
+        -Infinity
+
+    if(
+        support5 < entry
+    ){
+        structureTP =
+            Math.max(
+                structureTP,
+                support5
+            )
+    }
+
+    if(
+        support15 < entry
+    ){
+        structureTP =
+            Math.max(
+                structureTP,
+                support15
+            )
+    }
+
+    if(
+        Number.isFinite(structureTP)
+    ){
+
+        const structureDistance =
+            entry - structureTP
+
+        if(
+            structureDistance >= risk * 1.25
+        ){
+            rawTP =
+                Math.max(
+                    rawTP,
+                    structureTP
+                )
+        }
+    }
+
+    tp = rawTP
+}
+
+// ================= FINAL INITIAL RR =================
+
+if(
+    !Number.isFinite(sl) ||
+    !Number.isFinite(tp) ||
+    !Number.isFinite(risk) ||
+    risk <= 0
+){
+    return null
+}
+
+const initialRR =
+    side === "LONG"
+        ? (tp-entry)/risk
+        : (entry-tp)/risk
+
+// Không nhận setup có reward quá thấp.
+
+if(
+    initialRR < 1.25
+){
+    return null
+}
+
+// ================= MAX TARGET =================
+
+// Không cho TP quá xa đến mức dễ biến thành
+// lệnh giữ qua ngày.
+//
+// Dùng ATR15 thay vì ATR5.
+
+const maxTargetDistance =
+    atr15Safe *
+    (3.20 * volFactor)
+
+if(
+    Math.abs(tp-entry) >
+    maxTargetDistance
+){
+
+    tp =
+        side === "LONG"
+            ? entry + maxTargetDistance
+            : entry - maxTargetDistance
+}
+
+// ================= FINAL RR AFTER CAP =================
+
+const finalRR =
+    side === "LONG"
+        ? (tp-entry)/risk
+        : (entry-tp)/risk
+
+// Sau khi cap TP phải kiểm tra lại RR.
+
+if(
+    finalRR < 1.20
+){
+    return null
+}
+
+// ================= NEAREST STRUCTURE =================
+
+// Chỉ reject structure nếu nó nằm quá gần entry.
+// Không còn ép TP phải nằm ngay tại resistance/support
+// như core cũ.
+
+const nearestResistance =
+    Math.max(
+        ...h5.slice(-18,-1)
+    )
+
+const nearestSupport =
+    Math.min(
+        ...l5.slice(-18,-1)
+    )
+
+if(side === "LONG"){
+
+    if(
+        nearestResistance > entry
+    ){
+
+        const distance =
+            nearestResistance-entry
+
+        // Nếu resistance nằm trước TP nhưng quá gần,
+        // setup không có đủ room.
+
+        if(
+            distance < risk * 1.05 &&
+            distance < tp-entry
+        ){
+            return null
+        }
+    }
+
+}else{
+
+    if(
+        nearestSupport < entry
+    ){
+
+        const distance =
+            entry-nearestSupport
+
+        if(
+            distance < risk * 1.05 &&
+            distance < entry-tp
+        ){
+            return null
+        }
+    }
+}
+
+// ================= TIME TARGET =================
+
+// Ước lượng thời gian dự kiến dựa trên ATR15.
+// Đây không phải hard guarantee, chỉ là metadata.
+//
+// ATR15 = biến động trung bình của 15M.
+// Target càng lớn -> thời gian dự kiến càng dài.
+
+const tpDistance =
+    Math.abs(tp-entry)
+
+const estimated15mBars =
+    atr15Safe > 0
+        ? tpDistance / atr15Safe
+        : 0
+
+const estimatedHours =
+    estimated15mBars * 0.25
+
+// Không cho target mang tính "swing dài ngày".
+
+if(
+    estimatedHours > 12
+){
+    return null
+}
+
+// ================= DYNAMIC PROFILE =================
+
+let tpProfile = "NORMAL"
+
+if(
+    estimatedHours <= 2
+){
+    tpProfile = "FAST"
+}
+else if(
+    estimatedHours <= 5
+){
+    tpProfile = "NORMAL"
+}
+else if(
+    estimatedHours <= 8
+){
+    tpProfile = "EXTENDED"
+}
+else{
+    tpProfile = "MAX_HOLD"
+}
+const resistance =
+    Math.max(
+        ...h5.slice(-18,-1)
+    )
+
+const support =
+    Math.min(
+        ...l5.slice(-18,-1)
+    )
     // ================= OUTPUT =================
 
     const round = (n,d=8) =>
@@ -3781,14 +5506,20 @@ try{
     }
 
     insertResult =
-        await trades.insertOne(trade)
+    await trades.insertOne(trade)
 
-    trade._id =
-        insertResult.insertedId
+trade._id =
+    insertResult.insertedId
 
-    console.log(
-        `💾 DB SAVED ${trade.symbol}`
-    )
+activeTrades.push(trade)
+
+console.log(
+    `💾 DB SAVED ${trade.symbol}`
+)
+
+console.log(
+    `🟢 ACTIVE TRADE ADDED ${trade.symbol}`
+)
 
 }catch(dbErr){
 
@@ -4610,7 +6341,57 @@ async function syncActiveTrades(){
         )
     }
 }
+let DYNAMIC_TPSL_RUNNING = false
 
+async function runDynamicTPSL(){
+
+    if(DYNAMIC_TPSL_RUNNING){
+        console.log("⛔ DYNAMIC TPSL ALREADY RUNNING")
+        return
+    }
+
+    DYNAMIC_TPSL_RUNNING = true
+
+    try{
+
+        if(!activeTrades || activeTrades.length === 0){
+            return
+        }
+
+        for(const trade of [...activeTrades]){
+
+            if(!trade){
+                continue
+            }
+
+            if(trade.result !== "PENDING"){
+                continue
+            }
+
+            try{
+
+                await manageDynamicTPSL(trade)
+
+            }catch(e){
+
+                console.log(
+                    `❌ RUN DYNAMIC TPSL ${trade.symbol}:`,
+                    e.message
+                )
+
+            }
+        }
+
+    }finally{
+
+        DYNAMIC_TPSL_RUNNING = false
+
+    }
+}
+setInterval(
+    runDynamicTPSL,
+    60 * 1000
+)
 setInterval(syncActiveTrades, 3600000)
 function cleanup(){
     try{
