@@ -1965,7 +1965,7 @@ if(side === "SHORT" && closeShort(h0,l0,c0) >= 0.65){
     quality += 1
 }
 
-if(quality < 4){
+if(quality < 3){
     return null
 }
 
