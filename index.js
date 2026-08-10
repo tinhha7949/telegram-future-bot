@@ -1673,26 +1673,28 @@ const retestShort =
     // ================= 1M CONFIRMATION =================
 
     const confirmLong =
-    (
-        microBreakLong ||
-        sweepLow ||
-        reclaimEmaLong ||
-        retestLong
-    ) &&
-    c0 > o0 &&
-    br0 >= 0.40 &&
-    closeLong(h0,l0,c0) >= 0.58
+(
+    microBreakLong ||
+    sweepLow ||
+    reclaimEmaLong ||
+    retestLong ||
+    pullbackLong
+) &&
+c0 > o0 &&
+br0 >= 0.40 &&
+closeLong(h0,l0,c0) >= 0.58
 
 const confirmShort =
-    (
-        microBreakShort ||
-        sweepHigh ||
-        reclaimEmaShort ||
-        retestShort
-    ) &&
-    c0 < o0 &&
-    br0 >= 0.40 &&
-    closeShort(h0,l0,c0) >= 0.58
+(
+    microBreakShort ||
+    sweepHigh ||
+    reclaimEmaShort ||
+    retestShort ||
+    pullbackShort
+) &&
+c0 < o0 &&
+br0 >= 0.40 &&
+closeShort(h0,l0,c0) >= 0.58
 
     // ================= SETUP SELECTION =================
 
@@ -1895,14 +1897,15 @@ if(setup === "MOMENTUM_CONTINUATION"){
         score -= 5
     }
 }
+if(Math.abs(move5) > 0.025){
+    score -= 5
+}
 
     // Score thấp chỉ bỏ setup thực sự yếu.
     if(score < 65){
         return null
     }
-    if(Math.abs(move5) > 0.025){
-    score -= 5
-}
+    
 if(
     side === "LONG" &&
     move5 > 0.018 &&
@@ -2668,24 +2671,49 @@ for(let i=0;i<symbols.length;i+=10){
 
     let r = []
 
-for(let s of chunk){
+let r = await Promise.all(
+    chunk.map(async s => {
 
-    let result = await Promise.race([
-    scan(s),
-    new Promise(resolve =>
-        setTimeout(() => resolve(null), 20000)
-    )
-]).catch(e => {
-    console.log("SCAN ERROR:", s, e.message)
-    return null
-})
+        try{
 
-    if(result){
-        r.push({ status:"fulfilled", value: result })
-    }
+            let result =
+                await Promise.race([
+                    scan(s),
+                    new Promise(resolve =>
+                        setTimeout(
+                            () => resolve(null),
+                            20000
+                        )
+                    )
+                ])
 
-    await new Promise(r => setTimeout(r, 300))
-}
+            if(result){
+                return {
+                    status:"fulfilled",
+                    value:result
+                }
+            }
+
+            return {
+                status:"rejected",
+                value:null
+            }
+
+        }catch(e){
+
+            console.log(
+                "SCAN ERROR:",
+                s,
+                e.message
+            )
+
+            return {
+                status:"rejected",
+                value:null
+            }
+        }
+    })
+)
 
     results.push(...r)
 
