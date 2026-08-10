@@ -1,4 +1,5 @@
 let DB_READY = false
+const TPSL_LOCK = {}
 let DB_RECONNECTING = false
 let DB_LAST_ERROR = 0
 let TIME_SYNCED = false
@@ -786,6 +787,21 @@ async function setTPSLAndVerify(trade){
 
     const symbol = trade.symbol
 
+    if(!symbol){
+        return false
+    }
+
+    if(TPSL_LOCK[symbol]){
+
+        console.log(
+            `⛔ TPSL LOCK BUSY ${symbol}`
+        )
+
+        return false
+    }
+
+    TPSL_LOCK[symbol] = true
+
     try{
 
         // =========================================
@@ -900,48 +916,78 @@ async function setTPSLAndVerify(trade){
         }
 
         // =========================================
-        // CANCEL OLD ORDERS
-        // =========================================
+// CANCEL OLD TPSL
+// =========================================
 
-        const cancelled =
-            await cancelAllOrders(symbol)
+const cancelled =
+    await cancelAllOrders(symbol)
 
-        if(!cancelled){
+if(!cancelled){
 
-            console.log(
-                `❌ OLD TPSL NOT CLEARED ${symbol}`
-            )
+    console.log(
+        `❌ OLD TPSL NOT CLEARED ${symbol}`
+    )
 
-            return false
-        }
+    return false
+}
 
-        // =========================================
-        // FINAL VERIFY BEFORE PLACING
-        // =========================================
+// =========================================
+// FINAL VERIFY — BINANCE PHẢI THỰC SỰ EMPTY
+// =========================================
 
-        const beforeOrders =
-            await binance.futuresOpenOrders({
-                symbol,
-                recvWindow: 20000
-            })
+let beforeOrders = []
 
-        const remainingTPSL =
-            beforeOrders.filter(o =>
-                o.type === "STOP_MARKET" ||
-                o.type === "TAKE_PROFIT_MARKET" ||
-                o.type === "STOP" ||
-                o.type === "TAKE_PROFIT"
-            )
+for(let i = 0; i < 10; i++){
 
-        if(remainingTPSL.length > 0){
+    beforeOrders =
+        await binance.futuresOpenOrders({
+            symbol,
+            recvWindow: 20000
+        })
 
-            console.log(
-                `❌ TPSL STILL EXISTS BEFORE SET ${symbol} ` +
-                `COUNT=${remainingTPSL.length}`
-            )
+    const remainingTPSL =
+        beforeOrders.filter(o =>
+            o.type === "STOP_MARKET" ||
+            o.type === "TAKE_PROFIT_MARKET" ||
+            o.type === "STOP" ||
+            o.type === "TAKE_PROFIT"
+        )
 
-            return false
-        }
+    if(remainingTPSL.length === 0){
+        break
+    }
+
+    console.log(
+        `⏳ TPSL STILL CLEARING ${symbol} ` +
+        `COUNT=${remainingTPSL.length}`
+    )
+
+    await new Promise(r =>
+        setTimeout(r, 500)
+    )
+}
+
+const remainingTPSL =
+    beforeOrders.filter(o =>
+        o.type === "STOP_MARKET" ||
+        o.type === "TAKE_PROFIT_MARKET" ||
+        o.type === "STOP" ||
+        o.type === "TAKE_PROFIT"
+    )
+
+if(remainingTPSL.length > 0){
+
+    console.log(
+        `❌ TPSL STILL EXISTS BEFORE SET ${symbol} ` +
+        `COUNT=${remainingTPSL.length}`
+    )
+
+    return false
+}
+
+console.log(
+    `✅ BINANCE TPSL CLEAR CONFIRMED ${symbol}`
+)
 
         // =========================================
         // SET SL
@@ -1106,15 +1152,19 @@ async function setTPSLAndVerify(trade){
 
     }catch(e){
 
-        await checkTimeError(e)
+    await checkTimeError(e)
 
-        console.log(
-            `❌ TPSL FAIL ${symbol}:`,
-            e.message
-        )
+    console.log(
+        `❌ TPSL FAIL ${symbol}:`,
+        e.message
+    )
 
-        return false
-    }
+    return false
+
+}finally{
+
+    delete TPSL_LOCK[symbol]
+}
 }
 async function openPositionWithTPSL(
     trade,
@@ -1268,8 +1318,14 @@ CLOSE FAIL`
             return false
         }
 
-        trade.enteredAt =
-            Date.now()
+        trade.sl =
+    Number(tpslResult.sl)
+
+trade.tp =
+    Number(tpslResult.tp)
+
+trade.enteredAt =
+    Date.now()
 
         console.log(
             `✅ TPSL ACTIVE ${trade.symbol} ` +
@@ -2395,7 +2451,7 @@ async function cancelAllOrders(symbol){
         })
 
         // =========================================
-        // VERIFY BINANCE THỰC SỰ ĐÃ CLEAR
+        // WAIT BINANCE CONFIRM
         // =========================================
 
         for(let i = 0; i < 20; i++){
@@ -2410,7 +2466,7 @@ async function cancelAllOrders(symbol){
                     recvWindow: 20000
                 })
 
-            const remaining =
+            const remainingTPSL =
                 openOrders.filter(o =>
                     o.type === "STOP_MARKET" ||
                     o.type === "TAKE_PROFIT_MARKET" ||
@@ -2418,7 +2474,7 @@ async function cancelAllOrders(symbol){
                     o.type === "TAKE_PROFIT"
                 )
 
-            if(remaining.length === 0){
+            if(remainingTPSL.length === 0){
 
                 console.log(
                     `🗑 OLD TPSL CLEARED ${symbol}`
@@ -2429,13 +2485,9 @@ async function cancelAllOrders(symbol){
 
             console.log(
                 `⏳ WAIT TPSL CLEAR ${symbol} ` +
-                `REMAINING=${remaining.length}`
+                `REMAINING=${remainingTPSL.length}`
             )
         }
-
-        // =========================================
-        // KHÔNG ĐƯỢC GIẢ SUCCESS
-        // =========================================
 
         console.log(
             `❌ OLD TPSL STILL EXISTS ${symbol}`
