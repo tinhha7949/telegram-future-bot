@@ -1534,21 +1534,59 @@ try{
     // INITIAL RISK
     // =============================================
 
-    const initialRisk =
-        Number(
-            trade.initialRisk
-        )
+    let initialRisk =
+    Number(trade.initialRisk)
+
+if(
+    !Number.isFinite(initialRisk) ||
+    initialRisk <= 0
+){
+
+    const fallbackSL =
+        Number(trade.sl)
 
     if(
-        !Number.isFinite(initialRisk) ||
-        initialRisk <= 0
+        Number.isFinite(fallbackSL) &&
+        fallbackSL > 0
     ){
+
+        initialRisk =
+            Math.abs(
+                currentEntry -
+                fallbackSL
+            )
+
+        if(
+            Number.isFinite(initialRisk) &&
+            initialRisk > 0
+        ){
+
+            trade.initialRisk =
+                initialRisk
+
+            console.log(
+                `🔧 INITIAL RISK RECOVERED ${trade.symbol} ` +
+                `RISK=${initialRisk}`
+            )
+
+        }else{
+
+            console.log(
+                `⚠️ NO INITIAL RISK ${trade.symbol}`
+            )
+
+            return
+        }
+
+    }else{
+
         console.log(
             `⚠️ NO INITIAL RISK ${trade.symbol}`
         )
 
         return
     }
+}
 
     // =============================================
     // ATR 15M
@@ -2194,65 +2232,106 @@ try{
         }
 
         const result =
-            await setTPSLAndVerify(
-                updateTrade
+    await setTPSLAndVerify(
+        updateTrade
+    )
+
+if(!result?.ok){
+
+    console.log(
+        `🚨 DYNAMIC TPSL UPDATE FAIL ${trade.symbol} -> CLOSE`
+    )
+
+    const realQty =
+        Math.abs(
+            Number(pos.positionAmt)
+        )
+
+    if(realQty > 0){
+
+        const closed =
+            await closePosition(
+                trade.symbol,
+                trade.side,
+                realQty
             )
 
-        if(!result?.ok){
+        if(!closed){
 
             console.log(
-                `🚨 DYNAMIC TPSL UPDATE FAIL ${trade.symbol} -> CLOSE`
+                `🚨 CRITICAL CLOSE FAIL ${trade.symbol}`
             )
 
-            const realQty =
-                Math.abs(
-                    Number(pos.positionAmt)
-                )
-
-            if(realQty > 0){
-
-                const closed =
-                    await closePosition(
-                        trade.symbol,
-                        trade.side,
-                        realQty
-                    )
-
-                if(!closed){
-
-                    console.log(
-                        `🚨 CRITICAL CLOSE FAIL ${trade.symbol}`
-                    )
-
-                    await sendTelegram2(
-                        `🚨 CRITICAL TPSL UPDATE FAIL\n${trade.symbol}\nPOSITION STILL OPEN`
-                    )
-                }
-            }
-
-            return
+            await sendTelegram2(
+                `🚨 CRITICAL TPSL UPDATE FAIL\n${trade.symbol}\nPOSITION STILL OPEN`
+            )
         }
+    }
 
-        // =================================================
-        // UPDATE LOCAL TRADE OBJECT
-        // =================================================
+    return
+}
 
-        trade.sl = newSL
-        trade.tp = newTP
+// =================================================
+// BINANCE TPSL ĐÃ SET THÀNH CÔNG
+// =================================================
 
-        await updateTradeTPSL(
-            trade,
-            newSL,
-            newTP
-        )
+trade.sl =
+    Number(result.sl)
 
-        console.log(
-            `🔄 DYNAMIC ${trade.symbol} ` +
-            `${trade.side} ` +
-            `R=${R.toFixed(2)} ` +
-            `SL=${newSL} ` +
-            `TP=${newTP}`
-        )
+trade.tp =
+    Number(result.tp)
+
+// =================================================
+// SAVE DB — KHÔNG SET TPSL BINANCE LẦN 2
+// =================================================
+
+const dbResult =
+    await trades.updateOne(
+
+        {
+            _id: trade._id,
+            result: "PENDING"
+        },
+
+        {
+            $set: {
+
+                sl:
+                    Number(result.sl),
+
+                tp:
+                    Number(result.tp),
+
+                updatedAt:
+                    Date.now()
+            }
+        }
+    )
+
+if(
+    dbResult.matchedCount === 0
+){
+
+    console.log(
+        `⚠️ DYNAMIC TPSL DB NOT FOUND ${trade.symbol}`
+    )
+
+    return
+}
+
+console.log(
+    `💾 DYNAMIC TPSL SAVED ${trade.symbol} ` +
+    `SL=${result.sl} ` +
+    `TP=${result.tp}`
+)
+
+console.log(
+    `🔄 DYNAMIC ${trade.symbol} ` +
+    `${trade.side} ` +
+    `R=${R.toFixed(2)} ` +
+    `SL=${result.sl} ` +
+    `TP=${result.tp}`
+)
 
     }catch(e){
 
