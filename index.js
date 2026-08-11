@@ -553,7 +553,126 @@ function normalizeQtyFinal(qty, stepSize){
 
    // return Number(fixed.toFixed(precision))
 //}
+async function cancelAlgoTPSL(symbol){
 
+    if(!symbol){
+        console.log("❌ CANCEL ALGO NO SYMBOL")
+        return false
+    }
+
+    try{
+
+        const baseUrl =
+            "https://fapi.binance.com"
+
+        const path =
+            "/fapi/v1/algoOpenOrders"
+
+        const timestamp =
+            getTimestamp()
+
+        const query =
+            `symbol=${symbol}` +
+            `&recvWindow=60000` +
+            `&timestamp=${timestamp}`
+
+        const signature =
+            crypto
+                .createHmac(
+                    "sha256",
+                    process.env.BINANCE_SECRET
+                )
+                .update(query)
+                .digest("hex")
+
+        const url =
+            `${baseUrl}${path}?${query}&signature=${signature}`
+
+        const res =
+            await safeFetch(
+                url,
+                {
+                    method: "DELETE",
+                    headers: {
+                        "X-MBX-APIKEY":
+                            process.env.BINANCE_KEY
+                    }
+                }
+            )
+
+        if(!res || !res.ok){
+
+            console.log(
+                `❌ ALGO CANCEL HTTP FAIL ${symbol}:`,
+                res?.status
+            )
+
+            return false
+        }
+
+        const data =
+            await res.json()
+
+        if(
+            data?.code === -1021 ||
+            String(data?.msg || "")
+                .toLowerCase()
+                .includes("timestamp")
+        ){
+
+            console.log(
+                `🕒 ALGO CANCEL RESYNC ${symbol}`
+            )
+
+            await syncTime()
+
+            return false
+        }
+
+        /*
+         * Binance có thể trả:
+         *
+         * {
+         *   code: 200,
+         *   msg: "The operation of cancel all open orders..."
+         * }
+         *
+         * hoặc response thành công tương đương.
+         *
+         * Chỉ coi là fail khi code là lỗi âm.
+         */
+
+        if(
+            data?.code !== undefined &&
+            Number(data.code) < 0
+        ){
+
+            console.log(
+                `❌ ALGO CANCEL REJECT ${symbol}:`,
+                data
+            )
+
+            return false
+        }
+
+        console.log(
+            `🗑 ALGO TPSL CANCELLED ${symbol}`
+        )
+
+        return true
+
+    }catch(e){
+
+        await checkTimeError(e)
+
+        console.log(
+            `❌ CANCEL ALGO TPSL ${symbol}:`,
+            e?.message || e
+        )
+
+        return false
+    }
+}
 async function getOpenTrade(symbol){
 
     try{
@@ -636,6 +755,24 @@ async function openPosition(symbol, side, qty){
                 position: existingPos
             }
         }
+        // =========================================
+// CLEAR STALE ORDERS / ALGO TPSL
+// =========================================
+
+const cleared =
+    await cancelAllOrders(symbol)
+
+if(!cleared){
+
+    console.log(
+        `⛔ SKIP OPEN ${symbol}: OLD ORDERS NOT CLEARED`
+    )
+
+    return {
+        skipped: true,
+        reason: "OLD_ORDERS_NOT_CLEARED"
+    }
+}
 
         // =========================================
         // CHECK OPEN ORDERS
@@ -924,6 +1061,95 @@ async function openPosition(symbol, side, qty){
 
         delete OPEN_POSITION_LOCK[symbol]
     }
+}
+async function placeTPSLWithRetry(
+    symbol,
+    side,
+    type,
+    stopPrice
+){
+
+    const closeSide =
+        side === "LONG"
+            ? "SELL"
+            : "BUY"
+
+    for(
+        let attempt = 1;
+        attempt <= 4;
+        attempt++
+    ){
+
+        try{
+
+            const result =
+                await binance.futuresOrder({
+
+                    symbol,
+                    side: closeSide,
+                    type,
+                    stopPrice,
+                    closePosition: true,
+                    workingType: "MARK_PRICE",
+                    recvWindow: 60000
+
+                })
+
+            if(
+                result &&
+                (
+                    result.algoId ||
+                    result.orderId
+                )
+            ){
+
+                return result
+            }
+
+        }catch(e){
+
+            await checkTimeError(e)
+
+            const msg =
+                String(
+                    e?.message ||
+                    e?.body ||
+                    e
+                )
+
+            const conflict =
+                msg.includes(
+                    "open stop or take profit order"
+                ) ||
+                msg.includes(
+                    "GTE and closePosition"
+                )
+
+            console.log(
+                `⚠️ TPSL ${type} RETRY ` +
+                `${symbol} ` +
+                `ATTEMPT=${attempt}/4: ` +
+                msg
+            )
+
+            if(!conflict){
+
+                throw e
+            }
+
+            if(attempt < 4){
+
+                await new Promise(r =>
+                    setTimeout(
+                        r,
+                        1000 * attempt
+                    )
+                )
+            }
+        }
+    }
+
+    return null
 }
 async function setDynamicTPSL(trade){
 
@@ -1262,33 +1488,29 @@ if(side !== "LONG" && side !== "SHORT"){
 
         let slRes
 
-        try{
+try{
 
-            slRes =
-                await binance.futuresOrder({
+    slRes =
+        await placeTPSLWithRetry(
+            symbol,
+            positionSide,
+            "STOP_MARKET",
+            sl
+        )
 
-                    symbol,
-                    side: closeSide,
-                    type: "STOP_MARKET",
-                    stopPrice: sl,
-                    closePosition: true,
-                    workingType: "MARK_PRICE",
-                    recvWindow: 60000
-                })
+}catch(e){
 
-        }catch(e){
+    await checkTimeError(e)
 
-            await checkTimeError(e)
+    console.log(
+        `❌ DYNAMIC SL SET FAIL ${symbol}:`,
+        e?.message || e
+    )
 
-            console.log(
-                `❌ DYNAMIC SL SET FAIL ${symbol}:`,
-                e.message
-            )
+    return false
+}
 
-            return false
-        }
-
-        if(
+if(
     !slRes ||
     !(
         slRes.algoId ||
@@ -1308,54 +1530,38 @@ const slOrderId =
     slRes.algoId ||
     slRes.orderId
 
-        console.log(
-            `🛡 DYNAMIC SL SET ${symbol}: ${sl}`
-        )
-
+console.log(
+    `🛡 DYNAMIC SL SET ${symbol}: ${sl}`
+)
         // =================================================
         // 10. SET TP
         // =================================================
 
         let tpRes
 
-        try{
+try{
 
-            tpRes =
-                await binance.futuresOrder({
+    tpRes =
+        await placeTPSLWithRetry(
+            symbol,
+            positionSide,
+            "TAKE_PROFIT_MARKET",
+            tp
+        )
 
-                    symbol,
-                    side: closeSide,
-                    type: "TAKE_PROFIT_MARKET",
-                    stopPrice: tp,
-                    closePosition: true,
-                    workingType: "MARK_PRICE",
-                    recvWindow: 60000
-                })
+}catch(e){
 
-        }catch(e){
+    await checkTimeError(e)
 
-            await checkTimeError(e)
+    console.log(
+        `❌ DYNAMIC TP SET FAIL ${symbol}:`,
+        e?.message || e
+    )
 
-            console.log(
-                `❌ DYNAMIC TP SET FAIL ${symbol}:`,
-                e.message
-            )
+    return false
+}
 
-            /*
-             * TP fail.
-             *
-             * Không được để SL mới tồn tại
-             * mà caller tưởng rằng cả TPSL active.
-             */
-
-            try{
-                await cancelAllOrders(symbol)
-            }catch(_){}
-
-            return false
-        }
-
-        if(
+if(
     !tpRes ||
     !(
         tpRes.algoId ||
@@ -1364,13 +1570,9 @@ const slOrderId =
 ){
 
     console.log(
-        `❌ DYNAMIC TP INVALID RESPONSE ${symbol}:`,
+        `❌ TP INVALID RESPONSE ${symbol}:`,
         JSON.stringify(tpRes)
     )
-
-    try{
-        await cancelAllOrders(symbol)
-    }catch(_){}
 
     return false
 }
@@ -1379,47 +1581,9 @@ const tpOrderId =
     tpRes.algoId ||
     tpRes.orderId
 
-        console.log(
-            `🎯 DYNAMIC TP SET ${symbol}: ${tp}`
-        )
-
-
-        // =================================================
-        // 12. FINAL POSITION VERIFY
-        // =================================================
-
-        POS_CACHE = null
-        POS_CACHE_TIME = 0
-
-        const finalPos =
-    await hasPosition(symbol)
-
-if(!finalPos){
-
-    console.log(
-        `⚠️ POSITION CLOSED DURING DYNAMIC ${symbol}`
-    )
-
-    try{
-        await cancelAllOrders(symbol)
-    }catch(e){
-        console.log(
-            `⚠️ CLEANUP TPSL AFTER POSITION CLOSED FAIL ${symbol}:`,
-            e.message
-        )
-    }
-
-    return false
-}
-
-        // =================================================
-        // 13. SUCCESS
-        // =================================================
-
-        console.log(
-            `✅ DYNAMIC TPSL VERIFIED ${symbol} ` +
-            `SL=${sl} TP=${tp}`
-        )
+console.log(
+    `🎯 DYNAMIC TP SET ${symbol}: ${tp}`
+)
 
         return {
     ok: true,
@@ -1688,16 +1852,12 @@ async function setInitialTPSL(trade){
         )
 
         const slRes =
-            await binance.futuresOrder({
-
-                symbol,
-                side: closeSide,
-                type: "STOP_MARKET",
-                stopPrice: sl,
-                closePosition: true,
-                workingType: "MARK_PRICE",
-                recvWindow: 20000
-            })
+    await placeTPSLWithRetry(
+        symbol,
+        positionSide,
+        "STOP_MARKET",
+        sl
+    )
 
         console.log(
             `✅ SL RESPONSE ${symbol}:`,
@@ -1731,16 +1891,12 @@ async function setInitialTPSL(trade){
         )
 
         const tpRes =
-            await binance.futuresOrder({
-
-                symbol,
-                side: closeSide,
-                type: "TAKE_PROFIT_MARKET",
-                stopPrice: tp,
-                closePosition: true,
-                workingType: "MARK_PRICE",
-                recvWindow: 20000
-            })
+    await placeTPSLWithRetry(
+        symbol,
+        positionSide,
+        "TAKE_PROFIT_MARKET",
+        tp
+    )
 
         console.log(
             `✅ TP RESPONSE ${symbol}:`,
@@ -2238,64 +2394,7 @@ async function updateTradeTPSLData(trade){
         return false
     }
 }
-// =====================================================
-// DYNAMIC TPSL MANAGER
-// =====================================================
-async function verifyCurrentTPSL(
-    symbol,
-    side
-){
 
-    try{
-
-        const expectedSide =
-            side === "LONG"
-                ? "SELL"
-                : "BUY"
-
-        const orders =
-            await binance.futuresOpenOrders({
-
-                symbol,
-                recvWindow: 60000
-            })
-
-        if(!Array.isArray(orders)){
-            return false
-        }
-
-        const sl =
-            orders.some(o =>
-                (
-                    o.type === "STOP_MARKET" ||
-                    o.type === "STOP"
-                ) &&
-                o.side === expectedSide
-            )
-
-        const tp =
-            orders.some(o =>
-                (
-                    o.type === "TAKE_PROFIT_MARKET" ||
-                    o.type === "TAKE_PROFIT"
-                ) &&
-                o.side === expectedSide
-            )
-
-        return sl && tp
-
-    }catch(e){
-
-        await checkTimeError(e)
-
-        console.log(
-            `❌ VERIFY CURRENT TPSL ${symbol}:`,
-            e.message
-        )
-
-        return false
-    }
-}
 const TPSL_CLOSING = {}
 async function manageDynamicTPSL(trade){
 
@@ -3209,121 +3308,14 @@ if(trade.side === "LONG"){
     await setDynamicTPSL(
         updateTrade
     )
-
 if(!result?.ok){
 
     console.log(
         `⚠️ DYNAMIC TPSL UPDATE FAILED ${trade.symbol}`
     )
 
-    POS_CACHE = null
-    POS_CACHE_TIME = 0
-
-    let realPos = null
-
-    try{
-
-        const positions =
-            await getPositionsCached()
-
-        realPos =
-            positions.find(p =>
-                p.symbol === trade.symbol &&
-                Math.abs(
-                    Number(p.positionAmt || 0)
-                ) > 0
-            )
-
-    }catch(e){
-
-        await checkTimeError(e)
-
-        console.log(
-            `⚠️ DYNAMIC POSITION VERIFY FAIL ${trade.symbol}:`,
-            e.message
-        )
-
-        return
-    }
-
-    if(!realPos){
-
-        console.log(
-            `ℹ️ DYNAMIC POSITION ALREADY CLOSED ${trade.symbol}`
-        )
-
-        return
-    }
-
-    if(TPSL_CLOSING[trade.symbol]){
-        return
-    }
-
-    TPSL_CLOSING[trade.symbol] = true
-
-    try{
-
-        const realQty =
-            Math.abs(
-                Number(realPos.positionAmt)
-            )
-
-        if(
-            !Number.isFinite(realQty) ||
-            realQty <= 0
-        ){
-            return
-        }
-
-        console.log(
-            `🚨 EMERGENCY CLOSE ${trade.symbol} ` +
-            `QTY=${realQty}`
-        )
-
-        const closed =
-            await closePosition(
-                trade.symbol,
-                trade.side,
-                realQty
-            )
-
-        if(closed){
-
-            console.log(
-                `✅ EMERGENCY CLOSE SUCCESS ${trade.symbol}`
-            )
-
-        }else{
-
-            console.log(
-                `🚨 CRITICAL EMERGENCY CLOSE FAIL ${trade.symbol}`
-            )
-
-            await sendTelegram2(
-                `🚨 CRITICAL TPSL FAILURE\n` +
-                `${trade.symbol}\n` +
-                `POSITION STILL OPEN\n` +
-                `NO ACTIVE TPSL`
-            )
-        }
-
-    }catch(e){
-
-        await checkTimeError(e)
-
-        console.log(
-            `🚨 EMERGENCY CLOSE ERROR ${trade.symbol}:`,
-            e.message
-        )
-
-    }finally{
-
-        delete TPSL_CLOSING[trade.symbol]
-    }
-
     return
 }
-
 // =================================================
 // BINANCE TPSL ĐÃ SET THÀNH CÔNG
 // =================================================
@@ -3418,100 +3410,69 @@ console.log(
 
 async function cancelAllOrders(symbol){
 
+    if(!symbol){
+        console.log("❌ CANCEL ALL NO SYMBOL")
+        return false
+    }
+
     try{
 
         console.log(
             `🗑 CANCEL OLD TPSL ${symbol}`
         )
 
-        await binance.futuresCancelAllOpenOrders({
+        // =========================================
+        // 1. CANCEL REGULAR OPEN ORDERS
+        // =========================================
 
-            symbol,
-            recvWindow: 60000
-        })
+        try{
 
-        // ==========================================
-        // CHỜ BINANCE THỰC SỰ CLEAR TPSL
-        // ==========================================
+            await binance.futuresCancelAllOpenOrders({
+                symbol,
+                recvWindow: 60000
+            })
 
-        for(let i = 0; i < 20; i++){
+        }catch(e){
 
-            await new Promise(r =>
-                setTimeout(r, 500)
-            )
-
-            let openOrders
-
-            try{
-
-                openOrders =
-                    await binance.futuresOpenOrders({
-
-                        symbol,
-                        recvWindow: 60000
-                    })
-
-            }catch(e){
-
-                await checkTimeError(e)
-
-                console.log(
-                    `⚠️ CHECK OLD TPSL FAIL ${symbol}:`,
-                    e?.message || e
-                )
-
-                continue
-            }
-
-            if(!Array.isArray(openOrders)){
-                continue
-            }
-
-            const remainingTPSL =
-                openOrders.filter(o => {
-
-                    const type =
-                        String(o?.type || "").toUpperCase()
-
-                    return (
-                        type === "STOP_MARKET" ||
-                        type === "TAKE_PROFIT_MARKET" ||
-                        type === "STOP" ||
-                        type === "TAKE_PROFIT"
-                    )
-                })
-
-            if(remainingTPSL.length === 0){
-
-                // ======================================
-                // QUAN TRỌNG:
-                // CHỜ THÊM MỘT NHỊP SAU KHI BINANCE
-                // BÁO EMPTY
-                // ======================================
-
-                await new Promise(r =>
-                    setTimeout(r, 1000)
-                )
-
-                console.log(
-                    `🗑 OLD TPSL CLEARED ${symbol}`
-                )
-
-                return true
-            }
+            await checkTimeError(e)
 
             console.log(
-                `⏳ WAIT TPSL CLEAR ${symbol} ` +
-                `REMAINING=${remainingTPSL.length} ` +
-                `TRY=${i + 1}/20`
+                `❌ REGULAR CANCEL FAIL ${symbol}:`,
+                e?.message || e
             )
+
+            return false
         }
 
-        console.log(
-            `❌ OLD TPSL STILL EXISTS ${symbol}`
+        // =========================================
+        // 2. CANCEL ALGO TPSL
+        // =========================================
+
+        const algoCancelled =
+            await cancelAlgoTPSL(symbol)
+
+        if(!algoCancelled){
+
+            console.log(
+                `❌ ALGO TPSL CANCEL FAIL ${symbol}`
+            )
+
+            return false
+        }
+
+        // =========================================
+        // 3. WAIT BINANCE
+        // =========================================
+
+        await new Promise(r =>
+            setTimeout(r, 1500)
         )
 
-        return false
+        console.log(
+            `🗑 OLD TPSL CLEARED ${symbol}`
+        )
+
+        return true
 
     }catch(e){
 
