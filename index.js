@@ -1,4 +1,5 @@
 let DB_READY = false
+const OPEN_POSITION_LOCK = {}
 const TPSL_LOCK = {}
 const TPSL_PHASE = {}
 let DB_RECONNECTING = false
