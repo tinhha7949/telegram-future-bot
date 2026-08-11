@@ -1394,11 +1394,9 @@ if(side !== "LONG" && side !== "SHORT"){
              */
 
             if(
-                sl >= currentPrice ||
-                tp <= currentPrice ||
-                sl >= entry ||
-                tp <= entry
-            ){
+    sl >= currentPrice ||
+    tp <= currentPrice
+){
 
                 console.log(
                     `❌ INVALID LONG DYNAMIC TPSL ${symbol} ` +
@@ -1422,11 +1420,9 @@ if(side !== "LONG" && side !== "SHORT"){
              */
 
             if(
-                sl <= currentPrice ||
-                tp >= currentPrice ||
-                sl <= entry ||
-                tp >= entry
-            ){
+    sl <= currentPrice ||
+    tp >= currentPrice
+){
 
                 console.log(
                     `❌ INVALID SHORT DYNAMIC TPSL ${symbol} ` +
