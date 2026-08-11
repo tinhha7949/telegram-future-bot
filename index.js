@@ -981,18 +981,10 @@ if(side !== "LONG" && side !== "SHORT"){
             return false
         }
 
-        const positionSide =
+       const positionSide =
     positionAmt > 0
         ? "LONG"
         : "SHORT"
-
-if(side !== positionSide){
-    console.log(
-        `🚨 DYNAMIC SIDE MISMATCH ${symbol} ` +
-        `TRADE=${side} POSITION=${positionSide}`
-    )
-    return false
-}
 
         const entry =
             Number(pos.entryPrice)
@@ -1388,30 +1380,6 @@ const tpOrderId =
             `🎯 DYNAMIC TP SET ${symbol}: ${tp}`
         )
 
-        // =================================================
-        // 11. VERIFY BOTH
-        // =================================================
-
-        const verified =
-            await verifyDynamicTPSL(
-                symbol,
-                positionSide,
-                sl,
-                tp
-            )
-
-        if(!verified){
-
-            console.log(
-                `❌ DYNAMIC TPSL VERIFY FAIL ${symbol}`
-            )
-
-            try{
-                await cancelAllOrders(symbol)
-            }catch(_){}
-
-            return false
-        }
 
         // =================================================
         // 12. FINAL POSITION VERIFY
@@ -1473,123 +1441,6 @@ if(!finalPos){
 
         delete TPSL_LOCK[symbol]
     }
-}
-async function verifyDynamicTPSL(
-    symbol,
-    side,
-    sl,
-    tp
-){
-
-    const expectedSide =
-        side === "LONG"
-            ? "SELL"
-            : "BUY"
-
-    const targetSL =
-        Number(sl)
-
-    const targetTP =
-        Number(tp)
-
-    if(
-        !Number.isFinite(targetSL) ||
-        !Number.isFinite(targetTP)
-    ){
-        return false
-    }
-
-    for(
-        let attempt = 1;
-        attempt <= 6;
-        attempt++
-    ){
-
-        try{
-
-            const orders =
-                await binance.futuresOpenOrders({
-
-                    symbol,
-                    recvWindow: 60000
-                })
-
-            if(!Array.isArray(orders)){
-                throw new Error(
-                    "OPEN ORDERS RESPONSE INVALID"
-                )
-            }
-
-            const slOrders =
-                orders.filter(o =>
-                    (
-                        o.type === "STOP_MARKET" ||
-                        o.type === "STOP"
-                    ) &&
-                    o.side === expectedSide
-                )
-
-            const tpOrders =
-                orders.filter(o =>
-                    (
-                        o.type === "TAKE_PROFIT_MARKET" ||
-                        o.type === "TAKE_PROFIT"
-                    ) &&
-                    o.side === expectedSide
-                )
-
-            const tolerance =
-                Math.max(
-                    Math.abs(targetSL) * 0.000002,
-                    Math.abs(targetTP) * 0.000002,
-                    0.00000001
-                )
-
-            const hasSL =
-                slOrders.some(o =>
-                    Math.abs(
-                        Number(o.stopPrice) -
-                        targetSL
-                    ) <= tolerance
-                )
-
-            const hasTP =
-                tpOrders.some(o =>
-                    Math.abs(
-                        Number(o.stopPrice) -
-                        targetTP
-                    ) <= tolerance
-                )
-
-            console.log(
-                `🔎 DYNAMIC VERIFY ${symbol} ` +
-                `ATTEMPT=${attempt} ` +
-                `SL=${hasSL} TP=${hasTP}`
-            )
-
-            if(hasSL && hasTP){
-                return true
-            }
-
-        }catch(e){
-
-            await checkTimeError(e)
-
-            console.log(
-                `⚠️ DYNAMIC VERIFY ERROR ${symbol}:`,
-                e.message
-            )
-        }
-
-        if(attempt < 6){
-
-            await new Promise(r =>
-                setTimeout(r, 1000)
-            )
-        }
-    }
-
-    return false
 }
 async function waitPosition(symbol){
 
@@ -1910,26 +1761,7 @@ async function setInitialTPSL(trade){
 
     return false
 }
-const verified =
-    await verifyDynamicTPSL(
-        symbol,
-        positionSide,
-        sl,
-        tp
-    )
 
-if(!verified){
-
-    console.log(
-        `❌ INITIAL TPSL VERIFY FAIL ${symbol}`
-    )
-
-    try{
-        await cancelAllOrders(symbol)
-    }catch(_){}
-
-    return false
-}
 
 const tpOrderId =
     tpRes.algoId ||
@@ -3381,12 +3213,6 @@ if(!result?.ok){
         `⚠️ DYNAMIC TPSL UPDATE FAILED ${trade.symbol}`
     )
 
-    /*
-     * KHÔNG CLOSE NGAY.
-     *
-     * Kiểm tra position thật trước.
-     */
-
     POS_CACHE = null
     POS_CACHE_TIME = 0
 
@@ -3407,23 +3233,15 @@ if(!result?.ok){
 
     }catch(e){
 
+        await checkTimeError(e)
+
         console.log(
             `⚠️ DYNAMIC POSITION VERIFY FAIL ${trade.symbol}:`,
             e.message
         )
 
-        /*
-         * API verify fail:
-         * KHÔNG được close mù.
-         */
-
         return
     }
-
-    /*
-     * Position đã không còn.
-     * checkTrades sẽ xử lý kết quả.
-     */
 
     if(!realPos){
 
@@ -3433,50 +3251,6 @@ if(!result?.ok){
 
         return
     }
-
-    /*
-     * Position vẫn còn.
-     * Kiểm tra TPSL hiện tại.
-     */
-
-    let currentTPSL = false
-
-    try{
-
-        currentTPSL =
-            await verifyCurrentTPSL(
-                trade.symbol,
-                trade.side
-            )
-
-    }catch(e){
-
-        console.log(
-            `⚠️ CURRENT TPSL VERIFY ERROR ${trade.symbol}:`,
-            e.message
-        )
-
-        return
-    }
-
-    /*
-     * Nếu TPSL vẫn còn:
-     * KHÔNG đóng lệnh.
-     */
-
-    if(currentTPSL){
-
-        console.log(
-            `🛡 EXISTING TPSL STILL ACTIVE ${trade.symbol}`
-        )
-
-        return
-    }
-
-    /*
-     * Position còn nhưng không còn TPSL.
-     * Đây mới là emergency.
-     */
 
     if(TPSL_CLOSING[trade.symbol]){
         return
@@ -3491,7 +3265,10 @@ if(!result?.ok){
                 Number(realPos.positionAmt)
             )
 
-        if(realQty <= 0){
+        if(
+            !Number.isFinite(realQty) ||
+            realQty <= 0
+        ){
             return
         }
 
@@ -7170,6 +6947,12 @@ try{
 }catch(e){
     console.log("⚠ POSITION VERIFY FAIL")
 }
+if(!Array.isArray(positions)){
+    console.log(
+        "❌ SYNC ABORT: INVALID POSITIONS"
+    )
+    return
+}
 
 let realPos = positions.find(p =>
     p.symbol === t.symbol &&
@@ -8132,36 +7915,45 @@ setInterval(
         // 12. SCANNER LOOP
         // ==================================================
         async function scanLoop(){
+
+    console.log(
+        "🟢 SCANNER LOOP STARTED"
+    )
+
+    while(true){
+
+        if(isScanning){
+
             console.log(
-                "🟢 SCANNER LOOP STARTED"
+                "⛔ Scanner already running"
             )
-            while(true){
-                if(scanning){
-                    console.log(
-                        "⛔ Scanner already running"
-                    )
-                    await new Promise(r =>
-                        setTimeout(r, 5000)
-                    )
-                    continue
-                }
-                scanning = true
-                try{
-                    await scanner()
-                }catch(e){
-                    console.error(
-                        "❌ SCANNER LOOP:",
-                        e.message
-                    )
-                }finally{
-                    scanning = false
-                }
-                // scan mỗi 2 phút
-                await new Promise(r =>
-                    setTimeout(r, 120000)
-                )
-            }
+
+            await new Promise(r =>
+                setTimeout(r,5000)
+            )
+
+            continue
         }
+
+        try{
+
+            await scanner()
+
+        }catch(e){
+
+            console.error(
+                "❌ SCANNER LOOP:",
+                e.message
+            )
+
+        }
+
+        // scan mỗi 2 phút
+        await new Promise(r =>
+            setTimeout(r,120000)
+        )
+    }
+}
         // ==================================================
         // 13. START CHECK LOOP TRƯỚC
         // ==================================================
