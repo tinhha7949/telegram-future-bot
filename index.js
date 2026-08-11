@@ -2070,102 +2070,102 @@ async function openPositionWithTPSL(trade, qty){
         )
 
         const tpslResult =
-    await setInitialTPSL(
-        trade
-    )
-
-if(!tpslResult?.ok){
-
-    console.log(
-        `🚨 INITIAL TPSL FAIL ${trade.symbol}`
-    )
-
-    POS_CACHE = null
-    POS_CACHE_TIME = 0
-
-    let realPos = null
-
-    try{
-
-        const positions =
-            await getPositionsCached()
-
-        realPos =
-            positions.find(p =>
-                p.symbol === trade.symbol &&
-                Math.abs(
-                    Number(p.positionAmt || 0)
-                ) > 0
+            await setInitialTPSL(
+                trade
             )
 
-    }catch(e){
+        if(!tpslResult?.ok){
 
-        await checkTimeError(e)
+            console.log(
+                `🚨 INITIAL TPSL FAIL ${trade.symbol}`
+            )
 
-        console.log(
-            `⚠️ INITIAL POSITION VERIFY FAIL ${trade.symbol}:`,
-            e.message
-        )
+            POS_CACHE = null
+            POS_CACHE_TIME = 0
 
-        return false
-    }
+            let realPos = null
 
-    // Position đã biến mất → không close nữa
-    if(!realPos){
+            try{
 
-        console.log(
-            `ℹ️ POSITION ALREADY CLOSED ${trade.symbol}`
-        )
+                const positions =
+                    await getPositionsCached()
 
-        return false
-    }
+                realPos =
+                    positions.find(p =>
+                        p.symbol === trade.symbol &&
+                        Math.abs(
+                            Number(p.positionAmt || 0)
+                        ) > 0
+                    )
 
-    // Position còn nhưng initial TPSL thất bại
-    const realQty =
-        Math.abs(
-            Number(realPos.positionAmt)
-        )
+            }catch(e){
 
-    if(
-        !Number.isFinite(realQty) ||
-        realQty <= 0
-    ){
+                await checkTimeError(e)
 
-        console.log(
-            `❌ INVALID REAL QTY ${trade.symbol}`
-        )
+                console.log(
+                    `⚠️ INITIAL POSITION VERIFY FAIL ${trade.symbol}:`,
+                    e.message
+                )
 
-        return false
-    }
+                return false
+            }
 
-    console.log(
-        `🚨 INITIAL TPSL FAIL -> CLOSE ${trade.symbol}`
-    )
+            // Position đã biến mất → không close nữa
+            if(!realPos){
 
-    const closed =
-        await closePosition(
-            trade.symbol,
-            trade.side,
-            realQty
-        )
+                console.log(
+                    `ℹ️ POSITION ALREADY CLOSED ${trade.symbol}`
+                )
 
-    if(!closed){
+                return false
+            }
 
-        console.log(
-            `🚨 CRITICAL INITIAL CLOSE FAIL ${trade.symbol}`
-        )
+            // Position còn nhưng initial TPSL thất bại
+            const realQty =
+                Math.abs(
+                    Number(realPos.positionAmt)
+                )
 
-        await sendTelegram2(
-            `🚨 CRITICAL INITIAL TPSL FAILURE\n` +
-            `${trade.symbol}\n` +
-            `POSITION STILL OPEN\n` +
-            `TPSL NOT ACTIVE\n` +
-            `CLOSE FAILED`
-        )
-    }
+            if(
+                !Number.isFinite(realQty) ||
+                realQty <= 0
+            ){
 
-    return false
-}
+                console.log(
+                    `❌ INVALID REAL QTY ${trade.symbol}`
+                )
+
+                return false
+            }
+
+            console.log(
+                `🚨 INITIAL TPSL FAIL -> CLOSE ${trade.symbol}`
+            )
+
+            const closed =
+                await closePosition(
+                    trade.symbol,
+                    trade.side,
+                    realQty
+                )
+
+            if(!closed){
+
+                console.log(
+                    `🚨 CRITICAL INITIAL CLOSE FAIL ${trade.symbol}`
+                )
+
+                await sendTelegram2(
+                    `🚨 CRITICAL INITIAL TPSL FAILURE\n` +
+                    `${trade.symbol}\n` +
+                    `POSITION STILL OPEN\n` +
+                    `TPSL NOT ACTIVE\n` +
+                    `CLOSE FAILED`
+                )
+            }
+
+            return false
+        }
 
         // =========================================
         // SAVE REAL TPSL
@@ -2176,12 +2176,6 @@ if(!tpslResult?.ok){
 
         trade.tp =
             Number(tpslResult.tp)
-
-        trade.enteredAt =
-            Date.now()
-
-        trade.openedAt =
-            trade.enteredAt
 
         trade.initialRisk =
             Math.abs(
@@ -2397,8 +2391,6 @@ async function updateTradeTPSLData(trade){
 
 const TPSL_CLOSING = {}
 async function manageDynamicTPSL(trade){
-
-
 try{
 
     // =============================================
@@ -3326,6 +3318,13 @@ trade.sl =
 trade.tp =
     Number(result.tp)
 
+    await sendTelegram2(
+    `🔄 DYNAMIC TPSL UPDATED\n` +
+    `${trade.symbol} ${trade.side}\n` +
+    `SL=${result.sl}\n` +
+    `TP=${result.tp}\n` +
+    `R=${R.toFixed(2)}`
+)
 // =================================================
 // SAVE DB — KHÔNG SET TPSL BINANCE LẦN 2
 // =================================================
