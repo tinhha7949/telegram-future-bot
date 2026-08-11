@@ -1247,6 +1247,9 @@ if(side !== "LONG" && side !== "SHORT"){
 
             return false
         }
+        await new Promise(r =>
+    setTimeout(r, 1000)
+)
 
         // =================================================
         // 9. SET SL
@@ -3427,36 +3430,68 @@ async function cancelAllOrders(symbol){
             recvWindow: 60000
         })
 
-        for(let i = 0; i < 10; i++){
+        // ==========================================
+        // CHỜ BINANCE THỰC SỰ CLEAR TPSL
+        // ==========================================
+
+        for(let i = 0; i < 20; i++){
 
             await new Promise(r =>
                 setTimeout(r, 500)
             )
 
-            const openOrders =
-                await binance.futuresOpenOrders({
+            let openOrders
 
-                    symbol,
-                    recvWindow: 60000
-                })
+            try{
+
+                openOrders =
+                    await binance.futuresOpenOrders({
+
+                        symbol,
+                        recvWindow: 60000
+                    })
+
+            }catch(e){
+
+                await checkTimeError(e)
+
+                console.log(
+                    `⚠️ CHECK OLD TPSL FAIL ${symbol}:`,
+                    e?.message || e
+                )
+
+                continue
+            }
 
             if(!Array.isArray(openOrders)){
                 continue
             }
 
             const remainingTPSL =
-                openOrders.filter(o =>
-                    (
-                        o.type === "STOP_MARKET" ||
-                        o.type === "TAKE_PROFIT_MARKET" ||
-                        o.type === "STOP" ||
-                        o.type === "TAKE_PROFIT"
-                    )
-                )
+                openOrders.filter(o => {
 
-            if(
-                remainingTPSL.length === 0
-            ){
+                    const type =
+                        String(o?.type || "").toUpperCase()
+
+                    return (
+                        type === "STOP_MARKET" ||
+                        type === "TAKE_PROFIT_MARKET" ||
+                        type === "STOP" ||
+                        type === "TAKE_PROFIT"
+                    )
+                })
+
+            if(remainingTPSL.length === 0){
+
+                // ======================================
+                // QUAN TRỌNG:
+                // CHỜ THÊM MỘT NHỊP SAU KHI BINANCE
+                // BÁO EMPTY
+                // ======================================
+
+                await new Promise(r =>
+                    setTimeout(r, 1000)
+                )
 
                 console.log(
                     `🗑 OLD TPSL CLEARED ${symbol}`
@@ -3467,7 +3502,8 @@ async function cancelAllOrders(symbol){
 
             console.log(
                 `⏳ WAIT TPSL CLEAR ${symbol} ` +
-                `REMAINING=${remainingTPSL.length}`
+                `REMAINING=${remainingTPSL.length} ` +
+                `TRY=${i + 1}/20`
             )
         }
 
@@ -3483,7 +3519,7 @@ async function cancelAllOrders(symbol){
 
         console.log(
             `❌ CANCEL TPSL ${symbol}:`,
-            e.message
+            e?.message || e
         )
 
         return false
@@ -6947,12 +6983,7 @@ try{
 }catch(e){
     console.log("⚠ POSITION VERIFY FAIL")
 }
-if(!Array.isArray(positions)){
-    console.log(
-        "❌ SYNC ABORT: INVALID POSITIONS"
-    )
-    return
-}
+
 
 let realPos = positions.find(p =>
     p.symbol === t.symbol &&
