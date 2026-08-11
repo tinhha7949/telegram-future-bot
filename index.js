@@ -1292,16 +1292,24 @@ async function setDynamicTPSL(trade){
         }
 
         if(
-            !slRes ||
-            !slRes.orderId
-        ){
+    !slRes ||
+    !(
+        slRes.algoId ||
+        slRes.orderId
+    )
+){
 
-            console.log(
-                `❌ DYNAMIC SL INVALID RESPONSE ${symbol}`
-            )
+    console.log(
+        `❌ SL INVALID RESPONSE ${symbol}:`,
+        JSON.stringify(slRes)
+    )
 
-            return false
-        }
+    return false
+}
+
+const slOrderId =
+    slRes.algoId ||
+    slRes.orderId
 
         console.log(
             `🛡 DYNAMIC SL SET ${symbol}: ${sl}`
@@ -1351,20 +1359,28 @@ async function setDynamicTPSL(trade){
         }
 
         if(
-            !tpRes ||
-            !tpRes.orderId
-        ){
+    !tpRes ||
+    !(
+        tpRes.algoId ||
+        tpRes.orderId
+    )
+){
 
-            console.log(
-                `❌ DYNAMIC TP INVALID RESPONSE ${symbol}`
-            )
+    console.log(
+        `❌ DYNAMIC TP INVALID RESPONSE ${symbol}:`,
+        JSON.stringify(tpRes)
+    )
 
-            try{
-                await cancelAllOrders(symbol)
-            }catch(_){}
+    try{
+        await cancelAllOrders(symbol)
+    }catch(_){}
 
-            return false
-        }
+    return false
+}
+
+const tpOrderId =
+    tpRes.algoId ||
+    tpRes.orderId
 
         console.log(
             `🎯 DYNAMIC TP SET ${symbol}: ${tp}`
@@ -1424,12 +1440,12 @@ async function setDynamicTPSL(trade){
         )
 
         return {
-            ok: true,
-            sl,
-            tp,
-            slOrderId: slRes.orderId,
-            tpOrderId: tpRes.orderId
-        }
+    ok: true,
+    sl,
+    tp,
+    slOrderId,
+    tpOrderId
+}
 
     }catch(e){
 
@@ -1825,7 +1841,10 @@ async function setInitialTPSL(trade){
 
         if(
             !slRes ||
-            !slRes.orderId
+            !(
+                slRes.algoId ||
+                slRes.orderId
+            )
         ){
 
             console.log(
@@ -1834,6 +1853,9 @@ async function setInitialTPSL(trade){
 
             return false
         }
+        const slOrderId =
+    slRes.algoId ||
+    slRes.orderId
 
         // =========================================
         // SET TP
@@ -1861,36 +1883,58 @@ async function setInitialTPSL(trade){
         )
 
         if(
-            !tpRes ||
-            !tpRes.orderId
-        ){
+    !tpRes ||
+    !(
+        tpRes.algoId ||
+        tpRes.orderId
+    )
+){
 
-            console.log(
-                `❌ TP INVALID RESPONSE ${symbol}`
-            )
+    console.log(
+        `❌ TP INVALID RESPONSE ${symbol}:`,
+        JSON.stringify(tpRes)
+    )
 
-            /*
-             * SL đã tồn tại nhưng TP fail.
-             * Xóa SL để caller emergency close
-             * position một cách rõ ràng.
-             */
+    await cancelAllOrders(symbol)
 
-            await cancelAllOrders(symbol)
+    return false
+}
+const verified =
+    await verifyDynamicTPSL(
+        symbol,
+        positionSide,
+        sl,
+        tp
+    )
 
-            return false
-        }
+if(!verified){
+
+    console.log(
+        `❌ INITIAL TPSL VERIFY FAIL ${symbol}`
+    )
+
+    try{
+        await cancelAllOrders(symbol)
+    }catch(_){}
+
+    return false
+}
+
+const tpOrderId =
+    tpRes.algoId ||
+    tpRes.orderId
 
         await new Promise(r =>
             setTimeout(r, 3000)
         )
 
         return {
-            ok: true,
-            sl,
-            tp,
-            slOrderId: slRes.orderId,
-            tpOrderId: tpRes.orderId
-        }
+    ok: true,
+    sl,
+    tp,
+    slOrderId,
+    tpOrderId
+}
 
     }catch(e){
 
