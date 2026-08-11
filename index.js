@@ -2734,164 +2734,75 @@ await trades.updateOne(
         return
     }
 
-    // =================================================
-    // 0 → 0.60R
-    // NO TRAILING
-    // =================================================
+// =================================================
+// CONTINUOUS PROFIT LOCK
+// SL CHỈ DỜI THEO HƯỚNG CÓ LỢI
+// KHÔNG ATR TRAILING
+// KHÔNG CÓ MỨC LOCK TỐI ĐA
+// =================================================
 
-    if(R < 0.60){
+if(R >= 0.70){
 
-        // Giữ SL nguyên.
+    let lockR
+
+    if(R < 0.90){
+
+        lockR = 0.20
+
     }
+    else if(R < 1.20){
 
-    // =================================================
-    // 0.60R → 0.90R
-    // REDUCE RISK
-    // =================================================
+        lockR = 0.50
+
+    }
+    else if(R < 1.50){
+
+        lockR = 0.80
+
+    }
+    else if(R < 2.00){
+
+        lockR = 1.20
+
+    }
+    else if(R < 2.50){
+
+        lockR = 1.70
+
+    }
+    else if(R < 3.00){
+
+        lockR = 2.20
+
+    }
+    else{
+
+        lockR = R - 0.70
+    }
 
     if(
-        R >= 0.60 &&
-        R < 0.90
+        trade.side === "LONG"
     ){
 
-        if(
-            trade.side === "LONG"
-        ){
+        const candidate =
+            currentEntry +
+            initialRisk * lockR
 
-            const candidate =
-                currentEntry -
-                atr15 * 0.20
+        if(candidate > newSL){
+            newSL = candidate
+        }
 
-            if(candidate > newSL){
-                newSL = candidate
-            }
+    }else{
 
-        }else{
+        const candidate =
+            currentEntry -
+            initialRisk * lockR
 
-            const candidate =
-                currentEntry +
-                atr15 * 0.20
-
-            if(candidate < newSL){
-                newSL = candidate
-            }
+        if(candidate < newSL){
+            newSL = candidate
         }
     }
-
-    // =================================================
-    // >= 0.90R
-    // BREAK EVEN
-    // =================================================
-
-    if(R >= 0.90){
-
-        const buffer =
-            Math.max(
-                atr15 * 0.05,
-                currentEntry * 0.0002
-            )
-
-        if(
-            trade.side === "LONG"
-        ){
-
-            const candidate =
-                currentEntry + buffer
-
-            if(candidate > newSL){
-                newSL = candidate
-            }
-
-        }else{
-
-            const candidate =
-                currentEntry - buffer
-
-            if(candidate < newSL){
-                newSL = candidate
-            }
-        }
-    }
-
-    // =================================================
-    // >= 1.20R
-    // LOCK PROFIT
-    // =================================================
-
-    if(R >= 1.20){
-
-        let lockR = 0.30
-
-        if(R >= 2.00){
-            lockR = 0.75
-        }
-        else if(R >= 1.60){
-            lockR = 0.55
-        }
-
-        if(
-            trade.side === "LONG"
-        ){
-
-            const candidate =
-                currentEntry +
-                initialRisk * lockR
-
-            if(candidate > newSL){
-                newSL = candidate
-            }
-
-        }else{
-
-            const candidate =
-                currentEntry -
-                initialRisk * lockR
-
-            if(candidate < newSL){
-                newSL = candidate
-            }
-        }
-    }
-
-    // =================================================
-    // >= 1.40R
-    // ATR 15M TRAILING
-    // =================================================
-
-    if(R >= 1.40){
-
-        let multiplier = 1.20
-
-        if(R >= 2.50){
-            multiplier = 0.90
-        }
-        else if(R >= 2.00){
-            multiplier = 1.05
-        }
-
-        if(
-            trade.side === "LONG"
-        ){
-
-            const candidate =
-                current -
-                atr15 * multiplier
-
-            if(candidate > newSL){
-                newSL = candidate
-            }
-
-        }else{
-
-            const candidate =
-                current +
-                atr15 * multiplier
-
-            if(candidate < newSL){
-                newSL = candidate
-            }
-        }
-    }
+}
 
     // =====================================================
 // DYNAMIC TP BY R
@@ -2931,7 +2842,7 @@ if(R >= 2.50){
 const minimumFutureR =
     Math.max(
         targetR,
-        R + 0.50
+        R + 0.60
     )
 
 const dynamicTP =
@@ -2966,137 +2877,6 @@ if(trade.side === "LONG"){
     }
 }
 
-    // =====================================================
-    // APPROACHING STRUCTURE
-    // =====================================================
-
-    const structureBuffer =
-        atr15 * 0.35
-
-    // ================= LONG =================
-
-    if(
-        trade.side === "LONG" &&
-        nextResistance &&
-        nextResistance > current
-    ){
-
-        const distance =
-            nextResistance - current
-
-        if(
-            distance <= structureBuffer
-        ){
-
-            // Đã có lời -> khóa lợi nhuận
-            if(R >= 0.70){
-
-                const lock =
-                    currentEntry +
-                    initialRisk * 0.40
-
-                if(lock > newSL){
-                    newSL = lock
-                }
-            }
-
-            // TP đặt ngay trước resistance
-            const target =
-                nextResistance -
-                atr15 * 0.10
-
-            if(
-                target > current &&
-                target < newTP
-            ){
-                newTP = target
-            }
-        }
-    }
-
-    // ================= SHORT =================
-
-    if(
-        trade.side === "SHORT" &&
-        nextSupport &&
-        nextSupport < current
-    ){
-
-        const distance =
-            current - nextSupport
-
-        if(
-            distance <= structureBuffer
-        ){
-
-            if(R >= 0.70){
-
-                const lock =
-                    currentEntry -
-                    initialRisk * 0.40
-
-                if(lock < newSL){
-                    newSL = lock
-                }
-            }
-
-            const target =
-                nextSupport +
-                atr15 * 0.10
-
-            if(
-                target < current &&
-                target > newTP
-            ){
-                newTP = target
-            }
-        }
-    }
-
-    // =====================================================
-    // STRUCTURE EXIT
-    // =====================================================
-
-    if(
-        trade.side === "LONG" &&
-        nextResistance &&
-        nextResistance > current
-    ){
-
-        const distance =
-            nextResistance - current
-
-        if(
-            distance <= atr15 * 0.15 &&
-            R >= 0.50
-        ){
-
-            const qty =
-                Math.abs(
-                    Number(pos.positionAmt)
-                )
-
-            if(qty > 0){
-
-                console.log(
-                    `🏁 RESISTANCE EXIT ${trade.symbol} ` +
-                    `R=${R.toFixed(2)} ` +
-                    `DIST=${distance}`
-                )
-
-                const closed =
-                    await closePosition(
-                        trade.symbol,
-                        trade.side,
-                        qty
-                    )
-
-                if(closed){
-                    return
-                }
-            }
-        }
-    }
 
     // =====================================================
     // AFTER BREAKOUT
@@ -3156,44 +2936,6 @@ if(trade.side === "LONG"){
                 newTP = candidateTP
             }
         }
-    }
-
-    // =====================================================
-    // TIME EXIT
-    // =====================================================
-
-    // Không đóng lệnh chỉ vì đã 12h.
-    //
-    // Chỉ đóng nếu:
-    // 1. Đã giữ >= 8h
-    // 2. Lệnh gần như không chạy
-    // 3. R < 0.30
-
-    if(
-        elapsedHours >= 8 &&
-        R < 0.30
-    ){
-
-        const qty =
-            Math.abs(
-                Number(
-                    pos.positionAmt
-                )
-            )
-
-        console.log(
-            `⏰ STALE TRADE EXIT ${trade.symbol} ` +
-            `R=${R.toFixed(2)} ` +
-            `H=${elapsedHours.toFixed(2)}`
-        )
-
-        await closePosition(
-            trade.symbol,
-            trade.side,
-            qty
-        )
-
-        return
     }
 
     // Safety cực xa.
