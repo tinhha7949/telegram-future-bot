@@ -934,6 +934,14 @@ async function setDynamicTPSL(trade){
         console.log("❌ DYNAMIC TPSL NO SYMBOL")
         return false
     }
+    const side = String(trade?.side || "").toUpperCase()
+
+if(side !== "LONG" && side !== "SHORT"){
+    console.log(
+        `❌ DYNAMIC INVALID SIDE ${symbol}: ${trade?.side}`
+    )
+    return false
+}
 
     if(TPSL_LOCK[symbol]){
         console.log(
@@ -974,23 +982,17 @@ async function setDynamicTPSL(trade){
         }
 
         const positionSide =
-            positionAmt > 0
-                ? "LONG"
-                : "SHORT"
+    positionAmt > 0
+        ? "LONG"
+        : "SHORT"
 
-        if(
-            String(trade.side).toUpperCase() !==
-            positionSide
-        ){
-
-            console.log(
-                `🚨 DYNAMIC SIDE MISMATCH ${symbol} ` +
-                `TRADE=${trade.side} ` +
-                `POSITION=${positionSide}`
-            )
-
-            return false
-        }
+if(side !== positionSide){
+    console.log(
+        `🚨 DYNAMIC SIDE MISMATCH ${symbol} ` +
+        `TRADE=${side} POSITION=${positionSide}`
+    )
+    return false
+}
 
         const entry =
             Number(pos.entryPrice)
@@ -1419,16 +1421,25 @@ const tpOrderId =
         POS_CACHE_TIME = 0
 
         const finalPos =
-            await hasPosition(symbol)
+    await hasPosition(symbol)
 
-        if(!finalPos){
+if(!finalPos){
 
-            console.log(
-                `⚠️ POSITION CLOSED DURING DYNAMIC ${symbol}`
-            )
+    console.log(
+        `⚠️ POSITION CLOSED DURING DYNAMIC ${symbol}`
+    )
 
-            return false
-        }
+    try{
+        await cancelAllOrders(symbol)
+    }catch(e){
+        console.log(
+            `⚠️ CLEANUP TPSL AFTER POSITION CLOSED FAIL ${symbol}:`,
+            e.message
+        )
+    }
+
+    return false
+}
 
         // =================================================
         // 13. SUCCESS
@@ -2568,7 +2579,10 @@ if(elapsedSinceEntry < 60000){
     const c5 = data5.map(x => +x[4])
 
     const current =
-        c5.at(-1)
+    Number(
+        pos.markPrice ||
+        pos.entryPrice
+    )
 
     if(
         !Number.isFinite(current) ||
@@ -7440,64 +7454,155 @@ PnL: ${closed.pnl.toFixed(4)}
         checkingTrades = false
     }
 }
+
 async function closePosition(symbol, side, qty){
 
     try{
 
-        let pos = await hasPosition(symbol)
+        // ==================================================
+        // 1. LẤY POSITION THẬT TỪ BINANCE
+        // ==================================================
+
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
+
+        let positions =
+            await getPositionsCached()
+
+        let pos =
+            positions.find(p =>
+                p?.symbol === symbol &&
+                Math.abs(
+                    Number(p.positionAmt || 0)
+                ) > 0
+            )
 
         if(!pos){
             return true
         }
 
-        let closeSide =
-            side === "LONG"
+        // ==================================================
+        // 2. LUÔN DÙNG QTY THỰC TẾ CỦA BINANCE
+        //    KHÔNG DÙNG QTY CŨ TRUYỀN VÀO
+        // ==================================================
+
+        const realQty =
+            Math.abs(
+                Number(pos.positionAmt || 0)
+            )
+
+        if(
+            !Number.isFinite(realQty) ||
+            realQty <= 0
+        ){
+            return true
+        }
+
+        const realSide =
+            Number(pos.positionAmt) > 0
+                ? "LONG"
+                : "SHORT"
+
+        const closeSide =
+            realSide === "LONG"
                 ? "SELL"
                 : "BUY"
+
+        console.log(
+            `🔴 FORCE CLOSE ${symbol} ` +
+            `SIDE=${realSide} ` +
+            `QTY=${realQty}`
+        )
+
+        // ==================================================
+        // 3. MARKET REDUCE ONLY
+        // ==================================================
 
         await binance.futuresOrder({
 
             symbol,
+
             recvWindow: 20000,
+
             side: closeSide,
+
             type: "MARKET",
-            quantity: qty,
+
+            quantity: realQty,
+
             reduceOnly: true
         })
+
+        // ==================================================
+        // 4. XÓA CACHE NGAY SAU KHI CLOSE
+        // ==================================================
 
         POS_CACHE = null
         POS_CACHE_TIME = 0
 
-        // phần verify phía dưới giữ nguyên để đảm bảo position thật đã đóng, tránh trường hợp API lag hoặc lỗi mà DB đã update nhưng position vẫn còn
+        // ==================================================
+        // 5. VERIFY POSITION THẬT
+        //    MỖI VÒNG ĐỀU ÉP REFRESH BINANCE
+        // ==================================================
 
-        // ===== VERIFY CLOSED =====
-        for(let i=0;i<30;i++){
+        for(let i = 0; i < 30; i++){
 
-    await new Promise(r =>
-        setTimeout(r, 2000)
-    )
-
-            let positions =
-                await getPositionsCached()
-
-            let pos = positions.find(p =>
-                p.symbol === symbol &&
-                Math.abs(parseFloat(p.positionAmt || "0")) > 0
+            await new Promise(r =>
+                setTimeout(r, 2000)
             )
 
-            if(!pos){
+            POS_CACHE = null
+            POS_CACHE_TIME = 0
+
+            let freshPositions
+
+            try{
+
+                freshPositions =
+                    await getPositionsCached()
+
+            }catch(e){
+
+                console.log(
+                    `⚠️ CLOSE VERIFY ${symbol}:`,
+                    e?.message || e
+                )
+
+                continue
+            }
+
+            const stillOpen =
+                freshPositions.some(p =>
+                    p?.symbol === symbol &&
+                    Math.abs(
+                        Number(p.positionAmt || 0)
+                    ) > 0
+                )
+
+            if(!stillOpen){
+
+                console.log(
+                    `✅ FORCE CLOSED ${symbol}`
+                )
 
                 return true
             }
+
         }
+
+        console.log(
+            `❌ FORCE CLOSE VERIFY FAILED ${symbol}`
+        )
 
         return false
 
     }catch(e){
+
         await checkTimeError(e)
+
         console.log(
             `❌ FORCE CLOSE ${symbol}:`,
-            e.message
+            e?.message || e
         )
 
         return false
@@ -7713,27 +7818,54 @@ async function recoverOrphanPositions(){
                 markPrice
             }
 
-            // ==========================================
-            // RAM ACTIVE
-            // ==========================================
+// ==========================================
+// CHỐNG DUPLICATE THEO SYMBOL
+// ==========================================
 
-            activeTrades.push(
-                orphanTrade
-            )
+const existingIndex =
+    activeTrades.findIndex(
+        t =>
+            t?.symbol === symbol &&
+            t.result === "PENDING"
+    )
 
-            // ==========================================
-            // DYNAMIC TPSL BẬT
-            // ==========================================
+if(existingIndex !== -1){
 
-            TPSL_PHASE[symbol] =
-                "ACTIVE"
+    // Đã có trade trong RAM.
+    // Không tạo thêm trade thứ 2.
 
-            console.log(
-                `🟢 ORPHAN RECOVERED ${symbol} ` +
-                `SIDE=${side} ` +
-                `ENTRY=${entry} ` +
-                `QTY=${Math.abs(positionAmt)}`
-            )
+    TPSL_PHASE[symbol] =
+        "ACTIVE"
+
+    console.log(
+        `♻️ ORPHAN ${symbol} ALREADY ACTIVE → SKIP DUPLICATE`
+    )
+
+    continue
+}
+
+// ==========================================
+// RAM ACTIVE
+// ==========================================
+
+activeTrades.push(
+    orphanTrade
+)
+
+// ==========================================
+// DYNAMIC TPSL BẬT
+// ==========================================
+
+TPSL_PHASE[symbol] =
+    "ACTIVE"
+
+console.log(
+    `🟢 ORPHAN RECOVERED ${symbol} ` +
+    `SIDE=${side} ` +
+    `ENTRY=${entry} ` +
+    `QTY=${Math.abs(positionAmt)}`
+)
+
 
             // ==========================================
             // THỬ LƯU LẠI VÀO MONGO
@@ -7936,6 +8068,10 @@ console.log(
 // ==================================================
 
 await recoverOrphanPositions()
+setInterval(
+    recoverOrphanPositions,
+    60000
+)
 
 console.log(
     `♻️ AFTER ORPHAN RECOVERY: ${activeTrades.length} ACTIVE`
@@ -8158,6 +8294,7 @@ async function getDBStats(setup, market, side, volatility){
 }
             
 start()
+
 async function syncActiveTrades(){
 
     try{
@@ -8171,57 +8308,135 @@ async function syncActiveTrades(){
             return
         }
 
-        let dbTrades =
-    await trades.find({
-        result:"PENDING"
-    }).toArray()
+        // ==================================================
+        // 1. LẤY DB PENDING
+        // ==================================================
 
-const dbFailedTrades =
-    activeTrades.filter(
-        t =>
-            t?.dbSaveFailed === true &&
-            t?.dbRecoveryNeeded === true &&
-            t?.symbol
-    )
+        const dbTrades =
+            await trades.find({
+                result: "PENDING"
+            }).toArray()
 
-const merged = new Map()
+        // ==================================================
+        // 2. LẤY POSITION THẬT TỪ BINANCE
+        // ==================================================
 
-for(const trade of dbTrades){
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
 
-    if(
-        trade?.symbol &&
-        trade.result === "PENDING"
-    ){
-        merged.set(
-            trade.symbol,
-            trade
-        )
-    }
-}
+        let positions
 
-for(const trade of dbFailedTrades){
+        try{
 
-    if(
-        trade?.symbol &&
-        trade.result === "PENDING"
-    ){
+            positions =
+                await getPositionsCached()
 
-        // Nếu DB đã có trade thì ưu tiên DB
-        if(!merged.has(trade.symbol)){
-            merged.set(
-                trade.symbol,
-                trade
+        }catch(e){
+
+            console.log(
+                "❌ SYNC BINANCE POSITIONS FAIL:",
+                e?.message || e
             )
+
+            // Binance không xác nhận được
+            // thì TUYỆT ĐỐI KHÔNG xoá activeTrades
+            return
         }
-    }
-}
 
-activeTrades =
-    [...merged.values()]
+        const positionMap =
+            new Map()
 
-        // ===== BUILD ACTIVE SYMBOL SET =====
+        for(const pos of positions){
 
-        const activeSymbols = new Set()
+            const symbol =
+                pos?.symbol
+
+            const amount =
+                Number(pos?.positionAmt || 0)
+
+            if(
+                symbol &&
+                Number.isFinite(amount) &&
+                Math.abs(amount) > 0
+            ){
+
+                positionMap.set(
+                    symbol,
+                    pos
+                )
+            }
+        }
+
+        // ==================================================
+        // 3. CHỈ GIỮ DB TRADE CÓ POSITION THẬT
+        // ==================================================
+
+        const merged =
+            new Map()
+
+        for(const trade of dbTrades){
+
+            if(
+                !trade?.symbol ||
+                trade.result !== "PENDING"
+            ){
+                continue
+            }
+
+            if(
+                positionMap.has(
+                    trade.symbol
+                )
+            ){
+
+                merged.set(
+                    trade.symbol,
+                    trade
+                )
+            }
+
+        }
+
+        // ==================================================
+        // 4. GIỮ ORPHAN RAM CHƯA SAVE ĐƯỢC
+        // ==================================================
+
+        for(const trade of activeTrades){
+
+            if(
+                !trade?.symbol ||
+                trade.result !== "PENDING"
+            ){
+                continue
+            }
+
+            if(
+                trade.dbSaveFailed === true &&
+                trade.dbRecoveryNeeded === true &&
+                positionMap.has(trade.symbol) &&
+                !merged.has(trade.symbol)
+            ){
+
+                merged.set(
+                    trade.symbol,
+                    trade
+                )
+            }
+        }
+
+        // ==================================================
+        // 5. REBUILD ACTIVE TRADES THEO SYMBOL
+        // ==================================================
+
+        activeTrades =
+            [...merged.values()]
+
+        // ==================================================
+        // 6. REBUILD TPSL PHASE
+        // ==================================================
+
+        const activeSymbols =
+            new Set()
 
         for(const trade of activeTrades){
 
@@ -8235,15 +8450,22 @@ activeTrades =
                 )
 
                 TPSL_PHASE[trade.symbol] =
-                    TPSL_PHASE[trade.symbol] || "ACTIVE"
+                    "ACTIVE"
             }
         }
 
-        // ===== CLEAN STALE TPSL PHASE =====
+        // ==================================================
+        // 7. XÓA PHASE KHÔNG CÒN POSITION
+        // ==================================================
 
-        for(const symbol of Object.keys(TPSL_PHASE)){
+        for(
+            const symbol
+            of Object.keys(TPSL_PHASE)
+        ){
 
-            if(!activeSymbols.has(symbol)){
+            if(
+                !activeSymbols.has(symbol)
+            ){
 
                 delete TPSL_PHASE[symbol]
 
@@ -8264,6 +8486,7 @@ activeTrades =
         )
     }
 }
+
 let DYNAMIC_TPSL_RUNNING = false
 
 async function runDynamicTPSL(){
@@ -8283,6 +8506,57 @@ async function runDynamicTPSL(){
             return
         }
 
+        // ==================================================
+        // LẤY POSITION THẬT 1 LẦN / DYNAMIC CYCLE
+        // ==================================================
+
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
+
+        let positions
+
+        try{
+
+            positions =
+                await getPositionsCached()
+
+        }catch(e){
+
+            console.log(
+                "❌ DYNAMIC POSITION CHECK:",
+                e?.message || e
+            )
+
+            return
+        }
+
+        const positionMap =
+            new Map()
+
+        for(const pos of positions){
+
+            const amount =
+                Number(
+                    pos?.positionAmt || 0
+                )
+
+            if(
+                pos?.symbol &&
+                Number.isFinite(amount) &&
+                Math.abs(amount) > 0
+            ){
+
+                positionMap.set(
+                    pos.symbol,
+                    pos
+                )
+            }
+        }
+
+        // ==================================================
+        // CHỈ DYNAMIC CHO POSITION THẬT
+        // ==================================================
+
         for(const trade of [...activeTrades]){
 
             if(
@@ -8293,21 +8567,41 @@ async function runDynamicTPSL(){
                 continue
             }
 
+            const symbol =
+                trade.symbol
+
             if(
-                TPSL_PHASE[
-                    trade.symbol
-                ] !== "ACTIVE"
+                TPSL_PHASE[symbol] !== "ACTIVE"
             ){
                 continue
             }
 
             if(
-                TPSL_PENDING[
-                    trade.symbol
-                ]
+                TPSL_PENDING[symbol]
             ){
                 continue
             }
+
+            // ==============================================
+            // BINANCE KHÔNG CÒN POSITION
+            // ==============================================
+
+            if(
+                !positionMap.has(symbol)
+            ){
+
+                console.log(
+                    `⛔ DYNAMIC SKIP ${symbol} → NO BINANCE POSITION`
+                )
+
+                delete TPSL_PHASE[symbol]
+
+                continue
+            }
+
+            // ==============================================
+            // DYNAMIC
+            // ==============================================
 
             try{
 
@@ -8318,8 +8612,8 @@ async function runDynamicTPSL(){
             }catch(e){
 
                 console.log(
-                    `❌ RUN DYNAMIC ${trade.symbol}:`,
-                    e.message
+                    `❌ RUN DYNAMIC ${symbol}:`,
+                    e?.message || e
                 )
             }
         }
@@ -8328,7 +8622,7 @@ async function runDynamicTPSL(){
 
         console.log(
             `❌ DYNAMIC LOOP ERROR:`,
-            e.message
+            e?.message || e
         )
 
     }finally{
