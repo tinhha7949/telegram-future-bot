@@ -3317,14 +3317,6 @@ trade.sl =
 
 trade.tp =
     Number(result.tp)
-
-    await sendTelegram2(
-    `🔄 DYNAMIC TPSL UPDATED\n` +
-    `${trade.symbol} ${trade.side}\n` +
-    `SL=${result.sl}\n` +
-    `TP=${result.tp}\n` +
-    `R=${R.toFixed(2)}`
-)
 // =================================================
 // SAVE DB — KHÔNG SET TPSL BINANCE LẦN 2
 // =================================================
