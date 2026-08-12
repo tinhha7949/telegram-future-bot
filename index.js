@@ -3916,17 +3916,17 @@ async function coreLogic(data15, data1h, data5, data1m){
     const pullbackLongLocation =
         softLong5 &&
         (
-            l5.at(-1) <= ema9_5 * 1.003 ||
-            l5.at(-1) <= ema20_5 * 1.008 ||
-            l5.at(-2) <= ema20_5 * 1.008
+            l5.at(-1) <= ema9_5 * 1.005 ||
+            l5.at(-1) <= ema20_5 * 1.012 ||
+            l5.at(-2) <= ema20_5 * 1.012
         )
 
     const pullbackShortLocation =
         softShort5 &&
         (
-            h5.at(-1) >= ema9_5 * 0.997 ||
-            h5.at(-1) >= ema20_5 * 0.992 ||
-            h5.at(-2) >= ema20_5 * 0.992
+            h5.at(-1) >= ema9_5 * 0.995 ||
+            h5.at(-1) >= ema20_5 * 0.998 ||
+            h5.at(-2) >= ema20_5 * 0.998
         )
 
     const pullbackLong =
@@ -3964,7 +3964,7 @@ async function coreLogic(data15, data1h, data5, data1m){
         longTrendAlignment &&
         trendLong5 &&
         Math.abs(move5) < Math.max(atr5Ratio * 5,0.018) &&
-        price - ema9_5 < atr5 * 1.8 &&
+        price - ema9_5 < atr5 * 2.2 &&
         (
             reclaimLong ||
             (microBreakLong && strongBullTrigger)
@@ -3974,7 +3974,7 @@ async function coreLogic(data15, data1h, data5, data1m){
         shortTrendAlignment &&
         trendShort5 &&
         Math.abs(move5) < Math.max(atr5Ratio * 5,0.018) &&
-        ema9_5 - price < atr5 * 1.8 &&
+        ema9_5 - price < atr5 * 2.2 &&
         (
             reclaimShort ||
             (microBreakShort && strongBearTrigger)
@@ -4158,8 +4158,8 @@ async function coreLogic(data15, data1h, data5, data1m){
 
     const minimumScore =
         setup === "REVERSAL_LONG" || setup === "REVERSAL_SHORT"
-            ? 68
-            : 65
+            ? 64
+            : 61
 
     if(score < minimumScore){
         return null
@@ -4223,7 +4223,7 @@ async function coreLogic(data15, data1h, data5, data1m){
 
         // A resistance too close means insufficient room — reject,
         // never fake RR by calculating before TP is capped.
-        if(resistance && resistance < price + riskDistance * 1.55){
+        if(resistance && resistance < price + riskDistance * 1.35){
             return null
         }
 
@@ -4258,7 +4258,7 @@ async function coreLogic(data15, data1h, data5, data1m){
 
         const desiredTP = price - riskDistance * rewardMultiple
 
-        if(support && support > price - riskDistance * 1.55){
+        if(support && support > price - riskDistance * 1.35){
             return null
         }
 
@@ -4279,7 +4279,7 @@ async function coreLogic(data15, data1h, data5, data1m){
             : price - tp
 
     const rr = risk > 0 ? reward/risk : 0
-    const minRR = isReversal ? 1.55 : 1.65
+    const minRR = isReversal ? 1.42 : 1.50
 
     if(
         !Number.isFinite(sl) ||
