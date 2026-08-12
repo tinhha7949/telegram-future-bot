@@ -3488,1820 +3488,956 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
     return base
 }
-// ================= CORE LOGIC V2 - SHORT TERM =================
-// 1H = BIAS
-// 15M = STRUCTURE
-// 5M = SETUP
-// 1M = ENTRY TIMING
-//
-// Mục tiêu:
-// - Bắt nhiều cơ hội short-term
-// - Không phụ thuộc duy nhất vào pullback EMA
-// - Không dùng volume/RSI làm hard filter
-// - Entry phải có price-action confirmation
-// - SL dựa trên structure 5M/1M
-// =============================================================
-
 async function coreLogic(data15, data1h, data5, data1m){
 
-    // ================= VALIDATE =================
+    // ========================================================
+    // VALIDATION — only closed candles are used
+    // ========================================================
 
-    if(!data15 || !data1h || !data5 || !data1m){
+    if(
+        !Array.isArray(data15) ||
+        !Array.isArray(data1h) ||
+        !Array.isArray(data5) ||
+        !Array.isArray(data1m)
+    ){
         return null
     }
 
-    // Chỉ dùng nến đã đóng
     data15 = data15.slice(0,-1)
     data1h = data1h.slice(0,-1)
     data5  = data5.slice(0,-1)
     data1m = data1m.slice(0,-1)
 
     if(
-        data15.length < 100 ||
-        data1h.length < 60 ||
-        data5.length < 80 ||
-        data1m.length < 80
+        data15.length < 140 ||
+        data1h.length < 140 ||
+        data5.length < 140 ||
+        data1m.length < 140
     ){
         return null
     }
 
-    // ================= ARRAY =================
+    const toNum = value => Number(value)
 
-    const o15 = data15.map(x=>+x[1])
-    const h15 = data15.map(x=>+x[2])
-    const l15 = data15.map(x=>+x[3])
-    const c15 = data15.map(x=>+x[4])
-    const v15 = data15.map(x=>+x[5])
+    const o15 = data15.map(x => toNum(x[1]))
+    const h15 = data15.map(x => toNum(x[2]))
+    const l15 = data15.map(x => toNum(x[3]))
+    const c15 = data15.map(x => toNum(x[4]))
+    const v15 = data15.map(x => toNum(x[5]))
 
-    const o1h = data1h.map(x=>+x[1])
-    const h1h = data1h.map(x=>+x[2])
-    const l1h = data1h.map(x=>+x[3])
-    const c1h = data1h.map(x=>+x[4])
+    const o1h = data1h.map(x => toNum(x[1]))
+    const h1h = data1h.map(x => toNum(x[2]))
+    const l1h = data1h.map(x => toNum(x[3]))
+    const c1h = data1h.map(x => toNum(x[4]))
+    const v1h = data1h.map(x => toNum(x[5]))
 
-    const o5 = data5.map(x=>+x[1])
-    const h5 = data5.map(x=>+x[2])
-    const l5 = data5.map(x=>+x[3])
-    const c5 = data5.map(x=>+x[4])
-    const v5 = data5.map(x=>+x[5])
+    const o5 = data5.map(x => toNum(x[1]))
+    const h5 = data5.map(x => toNum(x[2]))
+    const l5 = data5.map(x => toNum(x[3]))
+    const c5 = data5.map(x => toNum(x[4]))
+    const v5 = data5.map(x => toNum(x[5]))
 
-    const o1 = data1m.map(x=>+x[1])
-    const h1 = data1m.map(x=>+x[2])
-    const l1 = data1m.map(x=>+x[3])
-    const c1 = data1m.map(x=>+x[4])
-    const v1 = data1m.map(x=>+x[5])
+    const o1 = data1m.map(x => toNum(x[1]))
+    const h1 = data1m.map(x => toNum(x[2]))
+    const l1 = data1m.map(x => toNum(x[3]))
+    const c1 = data1m.map(x => toNum(x[4]))
+    const v1 = data1m.map(x => toNum(x[5]))
 
-    const price = c1.at(-1)
+    const allValues = [
+        ...o15,...h15,...l15,...c15,...v15,
+        ...o1h,...h1h,...l1h,...c1h,...v1h,
+        ...o5,...h5,...l5,...c5,...v5,
+        ...o1,...h1,...l1,...c1,...v1
+    ]
 
-    if(!price || price <= 0){
+    if(allValues.some(x => !Number.isFinite(x))){
         return null
     }
 
-    // ================= HELPERS =================
+    const price = c1.at(-1)
 
-    const pct = (a,b) =>
-        b !== 0 ? (a-b)/b : 0
-
-    const candleBody = (o,c) =>
-        Math.abs(c-o)
-
-    const candleRange = (h,l) =>
-        Math.max(h-l,0)
-
-    const bodyRatio = (o,h,l,c) => {
-        const range = candleRange(h,l)
-        return range > 0
-            ? Math.abs(c-o)/range
-            : 0
+    if(!Number.isFinite(price) || price <= 0){
+        return null
     }
 
-    const closeLong = (h,l,c) => {
-        const range = h-l
-        return range > 0
-            ? (c-l)/range
-            : 0
-    }
+    // ========================================================
+    // HELPERS
+    // ========================================================
 
-    const closeShort = (h,l,c) => {
-        const range = h-l
-        return range > 0
-            ? (h-c)/range
-            : 0
-    }
+    const pct = (a,b) => b ? (a-b)/b : 0
 
     const avg = arr =>
         arr.length
-            ? arr.reduce((a,b)=>a+b,0)/arr.length
+            ? arr.reduce((sum,x) => sum + x, 0) / arr.length
             : 0
 
-    // ================= INDICATORS =================
+    const highest = (arr,count) => {
+        const values = arr.slice(-count)
+        return values.length ? Math.max(...values) : 0
+    }
 
-    const atr15Raw = atr(data15.slice(-80))
-    const atr5Raw  = atr(data5.slice(-80))
-    const atr1Raw  = atr(data1m.slice(-80))
+    const lowest = (arr,count) => {
+        const values = arr.slice(-count)
+        return values.length ? Math.min(...values) : 0
+    }
+
+    const candleRange = (high,low) =>
+        Math.max(high-low,0)
+
+    const bodyRatio = (open,high,low,close) => {
+        const range = candleRange(high,low)
+        return range > 0 ? Math.abs(close-open)/range : 0
+    }
+
+    const closeAtHigh = (high,low,close) => {
+        const range = candleRange(high,low)
+        return range > 0 ? (close-low)/range : 0
+    }
+
+    const closeAtLow = (high,low,close) => {
+        const range = candleRange(high,low)
+        return range > 0 ? (high-close)/range : 0
+    }
+
+    const round = (value,decimals=8) =>
+        Number(Number(value).toFixed(decimals))
+
+    const nearestAbove = (levels,from,minDistance) => {
+        const valid = levels
+            .filter(x => Number.isFinite(x) && x > from + minDistance)
+            .sort((a,b) => a-b)
+
+        return valid[0] || null
+    }
+
+    const nearestBelow = (levels,from,minDistance) => {
+        const valid = levels
+            .filter(x => Number.isFinite(x) && x < from - minDistance)
+            .sort((a,b) => b-a)
+
+        return valid[0] || null
+    }
+
+    // ========================================================
+    // ATR / VOLATILITY
+    // ========================================================
+
+    const atr15Raw = atr(data15.slice(-100))
+    const atr5Raw  = atr(data5.slice(-100))
+    const atr1Raw  = atr(data1m.slice(-100))
 
     const atr15 =
         Number.isFinite(atr15Raw) && atr15Raw > 0
             ? atr15Raw
-            : price*0.003
+            : price * 0.003
 
     const atr5 =
         Number.isFinite(atr5Raw) && atr5Raw > 0
             ? atr5Raw
-            : price*0.002
+            : price * 0.0015
 
     const atr1 =
         Number.isFinite(atr1Raw) && atr1Raw > 0
             ? atr1Raw
-            : price*0.0008
+            : price * 0.0005
 
-    const atrRatio5 = atr5/price
+    const atr15Ratio = atr15 / price
+    const atr5Ratio = atr5 / price
 
-    // ================= 1H BIAS =================
+    if(
+        !Number.isFinite(atr15Ratio) ||
+        !Number.isFinite(atr5Ratio) ||
+        atr15Ratio > 0.02
+    ){
+        return null
+    }
 
-    const ema20_1h = ema(c1h.slice(-60),20)
-    const ema50_1h = ema(c1h.slice(-100),50)
+    let volatility = "NORMAL"
 
-    const ema20_1hPrev =
-        ema(c1h.slice(-61,-1),20)
+    if(atr5Ratio < 0.0008){
+        volatility = "LOW"
+    }
+    else if(atr5Ratio > 0.0045){
+        volatility = "HIGH"
+    }
 
-    const ema50_1hPrev =
-        ema(c1h.slice(-101,-1),50)
+    // ========================================================
+    // 1H MACRO TREND
+    // Use same lookback for current/previous EMA calculations.
+    // ========================================================
+
+    const ema20_1h = ema(c1h.slice(-120),20)
+    const ema50_1h = ema(c1h.slice(-120),50)
+    const ema100_1h = ema(c1h.slice(-120),100)
+
+    const ema20_1hPrev = ema(c1h.slice(-121,-1),20)
+    const ema50_1hPrev = ema(c1h.slice(-121,-1),50)
 
     const price1h = c1h.at(-1)
 
-    const slope1h =
-        ema20_1hPrev
-            ? (ema20_1h-ema20_1hPrev)/ema20_1hPrev
-            : 0
-
-    const gap1h =
-        price1h > 0
-            ? Math.abs(ema20_1h-ema50_1h)/price1h
-            : 0
+    const slope20_1h = pct(ema20_1h,ema20_1hPrev)
+    const slope50_1h = pct(ema50_1h,ema50_1hPrev)
 
     const bull1h =
-    ema20_1h > ema50_1h &&
-    price1h > ema20_1h &&
-    slope1h > 0.0002
+        ema20_1h > ema50_1h &&
+        ema50_1h > ema100_1h &&
+        slope20_1h > 0.00005
 
-const bear1h =
-    ema20_1h < ema50_1h &&
-    price1h < ema20_1h &&
-    slope1h < -0.0002
+    const bear1h =
+        ema20_1h < ema50_1h &&
+        ema50_1h < ema100_1h &&
+        slope20_1h < -0.00005
 
-    // ================= 15M STRUCTURE =================
+    const bull1hSoft =
+        ema20_1h > ema50_1h &&
+        (
+            price1h > ema50_1h ||
+            slope20_1h > 0
+        )
 
-    const ema20_15 = ema(c15.slice(-60),20)
-    const ema50_15 = ema(c15.slice(-100),50)
+    const bear1hSoft =
+        ema20_1h < ema50_1h &&
+        (
+            price1h < ema50_1h ||
+            slope20_1h < 0
+        )
 
-    const ema20_15Prev =
-        ema(c15.slice(-61,-1),20)
+    const strongBull1h =
+        bull1h &&
+        price1h > ema20_1h &&
+        slope20_1h > 0.00025
 
-    const ema50_15Prev =
-        ema(c15.slice(-101,-1),50)
+    const strongBear1h =
+        bear1h &&
+        price1h < ema20_1h &&
+        slope20_1h < -0.00025
+
+    // ========================================================
+    // 15M DIRECTION + STRUCTURE
+    // ========================================================
+
+    const ema20_15 = ema(c15.slice(-120),20)
+    const ema50_15 = ema(c15.slice(-120),50)
+    const ema100_15 = ema(c15.slice(-120),100)
+
+    const ema20_15Prev = ema(c15.slice(-121,-1),20)
+    const ema50_15Prev = ema(c15.slice(-121,-1),50)
 
     const price15 = c15.at(-1)
-
-    const slope15 =
-        ema20_15Prev
-            ? (ema20_15-ema20_15Prev)/ema20_15Prev
-            : 0
-
-    const gap15 =
-        price15 > 0
-            ? Math.abs(ema20_15-ema50_15)/price15
-            : 0
+    const slope15 = pct(ema20_15,ema20_15Prev)
+    const slope50_15 = pct(ema50_15,ema50_15Prev)
 
     const bull15 =
-    ema20_15 > ema50_15 &&
-    price15 > ema20_15 &&
-    slope15 > 0.0002
+        ema20_15 > ema50_15 &&
+        ema50_15 > ema100_15 &&
+        slope15 > 0.00005
 
-const bear15 =
-    ema20_15 < ema50_15 &&
-    price15 < ema20_15 &&
-    slope15 < -0.0002
+    const bear15 =
+        ema20_15 < ema50_15 &&
+        ema50_15 < ema100_15 &&
+        slope15 < -0.00005
 
-    // Không bắt buộc 1H + 15M cùng hướng.
-    // Chỉ tạo bias.
+    const high15_40 = highest(h15,40)
+    const low15_40 = lowest(l15,40)
+    const midpoint15 = (high15_40 + low15_40) / 2
 
-    let longBias = 0
-    let shortBias = 0
+    const structureLong15 = price15 > midpoint15
+    const structureShort15 = price15 < midpoint15
 
-    if(bull1h) longBias += 2
-    if(bear1h) shortBias += 2
-
-    if(bull15) longBias += 2
-    if(bear15) shortBias += 2
-
-    if(slope15 > 0.00015) longBias += 1
-    if(slope15 < -0.00015) shortBias += 1
-
-    // ================= 5M DATA =================
+    // ========================================================
+    // 5M TREND / LOCATION
+    // ========================================================
 
     const p5 = c5.at(-1)
     const p5Prev = c5.at(-2)
 
-    const ema9_5 = ema(c5.slice(-40),9)
-    const ema20_5 = ema(c5.slice(-60),20)
-    const ema50_5 = ema(c5.slice(-80),50)
-    const ema9_5Prev =
-    ema(c5.slice(-41,-1),9)
+    const ema9_5 = ema(c5.slice(-100),9)
+    const ema20_5 = ema(c5.slice(-100),20)
+    const ema50_5 = ema(c5.slice(-100),50)
 
-const slope9_5 =
-    ema9_5Prev
-        ? (ema9_5-ema9_5Prev)/ema9_5Prev
-        : 0
+    const ema9_5Prev = ema(c5.slice(-101,-1),9)
+    const ema20_5Prev = ema(c5.slice(-101,-1),20)
 
-            // ================= SHORT-TERM TREND ENGINE =================
+    const slope9_5 = pct(ema9_5,ema9_5Prev)
+    const slope20_5 = pct(ema20_5,ema20_5Prev)
 
-const ema9_5Prev2 =
-    ema(c5.slice(-42,-2),9)
+    const trendLong5 =
+        p5 > ema20_5 &&
+        ema9_5 > ema20_5 &&
+        ema20_5 > ema50_5 &&
+        slope9_5 > 0
 
-const slope9_5_fast =
-    ema9_5Prev2
-        ? (ema9_5-ema9_5Prev2)/ema9_5Prev2/2
-        : 0
+    const trendShort5 =
+        p5 < ema20_5 &&
+        ema9_5 < ema20_5 &&
+        ema20_5 < ema50_5 &&
+        slope9_5 < 0
 
-const move5m =
-    pct(p5,p5Prev)
+    const softLong5 =
+        ema9_5 > ema20_5 &&
+        ema20_5 > ema50_5 &&
+        slope20_5 > -0.00010
 
-const move15m =
-    pct(
-        c15.at(-1),
-        c15.at(-2)
-    )
+    const softShort5 =
+        ema9_5 < ema20_5 &&
+        ema20_5 < ema50_5 &&
+        slope20_5 < 0.00010
 
-const trendLong5 =
-    p5 > ema9_5 &&
-    ema9_5 > ema20_5 &&
-    slope9_5 > 0.00015
+    // Exclude the current two 5M candles for pre-breakout levels.
+    const previousHigh5 = highest(h5.slice(0,-2),12)
+    const previousLow5 = lowest(l5.slice(0,-2),12)
 
-const trendShort5 =
-    p5 < ema9_5 &&
-    ema9_5 < ema20_5 &&
-    slope9_5 < -0.00015
+    const swingHigh5 = highest(h5.slice(0,-1),24)
+    const swingLow5 = lowest(l5.slice(0,-1),24)
 
-const accelerationLong =
-    slope9_5 > 0.00015 &&
-    slope9_5 > slope9_5_fast
+    const rangeHigh5 = highest(h5.slice(0,-1),36)
+    const rangeLow5 = lowest(l5.slice(0,-1),36)
+    const range5 = rangeHigh5 - rangeLow5
 
-const accelerationShort =
-    slope9_5 < -0.00015 &&
-    slope9_5 < slope9_5_fast
+    if(range5 <= 0){
+        return null
+    }
 
-    const recent5Low =
-        Math.min(...l5.slice(-12,-2))
+    const vol5Avg = avg(v5.slice(-21,-1))
+    const vol5Ratio = vol5Avg > 0 ? v5.at(-1)/vol5Avg : 1
 
-    const recent5High =
-        Math.max(...h5.slice(-12,-2))
+    // ========================================================
+    // 1M TRIGGER
+    // ========================================================
 
-    const structureLow =
-        Math.min(...l5.slice(-20,-1))
+    const i = c1.length - 1
 
-    const structureHigh =
-        Math.max(...h5.slice(-20,-1))
-
-    // ================= 5M VOLUME =================
-
-    const vol5Avg =
-        avg(v5.slice(-21,-1))
-
-    const vol5Now =
-        v5.at(-1)
-
-    const vol5Ratio =
-        vol5Avg > 0
-            ? vol5Now/vol5Avg
-            : 1
-
-    // Volume chỉ là điểm cộng.
-    // Không còn hard filter.
-
-    // ================= 1M CURRENT =================
-
-    const i = c1.length-1
-
-    const c0 = c1[i]
     const o0 = o1[i]
     const h0 = h1[i]
     const l0 = l1[i]
+    const c0 = c1[i]
 
-    const cPrev = c1[i-1]
-    const oPrev = o1[i-1]
     const hPrev = h1[i-1]
     const lPrev = l1[i-1]
+    const cPrev = c1[i-1]
 
-    const c2 = c1[i-2]
     const h2 = h1[i-2]
     const l2 = l1[i-2]
 
-    const range0 = h0-l0
-    const body0 = Math.abs(c0-o0)
+    const range0 = candleRange(h0,l0)
+    const br0 = bodyRatio(o0,h0,l0,c0)
+    const closeLong0 = closeAtHigh(h0,l0,c0)
+    const closeShort0 = closeAtLow(h0,l0,c0)
 
-    if(range0 <= 0 || body0 <= 0){
+    if(range0 <= 0 || br0 <= 0){
         return null
     }
 
-    const br0 =
-        body0/range0
+    const vol1Avg = avg(v1.slice(-21,-1))
+    const vol1Ratio = vol1Avg > 0 ? v1.at(-1)/vol1Avg : 1
 
-    // ================= 1M VOLUME =================
+    const rsi5 = rsi(c5.slice(-80))
+    const rsi1 = rsi(c1.slice(-80))
 
-    const vol1Avg =
-        avg(v1.slice(-21,-1))
+    if(!Number.isFinite(rsi5) || !Number.isFinite(rsi1)){
+        return null
+    }
 
-    const vol1Now =
-        v1.at(-1)
+    const move1 = pct(c0,cPrev)
+    const move3 = pct(c0,c1.at(-4))
+    const move5 = pct(c0,c1.at(-6))
 
-    const vol1Ratio =
-        vol1Avg > 0
-            ? vol1Now/vol1Avg
-            : 1
+    const bullishTrigger =
+        c0 > o0 &&
+        br0 >= 0.38 &&
+        closeLong0 >= 0.56
 
-    // ================= RSI =================
+    const bearishTrigger =
+        c0 < o0 &&
+        br0 >= 0.38 &&
+        closeShort0 >= 0.56
 
-    const rsi5 = rsi(c5.slice(-50))
-    const rsi1 = rsi(c1.slice(-50))
+    const strongBullTrigger =
+        bullishTrigger &&
+        br0 >= 0.50 &&
+        closeLong0 >= 0.64
 
-    // RSI không còn hard filter.
-    // Chỉ dùng để tăng/giảm score.
+    const strongBearTrigger =
+        bearishTrigger &&
+        br0 >= 0.50 &&
+        closeShort0 >= 0.64
 
-    // ================= MOMENTUM =================
+    const microHigh = Math.max(hPrev,h2)
+    const microLow = Math.min(lPrev,l2)
 
-    const move1 =
-        pct(c0,cPrev)
+    const microBreakLong = c0 > microHigh
+    const microBreakShort = c0 < microLow
 
-    const move3 =
-        pct(c0,c1.at(-4))
-
-    const move5 =
-        pct(c0,c1.at(-6))
-
-    // Không chase cú đã chạy quá mạnh.
-    // Nhưng ngưỡng rộng hơn core cũ.
-
-    //if(Math.abs(move5) > 0.035){
-        //return null
-    //}
-
-    // ================= LIQUIDITY SWEEP =================
-
+    // Sweep must take a prior level and close back inside it.
     const sweepLow =
-        l0 < recent5Low &&
-        c0 > recent5Low
+        l0 < previousLow5 &&
+        c0 > previousLow5 &&
+        bullishTrigger
 
     const sweepHigh =
-        h0 > recent5High &&
-        c0 < recent5High
+        h0 > previousHigh5 &&
+        c0 < previousHigh5 &&
+        bearishTrigger
 
-    // ================= MICRO STRUCTURE =================
+    const reclaimLong =
+        cPrev <= ema9_5 &&
+        c0 > ema9_5 &&
+        bullishTrigger
 
-    const microBreakLong =
-        c0 > Math.max(hPrev,h2)
+    const reclaimShort =
+        cPrev >= ema9_5 &&
+        c0 < ema9_5 &&
+        bearishTrigger
 
-    const microBreakShort =
-        c0 < Math.min(lPrev,l2)
+    // ========================================================
+    // SETUPS
+    // ========================================================
 
-    // ================= 5M RECLAIM =================
+    const longTrendAlignment =
+        (
+            bull1h &&
+            (bull15 || structureLong15)
+        ) ||
+        (
+            bull15 &&
+            bull1hSoft
+        )
 
-    const reclaimEmaLong =
-        p5 > ema20_5 &&
-        p5Prev <= ema20_5*1.002
+    const shortTrendAlignment =
+        (
+            bear1h &&
+            (bear15 || structureShort15)
+        ) ||
+        (
+            bear15 &&
+            bear1hSoft
+        )
 
-    const reclaimEmaShort =
-        p5 < ema20_5 &&
-        p5Prev >= ema20_5*0.998
+    const pullbackLongLocation =
+        softLong5 &&
+        (
+            l5.at(-1) <= ema9_5 * 1.003 ||
+            l5.at(-1) <= ema20_5 * 1.008 ||
+            l5.at(-2) <= ema20_5 * 1.008
+        )
 
-    // ================= PULLBACK =================
+    const pullbackShortLocation =
+        softShort5 &&
+        (
+            h5.at(-1) >= ema9_5 * 0.997 ||
+            h5.at(-1) >= ema20_5 * 0.992 ||
+            h5.at(-2) >= ema20_5 * 0.992
+        )
 
     const pullbackLong =
-    p5 > ema20_5 &&
-    ema20_5 > ema50_5 &&
-    (
-        bull15 ||
-        bull1h ||
-        slope15 > 0.00015
-    ) &&
-    (
-        l5.at(-2) <= ema9_5 * 1.008 ||
-        l5.at(-2) <= ema20_5 * 1.015
-    ) &&
-    c0 > cPrev
-
-const pullbackShort =
-    p5 < ema20_5 &&
-    ema20_5 < ema50_5 &&
-    (
-        bear15 ||
-        bear1h ||
-        slope15 < -0.00015
-    ) &&
-    (
-        h5.at(-2) >= ema9_5 * 0.992 ||
-        h5.at(-2) >= ema20_5 * 0.985
-    ) &&
-    c0 < cPrev
-
-    const pullbackReclaimLong =
-    pullbackLong &&
-    (
-        reclaimEmaLong ||
-        microBreakLong ||
-        c0 > hPrev
-    )
-
-const pullbackReclaimShort =
-    pullbackShort &&
-    (
-        reclaimEmaShort ||
-        microBreakShort ||
-        c0 < lPrev
-    )
-// ================= TREND CONTINUATION =================
-
-const trendContinuationLong =
-    trendLong5 &&
-    (
-        bull15 ||
-        bull1h ||
-        slope15 > 0.00015
-    ) &&
-    c0 > cPrev &&
-    (
-        microBreakLong ||
-        reclaimEmaLong ||
-        pullbackReclaimLong ||
-        accelerationLong ||
-        c0 > hPrev
-    )
-
-const trendContinuationShort =
-    trendShort5 &&
-    (
-        bear15 ||
-        bear1h ||
-        slope15 < -0.00015
-    ) &&
-    c0 < cPrev &&
-    (
-        microBreakShort ||
-        reclaimEmaShort ||
-        pullbackReclaimShort ||
-        accelerationShort ||
-        c0 < lPrev
-    )
-    // ================= REVERSAL ENGINE =================
-
-const reversalLong =
-    sweepLow &&
-    c0 > recent5Low &&
-    c0 > cPrev &&
-    (
-        microBreakLong ||
-        reclaimEmaLong
-    ) &&
-    closeLong(h0,l0,c0) >= 0.55
-
-const reversalShort =
-    sweepHigh &&
-    c0 < recent5High &&
-    c0 < cPrev &&
-    (
-        microBreakShort ||
-        reclaimEmaShort
-    ) &&
-    closeShort(h0,l0,c0) >= 0.55
-    // ================= BREAKOUT / RETEST =================
-
-// Breakout phải xảy ra trước đó.
-// Không coi chính cây breakout là retest.
-
-const breakoutLong =
-    p5Prev <= recent5High &&
-    p5 > recent5High
-
-const breakoutShort =
-    p5Prev >= recent5Low &&
-    p5 < recent5Low
-
-// Retest thật:
-// 5M đã nằm trên/dưới vùng breakout,
-// giá 1M quay lại vùng đó,
-// sau đó reclaim lại.
-
-const retestLong =
-    !breakoutLong &&
-    p5 > recent5High &&
-    l0 <= recent5High * 1.003 &&
-    c0 > recent5High
-
-const retestShort =
-    !breakoutShort &&
-    p5 < recent5Low &&
-    h0 >= recent5Low * 0.997 &&
-    c0 < recent5Low
-
-    // ================= MOMENTUM =================
-
-    const momentumLong =
-    p5 > ema9_5 &&
-    ema9_5 > ema20_5 &&
-    slope9_5 > 0.00010 &&
-    c0 > cPrev
-
-const momentumShort =
-    p5 < ema9_5 &&
-    ema9_5 < ema20_5 &&
-    slope9_5 < -0.00010 &&
-    c0 < cPrev
-
-const strongBullContext =
-    bull15 &&
-    slope15 > 0.0008 &&
-    p5 > ema20_5
-
-const strongBearContext =
-    bear15 &&
-    slope15 < -0.0008 &&
-    p5 < ema20_5
-
-    const validReversalLong =
-    reversalLong &&
-    !strongBearContext 
-
-const validReversalShort =
-    reversalShort &&
-    !strongBullContext
-    
-    // ================= 1M CONFIRMATION =================
-const longTrigger =
-    pullbackLong ||
-    trendContinuationLong ||
-    retestLong ||
-    momentumLong ||
-    reversalLong ||
-    microBreakLong ||
-    reclaimEmaLong
-
-const shortTrigger =
-    pullbackShort ||
-    trendContinuationShort ||
-    retestShort ||
-    momentumShort ||
-    reversalShort ||
-    microBreakShort ||
-    reclaimEmaShort
-
-const longMomentumConfirm =
-    c0 > cPrev ||
-    accelerationLong
-
-const shortMomentumConfirm =
-    c0 < cPrev ||
-    accelerationShort
-
-
-    const confirmLong =
-    longTrigger &&
-    longMomentumConfirm &&
-    c0 > o0 &&
-    br0 >= 0.30 &&
-    closeLong(h0,l0,c0) >= 0.50
-
-const confirmShort =
-    shortTrigger &&
-    shortMomentumConfirm &&
-    c0 < o0 &&
-    br0 >= 0.30 &&
-    closeShort(h0,l0,c0) >= 0.50
-
-    // ================= SETUP SELECTION =================
-
-let longSetup = null
-let shortSetup = null
-
-// LONG
-
-if(validReversalLong && confirmLong){
-    longSetup = "REVERSAL_LONG"
-}
-else if(retestLong && confirmLong){
-    longSetup = "BREAKOUT_RETEST"
-}
-else if(pullbackLong && confirmLong){
-    longSetup = "PULLBACK_RECLAIM"
-}
-else if(trendContinuationLong && confirmLong){
-    longSetup = "TREND_CONTINUATION"
-}
-else if(momentumLong && confirmLong){
-    longSetup = "MOMENTUM_CONTINUATION"
-}
-
-// SHORT
-
-if(validReversalShort && confirmShort){
-    shortSetup = "REVERSAL_SHORT"
-}
-else if(retestShort && confirmShort){
-    shortSetup = "BREAKOUT_RETEST"
-}
-else if(pullbackShort && confirmShort){
-    shortSetup = "PULLBACK_RECLAIM"
-}
-else if(trendContinuationShort && confirmShort){
-    shortSetup = "TREND_CONTINUATION"
-}
-else if(momentumShort && confirmShort){
-    shortSetup = "MOMENTUM_CONTINUATION"
-}
-
-    // ================= SIDE =================
-
-let side = null
-let setup = null
-
-if(longSetup && !shortSetup){
-
-    if(longBias >= 1){
-        side = "LONG"
-        setup = longSetup
-    }
-
-}
-else if(shortSetup && !longSetup){
-
-    if(shortBias >= 1){
-        side = "SHORT"
-        setup = shortSetup
-    }
-
-}
-else if(longSetup && shortSetup){
-
-    if(longBias > shortBias && longBias >= 1){
-
-        side = "LONG"
-        setup = longSetup
-
-    }
-    else if(shortBias > longBias && shortBias >= 1){
-
-        side = "SHORT"
-        setup = shortSetup
-
-    }
-}
-
-if(!side){
-    return null
-}
-// ================= DIRECTION FILTER =================
-
-// LONG ngược bearish lớn -> chỉ cho nếu reversal thật
-if(
-    side === "LONG" &&
-    bear1h &&
-    bear15 &&
-    setup !== "REVERSAL_LONG"
-){
-    return null
-}
-
-// SHORT ngược bullish lớn -> chỉ cho nếu reversal thật
-if(
-    side === "SHORT" &&
-    bull1h &&
-    bull15 &&
-    setup !== "REVERSAL_SHORT"
-){
-    return null
-}
-
-// Reversal counter-trend phải có sweep
-if(
-    side === "LONG" &&
-    bear15 &&
-    setup === "REVERSAL_LONG" &&
-    !sweepLow
-){
-    return null
-}
-
-if(
-    side === "SHORT" &&
-    bull15 &&
-    setup === "REVERSAL_SHORT" &&
-    !sweepHigh
-){
-    return null
-}
-    // ================= ANTI COUNTER-MOVE =================
-
-if(
-    side === "LONG" &&
-    move1 < -0.004
-){
-    return null
-}
-
-if(
-    side === "SHORT" &&
-    move1 > 0.004
-){
-    return null
-}
-
-   // ================= SCORE =================
-
-let score = 50
-
-// ===== DIRECTION =====
-
-if(side === "LONG"){
-
-    if(bull1h) score += 8
-    if(bull15) score += 8
-    if(slope15 > 0.0002) score += 4
-
-}else{
-
-    if(bear1h) score += 8
-    if(bear15) score += 8
-    if(slope15 < -0.0002) score += 4
-}
-
-// ===== SETUP =====
-
-if(
-    setup === "REVERSAL_LONG" ||
-    setup === "REVERSAL_SHORT"
-){
-    score += 18
-}
-
-if(setup === "BREAKOUT_RETEST"){
-    score += 15
-}
-
-if(setup === "PULLBACK_RECLAIM"){
-    score += 10
-}
-
-if(setup === "TREND_CONTINUATION"){
-    score += 13
-}
-
-if(setup === "MOMENTUM_CONTINUATION"){
-    score += 9
-}
-
-// ===== MICRO STRUCTURE =====
-
-if(side === "LONG" && microBreakLong){
-    score += 7
-}
-
-if(side === "SHORT" && microBreakShort){
-    score += 7
-}
-
-// ===== SWEEP =====
-
-if(side === "LONG" && sweepLow){
-    score += 7
-}
-
-if(side === "SHORT" && sweepHigh){
-    score += 7
-}
-
-// ===== TREND SPEED =====
-
-if(side === "LONG" && accelerationLong){
-    score += 6
-}
-
-if(side === "SHORT" && accelerationShort){
-    score += 6
-}
-
-// ===== VOLUME =====
-
-if(
-    vol1Ratio >= 1.5 ||
-    vol5Ratio >= 1.5
-){
-    score += 6
-}
-else if(
-    vol1Ratio >= 1.15 ||
-    vol5Ratio >= 1.15
-){
-    score += 3
-}
-
-if(
-    vol1Ratio < 0.45 &&
-    vol5Ratio < 0.55
-){
-    score -= 5
-}
-
-// ===== CANDLE =====
-
-if(br0 >= 0.55){
-    score += 5
-}
-
-// ===== RSI =====
-
-if(side === "LONG"){
-
-    if(rsi5 >= 45 && rsi5 <= 70){
-        score += 3
-    }
-
-    if(rsi5 > 78){
-        score -= 5
-    }
-
-}else{
-
-    if(rsi5 <= 55 && rsi5 >= 30){
-        score += 3
-    }
-
-    if(rsi5 < 22){
-        score -= 5
-    }
-}
-
-// ===== EXTENSION =====
-
-if(score < 58){
-    return null
-}
-    
-// ================= EXTENSION FILTER =================
-
-if(
-    side === "LONG" &&
-    move5 > 0.04 &&
-    !retestLong &&
-    !pullbackLong &&
-    !sweepLow
-){
-    return null
-}
-
-if(
-    side === "SHORT" &&
-    move5 < -0.04 &&
-    !retestShort &&
-    !pullbackShort &&
-    !sweepHigh
-){
-    return null
-}
-// ================= QUALITY =================
-
-let quality = 0
-
-// Direction
-if(side === "LONG"){
-
-    if(bull15) quality += 2
-    if(bull1h) quality += 1
-    if(slope15 > 0.0002) quality += 1
-
-}else{
-
-    if(bear15) quality += 2
-    if(bear1h) quality += 1
-    if(slope15 < -0.0002) quality += 1
-}
-
-// Setup
-if(
-    setup === "REVERSAL_LONG" ||
-    setup === "REVERSAL_SHORT"
-){
-    quality += 2
-}
-
-if(setup === "BREAKOUT_RETEST"){
-    quality += 2
-}
-
-if(setup === "PULLBACK_RECLAIM"){
-    quality += 1
-}
-
-if(setup === "TREND_CONTINUATION"){
-    quality += 2
-}
-
-if(setup === "MOMENTUM_CONTINUATION"){
-    quality += 1
-}
-
-// Momentum
-if(side === "LONG" && accelerationLong){
-    quality += 1
-}
-
-if(side === "SHORT" && accelerationShort){
-    quality += 1
-}
-
-// Candle
-if(br0 >= 0.55){
-    quality += 1
-}
-
-if(
-    side === "LONG" &&
-    closeLong(h0,l0,c0) >= 0.62
-){
-    quality += 1
-}
-
-if(
-    side === "SHORT" &&
-    closeShort(h0,l0,c0) >= 0.62
-){
-    quality += 1
-}
-
-// Volume
-if(
-    vol1Ratio >= 1.2 ||
-    vol5Ratio >= 1.2
-){
-    quality += 1
-}
-
-// Reversal bonus
-if(
-    setup === "REVERSAL_LONG" ||
-    setup === "REVERSAL_SHORT"
-){
-    if(
-        (side === "LONG" && sweepLow) ||
-        (side === "SHORT" && sweepHigh)
-    ){
-        quality += 1
-    }
-}
-
-if(quality < 2){
-    return null
-}
-
-    // ================= MARKET STATE =================
-
-    let marketState = "TREND_WEAK"
-
-    if(
-        gap15 >= 0.003 ||
-        gap1h >= 0.003
-    ){
-        marketState = "TREND_STRONG"
-    }
-    else if(
-        gap15 < 0.001 ||
-        gap1h < 0.001
-    ){
-        marketState = "RANGE"
-    }
-
-    // ================= ENTRY =================
-
-    const entry = price
-
-    // ================= STRUCTURE =================
-
-    const microLow =
-        Math.min(
-            ...l1.slice(-8)
+        longTrendAlignment &&
+        pullbackLongLocation &&
+        (
+            reclaimLong ||
+            (sweepLow && microBreakLong)
         )
 
-    const microHigh =
-        Math.max(
-            ...h1.slice(-8)
-        )
-// ================= DYNAMIC RISK / TP / SL =================
-
-// Mục tiêu:
-// - Không dùng SL quá sát theo 1M.
-// - Ưu tiên cấu trúc 5M + ATR15.
-// - TP thích nghi theo volatility + structure.
-// - Giữ lệnh đủ lâu để bắt move vài giờ.
-// - Không cho target quá xa khiến lệnh kéo dài vô lý.
-
-// ATR15 được dùng cho swing/hold nhiều giờ.
-// ATR5 dùng để tinh chỉnh entry.
-// ATR1 chỉ dùng làm buffer nhỏ.
-
-const atr15Safe =
-    Number.isFinite(atr15) && atr15 > 0
-        ? atr15
-        : entry * 0.003
-
-const atr5Safe =
-    Number.isFinite(atr5) && atr5 > 0
-        ? atr5
-        : entry * 0.002
-
-const atr1Safe =
-    Number.isFinite(atr1) && atr1 > 0
-        ? atr1
-        : entry * 0.0008
-
-// ================= VOLATILITY FACTOR =================
-
-// ATR15 / price cho biết biên độ thực tế của thị trường.
-// Volatility càng cao -> cho lệnh rộng hơn.
-// Volatility thấp -> không cho SL quá rộng.
-
-const atr15Ratio =
-    atr15Safe / entry
-
-let volFactor = 1.0
-
-if(atr15Ratio >= 0.008){
-    volFactor = 1.35
-}
-else if(atr15Ratio >= 0.005){
-    volFactor = 1.20
-}
-else if(atr15Ratio >= 0.003){
-    volFactor = 1.05
-}
-else if(atr15Ratio <= 0.0015){
-    volFactor = 0.85
-}
-
-// ================= STRUCTURE =================
-
-// Structure 5M quan trọng hơn micro structure 1M.
-// Micro structure chỉ dùng làm buffer.
-
-const swingLow5 =
-    Math.min(
-        ...l5.slice(-24,-1)
-    )
-
-const swingHigh5 =
-    Math.max(
-        ...h5.slice(-24,-1)
-    )
-
-const swingLow15 =
-    Math.min(
-        ...l15.slice(-12,-1)
-    )
-
-const swingHigh15 =
-    Math.max(
-        ...h15.slice(-12,-1)
-    )
-
-// Dùng cấu trúc gần nhất nhưng không để một wick 1M quá nhỏ
-// quyết định toàn bộ SL.
-
-let sl = null
-let risk = null
-let tp = null
-
-// ================= LONG =================
-
-if(side === "LONG"){
-
-    // SL chính:
-    // - swing 5M
-    // - swing 15M nếu cần
-    // - sweep low
-    //
-    // Không dùng microLow 1M làm SL chính nữa.
-
-    let structuralSL =
-        Math.min(
-            swingLow5,
-            structureLow
+    const pullbackShort =
+        shortTrendAlignment &&
+        pullbackShortLocation &&
+        (
+            reclaimShort ||
+            (sweepHigh && microBreakShort)
         )
 
-    if(
+    // Do not enter a raw breakout. Enter only after reclaim/retest.
+    const breakoutRetestLong =
+        p5 > previousHigh5 &&
+        l0 <= previousHigh5 * 1.0025 &&
+        c0 > previousHigh5 &&
+        bullishTrigger &&
+        (microBreakLong || reclaimLong)
+
+    const breakoutRetestShort =
+        p5 < previousLow5 &&
+        h0 >= previousLow5 * 0.9975 &&
+        c0 < previousLow5 &&
+        bearishTrigger &&
+        (microBreakShort || reclaimShort)
+
+    const continuationLong =
+        longTrendAlignment &&
+        trendLong5 &&
+        Math.abs(move5) < Math.max(atr5Ratio * 5,0.018) &&
+        price - ema9_5 < atr5 * 1.8 &&
+        (
+            reclaimLong ||
+            (microBreakLong && strongBullTrigger)
+        )
+
+    const continuationShort =
+        shortTrendAlignment &&
+        trendShort5 &&
+        Math.abs(move5) < Math.max(atr5Ratio * 5,0.018) &&
+        ema9_5 - price < atr5 * 1.8 &&
+        (
+            reclaimShort ||
+            (microBreakShort && strongBearTrigger)
+        )
+
+    // Counter-trend is allowed only as an actual sweep + structure shift.
+    const reversalLong =
         sweepLow &&
-        Number.isFinite(l0)
-    ){
-        structuralSL =
-            Math.min(
-                structuralSL,
-                l0
-            )
-    }
-
-    // Nếu structure 15M quá xa thì không dùng trực tiếp,
-    // nhưng vẫn đảm bảo SL có khoảng thở theo ATR15.
-
-    const atrBasedSL =
-        entry -
-        atr15Safe *
-        (0.80 * volFactor)
-
-    // Chọn mức rộng hơn giữa structure và ATR.
-    // Mục tiêu tránh SL bị wick 1M quét quá dễ.
-
-    sl =
-        Math.min(
-            structuralSL,
-            atrBasedSL
+        microBreakLong &&
+        strongBullTrigger &&
+        (
+            !strongBear1h ||
+            rsi5 < 38
         )
 
-    // Buffer nhỏ sau structure.
-    sl -= atr5Safe * 0.12
-
-    if(sl >= entry){
-        return null
-    }
-
-    risk =
-        entry - sl
-
-    // ================= SL BOUNDARIES =================
-
-    // SL tối thiểu.
-    // Không dùng ATR1 quá thấp làm SL.
-
-    const minRisk =
-        Math.max(
-            atr5Safe * 0.55,
-            atr1Safe * 2.0
-        )
-
-    if(risk < minRisk){
-
-        sl =
-            entry - minRisk
-
-        risk =
-            entry - sl
-    }
-
-    // SL tối đa dựa trên ATR15.
-    // Nếu structure quá xa, bỏ lệnh thay vì đặt SL vô lý.
-
-    const maxRisk =
-        atr15Safe *
-        (1.35 * volFactor)
-
-    if(risk > maxRisk){
-
-        const fallbackSL =
-            entry - maxRisk
-
-        // Nếu fallback SL nằm trên structure,
-        // nghĩa là structure đang quá gần / không đẹp.
-
-        if(
-            fallbackSL >
-            structuralSL
-        ){
-            return null
-        }
-
-        sl =
-            fallbackSL
-
-        risk =
-            entry - sl
-    }
-
-    // ================= LONG TARGET =================
-
-    // Target cơ bản theo ATR15.
-    // Đây là target cho move vài giờ,
-    // không phải scalp vài phút.
-
-    let targetATR =
-        atr15Safe *
-        (1.45 * volFactor)
-
-    let rawTP =
-        entry + targetATR
-
-    // Resistance 5M / 15M gần nhất.
-
-    const resistance5 =
-        Math.max(
-            ...h5.slice(-24,-1)
-        )
-
-    const resistance15 =
-        Math.max(
-            ...h15.slice(-12,-1)
-        )
-
-    // Ưu tiên target structure nếu nó nằm hợp lý.
-    // Không đặt TP ngay trước resistance quá sát.
-
-    let structureTP =
-        Infinity
-
-    if(
-        resistance5 > entry
-    ){
-        structureTP =
-            Math.min(
-                structureTP,
-                resistance5
-            )
-    }
-
-    if(
-        resistance15 > entry
-    ){
-        structureTP =
-            Math.min(
-                structureTP,
-                resistance15
-            )
-    }
-
-    if(
-        Number.isFinite(structureTP)
-    ){
-
-        const structureDistance =
-            structureTP - entry
-
-        if(
-            structureDistance >= risk * 1.25
-        ){
-            rawTP =
-                Math.min(
-                    rawTP,
-                    structureTP
-                )
-        }
-    }
-
-    tp = rawTP
-
-// ================= SHORT =================
-
-}else{
-
-    let structuralSL =
-        Math.max(
-            swingHigh5,
-            structureHigh
-        )
-
-    if(
+    const reversalShort =
         sweepHigh &&
-        Number.isFinite(h0)
-    ){
-        structuralSL =
-            Math.max(
-                structuralSL,
-                h0
-            )
-    }
-
-    const atrBasedSL =
-        entry +
-        atr15Safe *
-        (0.80 * volFactor)
-
-    sl =
-        Math.max(
-            structuralSL,
-            atrBasedSL
+        microBreakShort &&
+        strongBearTrigger &&
+        (
+            !strongBull1h ||
+            rsi5 > 62
         )
 
-    sl += atr5Safe * 0.12
+    // ========================================================
+    // SIDE / SETUP SELECTION
+    // ========================================================
 
-    if(sl <= entry){
+    let longSetup = null
+    let shortSetup = null
+
+    if(reversalLong) longSetup = "REVERSAL_LONG"
+    else if(breakoutRetestLong) longSetup = "BREAKOUT_RETEST"
+    else if(pullbackLong) longSetup = "PULLBACK_RECLAIM"
+    else if(continuationLong) longSetup = "TREND_CONTINUATION"
+
+    if(reversalShort) shortSetup = "REVERSAL_SHORT"
+    else if(breakoutRetestShort) shortSetup = "BREAKOUT_RETEST"
+    else if(pullbackShort) shortSetup = "PULLBACK_RECLAIM"
+    else if(continuationShort) shortSetup = "TREND_CONTINUATION"
+
+    let longBias = 0
+    let shortBias = 0
+
+    if(bull1h) longBias += 3
+    if(bear1h) shortBias += 3
+
+    if(bull15) longBias += 3
+    if(bear15) shortBias += 3
+
+    if(structureLong15) longBias += 1
+    if(structureShort15) shortBias += 1
+
+    if(trendLong5) longBias += 1
+    if(trendShort5) shortBias += 1
+
+    if(reversalLong) longBias += 2
+    if(reversalShort) shortBias += 2
+
+    let side = null
+    let setup = null
+
+    if(longSetup && !shortSetup){
+        side = "LONG"
+        setup = longSetup
+    }
+    else if(shortSetup && !longSetup){
+        side = "SHORT"
+        setup = shortSetup
+    }
+    else if(longSetup && shortSetup){
+        if(longBias > shortBias){
+            side = "LONG"
+            setup = longSetup
+        }
+        else if(shortBias > longBias){
+            side = "SHORT"
+            setup = shortSetup
+        }
+    }
+
+    if(!side){
         return null
     }
 
-    risk =
-        sl - entry
-
-    // ================= SL BOUNDARIES =================
-
-    const minRisk =
-        Math.max(
-            atr5Safe * 0.55,
-            atr1Safe * 2.0
-        )
-
-    if(risk < minRisk){
-
-        sl =
-            entry + minRisk
-
-        risk =
-            sl - entry
+    // Block ordinary setups against aligned macro trend.
+    if(
+        side === "LONG" &&
+        strongBear1h &&
+        bear15 &&
+        setup !== "REVERSAL_LONG"
+    ){
+        return null
     }
 
-    const maxRisk =
-        atr15Safe *
-        (1.35 * volFactor)
+    if(
+        side === "SHORT" &&
+        strongBull1h &&
+        bull15 &&
+        setup !== "REVERSAL_SHORT"
+    ){
+        return null
+    }
 
-    if(risk > maxRisk){
+    // Last candle cannot be moving materially against the chosen side.
+    if(side === "LONG" && move1 < -Math.max(atr1/price*2,0.0025)){
+        return null
+    }
 
-        const fallbackSL =
-            entry + maxRisk
+    if(side === "SHORT" && move1 > Math.max(atr1/price*2,0.0025)){
+        return null
+    }
 
-        if(
-            fallbackSL <
-            structuralSL
-        ){
+    // ========================================================
+    // SCORE
+    // ========================================================
+
+    let score = 50
+
+    const scoreBreakdown = {
+        higherTimeframe: 0,
+        structure: 0,
+        trigger: 0,
+        volume: 0,
+        momentum: 0,
+        setup: 0,
+        penalty: 0
+    }
+
+    const addScore = (key,value) => {
+        score += value
+        scoreBreakdown[key] += value
+    }
+
+    if(side === "LONG"){
+        if(bull1h) addScore("higherTimeframe",8)
+        else if(bull1hSoft) addScore("higherTimeframe",4)
+
+        if(bull15) addScore("higherTimeframe",8)
+        if(structureLong15) addScore("structure",4)
+        if(trendLong5) addScore("structure",4)
+        if(microBreakLong) addScore("trigger",4)
+        if(reclaimLong) addScore("trigger",3)
+        if(bullishTrigger) addScore("trigger",3)
+        if(vol1Ratio >= 1.15) addScore("volume",2)
+        if(vol5Ratio >= 1.10) addScore("volume",2)
+        if(rsi5 >= 45 && rsi5 <= 68) addScore("momentum",2)
+        if(setup === "PULLBACK_RECLAIM") addScore("setup",5)
+        if(setup === "BREAKOUT_RETEST") addScore("setup",4)
+        if(setup === "TREND_CONTINUATION") addScore("setup",3)
+        if(setup === "REVERSAL_LONG") addScore("setup",4)
+
+        if(rsi1 > 82) addScore("penalty",-4)
+    }
+    else{
+        if(bear1h) addScore("higherTimeframe",8)
+        else if(bear1hSoft) addScore("higherTimeframe",4)
+
+        if(bear15) addScore("higherTimeframe",8)
+        if(structureShort15) addScore("structure",4)
+        if(trendShort5) addScore("structure",4)
+        if(microBreakShort) addScore("trigger",4)
+        if(reclaimShort) addScore("trigger",3)
+        if(bearishTrigger) addScore("trigger",3)
+        if(vol1Ratio >= 1.15) addScore("volume",2)
+        if(vol5Ratio >= 1.10) addScore("volume",2)
+        if(rsi5 >= 32 && rsi5 <= 55) addScore("momentum",2)
+        if(setup === "PULLBACK_RECLAIM") addScore("setup",5)
+        if(setup === "BREAKOUT_RETEST") addScore("setup",4)
+        if(setup === "TREND_CONTINUATION") addScore("setup",3)
+        if(setup === "REVERSAL_SHORT") addScore("setup",4)
+
+        if(rsi1 < 18) addScore("penalty",-4)
+    }
+
+    if(volatility === "HIGH"){
+        addScore("penalty",-3)
+    }
+
+    score = Math.max(0,Math.min(100,Math.round(score)))
+
+    const minimumScore =
+        setup === "REVERSAL_LONG" || setup === "REVERSAL_SHORT"
+            ? 68
+            : 65
+
+    if(score < minimumScore){
+        return null
+    }
+
+    // ========================================================
+    // SL / TP
+    // Stop = structure + ATR room.
+    // TP is capped by available structure room, then RR is checked.
+    // ========================================================
+
+    const isReversal =
+        setup === "REVERSAL_LONG" ||
+        setup === "REVERSAL_SHORT"
+
+    const stopBuffer =
+        volatility === "HIGH"
+            ? atr5 * 0.35
+            : atr5 * 0.24
+
+    let sl = null
+    let tp = null
+    let structureStop = null
+    let targetLevel = null
+
+    const minRisk = atr5 * 0.45
+    const maxRisk = atr5 * (isReversal ? 2.8 : 2.35)
+
+    const rewardMultiple =
+        isReversal
+            ? 1.85
+            : setup === "BREAKOUT_RETEST"
+                ? 2.05
+                : 2.0
+
+    if(side === "LONG"){
+
+        structureStop = isReversal
+            ? Math.min(l0,microLow,swingLow5)
+            : Math.min(swingLow5,l5.at(-1),l5.at(-2))
+
+        sl = structureStop - stopBuffer
+
+        if(price - sl < minRisk){
+            sl = price - minRisk
+        }
+
+        const riskDistance = price - sl
+
+        if(riskDistance <= 0 || riskDistance > maxRisk){
             return null
         }
 
-        sl =
-            fallbackSL
-
-        risk =
-            sl - entry
-    }
-
-    // ================= SHORT TARGET =================
-
-    let targetATR =
-        atr15Safe *
-        (1.45 * volFactor)
-
-    let rawTP =
-        entry - targetATR
-
-    const support5 =
-        Math.min(
-            ...l5.slice(-24,-1)
+        const resistance = nearestAbove(
+            [...h5.slice(-48,-1),...h15.slice(-32,-1)],
+            price,
+            atr5 * 0.20
         )
 
-    const support15 =
-        Math.min(
-            ...l15.slice(-12,-1)
-        )
+        const desiredTP = price + riskDistance * rewardMultiple
 
-    let structureTP =
-        -Infinity
-
-    if(
-        support5 < entry
-    ){
-        structureTP =
-            Math.max(
-                structureTP,
-                support5
-            )
-    }
-
-    if(
-        support15 < entry
-    ){
-        structureTP =
-            Math.max(
-                structureTP,
-                support15
-            )
-    }
-
-    if(
-        Number.isFinite(structureTP)
-    ){
-
-        const structureDistance =
-            entry - structureTP
-
-        if(
-            structureDistance >= risk * 1.25
-        ){
-            rawTP =
-                Math.max(
-                    rawTP,
-                    structureTP
-                )
+        // A resistance too close means insufficient room — reject,
+        // never fake RR by calculating before TP is capped.
+        if(resistance && resistance < price + riskDistance * 1.55){
+            return null
         }
+
+        targetLevel = resistance
+        tp = resistance
+            ? Math.min(desiredTP,resistance - atr1 * 0.10)
+            : desiredTP
+    }
+    else{
+
+        structureStop = isReversal
+            ? Math.max(h0,microHigh,swingHigh5)
+            : Math.max(swingHigh5,h5.at(-1),h5.at(-2))
+
+        sl = structureStop + stopBuffer
+
+        if(sl - price < minRisk){
+            sl = price + minRisk
+        }
+
+        const riskDistance = sl - price
+
+        if(riskDistance <= 0 || riskDistance > maxRisk){
+            return null
+        }
+
+        const support = nearestBelow(
+            [...l5.slice(-48,-1),...l15.slice(-32,-1)],
+            price,
+            atr5 * 0.20
+        )
+
+        const desiredTP = price - riskDistance * rewardMultiple
+
+        if(support && support > price - riskDistance * 1.55){
+            return null
+        }
+
+        targetLevel = support
+        tp = support
+            ? Math.max(desiredTP,support + atr1 * 0.10)
+            : desiredTP
     }
 
-    tp = rawTP
-}
-
-// ================= FINAL INITIAL RR =================
-
-if(
-    !Number.isFinite(sl) ||
-    !Number.isFinite(tp) ||
-    !Number.isFinite(risk) ||
-    risk <= 0
-){
-    return null
-}
-
-const initialRR =
-    side === "LONG"
-        ? (tp-entry)/risk
-        : (entry-tp)/risk
-
-// Không nhận setup có reward quá thấp.
-
-if(
-    initialRR < 1.25
-){
-    return null
-}
-
-// ================= MAX TARGET =================
-
-// Không cho TP quá xa đến mức dễ biến thành
-// lệnh giữ qua ngày.
-//
-// Dùng ATR15 thay vì ATR5.
-
-const maxTargetDistance =
-    atr15Safe *
-    (3.20 * volFactor)
-
-if(
-    Math.abs(tp-entry) >
-    maxTargetDistance
-){
-
-    tp =
+    const risk =
         side === "LONG"
-            ? entry + maxTargetDistance
-            : entry - maxTargetDistance
-}
+            ? price - sl
+            : sl - price
 
-// ================= FINAL RR AFTER CAP =================
+    const reward =
+        side === "LONG"
+            ? tp - price
+            : price - tp
 
-const finalRR =
-    side === "LONG"
-        ? (tp-entry)/risk
-        : (entry-tp)/risk
-
-// Sau khi cap TP phải kiểm tra lại RR.
-
-if(
-    finalRR < 1.20
-){
-    return null
-}
-
-// ================= NEAREST STRUCTURE =================
-
-// Chỉ reject structure nếu nó nằm quá gần entry.
-// Không còn ép TP phải nằm ngay tại resistance/support
-// như core cũ.
-
-const nearestResistance =
-    Math.max(
-        ...h5.slice(-18,-1)
-    )
-
-const nearestSupport =
-    Math.min(
-        ...l5.slice(-18,-1)
-    )
-
-if(side === "LONG"){
+    const rr = risk > 0 ? reward/risk : 0
+    const minRR = isReversal ? 1.55 : 1.65
 
     if(
-        nearestResistance > entry
+        !Number.isFinite(sl) ||
+        !Number.isFinite(tp) ||
+        !Number.isFinite(risk) ||
+        !Number.isFinite(rr) ||
+        risk <= 0 ||
+        reward <= 0 ||
+        rr < minRR
     ){
-
-        const distance =
-            nearestResistance-entry
-
-        // Nếu resistance nằm trước TP nhưng quá gần,
-        // setup không có đủ room.
-
-        if(
-            distance < risk * 1.05 &&
-            distance < tp-entry
-        ){
-            return null
-        }
+        return null
     }
 
-}else{
+    let marketState = "RANGE"
 
     if(
-        nearestSupport < entry
+        (side === "LONG" && longTrendAlignment && trendLong5) ||
+        (side === "SHORT" && shortTrendAlignment && trendShort5)
     ){
-
-        const distance =
-            entry-nearestSupport
-
-        if(
-            distance < risk * 1.05 &&
-            distance < entry-tp
-        ){
-            return null
-        }
+        marketState = "TREND"
     }
-}
 
-// ================= TIME TARGET =================
+    if(isReversal){
+        marketState = "REVERSAL"
+    }
 
-// Ước lượng thời gian dự kiến dựa trên ATR15.
-// Đây không phải hard guarantee, chỉ là metadata.
-//
-// ATR15 = biến động trung bình của 15M.
-// Target càng lớn -> thời gian dự kiến càng dài.
-
-const tpDistance =
-    Math.abs(tp-entry)
-
-const estimated15mBars =
-    atr15Safe > 0
-        ? tpDistance / atr15Safe
-        : 0
-
-const estimatedHours =
-    estimated15mBars * 0.25
-
-// Không cho target mang tính "swing dài ngày".
-
-if(
-    estimatedHours > 12
-){
-    return null
-}
-
-// ================= DYNAMIC PROFILE =================
-
-let tpProfile = "NORMAL"
-
-if(
-    estimatedHours <= 2
-){
-    tpProfile = "FAST"
-}
-else if(
-    estimatedHours <= 5
-){
-    tpProfile = "NORMAL"
-}
-else if(
-    estimatedHours <= 8
-){
-    tpProfile = "EXTENDED"
-}
-else{
-    tpProfile = "MAX_HOLD"
-}
-const resistance =
-    Math.max(
-        ...h5.slice(-18,-1)
-    )
-
-const support =
-    Math.min(
-        ...l5.slice(-18,-1)
-    )
-    // ================= OUTPUT =================
-
-    const round = (n,d=8) =>
-        Number(
-            Number(n).toFixed(d)
-        )
-
-    const volatility =
-        atrRatio5 >= 0.004
-            ? "HIGH"
-            : atrRatio5 <= 0.0012
-                ? "LOW"
-                : "NORMAL"
+    // ========================================================
+    // RETURN CONTRACT
+    // ========================================================
 
     return {
-
         side,
-
-        price:
-            round(entry),
-
-        sl:
-            round(sl),
-
-        tp:
-            round(tp),
+        price: round(price),
+        entry: round(price),
+        sl: round(sl),
+        tp: round(tp),
 
         setup,
-
         marketState,
-
         volatility,
 
         score,
+        finalScore: score,
+        scoreBreakdown,
 
-        scoreBreakdown: {
-
-            h1Trend:
-                side === "LONG"
-                    ? bull1h
-                    : bear1h,
-
-            trend15:
-                side === "LONG"
-                    ? bull15
-                    : bear15,
-
-            setup,
-
-            sweep:
-                side === "LONG"
-                    ? sweepLow
-                    : sweepHigh,
-
-            breakoutRetest:
-                side === "LONG"
-                    ? retestLong
-                    : retestShort,
-
-            momentum:
-                side === "LONG"
-                    ? momentumLong
-                    : momentumShort,
-
-            microBreak:
-                side === "LONG"
-                    ? microBreakLong
-                    : microBreakShort,
-
-            bodyRatio:
-                round(br0,3),
-
-            volume1m:
-                round(vol1Ratio,3),
-
-            volume5m:
-                round(vol5Ratio,3),
-
-            rsi1m:
-                round(rsi1,2),
-
-            rsi5m:
-                round(rsi5,2),
-
-            atrRatio:
-                round(atrRatio5,6),
-
-            rr:
-                round(finalRR,2)
-        },
+        risk: round(risk),
+        initialRisk: round(risk),
+        reward: round(reward),
+        rr: round(rr,4),
 
         indicators: {
+            atr15: round(atr15),
+            atr5: round(atr5),
+            atr1: round(atr1),
+            atr15Ratio: round(atr15Ratio,6),
+            atr5Ratio: round(atr5Ratio,6),
 
-            ema20_15:
-                round(ema20_15),
+            ema20_1h: round(ema20_1h),
+            ema50_1h: round(ema50_1h),
+            ema100_1h: round(ema100_1h),
 
-            ema50_15:
-                round(ema50_15),
+            ema20_15: round(ema20_15),
+            ema50_15: round(ema50_15),
+            ema100_15: round(ema100_15),
 
-            ema20_1h:
-                round(ema20_1h),
+            ema9_5: round(ema9_5),
+            ema20_5: round(ema20_5),
+            ema50_5: round(ema50_5),
 
-            ema50_1h:
-                round(ema50_1h),
+            slope20_1h: round(slope20_1h,6),
+            slope50_1h: round(slope50_1h,6),
+            slope15: round(slope15,6),
+            slope50_15: round(slope50_15,6),
+            slope9_5: round(slope9_5,6),
+            slope20_5: round(slope20_5,6),
 
-            ema9_5:
-                round(ema9_5),
-
-            ema20_5:
-                round(ema20_5),
-
-            ema50_5:
-                round(ema50_5),
-
-            atr:
-                round(atr5),
-
-            atr1m:
-                round(atr1),
-
-            rsi:
-                round(rsi5,2),
-
-            volumeNow:
-                vol1Now,
-
-            volumeAvg:
-                vol1Avg,
-
-            volumeRatio:
-                round(vol1Ratio,3)
+            rsi5: round(rsi5,2),
+            rsi1: round(rsi1,2),
+            vol5Ratio: round(vol5Ratio,3),
+            vol1Ratio: round(vol1Ratio,3)
         },
 
         structure: {
+            bull1h,
+            bear1h,
+            bull1hSoft,
+            bear1hSoft,
 
-            support,
+            bull15,
+            bear15,
+            structureLong15,
+            structureShort15,
 
-            resistance,
+            trendLong5,
+            trendShort5,
+            softLong5,
+            softShort5,
 
-            recent5Low,
+            previousHigh5: round(previousHigh5),
+            previousLow5: round(previousLow5),
+            swingHigh5: round(swingHigh5),
+            swingLow5: round(swingLow5),
 
-            recent5High,
-
-            structureLow,
-
-            structureHigh,
-
-            microLow,
-
-            microHigh,
+            microHigh: round(microHigh),
+            microLow: round(microLow),
+            microBreakLong,
+            microBreakShort,
 
             sweepLow,
-
             sweepHigh
         },
 
         context: {
-
-            h1Bull:
-                bull1h,
-
-            h1Bear:
-                bear1h,
-
-            bull15,
-
-            bear15,
-
-            slope1h:
-                round(slope1h,6),
-
-            slope15:
-                round(slope15,6),
-
-            gap1h:
-                round(gap1h,6),
-
-            gap15:
-                round(gap15,6),
-
-            move1:
-                round(move1,6),
-
-            move3:
-                round(move3,6),
-
-            move5:
-                round(move5,6),
-
             longBias,
+            shortBias,
+            longTrendAlignment,
+            shortTrendAlignment,
+            pullbackLongLocation,
+            pullbackShortLocation,
+            targetLevel: targetLevel ? round(targetLevel) : null,
+            structureStop: round(structureStop),
 
-            shortBias
-        },
+            move1: round(move1,6),
+            move3: round(move3,6),
+            move5: round(move5,6),
 
-        risk: {
-
-            risk:
-                round(risk),
-
-            rr:
-                round(finalRR,2),
-
-            tpDistance:
-                round(Math.abs(tp-entry)),
-
-            atr:
-                round(atr5),
-
-            atr1m:
-                round(atr1)
+            strongBull1h,
+            strongBear1h
         },
 
         debug: {
+            longSetup,
+            shortSetup,
 
-            reason:
-                setup,
+            pullbackLong,
+            pullbackShort,
 
-            timestamp:
-                Date.now(),
+            breakoutRetestLong,
+            breakoutRetestShort,
 
-            candle: {
+            continuationLong,
+            continuationShort,
 
-                open:
-                    round(o0),
+            reversalLong,
+            reversalShort,
 
-                high:
-                    round(h0),
+            bullishTrigger,
+            bearishTrigger,
+            strongBullTrigger,
+            strongBearTrigger,
 
-                low:
-                    round(l0),
+            reclaimLong,
+            reclaimShort,
 
-                close:
-                    round(c0)
-            }
+            price: round(price),
+            stopDistance: round(risk),
+            rewardDistance: round(reward),
+            rr: round(rr,4)
         }
     }
 }
@@ -5943,264 +5079,191 @@ if(risk <= 0){
     if(!diff) continue
 
 
+const signalRisk = Number(best.initialRisk ?? best.risk)
+const signalRR = Number(best.rr)
+
+if(
+    !Number.isFinite(Number(best.price)) ||
+    !Number.isFinite(Number(best.sl)) ||
+    !Number.isFinite(Number(best.tp)) ||
+    !Number.isFinite(signalRisk) ||
+    signalRisk <= 0 ||
+    !Number.isFinite(signalRR) ||
+    signalRR <= 0
+){
+    throw new Error(`Invalid core signal for ${best.symbol}`)
+}
+
+const scoreBreakdown = best.scoreBreakdown || {}
+const indicators = best.indicators || {}
+const structure = best.structure || {}
+const context = best.context || {}
+
 let trade = {
+    symbol: best.symbol,
+    side: best.side,
 
-    // ================= BASIC =================
+    entry: Number(best.price),
+    price: Number(best.price),
+    tp: Number(best.tp),
+    sl: Number(best.sl),
 
-    symbol:
-        best.symbol,
+    // Risk distance from entry to SL, required by Dynamic TPSL.
+    risk: signalRisk,
+    initialRisk: signalRisk,
+    rr: signalRR,
 
-    side:
-        best.side,
+    score: Number(best.score ?? 0),
+    finalScore: Number(best.finalScore ?? best.score ?? 0),
 
-    entry:
-        best.price,
-
-    tp:
-        best.tp,
-
-    sl:
-        best.sl,
-
-    risk:
-        risk,
-
-    rr:
-        rr,
-
-    score:
-        best.score,
-
-    finalScore:
-        best.finalScore,
-
-    // ================= SETUP =================
-
-    setup:
-        best.setup,
-
-    marketState:
-        best.marketState,
-
-    volatility:
-        best.volatility,
-
+    setup: best.setup,
+    marketState: best.marketState,
+    volatility: best.volatility,
     btcRegime,
 
-    // ================= SCORE DETAIL =================
-
+    // Giữ các key cũ để schema/DB cũ không bị vỡ,
+    // đồng thời lưu đúng breakdown của core mới.
     scoreDetail: {
+        h1Trend: scoreBreakdown.higherTimeframe ?? 0,
+        trend15: scoreBreakdown.structure ?? 0,
+        setup: scoreBreakdown.setup ?? 0,
+        sweep: 0,
+        breakoutRetest: best.setup === "BREAKOUT_RETEST"
+            ? scoreBreakdown.setup ?? 0
+            : 0,
+        momentum: scoreBreakdown.momentum ?? 0,
+        microBreak: scoreBreakdown.trigger ?? 0,
+        bodyRatio: 0,
+        volume1m: scoreBreakdown.volume ?? 0,
+        volume5m: scoreBreakdown.volume ?? 0,
+        rsi1m: 0,
+        rsi5m: scoreBreakdown.momentum ?? 0,
+        atrRatio: 0,
+        rr: 0,
 
-        h1Trend:
-            best.scoreBreakdown.h1Trend,
-
-        trend15:
-            best.scoreBreakdown.trend15,
-
-        setup:
-            best.scoreBreakdown.setup,
-
-        sweep:
-            best.scoreBreakdown.sweep,
-
-        breakoutRetest:
-            best.scoreBreakdown.breakoutRetest,
-
-        momentum:
-            best.scoreBreakdown.momentum,
-
-        microBreak:
-            best.scoreBreakdown.microBreak,
-
-        bodyRatio:
-            best.scoreBreakdown.bodyRatio,
-
-        volume1m:
-            best.scoreBreakdown.volume1m,
-
-        volume5m:
-            best.scoreBreakdown.volume5m,
-
-        rsi1m:
-            best.scoreBreakdown.rsi1m,
-
-        rsi5m:
-            best.scoreBreakdown.rsi5m,
-
-        atrRatio:
-            best.scoreBreakdown.atrRatio,
-
-        rr:
-            best.scoreBreakdown.rr
+        // Field mới của core mới.
+        higherTimeframe: scoreBreakdown.higherTimeframe ?? 0,
+        structure: scoreBreakdown.structure ?? 0,
+        trigger: scoreBreakdown.trigger ?? 0,
+        volume: scoreBreakdown.volume ?? 0,
+        penalty: scoreBreakdown.penalty ?? 0
     },
-
-    // ================= INDICATORS =================
 
     indicators: {
+        // Key cũ
+        ema20_15: indicators.ema20_15 ?? null,
+        ema50_15: indicators.ema50_15 ?? null,
+        ema20_1h: indicators.ema20_1h ?? null,
+        ema50_1h: indicators.ema50_1h ?? null,
+        ema9_5: indicators.ema9_5 ?? null,
+        ema20_5: indicators.ema20_5 ?? null,
+        ema50_5: indicators.ema50_5 ?? null,
+        atr: indicators.atr5 ?? null,
+        atr1m: indicators.atr1 ?? null,
+        rsi: indicators.rsi5 ?? null,
+        volumeNow: null,
+        volumeAvg: null,
+        volumeRatio: indicators.vol1Ratio ?? null,
 
-        ema20_15:
-            best.indicators.ema20_15,
-
-        ema50_15:
-            best.indicators.ema50_15,
-
-        ema20_1h:
-            best.indicators.ema20_1h,
-
-        ema50_1h:
-            best.indicators.ema50_1h,
-
-        ema9_5:
-            best.indicators.ema9_5,
-
-        ema20_5:
-            best.indicators.ema20_5,
-
-        ema50_5:
-            best.indicators.ema50_5,
-
-        atr:
-            best.indicators.atr,
-
-        atr1m:
-            best.indicators.atr1m,
-
-        rsi:
-            best.indicators.rsi,
-
-        volumeNow:
-            best.indicators.volumeNow,
-
-        volumeAvg:
-            best.indicators.volumeAvg,
-
-        volumeRatio:
-            best.indicators.volumeRatio
+        // Field đầy đủ từ core mới
+        atr15: indicators.atr15 ?? null,
+        atr5: indicators.atr5 ?? null,
+        atr1: indicators.atr1 ?? null,
+        atr15Ratio: indicators.atr15Ratio ?? null,
+        atr5Ratio: indicators.atr5Ratio ?? null,
+        ema100_1h: indicators.ema100_1h ?? null,
+        ema100_15: indicators.ema100_15 ?? null,
+        slope20_1h: indicators.slope20_1h ?? null,
+        slope50_1h: indicators.slope50_1h ?? null,
+        slope15: indicators.slope15 ?? null,
+        slope50_15: indicators.slope50_15 ?? null,
+        slope9_5: indicators.slope9_5 ?? null,
+        slope20_5: indicators.slope20_5 ?? null,
+        rsi5: indicators.rsi5 ?? null,
+        rsi1: indicators.rsi1 ?? null,
+        vol5Ratio: indicators.vol5Ratio ?? null,
+        vol1Ratio: indicators.vol1Ratio ?? null
     },
-
-    // ================= STRUCTURE =================
 
     structure: {
+        // Key cũ
+        support: structure.swingLow5 ?? null,
+        resistance: structure.swingHigh5 ?? null,
+        recent5Low: structure.previousLow5 ?? null,
+        recent5High: structure.previousHigh5 ?? null,
+        structureLow: structure.swingLow5 ?? null,
+        structureHigh: structure.swingHigh5 ?? null,
+        microLow: structure.microLow ?? null,
+        microHigh: structure.microHigh ?? null,
+        sweepLow: structure.sweepLow ?? false,
+        sweepHigh: structure.sweepHigh ?? false,
 
-        support:
-            best.structure.support,
-
-        resistance:
-            best.structure.resistance,
-
-        recent5Low:
-            best.structure.recent5Low,
-
-        recent5High:
-            best.structure.recent5High,
-
-        structureLow:
-            best.structure.structureLow,
-
-        structureHigh:
-            best.structure.structureHigh,
-
-        microLow:
-            best.structure.microLow,
-
-        microHigh:
-            best.structure.microHigh,
-
-        sweepLow:
-            best.structure.sweepLow,
-
-        sweepHigh:
-            best.structure.sweepHigh
+        // Field mới
+        bull1h: structure.bull1h ?? false,
+        bear1h: structure.bear1h ?? false,
+        bull15: structure.bull15 ?? false,
+        bear15: structure.bear15 ?? false,
+        trendLong5: structure.trendLong5 ?? false,
+        trendShort5: structure.trendShort5 ?? false,
+        structureLong15: structure.structureLong15 ?? false,
+        structureShort15: structure.structureShort15 ?? false,
+        microBreakLong: structure.microBreakLong ?? false,
+        microBreakShort: structure.microBreakShort ?? false
     },
-
-    // ================= CONTEXT =================
 
     context: {
+        // Giữ key cũ
+        h1Bull: structure.bull1h ?? false,
+        h1Bear: structure.bear1h ?? false,
+        bull15: structure.bull15 ?? false,
+        bear15: structure.bear15 ?? false,
+        slope1h: indicators.slope20_1h ?? null,
+        slope15: indicators.slope15 ?? null,
+        gap1h: null,
+        gap15: null,
+        move1: context.move1 ?? null,
+        move3: context.move3 ?? null,
+        move5: context.move5 ?? null,
+        longBias: context.longBias ?? 0,
+        shortBias: context.shortBias ?? 0,
 
-        h1Bull:
-            best.context.h1Bull,
-
-        h1Bear:
-            best.context.h1Bear,
-
-        bull15:
-            best.context.bull15,
-
-        bear15:
-            best.context.bear15,
-
-        slope1h:
-            best.context.slope1h,
-
-        slope15:
-            best.context.slope15,
-
-        gap1h:
-            best.context.gap1h,
-
-        gap15:
-            best.context.gap15,
-
-        move1:
-            best.context.move1,
-
-        move3:
-            best.context.move3,
-
-        move5:
-            best.context.move5,
-
-        longBias:
-            best.context.longBias,
-
-        shortBias:
-            best.context.shortBias
+        // Field mới
+        targetLevel: context.targetLevel ?? null,
+        structureStop: context.structureStop ?? null,
+        longTrendAlignment: context.longTrendAlignment ?? false,
+        shortTrendAlignment: context.shortTrendAlignment ?? false,
+        strongBull1h: context.strongBull1h ?? false,
+        strongBear1h: context.strongBear1h ?? false
     },
-
-    // ================= RISK DETAIL =================
 
     riskDetail: {
-
-        risk:
-            risk,
-
-        rr:
-            rr,
-
-        tpDistance:
-            best.risk.tpDistance,
-
-        atr:
-            best.risk.atr,
-
-        atr1m:
-            best.risk.atr1m
+        risk: signalRisk,
+        initialRisk: signalRisk,
+        rr: signalRR,
+        tpDistance: Math.abs(Number(best.tp) - Number(best.price)),
+        slDistance: Math.abs(Number(best.price) - Number(best.sl)),
+        atr: indicators.atr5 ?? null,
+        atr1m: indicators.atr1 ?? null,
+        targetLevel: context.targetLevel ?? null,
+        structureStop: context.structureStop ?? null
     },
 
-    // ================= DEBUG =================
+    debug: best.debug ?? {},
 
-    debug:
-        best.debug,
+    quantity: 0,
+    notional: 0,
+    finalRisk: 0,
 
-    // ================= TRADE STATE =================
+    waitingEntry: false,
+    breakoutTriggered: best.setup === "BREAKOUT_RETEST",
 
-    waitingEntry:
-        false,
+    createdAt: Date.now(),
+    enteredAt: null,
+    openedAt: null,
+    closedAt: null,
+    updatedAt: Date.now(),
 
-    breakoutTriggered:
-        best.setup === "BREAKOUT_RETEST",
-
-    createdAt:
-        Date.now(),
-
-    enteredAt:
-        null,
-
-    closedAt:
-        null,
-
-    result:
-        "PENDING"
+    result: "PENDING"
 }
 
 
