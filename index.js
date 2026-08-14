@@ -381,8 +381,12 @@ const LIMIT_1H  = 200 //100
 
 const RR_THRESHOLD = 1.20 // 1.3 hoặc 1.4 nếu muốn 
 
-const RISK_PER_TRADE = 0.1  // 0.1 = 10% // 0.01 = 1% 
-const POSITION_SIZE_PERCENT = 0.15 // 0.05 5% vốn // 0.1 =10%
+const TRADE_CONFIG = {
+    riskPerTrade: 0.02,      
+    maxRiskPerTrade: 0.02,    
+    maxPositionPercent: 3.0,  
+    maxActivePositions: 20      
+}
 let ACCOUNT_BALANCE = 0
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
 // const MIN_VOL_24H = 15000000
@@ -2556,70 +2560,18 @@ if(elapsedSinceEntry < 60000){
     // INITIAL RISK
     // =============================================
 
-    let initialRisk =
+    const initialRisk =
     Number(trade.initialRisk)
 
 if(
     !Number.isFinite(initialRisk) ||
     initialRisk <= 0
 ){
+    console.log(
+        `⚠️ DYNAMIC SKIP — MISSING INITIAL RISK ${trade.symbol}`
+    )
 
-    const fallbackSL =
-        Number(trade.sl)
-
-    if(
-        Number.isFinite(fallbackSL) &&
-        fallbackSL > 0
-    ){
-
-        initialRisk =
-            Math.abs(
-                currentEntry -
-                fallbackSL
-            )
-
-        if(
-            Number.isFinite(initialRisk) &&
-            initialRisk > 0
-        ){
-
-            trade.initialRisk = initialRisk
-
-await trades.updateOne(
-    {
-    symbol: trade.symbol,
-    result: "PENDING"
-},
-    {
-        $set: {
-            initialRisk: initialRisk,
-            updatedAt: Date.now()
-        }
-    }
-)
-
-            console.log(
-                `🔧 INITIAL RISK RECOVERED ${trade.symbol} ` +
-                `RISK=${initialRisk}`
-            )
-
-        }else{
-
-            console.log(
-                `⚠️ NO INITIAL RISK ${trade.symbol}`
-            )
-
-            return
-        }
-
-    }else{
-
-        console.log(
-            `⚠️ NO INITIAL RISK ${trade.symbol}`
-        )
-
-        return
-    }
+    return
 }
 
     // =============================================
@@ -4358,7 +4310,7 @@ try{
     console.log("⚠ COUNT PENDING FAIL")
 }
 
-    if(realActive >= 25){
+    if(realActive >= TRADE_CONFIG.maxActivePositions){
         console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`)
         break
     }
@@ -4453,8 +4405,7 @@ if(dbAI.total >= 20){
 let balance =
     ACCOUNT_BALANCE
 
-let riskPercent =
-    RISK_PER_TRADE
+let riskPercent = TRADE_CONFIG.riskPerTrade
 
 let risk =
     balance *
@@ -4462,11 +4413,10 @@ let risk =
     multiplier
 
 // Không cho AI tăng risk quá mức
-risk =
-    Math.min(
-        risk,
-        balance * 0.005
-    )
+risk = Math.min(
+    risk,
+    balance * TRADE_CONFIG.maxRiskPerTrade
+)
 
 if(risk <= 0){
     continue
@@ -4506,7 +4456,7 @@ if(!trade){
 
     // ===== POSITION SIZE =====
     let positionValue =
-        ACCOUNT_BALANCE * POSITION_SIZE_PERCENT
+        ACCOUNT_BALANCE * TRADE_CONFIG.maxPositionPercent
 
     let qtyBySize =
         positionValue / best.price
@@ -4781,22 +4731,16 @@ try{
     // ===== INITIAL RISK CỐ ĐỊNH =====
 
     trade.initialRisk =
-        Number(
-            execution.initialRisk ||
-            Math.abs(
-                trade.entry -
-                trade.sl
-            )
-        )
+    Number(execution.initialRisk)
 
-    if(
-        !Number.isFinite(trade.initialRisk) ||
-        trade.initialRisk <= 0
-    ){
-        throw new Error(
-            `INVALID INITIAL RISK ${trade.symbol}`
-        )
-    }
+if(
+    !Number.isFinite(trade.initialRisk) ||
+    trade.initialRisk <= 0
+){
+    throw new Error(
+        `MISSING INITIAL RISK BEFORE DB INSERT ${trade.symbol}`
+    )
+}
 
     // ===== FILLED TIME =====
 
@@ -5481,6 +5425,19 @@ async function recoverOrphanPositions(){
                 }
 
                 TPSL_PHASE[symbol] = "ACTIVE"
+                const recoveredInitialRisk =
+    Number(trade.initialRisk)
+
+if(
+    !Number.isFinite(recoveredInitialRisk) ||
+    recoveredInitialRisk <= 0
+){
+    console.log(
+        `⚠️ RECOVERY SKIP — MISSING INITIAL RISK ${trade.symbol}`
+    )
+
+    continue
+}
 
                 console.log(
                     `♻️ RECOVER DB TRADE ${symbol} → TPSL ACTIVE`
