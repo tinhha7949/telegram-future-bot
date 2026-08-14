@@ -3309,92 +3309,113 @@ async function getData(symbol, interval, limit){
 }
 // ================= SYMBOL (PRO) =================
 async function getTopSymbols(){
-
-    const urls = [
+    const urls=[
         "https://api.binance.com/api/v3/ticker/24hr",
         "https://data-api.binance.vision/api/v3/ticker/24hr"
     ]
 
     for(let url of urls){
-        for(let attempt=0; attempt<2; attempt++){
+        for(let attempt=0;attempt<2;attempt++){
             try{
-                let res = await safeFetch(url, { headers:{"User-Agent":"Mozilla/5.0"} })
-                if(!res || !res.ok) continue
+                const res=await safeFetch(url,{headers:{"User-Agent":"Mozilla/5.0"}})
+                if(!res||!res.ok)continue
 
-                let data = await res.json()
+                const data=await res.json()
+                if(!Array.isArray(data)||!data.length)continue
 
-                if(Array.isArray(data) && data.length>0){
-                    return data
-                        .filter(c =>
-    c.symbol.endsWith("USDT") &&
-    !c.symbol.includes("UP") &&
-    !c.symbol.includes("DOWN") &&
-    !c.symbol.includes("BUSD") &&
-    !c.symbol.includes("USD1") &&
-    !c.symbol.includes("FDUSD") &&
-    !c.symbol.includes("USDC") &&
-    !c.symbol.includes("EUR") &&
-    !c.symbol.includes("TRY") &&
-    !c.symbol.includes("RLUSD")
-)
-                      // 🔥 1. SQUEEZE (quan trọng nhất)
-    .filter(c => {
-        let change = Math.abs(Number(c.priceChangePercent))
-        // coin chưa chạy nhưng có dấu hiệu tích lực
-        return change >= 1 && change <= 35 // 
-    })
-    // 🔥 2. LIQUIDITY nhẹ (KHÔNG dùng minVol 24h nữa)
-    .filter(c =>
-        Number(c.quoteVolume) > 2_000_000 //3_000_000
-    )
-    .filter(c => {
+                const base=data
+                    .filter(c=>
+                        c.symbol.endsWith("USDT")&&
+                        !c.symbol.includes("UP")&&
+                        !c.symbol.includes("DOWN")&&
+                        !c.symbol.includes("BUSD")&&
+                        !c.symbol.includes("USD1")&&
+                        !c.symbol.includes("FDUSD")&&
+                        !c.symbol.includes("USDC")&&
+                        !c.symbol.includes("EUR")&&
+                        !c.symbol.includes("TRY")&&
+                        !c.symbol.includes("RLUSD")
+                    )
+                    .filter(c=>{
+                        const change=Math.abs(Number(c.priceChangePercent))
+                        return change>=1&&change<=100
+                    })
+                    .filter(c=>Number(c.quoteVolume)>2_000_000)
+                    .filter(c=>{
+                        const high=Number(c.highPrice),low=Number(c.lowPrice),last=Number(c.lastPrice)
+                        if(high<=0||low<=0||last<=0)return false
+                        return (high-low)/last>=0.015
+                    })
+                    .filter(c=>validFuturesSymbols&&validFuturesSymbols.size>0&&validFuturesSymbols.has(c.symbol))
 
-    let high = Number(c.highPrice)
-    let low  = Number(c.lowPrice)
-    let last = Number(c.lastPrice)
-
-    if(!high || !low || !last) return false
-
-    let dayRange = (high - low) / last
-
-    return dayRange > 0.015
-})
-    // 🔥 3. SORT
-    .sort((a,b)=>{
-
-    const volA = Number(a.quoteVolume)
-    const volB = Number(b.quoteVolume)
-
-    const moveA = Math.abs(Number(a.priceChangePercent))
-    const moveB = Math.abs(Number(b.priceChangePercent))
-
-    // Ưu tiên coin đang chuyển động,
-    // nhưng vẫn giữ thanh khoản đủ tốt.
-    const scoreA =
-        moveA * 3 +
-        Math.log10(Math.max(volA,1)) * 2
-
-    const scoreB =
-        moveB * 3 +
-        Math.log10(Math.max(volB,1)) * 2
-
-    return scoreB - scoreA
-})
-    .filter(c =>
-    validFuturesSymbols &&
-    validFuturesSymbols.size > 0 &&
-    validFuturesSymbols.has(c.symbol)
-)
-.slice(0, 120)
-.map(c => c.symbol)
+                const scoreCoin=c=>{
+                    const move=Math.abs(Number(c.priceChangePercent))
+                    const volume=Number(c.quoteVolume)
+                    return Math.min(move,20)*2.2+Math.log10(Math.max(volume,1))*2
                 }
+
+                const moving=base
+                    .filter(c=>{
+                        const move=Math.abs(Number(c.priceChangePercent))
+                        return move>=1&&move<=20
+                    })
+                    .sort((a,b)=>scoreCoin(b)-scoreCoin(a))
+
+                const reversal=base
+                    .filter(c=>{
+                        const move=Math.abs(Number(c.priceChangePercent))
+                        return move>20&&move<=100
+                    })
+                    .sort((a,b)=>scoreCoin(b)-scoreCoin(a))
+
+                const quiet=moving
+                    .filter(c=>{
+                        const move=Math.abs(Number(c.priceChangePercent))
+                        return move>=1&&move<=5
+                    })
+                    .sort((a,b)=>{
+                        const moveA=Math.abs(Number(a.priceChangePercent)),moveB=Math.abs(Number(b.priceChangePercent))
+                        const volA=Number(a.quoteVolume),volB=Number(b.quoteVolume)
+                        const sA=moveA*1.5+Math.log10(Math.max(volA,1))*2.5
+                        const sB=moveB*1.5+Math.log10(Math.max(volB,1))*2.5
+                        return sB-sA
+                    })
+
+                const selected=[],used=new Set()
+
+                const addSymbols=(list,limit)=>{
+                    for(const c of list){
+                        if(selected.length>=limit)break
+                        if(used.has(c.symbol))continue
+                        used.add(c.symbol)
+                        selected.push(c.symbol)
+                    }
+                }
+
+                addSymbols(quiet,25)
+                addSymbols(reversal,30)
+                addSymbols(moving,45)
+
+                if(selected.length<120){
+                    const remaining=base
+                        .filter(c=>!used.has(c.symbol))
+                        .sort((a,b)=>scoreCoin(b)-scoreCoin(a))
+
+                    addSymbols(remaining,120-selected.length)
+                }
+
+                console.log(
+                    `📊 SYMBOLS ${selected.length} MOVING=${moving.length} REVERSAL=${reversal.length} QUIET=${quiet.length}`
+                )
+
+                return selected
+
             }catch(e){
-                if(attempt===1){
-                    console.log("❌ SYMBOL FAIL:", url)
-                }
+                if(attempt===1)console.log("❌ SYMBOL FAIL:",url)
             }
         }
     }
+
     return null
 }
 async function loadValidFuturesSymbols(){
