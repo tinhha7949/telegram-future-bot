@@ -3490,6 +3490,8 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 }
 // Requires the existing global helpers: ema(values, period), atr(klines), rsi(values).
 // Contract is deliberately identical to the old coreLogic return shape.
+// Requires the existing global helpers: ema(values, period), atr(klines), rsi(values).
+// Contract is deliberately identical to the old coreLogic return shape.
 async function coreLogic(data15, data1h, data5, data1m){
     if(!Array.isArray(data15) || !Array.isArray(data1h) || !Array.isArray(data5) || !Array.isArray(data1m)) return null
 
@@ -3629,18 +3631,24 @@ async function coreLogic(data15, data1h, data5, data1m){
     if(side==='LONG'){
         const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,structureLow)
         sl=Math.min(structureStop-buffer,entry-atr5*.55); risk=entry-sl
-        if(risk>atr15*1.65 || risk<=0) return null
-        const resistance=nearestAbove([...h5.slice(-30,-1),...h15.slice(-16,-1)],entry+atr1*.2); targetLevel=resistance
-        if(resistance && resistance-entry<risk*1.20) return null
-        tp=entry+Math.max(risk*1.60,atr15*1.10)
+        if(risk>atr15*2.10 || risk<=0) return null
+        // Use only actual swing zones, not every small candle wick.
+        const resistanceCandidates=[recent5High,Math.max(...h15.slice(-12,-1))]
+            .filter(level=>level>entry+atr5*.35)
+        const resistance=resistanceCandidates.length ? Math.min(...resistanceCandidates) : null; targetLevel=resistance
+        if(resistance && resistance-entry<risk*.90) return null
+        tp=entry+Math.max(risk*1.55,atr15*1.05)
         if(resistance) tp=Math.min(tp,resistance-atr1*.10)
     }else{
         const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,structureHigh)
         sl=Math.max(structureStop+buffer,entry+atr5*.55); risk=sl-entry
-        if(risk>atr15*1.65 || risk<=0) return null
-        const support=nearestBelow([...l5.slice(-30,-1),...l15.slice(-16,-1)],entry-atr1*.2); targetLevel=support
-        if(support && entry-support<risk*1.20) return null
-        tp=entry-Math.max(risk*1.60,atr15*1.10)
+        if(risk>atr15*2.10 || risk<=0) return null
+        // Use only actual swing zones, not every small candle wick.
+        const supportCandidates=[recent5Low,Math.min(...l15.slice(-12,-1))]
+            .filter(level=>level<entry-atr5*.35)
+        const support=supportCandidates.length ? Math.max(...supportCandidates) : null; targetLevel=support
+        if(support && entry-support<risk*.90) return null
+        tp=entry-Math.max(risk*1.55,atr15*1.05)
         if(support) tp=Math.max(tp,support+atr1*.10)
     }
     const finalRR=side==='LONG'?(tp-entry)/risk:(entry-tp)/risk
@@ -3661,6 +3669,7 @@ async function coreLogic(data15, data1h, data5, data1m){
         debug:{reason:setup,timestamp:Date.now(),candle:{open:round(o0),high:round(h0),low:round(l0),close:round(c0)},targetLevel:targetLevel?round(targetLevel):null}
     }
 }
+
 
 // ================= SCAN =================
 
@@ -3893,7 +3902,10 @@ async function getBtcRegime() {
     return regime
 }
 
-function buildTradeFromCoreSignal(best, btcRegime){
+// Input: `best` is the core signal plus symbol:
+// const best = { ...signal, symbol }
+// Returns a DB-ready trade, or null when the signal is invalid.
+function buildTradeFromCoreSignal(best, btcRegime, riskBudget){
 
     const entry = Number(best?.price)
     const sl = Number(best?.sl)
@@ -3902,6 +3914,7 @@ function buildTradeFromCoreSignal(best, btcRegime){
     // The current filtered core returns risk as an object.
     const initialRisk = Number(best?.risk?.risk)
     const rr = Number(best?.risk?.rr)
+    const budget = Number(riskBudget)
 
     if(
         !best?.symbol ||
@@ -3910,6 +3923,7 @@ function buildTradeFromCoreSignal(best, btcRegime){
         !Number.isFinite(sl) || sl <= 0 ||
         !Number.isFinite(tp) || tp <= 0 ||
         !Number.isFinite(initialRisk) || initialRisk <= 0 ||
+        !Number.isFinite(budget) || budget <= 0 ||
         !Number.isFinite(rr) || rr <= 0
     ){
         console.log(
@@ -3950,12 +3964,13 @@ function buildTradeFromCoreSignal(best, btcRegime){
 
         // Dynamic TPSL needs both values. `initialRisk` is recalculated
         // again from Binance's real entry after the order fills.
-        risk: initialRisk,
+        // Monetary loss budget. The scanner uses this for quantity sizing.
+        risk: budget,
         initialRisk,
         rr,
 
         score: Number(best.score ?? 0),
-        finalScore: Number(best.score ?? 0),
+        finalScore: Number(best.finalScore ?? best.score ?? 0),
 
         setup: best.setup,
         marketState: best.marketState,
@@ -4027,6 +4042,7 @@ function buildTradeFromCoreSignal(best, btcRegime){
 
         riskDetail: {
             risk: initialRisk,
+            riskBudget: budget,
             rr,
             tpDistance: Number(
                 riskDetail.tpDistance ?? Math.abs(tp-entry)
@@ -4053,6 +4069,7 @@ function buildTradeFromCoreSignal(best, btcRegime){
         result: "PENDING"
     }
 }
+
 // ================= SCANNER ================
 async function scanner(){
     
