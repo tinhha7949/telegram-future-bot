@@ -2771,31 +2771,28 @@ if(R >= 0.65){
 // DYNAMIC TP BY R
 // =====================================================
 
-let targetR = 1.40
+let targetR = 1.45
 
-if(R >= 0.70){
-    targetR = 1.60
+if(R >= 0.80){
+    targetR = 1.70
 }
 
-if(R >= 1.00){
-    targetR = 1.80
-}
-
-if(R >= 1.30){
+if(R >= 1.20){
     targetR = 2.00
 }
 
-if(R >= 1.70){
-    targetR = 2.25
+if(R >= 1.60){
+    targetR = 2.30
 }
 
-if(R >= 2.10){
-    targetR = 2.50
+if(R >= 2.00){
+    targetR = 2.60
 }
 
 if(R >= 2.50){
-    targetR = 2.80
+    targetR = 3.00
 }
+
 /*
  * QUAN TRỌNG:
  *
@@ -2808,7 +2805,7 @@ if(R >= 2.50){
 const minimumFutureR =
     Math.max(
         targetR,
-        R + 0.50
+        R + 0.70
     )
 
 const dynamicTP =
@@ -5866,7 +5863,7 @@ console.log(
 
 setInterval(
     runDynamicTPSL,
-    30000
+    10000
 )
         // ==================================================
         // 10. LOAD BINANCE SYMBOLS
