@@ -2218,23 +2218,6 @@ async function openPositionWithTPSL(trade, qty){
         // SAVE DB
         // =========================================
 
-        const saved =
-            await updateTradeTPSLData(trade)
-
-        if(!saved){
-
-            console.log(
-                `🚨 TPSL DB SAVE FAIL ${symbol}`
-            )
-
-            /*
-             * Binance đã có TPSL.
-             * Không được đặt lại TPSL.
-             * Chỉ báo lỗi DB.
-             */
-
-        }
-
         TPSL_PHASE[symbol] =
             "ACTIVE"
 
@@ -2695,32 +2678,32 @@ if(R >= 0.70){
 
     if(R < 0.90){
 
-        lockR = 0.20
+        lockR = 0.30
 
     }
     else if(R < 1.20){
 
-        lockR = 0.50
+        lockR = 0.60
 
     }
     else if(R < 1.50){
 
-        lockR = 0.80
+        lockR = 0.90
 
     }
     else if(R < 2.00){
 
-        lockR = 1.20
+        lockR = 1.30
 
     }
     else if(R < 2.50){
 
-        lockR = 1.70
+        lockR = 1.80
 
     }
     else if(R < 3.00){
 
-        lockR = 2.20
+        lockR = 2.30
 
     }
     else{
@@ -2756,26 +2739,26 @@ if(R >= 0.70){
 // DYNAMIC TP BY R
 // =====================================================
 
-let targetR = 1.45
+let targetR = 1.40
 
 if(R >= 0.80){
-    targetR = 1.70
+    targetR = 1.55
 }
 
 if(R >= 1.20){
-    targetR = 2.00
+    targetR = 1.75
 }
 
 if(R >= 1.60){
-    targetR = 2.30
+    targetR = 2.00
 }
 
 if(R >= 2.00){
-    targetR = 2.60
+    targetR = 2.25
 }
 
 if(R >= 2.50){
-    targetR = 3.00
+    targetR = 2.60
 }
 
 /*
@@ -2790,7 +2773,7 @@ if(R >= 2.50){
 const minimumFutureR =
     Math.max(
         targetR,
-        R + 0.60
+        R + 0.40
     )
 
 const dynamicTP =
@@ -4759,12 +4742,24 @@ if(
     // ===== INSERT DB =====
 
     insertResult =
-        await trades.insertOne(trade)
+    await trades.insertOne(trade)
 
-    trade._id =
-        insertResult.insertedId
+if(
+    !insertResult ||
+    !insertResult.insertedId
+){
+    throw new Error(
+        `DB INSERT FAILED ${trade.symbol}`
+    )
+}
 
-    activeTrades.push(trade)
+trade._id =
+    insertResult.insertedId
+
+trade.dbSaveFailed = false
+trade.dbRecoveryNeeded = false
+
+activeTrades.push(trade)
 
     console.log(
         `💾 DB SAVED ${trade.symbol} ` +
@@ -4780,7 +4775,10 @@ if(
 
 }catch(dbErr){
 
-    DB_READY = false
+    console.error(
+        `🚨 DB SAVE FAIL ${trade.symbol}:`,
+        dbErr?.message || dbErr
+    )
 
     const ramTrade = {
         ...trade,
@@ -4791,10 +4789,6 @@ if(
     TPSL_PHASE[trade.symbol] = "ACTIVE"
 
     activeTrades.push(ramTrade)
-
-    console.error(
-        `🚨 DB SAVE FAIL ${trade.symbol}`
-    )
 
     console.log(
         `🟢 ${trade.symbol} REMAINS ACTIVE FOR DYNAMIC TPSL`
