@@ -2543,18 +2543,54 @@ if(elapsedSinceEntry < 60000){
     // INITIAL RISK
     // =============================================
 
-    const initialRisk =
-    Number(trade.initialRisk)
+    let initialRisk=Number(trade.initialRisk)
 
-if(
-    !Number.isFinite(initialRisk) ||
-    initialRisk <= 0
-){
-    console.log(
-        `⚠️ DYNAMIC SKIP — MISSING INITIAL RISK ${trade.symbol}`
+if(!Number.isFinite(initialRisk)||initialRisk<=0){
+
+    const fallbackEntry=Number(
+        trade.entry||currentEntry
     )
 
-    return
+    const fallbackSL=Number(
+        trade.sl
+    )
+
+    if(
+        !Number.isFinite(fallbackEntry)||
+        !Number.isFinite(fallbackSL)||
+        fallbackEntry<=0||
+        fallbackSL<=0
+    ){
+        console.log(
+            `⚠️ DYNAMIC SKIP — NO RISK DATA ${trade.symbol}`
+        )
+        return
+    }
+
+    initialRisk=Math.abs(
+        fallbackEntry-fallbackSL
+    )
+    await trades.updateOne(
+    {
+        symbol:trade.symbol,
+        result:"PENDING"
+    },
+    {
+        $set:{
+            initialRisk,
+            updatedAt:Date.now()
+        }
+    }
+)
+
+    if(!Number.isFinite(initialRisk)||initialRisk<=0){
+        return
+    }
+
+    console.log(
+        `♻️ DYNAMIC INITIAL RISK RECOVERED ${trade.symbol} `+
+        `RISK=${initialRisk}`
+    )
 }
 
     // =============================================
@@ -3482,6 +3518,8 @@ async function coreLogic(data15, data1h, data5, data1m){
     const slope9_5=pct(ema9_5,ema9_5Prev)
     const trendLong5=p5>ema20_5 && ema9_5>ema20_5 && ema20_5>ema50_5 && slope9_5>0
     const trendShort5=p5<ema20_5 && ema9_5<ema20_5 && ema20_5<ema50_5 && slope9_5<0
+    const weakLong5=p5<ema9_5 || slope9_5<-.00015
+    const weakShort5=p5>ema9_5 || slope9_5>.00015
     const softLong5=ema9_5>ema20_5 && ema20_5>ema50_5
     const softShort5=ema9_5<ema20_5 && ema20_5<ema50_5
     const recent5Low=Math.min(...l5.slice(-12,-2)), recent5High=Math.max(...h5.slice(-12,-2))
@@ -3505,13 +3543,13 @@ async function coreLogic(data15, data1h, data5, data1m){
     const sweepHigh=h0>recent5High && c0<recent5High && bearishCandle
 
     // A trigger alone is never an entry. It must occur at a valid 5M location.
-    const longContext=(bull15 || bull1h) && !strongBearContext
-    const shortContext=(bear15 || bear1h) && !strongBullContext
+    const longContext=(bull15 || bull1h) && !strongBearContext && !weakShort5
+    const shortContext=(bear15 || bear1h) && !strongBullContext && !weakLong5
     const touchTolerance=Math.max(atr5/price*.85,.0025)
     const pullbackLongLocation=softLong5 && (l5.at(-1)<=ema9_5*(1+touchTolerance) || l5.at(-2)<=ema20_5*(1+touchTolerance))
     const pullbackShortLocation=softShort5 && (h5.at(-1)>=ema9_5*(1-touchTolerance) || h5.at(-2)>=ema20_5*(1-touchTolerance))
-    const reclaimLong=cPrev<=ema9_5 && c0>ema9_5 && bullishCandle
-    const reclaimShort=cPrev>=ema9_5 && c0<ema9_5 && bearishCandle
+    const reclaimLong=cPrev<=ema9_5 && c0>ema9_5 && bullishCandle && closeLong0>=.65
+    const reclaimShort=cPrev>=ema9_5 && c0<ema9_5 && bearishCandle && closeShort0>=.65
 
     const pullbackLong=longContext && pullbackLongLocation && (reclaimLong || (sweepLow&&microBreakLong))
     const pullbackShort=shortContext && pullbackShortLocation && (reclaimShort || (sweepHigh&&microBreakShort))
@@ -3519,10 +3557,10 @@ async function coreLogic(data15, data1h, data5, data1m){
     const breakoutShort=p5Prev>=recent5Low && p5<recent5Low && vol5Ratio>=1.05
     const retestLong=!breakoutLong && longContext && p5>recent5High && l0<=recent5High*(1+touchTolerance*.5) && c0>recent5High && bullishCandle && microBreakLong
     const retestShort=!breakoutShort && shortContext && p5<recent5Low && h0>=recent5Low*(1-touchTolerance*.5) && c0<recent5Low && bearishCandle && microBreakShort
-    const continuationLong=longContext && trendLong5 && microBreakLong && strongBullCandle && move5<Math.max(atr5/price*5,.018) && price-ema9_5<atr5*2.2
-    const continuationShort=shortContext && trendShort5 && microBreakShort && strongBearCandle && move5>-Math.max(atr5/price*5,.018) && ema9_5-price<atr5*2.2
-    const reversalLong=sweepLow && microBreakLong && strongBullCandle && !strongBearContext && rsi5<45
-    const reversalShort=sweepHigh && microBreakShort && strongBearCandle && !strongBullContext && rsi5>55
+    const continuationLong=longContext && trendLong5 && microBreakLong && strongBullCandle && move5<Math.max(atr5/price*4,.015) && price-ema9_5<atr5*1.8
+    const continuationShort=shortContext && trendShort5 && microBreakShort && strongBearCandle && move5>-Math.max(atr5/price*4,.015) && ema9_5-price<atr5*1.8
+    const reversalLong=sweepLow&&microBreakLong&&strongBullCandle&&!strongBearContext&&rsi5<43&&closeLong0>=.68
+    const reversalShort=sweepHigh&&microBreakShort&&strongBearCandle&&!strongBullContext&&rsi5>57&&closeShort0>=.68
 
     let longSetup=null, shortSetup=null
     if(reversalLong) longSetup='REVERSAL_LONG'; else if(retestLong) longSetup='BREAKOUT_RETEST'; else if(pullbackLong) longSetup='PULLBACK_RECLAIM'; else if(continuationLong) longSetup='TREND_CONTINUATION'
@@ -3559,24 +3597,28 @@ async function coreLogic(data15, data1h, data5, data1m){
     const buffer=Math.max(atr5*.10,atr1*.55)
 let sl,tp,risk,targetLevel
 const isReversal=setup==='REVERSAL_LONG'||setup==='REVERSAL_SHORT'
+
 if(side==='LONG'){
     const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,structureLow)
-    sl=Math.max(structureStop-buffer,entry-(isReversal?atr5*.80:atr5*.65)); risk=entry-sl
-    if(risk>atr15*1.60 || risk<=0) return null
-    const resistanceCandidates=[recent5High,Math.max(...h15.slice(-12,-1))]
-        .filter(level=>level>entry+atr5*.30)
-    const resistance=resistanceCandidates.length ? Math.min(...resistanceCandidates):null; targetLevel=resistance
-    if(resistance && resistance-entry<risk*.90) return null
+    sl=Math.max(structureStop-buffer,entry-(isReversal?atr5*.75:atr5*.60)); risk=entry-sl
+    if(risk>atr15*1.45 || risk<=0) return null
+
+    const resistanceCandidates=[recent5High,Math.max(...h15.slice(-12,-1))].filter(level=>level>entry+atr5*.30)
+    const resistance=resistanceCandidates.length?Math.min(...resistanceCandidates):null; targetLevel=resistance
+    if(resistance&&resistance-entry<risk*.95) return null
+
     tp=entry+Math.max(risk*1.50,atr15*.95)
     if(resistance) tp=Math.min(tp,resistance-atr1*.10)
+
 }else{
     const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,structureHigh)
-    sl=Math.min(structureStop+buffer,entry+(isReversal?atr5*.80:atr5*.65)); risk=sl-entry
-    if(risk>atr15*1.60 || risk<=0) return null
-    const supportCandidates=[recent5Low,Math.min(...l15.slice(-12,-1))]
-        .filter(level=>level<entry-atr5*.30)
-    const support=supportCandidates.length ? Math.max(...supportCandidates):null; targetLevel=support
-    if(support && entry-support<risk*.90) return null
+    sl=Math.min(structureStop+buffer,entry+(isReversal?atr5*.75:atr5*.60)); risk=sl-entry
+    if(risk>atr15*1.45 || risk<=0) return null
+
+    const supportCandidates=[recent5Low,Math.min(...l15.slice(-12,-1))].filter(level=>level<entry-atr5*.30)
+    const support=supportCandidates.length?Math.max(...supportCandidates):null; targetLevel=support
+    if(support&&entry-support<risk*.95) return null
+
     tp=entry-Math.max(risk*1.50,atr15*.95)
     if(support) tp=Math.max(tp,support+atr1*.10)
 }
