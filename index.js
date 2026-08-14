@@ -2671,49 +2671,46 @@ if(
 // KHÔNG ATR TRAILING
 // KHÔNG CÓ MỨC LOCK TỐI ĐA
 // =================================================
-
-if(R >= 0.70){
+if(R >= 0.65){
 
     let lockR
 
-    if(R < 0.90){
+    if(R < 0.85){
 
-        lockR = 0.30
-
-    }
-    else if(R < 1.20){
-
-        lockR = 0.60
+        lockR = 0.15
 
     }
-    else if(R < 1.50){
+    else if(R < 1.10){
 
-        lockR = 0.90
-
-    }
-    else if(R < 2.00){
-
-        lockR = 1.30
+        lockR = 0.40
 
     }
-    else if(R < 2.50){
+    else if(R < 1.35){
+
+        lockR = 0.65
+
+    }
+    else if(R < 1.70){
+
+        lockR = 0.95
+
+    }
+    else if(R < 2.10){
+
+        lockR = 1.35
+
+    }
+    else if(R < 2.60){
 
         lockR = 1.80
 
     }
-    else if(R < 3.00){
-
-        lockR = 2.30
-
-    }
     else{
 
-        lockR = R - 0.70
+        lockR = R - 0.60
     }
 
-    if(
-        trade.side === "LONG"
-    ){
+    if(trade.side === "LONG"){
 
         const candidate =
             currentEntry +
@@ -2734,33 +2731,35 @@ if(R >= 0.70){
         }
     }
 }
-
     // =====================================================
 // DYNAMIC TP BY R
 // =====================================================
 
 let targetR = 1.40
 
-if(R >= 0.80){
-    targetR = 1.55
+if(R >= 0.70){
+    targetR = 1.60
 }
 
-if(R >= 1.20){
-    targetR = 1.75
+if(R >= 1.00){
+    targetR = 1.80
 }
 
-if(R >= 1.60){
+if(R >= 1.30){
     targetR = 2.00
 }
 
-if(R >= 2.00){
+if(R >= 1.70){
     targetR = 2.25
 }
 
-if(R >= 2.50){
-    targetR = 2.60
+if(R >= 2.10){
+    targetR = 2.50
 }
 
+if(R >= 2.50){
+    targetR = 2.80
+}
 /*
  * QUAN TRỌNG:
  *
@@ -2773,7 +2772,7 @@ if(R >= 2.50){
 const minimumFutureR =
     Math.max(
         targetR,
-        R + 0.40
+        R + 0.50
     )
 
 const dynamicTP =
@@ -3423,10 +3422,7 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
     return base
 }
-// Requires the existing global helpers: ema(values, period), atr(klines), rsi(values).
-// Contract is deliberately identical to the old coreLogic return shape.
-// Requires the existing global helpers: ema(values, period), atr(klines), rsi(values).
-// Contract is deliberately identical to the old coreLogic return shape.
+
 async function coreLogic(data15, data1h, data5, data1m){
     if(!Array.isArray(data15) || !Array.isArray(data1h) || !Array.isArray(data5) || !Array.isArray(data1m)) return null
 
@@ -3500,8 +3496,8 @@ async function coreLogic(data15, data1h, data5, data1m){
     const rsi5=rsi(c5.slice(-50)), rsi1=rsi(c1.slice(-50))
     if(!Number.isFinite(rsi5)||!Number.isFinite(rsi1)) return null
     const move1=pct(c0,cPrev), move3=pct(c0,c1.at(-4)), move5=pct(c0,c1.at(-6))
-    const bullishCandle=c0>o0 && br0>=.40 && closeLong0>=.58
-    const bearishCandle=c0<o0 && br0>=.40 && closeShort0>=.58
+    const bullishCandle=c0>o0 && br0>=.45 && closeLong0>=.60
+    const bearishCandle=c0<o0 && br0>=.45 && closeShort0>=.60
     const strongBullCandle=bullishCandle && br0>=.55 && closeLong0>=.65
     const strongBearCandle=bearishCandle && br0>=.55 && closeShort0>=.65
     const microBreakLong=c0>Math.max(hPrev,h2), microBreakShort=c0<Math.min(lPrev,l2)
@@ -3560,32 +3556,30 @@ async function coreLogic(data15, data1h, data5, data1m){
 
     const entry=price, swingLow5=low(l5.slice(0,-1),24), swingHigh5=high(h5.slice(0,-1),24)
     const swingLow15=low(l15.slice(0,-1),12), swingHigh15=high(h15.slice(0,-1),12)
-    const buffer=Math.max(atr5*.16,atr1*.8)
-    let sl,tp,risk,targetLevel
-    const isReversal=setup==='REVERSAL_LONG'||setup==='REVERSAL_SHORT'
-    if(side==='LONG'){
-        const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,structureLow)
-        sl=Math.min(structureStop-buffer,entry-atr5*.55); risk=entry-sl
-        if(risk>atr15*2.10 || risk<=0) return null
-        // Use only actual swing zones, not every small candle wick.
-        const resistanceCandidates=[recent5High,Math.max(...h15.slice(-12,-1))]
-            .filter(level=>level>entry+atr5*.35)
-        const resistance=resistanceCandidates.length ? Math.min(...resistanceCandidates) : null; targetLevel=resistance
-        if(resistance && resistance-entry<risk*.90) return null
-        tp=entry+Math.max(risk*1.55,atr15*1.05)
-        if(resistance) tp=Math.min(tp,resistance-atr1*.10)
-    }else{
-        const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,structureHigh)
-        sl=Math.max(structureStop+buffer,entry+atr5*.55); risk=sl-entry
-        if(risk>atr15*2.10 || risk<=0) return null
-        // Use only actual swing zones, not every small candle wick.
-        const supportCandidates=[recent5Low,Math.min(...l15.slice(-12,-1))]
-            .filter(level=>level<entry-atr5*.35)
-        const support=supportCandidates.length ? Math.max(...supportCandidates) : null; targetLevel=support
-        if(support && entry-support<risk*.90) return null
-        tp=entry-Math.max(risk*1.55,atr15*1.05)
-        if(support) tp=Math.max(tp,support+atr1*.10)
-    }
+    const buffer=Math.max(atr5*.10,atr1*.55)
+let sl,tp,risk,targetLevel
+const isReversal=setup==='REVERSAL_LONG'||setup==='REVERSAL_SHORT'
+if(side==='LONG'){
+    const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,structureLow)
+    sl=Math.max(structureStop-buffer,entry-(isReversal?atr5*.80:atr5*.65)); risk=entry-sl
+    if(risk>atr15*1.60 || risk<=0) return null
+    const resistanceCandidates=[recent5High,Math.max(...h15.slice(-12,-1))]
+        .filter(level=>level>entry+atr5*.30)
+    const resistance=resistanceCandidates.length ? Math.min(...resistanceCandidates):null; targetLevel=resistance
+    if(resistance && resistance-entry<risk*.90) return null
+    tp=entry+Math.max(risk*1.50,atr15*.95)
+    if(resistance) tp=Math.min(tp,resistance-atr1*.10)
+}else{
+    const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,structureHigh)
+    sl=Math.min(structureStop+buffer,entry+(isReversal?atr5*.80:atr5*.65)); risk=sl-entry
+    if(risk>atr15*1.60 || risk<=0) return null
+    const supportCandidates=[recent5Low,Math.min(...l15.slice(-12,-1))]
+        .filter(level=>level<entry-atr5*.30)
+    const support=supportCandidates.length ? Math.max(...supportCandidates):null; targetLevel=support
+    if(support && entry-support<risk*.90) return null
+    tp=entry-Math.max(risk*1.50,atr15*.95)
+    if(support) tp=Math.max(tp,support+atr1*.10)
+}
     const finalRR=side==='LONG'?(tp-entry)/risk:(entry-tp)/risk
     if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(finalRR)||finalRR<1.35) return null
     scoreBreakdown.rr=round(finalRR,2)
@@ -3605,9 +3599,7 @@ async function coreLogic(data15, data1h, data5, data1m){
     }
 }
 
-
 // ================= SCAN =================
-
 async function scan(symbol){
 
     const [
