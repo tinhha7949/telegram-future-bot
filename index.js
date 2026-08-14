@@ -5412,39 +5412,43 @@ async function recoverOrphanPositions(){
 
             if(dbTrade){
 
-                const exists =
-                    activeTrades.some(
-                        t =>
-                            t?.symbol === symbol &&
-                            t.result === "PENDING"
-                    )
+    const recoveredInitialRisk =
+        Number(dbTrade.initialRisk)
 
-                if(!exists){
+    if(
+        !Number.isFinite(recoveredInitialRisk) ||
+        recoveredInitialRisk <= 0
+    ){
+        console.log(
+            `⚠️ RECOVERY SKIP — MISSING INITIAL RISK ${symbol}`
+        )
 
-                    activeTrades.push(dbTrade)
-                }
+        continue
+    }
 
-                TPSL_PHASE[symbol] = "ACTIVE"
-                const recoveredInitialRisk =
-    Number(trade.initialRisk)
+    const exists =
+        activeTrades.some(
+            t =>
+                t?.symbol === symbol &&
+                t.result === "PENDING"
+        )
 
-if(
-    !Number.isFinite(recoveredInitialRisk) ||
-    recoveredInitialRisk <= 0
-){
+    if(!exists){
+
+        activeTrades.push(
+            dbTrade
+        )
+    }
+
+    TPSL_PHASE[symbol] =
+        "ACTIVE"
+
     console.log(
-        `⚠️ RECOVERY SKIP — MISSING INITIAL RISK ${trade.symbol}`
+        `♻️ RECOVER DB TRADE ${symbol} → TPSL ACTIVE`
     )
 
     continue
 }
-
-                console.log(
-                    `♻️ RECOVER DB TRADE ${symbol} → TPSL ACTIVE`
-                )
-
-                continue
-            }
 
             // ==========================================
             // BINANCE CÓ POSITION
