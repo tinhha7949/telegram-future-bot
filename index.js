@@ -6,6 +6,9 @@ let DB_RECONNECTING = false
 let DB_LAST_ERROR = 0
 let TIME_SYNCED = false
 const TPSL_PENDING = {}
+const TPSL_CLOSING = {}
+const DYNAMIC_LAST_UPDATE = {}
+const DYNAMIC_PHASE = {}
 let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
@@ -2372,100 +2375,269 @@ async function updateTradeTPSLData(trade){
     }
 }
 
-const TPSL_CLOSING = {}
-
 async function manageDynamicTPSL(trade){
+
 try{
-
-    // =============================================
+    // =========================================================
     // SAFETY
-    // =============================================
-
+    // =========================================================
     if(!trade)return
-    if(!trade.symbol||!trade.side)return
-    if(TPSL_CLOSING[trade.symbol])return
-    if(TPSL_PENDING[trade.symbol])return
-
-    // =============================================
+    if(!trade.symbol)return
+    if(!trade.side)return
+    const symbol=trade.symbol
+    const side=String(trade.side).toUpperCase()
+    if(side!=="LONG"&&side!=="SHORT")return
+    if(TPSL_CLOSING[symbol])return
+    if(TPSL_PENDING[symbol])return
+    // =========================================================
     // ENTRY COOLDOWN
-    // =============================================
+    // =========================================================
+    const entryTime=Number(
+        trade.enteredAt ||
+        trade.openedAt ||
+        trade.createdAt
+    )
 
-    const entryTime=Number(trade.enteredAt||trade.createdAt)
+    if(!Number.isFinite(entryTime)||entryTime<=0){
 
-    if(!entryTime){
-        console.log(`⚠️ NO ENTRY TIME ${trade.symbol}`)
+        console.log(
+            `⚠️ DYNAMIC NO ENTRY TIME ${symbol}`
+        )
+
         return
     }
 
-    const elapsedSinceEntry=Date.now()-entryTime
+    const now=Date.now()
 
-    // 90s đầu không cho Dynamic động vào trade.
+    const elapsedSinceEntry=
+        now-entryTime
+
+    /*
+     * 90 giây đầu:
+     *
+     * KHÔNG dynamic.
+     * Cho entry có thời gian xác nhận hướng.
+     */
+
     if(elapsedSinceEntry<90000){
-        console.log(`⏳ DYNAMIC TPSL WAIT ${trade.symbol} ${Math.ceil((90000-elapsedSinceEntry)/1000)}s`)
+
+        console.log(
+            `⏳ DYNAMIC WAIT ${symbol} `+
+            `${Math.ceil(
+                (90000-elapsedSinceEntry)/1000
+            )}s`
+        )
+
         return
     }
 
-    TPSL_PENDING[trade.symbol]=true
+    // =========================================================
+    // UPDATE COOLDOWN
+    // =========================================================
 
-    // =============================================
+    const lastUpdate=
+        Number(
+            DYNAMIC_LAST_UPDATE[symbol] || 0
+        )
+
+    /*
+     * Không cho Dynamic sửa TPSL liên tục.
+     *
+     * 150 giây giữa hai lần update.
+     */
+
+    if(
+        lastUpdate>0 &&
+        now-lastUpdate<150000
+    ){
+
+        return
+    }
+
+    // =========================================================
+    // LOCK
+    // =========================================================
+
+    TPSL_PENDING[symbol]=true
+
+    // =========================================================
     // CHECK POSITION
-    // =============================================
+    // =========================================================
 
-    const pos=await hasPosition(trade.symbol)
+    const pos=
+        await hasPosition(symbol)
 
-    if(!pos)return
+    if(!pos){
 
-    // =============================================
-    // GET DATA
-    // =============================================
+        delete DYNAMIC_LAST_UPDATE[symbol]
+        delete DYNAMIC_PHASE[symbol]
 
-    const [data15,data5]=await Promise.all([
-        getData(trade.symbol,"15m",160),
-        getData(trade.symbol,"5m",160)
+        return
+    }
+
+    // =========================================================
+    // GET MARKET DATA
+    // =========================================================
+
+    const [
+        data15,
+        data5
+    ]=await Promise.all([
+
+        getData(
+            symbol,
+            "15m",
+            160
+        ),
+
+        getData(
+            symbol,
+            "5m",
+            160
+        )
+
     ])
 
-    if(!data15||!data5)return
-    if(data15.length<80||data5.length<80)return
+    if(
+        !Array.isArray(data15)||
+        !Array.isArray(data5)
+    ){
+        return
+    }
 
-    // =============================================
-    // DATA
-    // =============================================
+    if(
+        data15.length<80||
+        data5.length<80
+    ){
+        return
+    }
 
-    const h5=data5.map(x=>+x[2])
-    const l5=data5.map(x=>+x[3])
-    const c5=data5.map(x=>+x[4])
+    // =========================================================
+    // REMOVE CURRENT / INCOMPLETE CANDLES
+    //
+    // Dynamic chỉ dùng candle ĐÃ ĐÓNG.
+    // =========================================================
 
-    const current=Number(pos.markPrice||pos.entryPrice)
+    const closed15=
+        data15.slice(0,-1)
 
-    if(!Number.isFinite(current)||current<=0)return
+    const closed5=
+        data5.slice(0,-1)
 
-    const currentEntry=Number(pos.entryPrice||trade.entry)
+    if(
+        closed15.length<60||
+        closed5.length<60
+    ){
+        return
+    }
 
-    if(!Number.isFinite(currentEntry)||currentEntry<=0)return
+    // =========================================================
+    // 5M DATA
+    // =========================================================
 
-    // =============================================
+    const h5=
+        closed5.map(x=>Number(x[2]))
+
+    const l5=
+        closed5.map(x=>Number(x[3]))
+
+    const c5=
+        closed5.map(x=>Number(x[4]))
+
+    if(
+        h5.some(x=>!Number.isFinite(x))||
+        l5.some(x=>!Number.isFinite(x))||
+        c5.some(x=>!Number.isFinite(x))
+    ){
+        return
+    }
+
+    // =========================================================
+    // CURRENT PRICE
+    // =========================================================
+
+    const current=
+        Number(
+            pos.markPrice||
+            pos.entryPrice||
+            trade.entry
+        )
+
+    if(
+        !Number.isFinite(current)||
+        current<=0
+    ){
+        return
+    }
+
+    // =========================================================
+    // ENTRY
+    // =========================================================
+
+    const currentEntry=
+        Number(
+            pos.entryPrice||
+            trade.entry
+        )
+
+    if(
+        !Number.isFinite(currentEntry)||
+        currentEntry<=0
+    ){
+        return
+    }
+
+    // =========================================================
     // INITIAL RISK
-    // =============================================
+    // =========================================================
 
-    let initialRisk=Number(trade.initialRisk)
+    let initialRisk=
+        Number(trade.initialRisk)
 
-    if(!Number.isFinite(initialRisk)||initialRisk<=0){
+    if(
+        !Number.isFinite(initialRisk)||
+        initialRisk<=0
+    ){
 
-        const fallbackEntry=Number(trade.entry||currentEntry)
-        const fallbackSL=Number(trade.sl)
+        const fallbackEntry=
+            Number(
+                trade.entry||
+                currentEntry
+            )
 
-        if(!Number.isFinite(fallbackEntry)||!Number.isFinite(fallbackSL)||fallbackEntry<=0||fallbackSL<=0){
-            console.log(`⚠️ DYNAMIC SKIP — NO RISK DATA ${trade.symbol}`)
+        const fallbackSL=
+            Number(trade.sl)
+
+        if(
+            !Number.isFinite(fallbackEntry)||
+            !Number.isFinite(fallbackSL)||
+            fallbackEntry<=0||
+            fallbackSL<=0
+        ){
+
+            console.log(
+                `⚠️ DYNAMIC NO INITIAL RISK ${symbol}`
+            )
+
             return
         }
 
-        initialRisk=Math.abs(fallbackEntry-fallbackSL)
+        initialRisk=
+            Math.abs(
+                fallbackEntry-
+                fallbackSL
+            )
 
-        if(!Number.isFinite(initialRisk)||initialRisk<=0)return
+        if(
+            !Number.isFinite(initialRisk)||
+            initialRisk<=0
+        ){
+            return
+        }
 
         await trades.updateOne(
             {
-                symbol:trade.symbol,
+                symbol,
                 result:"PENDING"
             },
             {
@@ -2476,423 +2648,1104 @@ try{
             }
         )
 
-        console.log(`♻️ DYNAMIC INITIAL RISK RECOVERED ${trade.symbol} RISK=${initialRisk}`)
+        console.log(
+            `♻️ DYNAMIC RISK RECOVERED `+
+            `${symbol} `+
+            `RISK=${initialRisk}`
+        )
     }
 
-    // =============================================
-    // ATR
-    // =============================================
+    // =========================================================
+    // ATR 15M
+    // =========================================================
 
-    const atrRaw=atr(data15.slice(-80))
-    const atr15=Number.isFinite(atrRaw)&&atrRaw>0?atrRaw:current*0.003
+    const atrRaw=
+        atr(
+            closed15.slice(-80)
+        )
 
-    if(!Number.isFinite(atr15)||atr15<=0)return
+    const atr15=
+        Number.isFinite(atrRaw)&&
+        atrRaw>0
+            ?atrRaw
+            :current*0.003
 
-    // =============================================
+    if(
+        !Number.isFinite(atr15)||
+        atr15<=0
+    ){
+        return
+    }
+
+    // =========================================================
     // PROFIT / R
-    // =============================================
+    // =========================================================
 
-    const profit=trade.side==="LONG"?current-currentEntry:currentEntry-current
-    const R=profit/initialRisk
+    const profit=
+        side==="LONG"
+            ?current-currentEntry
+            :currentEntry-current
+
+    const R=
+        profit/initialRisk
 
     if(!Number.isFinite(R))return
 
-    // =============================================
-    // CURRENT SL / TP
-    // =============================================
+    // =========================================================
+    // CURRENT TPSL
+    // =========================================================
 
-    let newSL=Number(trade.sl)
-    let newTP=Number(trade.tp)
+    const oldSL=
+        Number(trade.sl)
 
-    if(!Number.isFinite(newSL)||!Number.isFinite(newTP))return
+    const oldTP=
+        Number(trade.tp)
 
-    // =============================================
-    // STRUCTURE
-    // =============================================
+    if(
+        !Number.isFinite(oldSL)||
+        !Number.isFinite(oldTP)
+    ){
+        return
+    }
 
-    const resistance=Math.max(...h5.slice(-24,-1))
-    const support=Math.min(...l5.slice(-24,-1))
+    let newSL=oldSL
+    let newTP=oldTP
 
-    const resistanceFar=Math.max(...h5.slice(-48,-24))
-    const supportFar=Math.min(...l5.slice(-48,-24))
-
-    const recentHigh=Math.max(...h5.slice(-12,-1))
-    const recentLow=Math.min(...l5.slice(-12,-1))
-
-    const breakoutLong=trade.side==="LONG"&&current>recentHigh
-    const breakoutShort=trade.side==="SHORT"&&current<recentLow
-
-    // =============================================
+    // =========================================================
     // TIME
-    // =============================================
+    // =========================================================
 
-    const openedAt=Number(trade.openedAt||trade.enteredAt||trade.createdAt)
+    const openedAt=
+        Number(
+            trade.openedAt||
+            trade.enteredAt||
+            trade.createdAt
+        )
 
-    if(!openedAt){
-        console.log(`⚠️ NO openedAt ${trade.symbol}`)
+    if(
+        !Number.isFinite(openedAt)||
+        openedAt<=0
+    ){
+
+        console.log(
+            `⚠️ DYNAMIC NO OPENED TIME ${symbol}`
+        )
+
         return
     }
 
-    const elapsedHours=(Date.now()-openedAt)/3600000
+    const elapsedHours=
+        (now-openedAt)/3600000
 
-    // =============================================
+    // =========================================================
+    // CONFIRMED 5M STRUCTURE
+    // =========================================================
+
+    /*
+     * Tất cả structure đều lấy từ candle đã đóng.
+     *
+     * Không dùng candle đang chạy.
+     */
+
+    const recentHigh=
+        Math.max(
+            ...h5.slice(-12,-1)
+        )
+
+    const recentLow=
+        Math.min(
+            ...l5.slice(-12,-1)
+        )
+
+    const structureHigh=
+        Math.max(
+            ...h5.slice(-24,-1)
+        )
+
+    const structureLow=
+        Math.min(
+            ...l5.slice(-24,-1)
+        )
+
+    const farHigh=
+        Math.max(
+            ...h5.slice(-48,-24)
+        )
+
+    const farLow=
+        Math.min(
+            ...l5.slice(-48,-24)
+        )
+
+    // =========================================================
+    // LAST CLOSED 5M CANDLE
+    // =========================================================
+
+    const last5Close=
+        c5.at(-1)
+
+    const previous5High=
+        Math.max(
+            ...h5.slice(-13,-1)
+        )
+
+    const previous5Low=
+        Math.min(
+            ...l5.slice(-13,-1)
+        )
+
+    /*
+     * Breakout phải được xác nhận bởi
+     * candle 5m đã đóng.
+     */
+
+    const confirmedBreakoutLong=
+        side==="LONG"&&
+        last5Close>previous5High
+
+    const confirmedBreakoutShort=
+        side==="SHORT"&&
+        last5Close<previous5Low
+
+    // =========================================================
+    // DETERMINE PHASE
+    // =========================================================
+
+    let phase=0
+
+    if(R>=3.00){
+
+        phase=5
+
+    }else if(R>=2.20){
+
+        phase=4
+
+    }else if(R>=1.70){
+
+        phase=3
+
+    }else if(R>=1.20){
+
+        phase=2
+
+    }else if(R>=0.80){
+
+        phase=1
+
+    }else{
+
+        phase=0
+    }
+
+    /*
+     * Phase chỉ được phép tăng.
+     *
+     * Nếu R tụt từ 2R xuống 1.5R:
+     * Dynamic KHÔNG được nới SL lại.
+     */
+
+    const previousPhase=
+        Number(
+            DYNAMIC_PHASE[symbol]||0
+        )
+
+    const effectivePhase=
+        Math.max(
+            previousPhase,
+            phase
+        )
+
+    DYNAMIC_PHASE[symbol]=
+        effectivePhase
+
+    // =========================================================
+    // PHASE 0
+    //
+    // <0.80R
+    //
+    // KHÔNG ĐỤNG TPSL
+    // =========================================================
+
+    if(effectivePhase===0){
+
+        return
+    }
+
+    // =========================================================
     // PHASE 1
-    // 0R -> 0.80R
     //
-    // KHÔNG TRAILING
-    // KHÔNG BE
-    // KHÔNG LOCK
+    // >=0.80R
     //
-    // Cho trade thở.
-    // =============================================
+    // LOCK 0.10R
+    // =========================================================
 
-    if(R<0.80){
-        return
-    }
-
-    // =============================================
-    // PHASE 2
-    // 0.80R -> 1.00R
-    //
-    // Chỉ bảo vệ một phần rất nhỏ.
-    // =============================================
-
-    if(R>=0.80&&R<1.00){
+    if(effectivePhase>=1){
 
         const lockR=0.10
 
-        if(trade.side==="LONG"){
-            const candidate=currentEntry+initialRisk*lockR
-            if(candidate>newSL)newSL=candidate
+        if(side==="LONG"){
+
+            const candidate=
+                currentEntry+
+                initialRisk*lockR
+
+            if(candidate>newSL){
+                newSL=candidate
+            }
+
         }else{
-            const candidate=currentEntry-initialRisk*lockR
-            if(candidate<newSL)newSL=candidate
+
+            const candidate=
+                currentEntry-
+                initialRisk*lockR
+
+            if(candidate<newSL){
+                newSL=candidate
+            }
         }
     }
 
-    // =============================================
-    // PHASE 3
-    // 1.00R -> 1.50R
+    // =========================================================
+    // PHASE 2
     //
-    // Đưa về BE+ một chút.
-    // =============================================
+    // >=1.20R
+    //
+    // LOCK 0.25R
+    // =========================================================
 
-    if(R>=1.00&&R<1.50){
+    if(effectivePhase>=2){
 
         const lockR=0.25
 
-        if(trade.side==="LONG"){
-            const candidate=currentEntry+initialRisk*lockR
-            if(candidate>newSL)newSL=candidate
+        if(side==="LONG"){
+
+            const candidate=
+                currentEntry+
+                initialRisk*lockR
+
+            if(candidate>newSL){
+                newSL=candidate
+            }
+
         }else{
-            const candidate=currentEntry-initialRisk*lockR
-            if(candidate<newSL)newSL=candidate
+
+            const candidate=
+                currentEntry-
+                initialRisk*lockR
+
+            if(candidate<newSL){
+                newSL=candidate
+            }
         }
     }
 
-    // =============================================
+    // =========================================================
+    // PHASE 3
+    //
+    // >=1.70R
+    //
+    // LOCK 0.70R
+    //
+    // Không trailing theo markPrice.
+    // =========================================================
+
+    if(effectivePhase>=3){
+
+        const lockR=0.70
+
+        if(side==="LONG"){
+
+            const candidate=
+                currentEntry+
+                initialRisk*lockR
+
+            if(candidate>newSL){
+                newSL=candidate
+            }
+
+        }else{
+
+            const candidate=
+                currentEntry-
+                initialRisk*lockR
+
+            if(candidate<newSL){
+                newSL=candidate
+            }
+        }
+    }
+
+    // =========================================================
     // PHASE 4
-    // 1.50R -> 2.00R
     //
-    // Bảo vệ lợi nhuận nhưng vẫn cho hồi.
-    // =============================================
+    // >=2.20R
+    //
+    // STRUCTURE TRAILING
+    //
+    // Chỉ dùng confirmed 5m structure.
+    // =========================================================
 
-    if(R>=1.50&&R<2.00){
+    if(effectivePhase>=4){
 
-        const lockR=0.75
+        if(side==="LONG"){
 
-        if(trade.side==="LONG"){
-            const atrSL=current-atr15*1.15
-            const profitSL=currentEntry+initialRisk*lockR
-            const candidate=Math.max(profitSL,atrSL)
+            const structureCandidate=
+                recentLow-
+                atr15*0.20
 
-            if(candidate>newSL)newSL=candidate
+            const profitCandidate=
+                currentEntry+
+                initialRisk*1.10
+
+            const candidate=
+                Math.max(
+                    structureCandidate,
+                    profitCandidate
+                )
+
+            if(candidate>newSL){
+                newSL=candidate
+            }
+
         }else{
-            const atrSL=current+atr15*1.15
-            const profitSL=currentEntry-initialRisk*lockR
-            const candidate=Math.min(profitSL,atrSL)
 
-            if(candidate<newSL)newSL=candidate
+            const structureCandidate=
+                recentHigh+
+                atr15*0.20
+
+            const profitCandidate=
+                currentEntry-
+                initialRisk*1.10
+
+            const candidate=
+                Math.min(
+                    structureCandidate,
+                    profitCandidate
+                )
+
+            if(candidate<newSL){
+                newSL=candidate
+            }
         }
     }
 
-    // =============================================
+    // =========================================================
     // PHASE 5
-    // >=2R
     //
-    // Winner được phép chạy.
-    // =============================================
+    // >=3R
+    //
+    // WINNER RUNNER
+    // =========================================================
 
-    if(R>=2.00){
+    if(effectivePhase>=5){
 
-        if(trade.side==="LONG"){
+        if(side==="LONG"){
 
-            const atrSL=current-atr15*1.30
-            const structureSL=Math.max(
-                recentLow,
-                current-atr15*1.60
-            )
+            const structureCandidate=
+                structureLow-
+                atr15*0.15
 
-            const candidate=Math.max(
-                atrSL,
-                structureSL,
-                currentEntry+initialRisk*1.10
-            )
-
-            if(candidate>newSL)newSL=candidate
+            if(
+                structureCandidate>newSL
+            ){
+                newSL=
+                    structureCandidate
+            }
 
         }else{
 
-            const atrSL=current+atr15*1.30
-            const structureSL=Math.min(
-                recentHigh,
-                current+atr15*1.60
-            )
+            const structureCandidate=
+                structureHigh+
+                atr15*0.15
 
-            const candidate=Math.min(
-                atrSL,
-                structureSL,
-                currentEntry-initialRisk*1.10
-            )
-
-            if(candidate<newSL)newSL=candidate
-        }
-    }
-
-    // =============================================
-    // STRONG BREAKOUT
-    //
-    // Nếu đã >1R và phá structure:
-    // cho chạy về structure tiếp theo.
-    // =============================================
-
-    if(R>=1.00&&breakoutLong){
-
-        const candidateSL=recentHigh-atr15*0.45
-
-        if(candidateSL>newSL){
-            newSL=candidateSL
-        }
-
-        if(resistanceFar>current){
-
-            const candidateTP=resistanceFar-atr15*0.15
-
-            if(candidateTP>newTP){
-                newTP=candidateTP
+            if(
+                structureCandidate<newSL
+            ){
+                newSL=
+                    structureCandidate
             }
         }
     }
 
-    if(R>=1.00&&breakoutShort){
+    // =========================================================
+    // CONFIRMED BREAKOUT
+    //
+    // Chỉ xử lý khi R >= 1R
+    // và nến 5m ĐÃ ĐÓNG xác nhận.
+    // =========================================================
 
-        const candidateSL=recentLow+atr15*0.45
+    if(
+        R>=1.00&&
+        confirmedBreakoutLong
+    ){
 
-        if(candidateSL<newSL){
-            newSL=candidateSL
+        const breakoutSL=
+            previous5High-
+            atr15*0.25
+
+        if(breakoutSL>newSL){
+
+            newSL=
+                breakoutSL
         }
 
-        if(supportFar<current){
+        /*
+         * TP chỉ mở rộng tới structure xa
+         * nếu structure thực sự nằm phía trước.
+         */
 
-            const candidateTP=supportFar+atr15*0.15
+        if(
+            Number.isFinite(farHigh)&&
+            farHigh>current
+        ){
 
-            if(candidateTP<newTP){
-                newTP=candidateTP
+            const breakoutTP=
+                farHigh-
+                atr15*0.15
+
+            if(
+                breakoutTP>newTP&&
+                breakoutTP>current
+            ){
+
+                newTP=
+                    breakoutTP
             }
         }
     }
 
-    // =============================================
-    // DYNAMIC TP
+    if(
+        R>=1.00&&
+        confirmedBreakoutShort
+    ){
+
+        const breakoutSL=
+            previous5Low+
+            atr15*0.25
+
+        if(breakoutSL<newSL){
+
+            newSL=
+                breakoutSL
+        }
+
+        if(
+            Number.isFinite(farLow)&&
+            farLow<current
+        ){
+
+            const breakoutTP=
+                farLow+
+                atr15*0.15
+
+            if(
+                breakoutTP<newTP&&
+                breakoutTP<current
+            ){
+
+                newTP=
+                    breakoutTP
+            }
+        }
+    }
+
+    // =========================================================
+    // DYNAMIC TP BY PHASE
     //
-    // Không đẩy TP theo R + 0.70 liên tục nữa.
-    // =============================================
+    // TP chỉ tăng theo phase.
+    // Không dùng R + 0.70.
+    // Không kéo TP theo markPrice.
+    // =========================================================
 
     let targetR=1.50
 
-    if(R>=0.80)targetR=1.70
-    if(R>=1.20)targetR=2.00
-    if(R>=1.70)targetR=2.30
-    if(R>=2.20)targetR=2.70
-    if(R>=3.00)targetR=3.20
+    if(effectivePhase>=1){
+        targetR=1.70
+    }
 
-    if(trade.side==="LONG"){
+    if(effectivePhase>=2){
+        targetR=2.00
+    }
 
-        const dynamicTP=currentEntry+initialRisk*targetR
+    if(effectivePhase>=3){
+        targetR=2.30
+    }
 
-        if(dynamicTP>current&&dynamicTP>newTP){
-            newTP=dynamicTP
+    if(effectivePhase>=4){
+        targetR=2.70
+    }
+
+    if(effectivePhase>=5){
+        targetR=3.20
+    }
+
+    const phaseTP=
+        side==="LONG"
+            ?currentEntry+
+                initialRisk*targetR
+            :currentEntry-
+                initialRisk*targetR
+
+    /*
+     * TP chỉ được mở rộng.
+     *
+     * LONG:
+     * phaseTP > oldTP
+     *
+     * SHORT:
+     * phaseTP < oldTP
+     */
+
+    if(side==="LONG"){
+
+        if(
+            phaseTP>newTP&&
+            phaseTP>current
+        ){
+
+            newTP=
+                phaseTP
         }
 
     }else{
 
-        const dynamicTP=currentEntry-initialRisk*targetR
+        if(
+            phaseTP<newTP&&
+            phaseTP<current
+        ){
 
-        if(dynamicTP<current&&dynamicTP<newTP){
-            newTP=dynamicTP
+            newTP=
+                phaseTP
         }
     }
 
-    // =============================================
+    // =========================================================
+    // NEVER MOVE SL BACKWARD
+    // =========================================================
+
+    if(side==="LONG"){
+
+        if(newSL<oldSL){
+            newSL=oldSL
+        }
+
+    }else{
+
+        if(newSL>oldSL){
+            newSL=oldSL
+        }
+    }
+
+    // =========================================================
+    // SL MUST STAY ON PROFITABLE SIDE OF ENTRY
+    //
+    // Chỉ áp dụng khi phase đã lock.
+    //
+    // KHÔNG dùng current để kéo SL ngược.
+    // =========================================================
+
+    if(effectivePhase>=1){
+
+        if(side==="LONG"){
+
+            const minimumSL=
+                currentEntry+
+                initialRisk*0.05
+
+            if(newSL<minimumSL){
+                newSL=minimumSL
+            }
+
+        }else{
+
+            const maximumSL=
+                currentEntry-
+                initialRisk*0.05
+
+            if(newSL>maximumSL){
+                newSL=maximumSL
+            }
+        }
+    }
+
+    // =========================================================
+    // IMPORTANT:
+    //
+    // NEVER FORCE SL TO current - ATR
+    //
+    // Nếu candidate SL >= current:
+    // KHÔNG kéo nó ngược xuống.
+    //
+    // Chỉ bỏ candidate không hợp lệ.
+    // =========================================================
+
+    if(side==="LONG"){
+
+        if(newSL>=current){
+
+            /*
+             * Giữ oldSL nếu oldSL vẫn hợp lệ.
+             *
+             * Nếu oldSL cũng >= current,
+             * tuyệt đối KHÔNG tự động kéo xuống.
+             *
+             * Binance/order layer sẽ xử lý trạng thái
+             * theo TPSL hiện tại.
+             */
+
+            newSL=oldSL
+        }
+
+    }else{
+
+        if(newSL<=current){
+
+            newSL=oldSL
+        }
+    }
+
+    // =========================================================
+    // TP MUST STAY AHEAD
+    //
+    // KHÔNG tạo TP mới dựa trên current.
+    //
+    // Đây là điểm quan trọng để tránh TP nhảy.
+    // =========================================================
+
+    if(side==="LONG"){
+
+        if(newTP<=current){
+
+            /*
+             * TP đã vượt qua current.
+             *
+             * Không tự động kéo TP lên mỗi vòng.
+             */
+
+            newTP=oldTP
+        }
+
+    }else{
+
+        if(newTP>=current){
+
+            newTP=oldTP
+        }
+    }
+
+    // =========================================================
     // MAX TIME
     //
-    // Không đóng các winner đang chạy.
-    // Chỉ đóng trade bị treo lâu và vẫn yếu.
-    // =============================================
+    // Chỉ đóng trade bị treo rất lâu
+    // và chưa tạo được profit đáng kể.
+    // =========================================================
 
-    if(elapsedHours>=24&&R<0.50){
+    if(
+        elapsedHours>=24&&
+        R<0.50
+    ){
 
-        const qty=Math.abs(Number(pos.positionAmt))
+        const qty=
+            Math.abs(
+                Number(
+                    pos.positionAmt
+                )
+            )
 
-        if(qty>0){
+        if(
+            Number.isFinite(qty)&&
+            qty>0
+        ){
 
             console.log(
-                `🚨 MAX TIME EXIT ${trade.symbol} `+
+                `🚨 DYNAMIC MAX TIME EXIT `+
+                `${symbol} `+
                 `R=${R.toFixed(2)} `+
                 `H=${elapsedHours.toFixed(2)}`
             )
 
-            await closePosition(
-                trade.symbol,
-                trade.side,
-                qty
-            )
+            TPSL_CLOSING[symbol]=true
+
+            try{
+
+                await closePosition(
+                    symbol,
+                    side,
+                    qty
+                )
+
+            }finally{
+
+                delete TPSL_CLOSING[symbol]
+            }
         }
 
         return
     }
 
-    // =============================================
-    // NEVER MOVE SL BACKWARD
-    // =============================================
+    // =========================================================
+    // VALIDATE FINAL TPSL
+    // =========================================================
 
-    const oldSL=Number(trade.sl)
-
-    if(trade.side==="LONG"&&newSL<oldSL){
-        newSL=oldSL
+    if(
+        !Number.isFinite(newSL)||
+        !Number.isFinite(newTP)
+    ){
+        return
     }
 
-    if(trade.side==="SHORT"&&newSL>oldSL){
-        newSL=oldSL
+    if(newSL<=0||newTP<=0){
+        return
     }
 
-    // =============================================
-    // NEVER PUT SL ON WRONG SIDE
-    // =============================================
+    // =========================================================
+    // FINAL DIRECTION CHECK
+    // =========================================================
 
-    if(trade.side==="LONG"&&newSL>=current){
-        newSL=Math.min(
-            newSL,
-            current-atr15*0.05
+    if(side==="LONG"){
+
+        /*
+         * SL phải thấp hơn current.
+         *
+         * Nếu candidate mới không hợp lệ,
+         * giữ nguyên oldSL.
+         */
+
+        if(newSL>=current){
+            newSL=oldSL
+        }
+
+        /*
+         * TP phải cao hơn current.
+         */
+
+        if(newTP<=current){
+            newTP=oldTP
+        }
+
+        /*
+         * tuyệt đối không lùi SL
+         */
+
+        if(newSL<oldSL){
+            newSL=oldSL
+        }
+
+        /*
+         * TP chỉ tăng
+         */
+
+        if(newTP<oldTP){
+            newTP=oldTP
+        }
+
+    }else{
+
+        if(newSL<=current){
+            newSL=oldSL
+        }
+
+        if(newTP>=current){
+            newTP=oldTP
+        }
+
+        if(newSL>oldSL){
+            newSL=oldSL
+        }
+
+        if(newTP>oldTP){
+            newTP=oldTP
+        }
+    }
+
+    // =========================================================
+    // REAL CHANGE CHECK
+    // =========================================================
+
+    const minimumChange=
+        Math.max(
+            currentEntry*0.00005,
+            atr15*0.03
         )
-    }
-
-    if(trade.side==="SHORT"&&newSL<=current){
-        newSL=Math.max(
-            newSL,
-            current+atr15*0.05
-        )
-    }
-
-    // =============================================
-    // TP MUST STAY AHEAD
-    // =============================================
-
-    if(trade.side==="LONG"&&newTP<=current){
-        newTP=current+atr15*0.50
-    }
-
-    if(trade.side==="SHORT"&&newTP>=current){
-        newTP=current-atr15*0.50
-    }
-
-    // =============================================
-    // CHECK CHANGE
-    // =============================================
 
     const slChanged=
-        Math.abs(newSL-oldSL)>
-        Math.max(
-            currentEntry*0.00001,
-            atr15*0.01
-        )
+        Math.abs(
+            newSL-oldSL
+        )>=minimumChange
 
     const tpChanged=
         Math.abs(
-            newTP-Number(trade.tp)
-        )>
-        Math.max(
-            currentEntry*0.00001,
-            atr15*0.01
-        )
+            newTP-oldTP
+        )>=minimumChange
 
-    if(!slChanged&&!tpChanged){
+    if(
+        !slChanged&&
+        !tpChanged
+    ){
+
         return
     }
 
-    // =============================================
+    // =========================================================
+    // PHASE CHANGE CHECK
+    //
+    // Nếu chỉ là cùng một phase và không có
+    // structure breakout mới, hạn chế update.
+    // =========================================================
+
+    const phaseChanged=
+        effectivePhase>
+        previousPhase
+
+    const structureEvent=
+        confirmedBreakoutLong||
+        confirmedBreakoutShort
+
+    /*
+     * Nếu chỉ có SL thay đổi rất nhỏ do structure,
+     * cooldown + minimumChange đã lọc.
+     *
+     * Không cần ép update.
+     */
+
+    if(
+        !phaseChanged&&
+        !structureEvent&&
+        !tpChanged&&
+        !slChanged
+    ){
+        return
+    }
+
+    // =========================================================
+    // FINAL SNAPSHOT
+    // =========================================================
+
+    const updateTrade={
+        ...trade,
+
+        symbol,
+
+        side,
+
+        entry:
+            currentEntry,
+
+        sl:
+            newSL,
+
+        tp:
+            newTP,
+
+        initialRisk
+    }
+
+    console.log(
+        `🎯 DYNAMIC SIGNAL ${symbol} `+
+        `${side} `+
+        `R=${R.toFixed(2)} `+
+        `PHASE=${effectivePhase} `+
+        `SL ${oldSL} -> ${newSL} `+
+        `TP ${oldTP} -> ${newTP}`
+    )
+
+    // =========================================================
     // UPDATE BINANCE
-    // =============================================
+    // =========================================================
 
     try{
 
-        const updateTrade={
-            ...trade,
-            entry:currentEntry,
-            sl:newSL,
-            tp:newTP
-        }
-
-        const result=await setDynamicTPSL(updateTrade)
+        const result=
+            await setDynamicTPSL(
+                updateTrade
+            )
 
         if(!result?.ok){
 
             console.log(
-                `⚠️ DYNAMIC TPSL UPDATE FAILED ${trade.symbol}`
+                `⚠️ DYNAMIC TPSL UPDATE FAILED `+
+                `${symbol}`
             )
 
             return
         }
 
-        // =============================================
+        // =====================================================
         // BINANCE SUCCESS
-        // =============================================
+        // =====================================================
 
-        trade.sl=Number(result.sl)
-        trade.tp=Number(result.tp)
+        const finalSL=
+            Number(result.sl)
 
-        // =============================================
-        // SAVE DB
-        // =============================================
+        const finalTP=
+            Number(result.tp)
 
-        const dbResult=await trades.updateOne(
-            {
-                symbol:trade.symbol,
-                result:"PENDING"
-            },
-            {
-                $set:{
-                    sl:Number(result.sl),
-                    tp:Number(result.tp),
-                    updatedAt:Date.now()
-                }
-            }
-        )
-
-        if(dbResult.matchedCount===0){
+        if(
+            !Number.isFinite(finalSL)||
+            !Number.isFinite(finalTP)||
+            finalSL<=0||
+            finalTP<=0
+        ){
 
             console.log(
-                `⚠️ DYNAMIC TPSL DB NOT FOUND ${trade.symbol}`
+                `⚠️ DYNAMIC INVALID BINANCE RESULT `+
+                `${symbol}`
             )
 
             return
         }
 
+        // =====================================================
+        // VERIFY DIRECTION OF RESULT
+        // =====================================================
+
+        if(side==="LONG"){
+
+            /*
+             * Binance result không được phép
+             * làm SL lùi.
+             */
+
+            if(finalSL<oldSL){
+
+                console.log(
+                    `🚨 DYNAMIC REJECT BACKWARD SL `+
+                    `${symbol} `+
+                    `OLD=${oldSL} `+
+                    `NEW=${finalSL}`
+                )
+
+                return
+            }
+
+            /*
+             * TP không được lùi.
+             */
+
+            if(finalTP<oldTP){
+
+                console.log(
+                    `🚨 DYNAMIC REJECT BACKWARD TP `+
+                    `${symbol} `+
+                    `OLD=${oldTP} `+
+                    `NEW=${finalTP}`
+                )
+
+                return
+            }
+
+        }else{
+
+            if(finalSL>oldSL){
+
+                console.log(
+                    `🚨 DYNAMIC REJECT BACKWARD SL `+
+                    `${symbol} `+
+                    `OLD=${oldSL} `+
+                    `NEW=${finalSL}`
+                )
+
+                return
+            }
+
+            if(finalTP>oldTP){
+
+                console.log(
+                    `🚨 DYNAMIC REJECT BACKWARD TP `+
+                    `${symbol} `+
+                    `OLD=${oldTP} `+
+                    `NEW=${finalTP}`
+                )
+
+                return
+            }
+        }
+
+        // =====================================================
+        // UPDATE MEMORY
+        // =====================================================
+
+        trade.sl=
+            finalSL
+
+        trade.tp=
+            finalTP
+
+        // =====================================================
+        // UPDATE LAST UPDATE TIME
+        //
+        // Chỉ ghi cooldown sau khi Binance thành công.
+        // =====================================================
+
+        DYNAMIC_LAST_UPDATE[symbol]=
+            Date.now()
+
+        DYNAMIC_PHASE[symbol]=
+            Math.max(
+                Number(
+                    DYNAMIC_PHASE[symbol]||0
+                ),
+                effectivePhase
+            )
+
+        // =====================================================
+        // SAVE DB
+        // =====================================================
+
+        const dbResult=
+            await trades.updateOne(
+
+                {
+                    symbol,
+                    result:"PENDING"
+                },
+
+                {
+                    $set:{
+                        sl:
+                            finalSL,
+
+                        tp:
+                            finalTP,
+
+                        initialRisk,
+
+                        dynamicPhase:
+                            DYNAMIC_PHASE[symbol],
+
+                        dynamicUpdatedAt:
+                            Date.now(),
+
+                        updatedAt:
+                            Date.now()
+                    }
+                }
+            )
+
+        if(
+            dbResult.matchedCount===0
+        ){
+
+            console.log(
+                `⚠️ DYNAMIC DB NOT FOUND `+
+                `${symbol}`
+            )
+
+            return
+        }
+
+        // =====================================================
+        // LOG
+        // =====================================================
+
         console.log(
-            `💾 DYNAMIC TPSL SAVED ${trade.symbol} `+
+            `💾 DYNAMIC TPSL SAVED `+
+            `${symbol} `+
             `R=${R.toFixed(2)} `+
-            `SL=${result.sl} `+
-            `TP=${result.tp}`
+            `PHASE=${effectivePhase} `+
+            `SL=${finalSL} `+
+            `TP=${finalTP}`
         )
 
     }catch(e){
@@ -2900,7 +3753,8 @@ try{
         await checkTimeError(e)
 
         console.log(
-            `❌ DYNAMIC TPSL ERROR ${trade.symbol}:`,
+            `❌ DYNAMIC TPSL ERROR `+
+            `${symbol}:`,
             e.message
         )
     }
@@ -2910,14 +3764,18 @@ try{
     await checkTimeError(e)
 
     console.log(
-        `❌ MANAGE DYNAMIC TPSL ERROR ${trade?.symbol||"UNKNOWN"}:`,
+        `❌ MANAGE DYNAMIC TPSL ERROR `+
+        `${trade?.symbol||"UNKNOWN"}:`,
         e.message
     )
 
 }finally{
 
     if(trade?.symbol){
-        delete TPSL_PENDING[trade.symbol]
+
+        delete TPSL_PENDING[
+            trade.symbol
+        ]
     }
 }
 
