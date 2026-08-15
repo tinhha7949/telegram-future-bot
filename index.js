@@ -3477,179 +3477,228 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
     return base
 }
 
-async function coreLogic(data15, data1h, data5, data1m){
-    if(!Array.isArray(data15) || !Array.isArray(data1h) || !Array.isArray(data5) || !Array.isArray(data1m)) return null
+async function coreLogic(data15,data1h,data5,data1m){
+    if(!Array.isArray(data15)||!Array.isArray(data1h)||!Array.isArray(data5)||!Array.isArray(data1m))return null
 
-    // Keep the original input contract: discard only the still-forming candle.
-    data15 = data15.slice(0,-1); data1h = data1h.slice(0,-1)
-    data5 = data5.slice(0,-1); data1m = data1m.slice(0,-1)
-    if(data15.length < 100 || data1h.length < 60 || data5.length < 80 || data1m.length < 80) return null
+    data15=data15.slice(0,-1);data1h=data1h.slice(0,-1)
+    data5=data5.slice(0,-1);data1m=data1m.slice(0,-1)
+    if(data15.length<100||data1h.length<60||data5.length<80||data1m.length<80)return null
 
-    const col = (data,n) => data.map(x => Number(x[n]))
-    const o15=col(data15,1), h15=col(data15,2), l15=col(data15,3), c15=col(data15,4)
-    const o1h=col(data1h,1), h1h=col(data1h,2), l1h=col(data1h,3), c1h=col(data1h,4)
-    const o5=col(data5,1), h5=col(data5,2), l5=col(data5,3), c5=col(data5,4), v5=col(data5,5)
-    const o1=col(data1m,1), h1=col(data1m,2), l1=col(data1m,3), c1=col(data1m,4), v1=col(data1m,5)
-    if([o15,h15,l15,c15,o1h,h1h,l1h,c1h,o5,h5,l5,c5,v5,o1,h1,l1,c1,v1].flat().some(x => !Number.isFinite(x))) return null
+    const col=(data,n)=>data.map(x=>Number(x[n]))
+    const o15=col(data15,1),h15=col(data15,2),l15=col(data15,3),c15=col(data15,4)
+    const o1h=col(data1h,1),h1h=col(data1h,2),l1h=col(data1h,3),c1h=col(data1h,4)
+    const o5=col(data5,1),h5=col(data5,2),l5=col(data5,3),c5=col(data5,4),v5=col(data5,5)
+    const o1=col(data1m,1),h1=col(data1m,2),l1=col(data1m,3),c1=col(data1m,4),v1=col(data1m,5)
+    if([o15,h15,l15,c15,o1h,h1h,l1h,c1h,o5,h5,l5,c5,v5,o1,h1,l1,c1,v1].flat().some(x=>!Number.isFinite(x)))return null
 
     const price=c1.at(-1)
-    if(!Number.isFinite(price) || price <= 0) return null
+    if(!Number.isFinite(price)||price<=0)return null
 
-    const pct=(a,b)=>b ? (a-b)/b : 0
-    const avg=a=>a.length ? a.reduce((s,x)=>s+x,0)/a.length : 0
+    const pct=(a,b)=>b?(a-b)/b:0
+    const avg=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:0
     const high=(a,n)=>Math.max(...a.slice(-n))
     const low=(a,n)=>Math.min(...a.slice(-n))
     const range=(h,l)=>Math.max(h-l,0)
-    const bodyRatio=(o,h,l,c)=>range(h,l) ? Math.abs(c-o)/range(h,l) : 0
-    const closeLong=(h,l,c)=>range(h,l) ? (c-l)/range(h,l) : 0
-    const closeShort=(h,l,c)=>range(h,l) ? (h-c)/range(h,l) : 0
+    const bodyRatio=(o,h,l,c)=>range(h,l)?Math.abs(c-o)/range(h,l):0
+    const closeLong=(h,l,c)=>range(h,l)?(c-l)/range(h,l):0
+    const closeShort=(h,l,c)=>range(h,l)?(h-c)/range(h,l):0
     const round=(n,d=8)=>Number(Number(n).toFixed(d))
-    const nearestAbove=(levels,p)=>levels.filter(x=>x>p).sort((a,b)=>a-b)[0] || null
-    const nearestBelow=(levels,p)=>levels.filter(x=>x<p).sort((a,b)=>b-a)[0] || null
 
-    const atr15Raw=atr(data15.slice(-80)), atr5Raw=atr(data5.slice(-80)), atr1Raw=atr(data1m.slice(-80))
-    const atr15=Number.isFinite(atr15Raw)&&atr15Raw>0 ? atr15Raw : price*.003
-    const atr5=Number.isFinite(atr5Raw)&&atr5Raw>0 ? atr5Raw : price*.002
-    const atr1=Number.isFinite(atr1Raw)&&atr1Raw>0 ? atr1Raw : price*.0008
+    const atr15Raw=atr(data15.slice(-80)),atr5Raw=atr(data5.slice(-80)),atr1Raw=atr(data1m.slice(-80))
+    const atr15=Number.isFinite(atr15Raw)&&atr15Raw>0?atr15Raw:price*.003
+    const atr5=Number.isFinite(atr5Raw)&&atr5Raw>0?atr5Raw:price*.002
+    const atr1=Number.isFinite(atr1Raw)&&atr1Raw>0?atr1Raw:price*.0008
     const atrRatio5=atr5/price
-    if(!Number.isFinite(atrRatio5) || atrRatio5 > .025) return null
+    if(!Number.isFinite(atrRatio5)||atrRatio5>.025)return null
 
-    // Same EMA lookbacks as the original core; no larger data requirement.
-    const ema20_1h=ema(c1h.slice(-60),20), ema50_1h=ema(c1h.slice(-100),50)
+    const ema20_1h=ema(c1h.slice(-60),20),ema50_1h=ema(c1h.slice(-100),50)
     const ema20_1hPrev=ema(c1h.slice(-61,-1),20)
-    const ema20_15=ema(c15.slice(-60),20), ema50_15=ema(c15.slice(-100),50)
+    const ema20_15=ema(c15.slice(-60),20),ema50_15=ema(c15.slice(-100),50)
     const ema20_15Prev=ema(c15.slice(-61,-1),20)
-    const price1h=c1h.at(-1), price15=c15.at(-1)
-    const slope1h=pct(ema20_1h,ema20_1hPrev), slope15=pct(ema20_15,ema20_15Prev)
-    const gap1h=Math.abs(ema20_1h-ema50_1h)/price1h, gap15=Math.abs(ema20_15-ema50_15)/price15
+    const price1h=c1h.at(-1),price15=c15.at(-1)
+    const slope1h=pct(ema20_1h,ema20_1hPrev),slope15=pct(ema20_15,ema20_15Prev)
+    const gap1h=Math.abs(ema20_1h-ema50_1h)/price1h,gap15=Math.abs(ema20_15-ema50_15)/price15
 
-    const bull1h=ema20_1h>ema50_1h && price1h>ema20_1h && slope1h>.00006
-    const bear1h=ema20_1h<ema50_1h && price1h<ema20_1h && slope1h<-.00006
-    const bull15=ema20_15>ema50_15 && price15>ema20_15 && slope15>.00006
-    const bear15=ema20_15<ema50_15 && price15<ema20_15 && slope15<-.00006
-    const strongBullContext=bull1h && bull15 && slope15>.00025
-    const strongBearContext=bear1h && bear15 && slope15<-.00025
+    const bull1h=ema20_1h>ema50_1h&&price1h>ema20_1h&&slope1h>.00006
+    const bear1h=ema20_1h<ema50_1h&&price1h<ema20_1h&&slope1h<-.00006
+    const bull15=ema20_15>ema50_15&&price15>ema20_15&&slope15>.00006
+    const bear15=ema20_15<ema50_15&&price15<ema20_15&&slope15<-.00006
+    const strongBullContext=bull1h&&bull15&&slope15>.00025
+    const strongBearContext=bear1h&&bear15&&slope15<-.00025
 
-    const p5=c5.at(-1), p5Prev=c5.at(-2)
-    const ema9_5=ema(c5.slice(-40),9), ema20_5=ema(c5.slice(-60),20), ema50_5=ema(c5.slice(-80),50)
+    const p5=c5.at(-1),p5Prev=c5.at(-2)
+    const ema9_5=ema(c5.slice(-40),9),ema20_5=ema(c5.slice(-60),20),ema50_5=ema(c5.slice(-80),50)
     const ema9_5Prev=ema(c5.slice(-41,-1),9)
     const slope9_5=pct(ema9_5,ema9_5Prev)
-    const trendLong5=p5>ema20_5 && ema9_5>ema20_5 && ema20_5>ema50_5 && slope9_5>0
-    const trendShort5=p5<ema20_5 && ema9_5<ema20_5 && ema20_5<ema50_5 && slope9_5<0
-    const weakLong5=p5<ema9_5 || slope9_5<-.00015
-    const weakShort5=p5>ema9_5 || slope9_5>.00015
-    const softLong5=ema9_5>ema20_5 && ema20_5>ema50_5
-    const softShort5=ema9_5<ema20_5 && ema20_5<ema50_5
-    const recent5Low=Math.min(...l5.slice(-12,-2)), recent5High=Math.max(...h5.slice(-12,-2))
-    const structureLow=Math.min(...l5.slice(-20,-1)), structureHigh=Math.max(...h5.slice(-20,-1))
-    const vol5Avg=avg(v5.slice(-21,-1)), vol5Now=v5.at(-1), vol5Ratio=vol5Avg>0 ? vol5Now/vol5Avg : 1
 
-    const i=c1.length-1, o0=o1[i],h0=h1[i],l0=l1[i],c0=c1[i],cPrev=c1[i-1],hPrev=h1[i-1],lPrev=l1[i-1],h2=h1[i-2],l2=l1[i-2]
+    const trendLong5=p5>ema20_5&&ema9_5>ema20_5&&ema20_5>ema50_5&&slope9_5>0
+    const trendShort5=p5<ema20_5&&ema9_5<ema20_5&&ema20_5<ema50_5&&slope9_5<0
+    const weakLong5=p5<ema9_5||slope9_5<-.00015
+    const weakShort5=p5>ema9_5||slope9_5>.00015
+    const softLong5=ema9_5>ema20_5&&ema20_5>ema50_5
+    const softShort5=ema9_5<ema20_5&&ema20_5<ema50_5
+
+    const recent5Low=Math.min(...l5.slice(-12,-2)),recent5High=Math.max(...h5.slice(-12,-2))
+    const structureLow=Math.min(...l5.slice(-20,-1)),structureHigh=Math.max(...h5.slice(-20,-1))
+    const vol5Avg=avg(v5.slice(-21,-1)),vol5Now=v5.at(-1),vol5Ratio=vol5Avg>0?vol5Now/vol5Avg:1
+
+    const i=c1.length-1,o0=o1[i],h0=h1[i],l0=l1[i],c0=c1[i],cPrev=c1[i-1],hPrev=h1[i-1],lPrev=l1[i-1],h2=h1[i-2],l2=l1[i-2]
     const br0=bodyRatio(o0,h0,l0,c0)
-    if(range(h0,l0)<=0 || br0===0) return null
-    const closeLong0=closeLong(h0,l0,c0), closeShort0=closeShort(h0,l0,c0)
-    const vol1Avg=avg(v1.slice(-21,-1)), vol1Now=v1.at(-1), vol1Ratio=vol1Avg>0 ? vol1Now/vol1Avg : 1
-    const rsi5=rsi(c5.slice(-50)), rsi1=rsi(c1.slice(-50))
-    if(!Number.isFinite(rsi5)||!Number.isFinite(rsi1)) return null
-    const move1=pct(c0,cPrev), move3=pct(c0,c1.at(-4)), move5=pct(c0,c1.at(-6))
-    const bullishCandle=c0>o0 && br0>=.45 && closeLong0>=.60
-    const bearishCandle=c0<o0 && br0>=.45 && closeShort0>=.60
-    const strongBullCandle=bullishCandle && br0>=.55 && closeLong0>=.65
-    const strongBearCandle=bearishCandle && br0>=.55 && closeShort0>=.65
-    const microBreakLong=c0>Math.max(hPrev,h2), microBreakShort=c0<Math.min(lPrev,l2)
-    const sweepLow=l0<recent5Low && c0>recent5Low && bullishCandle
-    const sweepHigh=h0>recent5High && c0<recent5High && bearishCandle
+    if(range(h0,l0)<=0||br0===0)return null
 
-    // A trigger alone is never an entry. It must occur at a valid 5M location.
-    const longContext=(bull15 || bull1h) && !strongBearContext && !weakShort5
-    const shortContext=(bear15 || bear1h) && !strongBullContext && !weakLong5
-    const touchTolerance=Math.max(atr5/price*.85,.0025)
-    const pullbackLongLocation=softLong5 && (l5.at(-1)<=ema9_5*(1+touchTolerance) || l5.at(-2)<=ema20_5*(1+touchTolerance))
-    const pullbackShortLocation=softShort5 && (h5.at(-1)>=ema9_5*(1-touchTolerance) || h5.at(-2)>=ema20_5*(1-touchTolerance))
-    const reclaimLong=cPrev<=ema9_5 && c0>ema9_5 && bullishCandle && closeLong0>=.65
-    const reclaimShort=cPrev>=ema9_5 && c0<ema9_5 && bearishCandle && closeShort0>=.65
+    const closeLong0=closeLong(h0,l0,c0),closeShort0=closeShort(h0,l0,c0)
+    const vol1Avg=avg(v1.slice(-21,-1)),vol1Now=v1.at(-1),vol1Ratio=vol1Avg>0?vol1Now/vol1Avg:1
+    const rsi5=rsi(c5.slice(-50)),rsi1=rsi(c1.slice(-50))
+    if(!Number.isFinite(rsi5)||!Number.isFinite(rsi1))return null
 
-    const pullbackLong=longContext && pullbackLongLocation && (reclaimLong || (sweepLow&&microBreakLong))
-    const pullbackShort=shortContext && pullbackShortLocation && (reclaimShort || (sweepHigh&&microBreakShort))
-    const breakoutLong=p5Prev<=recent5High && p5>recent5High && vol5Ratio>=1.05
-    const breakoutShort=p5Prev>=recent5Low && p5<recent5Low && vol5Ratio>=1.05
-    const retestLong=!breakoutLong && longContext && p5>recent5High && l0<=recent5High*(1+touchTolerance*.5) && c0>recent5High && bullishCandle && microBreakLong
-    const retestShort=!breakoutShort && shortContext && p5<recent5Low && h0>=recent5Low*(1-touchTolerance*.5) && c0<recent5Low && bearishCandle && microBreakShort
-    const continuationLong=longContext && trendLong5 && microBreakLong && strongBullCandle && move5<Math.max(atr5/price*4,.015) && price-ema9_5<atr5*1.8
-    const continuationShort=shortContext && trendShort5 && microBreakShort && strongBearCandle && move5>-Math.max(atr5/price*4,.015) && ema9_5-price<atr5*1.8
+    const move1=pct(c0,cPrev),move3=pct(c0,c1.at(-4)),move5=pct(c0,c1.at(-6))
+    const bullishCandle=c0>o0&&br0>=.45&&closeLong0>=.60
+    const bearishCandle=c0<o0&&br0>=.45&&closeShort0>=.60
+    const strongBullCandle=bullishCandle&&br0>=.55&&closeLong0>=.65
+    const strongBearCandle=bearishCandle&&br0>=.55&&closeShort0>=.65
+    const microBreakLong=c0>Math.max(hPrev,h2),microBreakShort=c0<Math.min(lPrev,l2)
+    const sweepLow=l0<recent5Low&&c0>recent5Low&&bullishCandle
+    const sweepHigh=h0>recent5High&&c0<recent5High&&bearishCandle
+
+    const longContext=(bull15||bull1h)&&!strongBearContext&&!weakShort5
+    const shortContext=(bear15||bear1h)&&!strongBullContext&&!weakLong5
+
+    const touchTolerance=Math.max(atr5/price*.75,.002)
+    const pullbackLongLocation=softLong5&&(l5.at(-1)<=ema9_5*(1+touchTolerance)||l5.at(-2)<=ema20_5*(1+touchTolerance))
+    const pullbackShortLocation=softShort5&&(h5.at(-1)>=ema9_5*(1-touchTolerance)||h5.at(-2)>=ema20_5*(1-touchTolerance))
+
+    const reclaimLong=cPrev<=ema9_5&&c0>ema9_5&&bullishCandle&&closeLong0>=.65
+    const reclaimShort=cPrev>=ema9_5&&c0<ema9_5&&bearishCandle&&closeShort0>=.65
+
+    const pullbackLong=longContext&&pullbackLongLocation&&(reclaimLong||(sweepLow&&microBreakLong))
+    const pullbackShort=shortContext&&pullbackShortLocation&&(reclaimShort||(sweepHigh&&microBreakShort))
+
+    const breakoutLong=p5Prev<=recent5High&&p5>recent5High&&vol5Ratio>=1.08
+    const breakoutShort=p5Prev>=recent5Low&&p5<recent5Low&&vol5Ratio>=1.08
+
+    const retestLong=!breakoutLong&&longContext&&p5>recent5High&&l0<=recent5High*(1+touchTolerance*.5)&&c0>recent5High&&bullishCandle&&microBreakLong
+    const retestShort=!breakoutShort&&shortContext&&p5<recent5Low&&h0>=recent5Low*(1-touchTolerance*.5)&&c0<recent5Low&&bearishCandle&&microBreakShort
+
+    const continuationLong=longContext&&trendLong5&&microBreakLong&&strongBullCandle&&move5<Math.max(atr5/price*4,.015)&&price-ema9_5<atr5*1.8
+    const continuationShort=shortContext&&trendShort5&&microBreakShort&&strongBearCandle&&move5>-Math.max(atr5/price*4,.015)&&ema9_5-price<atr5*1.8
+
     const reversalLong=sweepLow&&microBreakLong&&strongBullCandle&&!strongBearContext&&rsi5<43&&closeLong0>=.68
     const reversalShort=sweepHigh&&microBreakShort&&strongBearCandle&&!strongBullContext&&rsi5>57&&closeShort0>=.68
 
-    let longSetup=null, shortSetup=null
-    if(reversalLong) longSetup='REVERSAL_LONG'; else if(retestLong) longSetup='BREAKOUT_RETEST'; else if(pullbackLong) longSetup='PULLBACK_RECLAIM'; else if(continuationLong) longSetup='TREND_CONTINUATION'
-    if(reversalShort) shortSetup='REVERSAL_SHORT'; else if(retestShort) shortSetup='BREAKOUT_RETEST'; else if(pullbackShort) shortSetup='PULLBACK_RECLAIM'; else if(continuationShort) shortSetup='TREND_CONTINUATION'
+    let longSetup=null,shortSetup=null
+    if(reversalLong)longSetup='REVERSAL_LONG';else if(retestLong)longSetup='BREAKOUT_RETEST';else if(pullbackLong)longSetup='PULLBACK_RECLAIM';else if(continuationLong)longSetup='TREND_CONTINUATION'
+    if(reversalShort)shortSetup='REVERSAL_SHORT';else if(retestShort)shortSetup='BREAKOUT_RETEST';else if(pullbackShort)shortSetup='PULLBACK_RECLAIM';else if(continuationShort)shortSetup='TREND_CONTINUATION'
+
     let longBias=(bull1h?2:0)+(bull15?2:0)+(trendLong5?1:0)+(slope15>.00003?1:0)
     let shortBias=(bear1h?2:0)+(bear15?2:0)+(trendShort5?1:0)+(slope15<-.00003?1:0)
-    let side=null, setup=null
-    if(longSetup && !shortSetup){side='LONG';setup=longSetup}
-    else if(shortSetup && !longSetup){side='SHORT';setup=shortSetup}
-    else if(longSetup && shortSetup){if(longBias>shortBias){side='LONG';setup=longSetup}else if(shortBias>longBias){side='SHORT';setup=shortSetup}}
-    if(!side) return null
 
-    // Last guards against counter-trend and chasing, but do not reject normal pullbacks.
-    if(side==='LONG' && strongBearContext && setup!=='REVERSAL_LONG') return null
-    if(side==='SHORT' && strongBullContext && setup!=='REVERSAL_SHORT') return null
-    if(side==='LONG' && move1< -Math.max(atr1/price*2,.003)) return null
-    if(side==='SHORT' && move1> Math.max(atr1/price*2,.003)) return null
+    let side=null,setup=null
+    if(longSetup&&!shortSetup){side='LONG';setup=longSetup}
+    else if(shortSetup&&!longSetup){side='SHORT';setup=shortSetup}
+    else if(longSetup&&shortSetup){if(longBias>shortBias){side='LONG';setup=longSetup}else if(shortBias>longBias){side='SHORT';setup=shortSetup}}
+    if(!side)return null
+
+    if(side==='LONG'&&strongBearContext&&setup!=='REVERSAL_LONG')return null
+    if(side==='SHORT'&&strongBullContext&&setup!=='REVERSAL_SHORT')return null
+
+    if(side==='LONG'&&weakShort5&&setup!=='REVERSAL_LONG')return null
+    if(side==='SHORT'&&weakLong5&&setup!=='REVERSAL_SHORT')return null
+
+    if(side==='LONG'&&move1<-Math.max(atr1/price*1.8,.0025))return null
+    if(side==='SHORT'&&move1>Math.max(atr1/price*1.8,.0025))return null
+
+    if(side==='LONG'&&move3<-Math.max(atr5/price*1.5,.006)&&setup!=='REVERSAL_LONG')return null
+    if(side==='SHORT'&&move3>Math.max(atr5/price*1.5,.006)&&setup!=='REVERSAL_SHORT')return null
 
     let score=50
     const scoreBreakdown={h1Trend:0,trend15:0,setup:0,sweep:0,breakoutRetest:0,momentum:0,microBreak:0,bodyRatio:0,volume1m:0,volume5m:0,rsi1m:0,rsi5m:0,atrRatio:0,rr:0}
     const add=(key,n)=>{score+=n;scoreBreakdown[key]+=n}
-    const trend1h=side==='LONG'?bull1h:bear1h, trend15=side==='LONG'?bull15:bear15, micro=side==='LONG'?microBreakLong:microBreakShort, sweep=side==='LONG'?sweepLow:sweepHigh
-    if(trend1h)add('h1Trend',7); if(trend15)add('trend15',8); if(micro)add('microBreak',5); if(sweep)add('sweep',5)
-    if(setup==='PULLBACK_RECLAIM')add('setup',10); if(setup==='BREAKOUT_RETEST'){add('setup',11);add('breakoutRetest',3)}
-    if(setup==='TREND_CONTINUATION')add('setup',9); if(setup==='REVERSAL_LONG'||setup==='REVERSAL_SHORT')add('setup',12)
-    if(vol1Ratio>=1.15)add('volume1m',2); if(vol5Ratio>=1.10)add('volume5m',2); if(br0>=.55)add('bodyRatio',3)
-    if((side==='LONG'&&rsi5>=42&&rsi5<=70)||(side==='SHORT'&&rsi5>=30&&rsi5<=58))add('rsi5m',2)
-    if((side==='LONG'&&rsi1>=42&&rsi1<=76)||(side==='SHORT'&&rsi1>=24&&rsi1<=58))add('rsi1m',1)
-    if(side==='LONG'&&move5>atr5/price*3)add('momentum',-4); if(side==='SHORT'&&move5<-atr5/price*3)add('momentum',-4)
-    if(score<62) return null
 
-    const entry=price, swingLow5=low(l5.slice(0,-1),24), swingHigh5=high(h5.slice(0,-1),24)
-    const swingLow15=low(l15.slice(0,-1),12), swingHigh15=high(h15.slice(0,-1),12)
+    const trend1h=side==='LONG'?bull1h:bear1h
+    const trend15=side==='LONG'?bull15:bear15
+    const micro=side==='LONG'?microBreakLong:microBreakShort
+    const sweep=side==='LONG'?sweepLow:sweepHigh
+
+    if(trend1h)add('h1Trend',8)
+    if(trend15)add('trend15',9)
+    if(micro)add('microBreak',5)
+    if(sweep)add('sweep',5)
+
+    if(setup==='PULLBACK_RECLAIM')add('setup',11)
+    if(setup==='BREAKOUT_RETEST'){add('setup',11);add('breakoutRetest',3)}
+    if(setup==='TREND_CONTINUATION')add('setup',9)
+    if(setup==='REVERSAL_LONG'||setup==='REVERSAL_SHORT')add('setup',12)
+
+    if(vol1Ratio>=1.15)add('volume1m',2)
+    if(vol5Ratio>=1.10)add('volume5m',2)
+    if(br0>=.55)add('bodyRatio',3)
+
+    if((side==='LONG'&&rsi5>=42&&rsi5<=68)||(side==='SHORT'&&rsi5>=32&&rsi5<=58))add('rsi5m',2)
+    if((side==='LONG'&&rsi1>=42&&rsi1<=74)||(side==='SHORT'&&rsi1>=26&&rsi1<=58))add('rsi1m',1)
+
+    if(side==='LONG'&&move5>atr5/price*2.8)add('momentum',-5)
+    if(side==='SHORT'&&move5<-atr5/price*2.8)add('momentum',-5)
+
+    if(side==='LONG'&&price>ema9_5+atr5*1.8&&setup!=='REVERSAL_LONG')return null
+    if(side==='SHORT'&&price<ema9_5-atr5*1.8&&setup!=='REVERSAL_SHORT')return null
+
+    if(score<68)return null
+
+    const entry=price
+    const swingLow5=low(l5.slice(0,-1),24),swingHigh5=high(h5.slice(0,-1),24)
+    const swingLow15=low(l15.slice(0,-1),12),swingHigh15=high(h15.slice(0,-1),12)
     const buffer=Math.max(atr5*.10,atr1*.55)
-let sl,tp,risk,targetLevel
-const isReversal=setup==='REVERSAL_LONG'||setup==='REVERSAL_SHORT'
 
-if(side==='LONG'){
-    const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,structureLow)
-    sl=Math.max(structureStop-buffer,entry-(isReversal?atr5*.75:atr5*.60)); risk=entry-sl
-    if(risk>atr15*1.45 || risk<=0) return null
+    let sl,tp,risk,targetLevel
+    const isReversal=setup==='REVERSAL_LONG'||setup==='REVERSAL_SHORT'
+    const strongSetup=isReversal||setup==='PULLBACK_RECLAIM'||setup==='BREAKOUT_RETEST'
+    const maxRiskATR=strongSetup?1.45:1.25
+    const maxRiskPct=strongSetup?.018:.015
 
-    const resistanceCandidates=[recent5High,Math.max(...h15.slice(-12,-1))].filter(level=>level>entry+atr5*.30)
-    const resistance=resistanceCandidates.length?Math.min(...resistanceCandidates):null; targetLevel=resistance
-    if(resistance&&resistance-entry<risk*.95) return null
+    if(side==='LONG'){
+        const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,structureLow)
+        const atrStop=entry-(isReversal?atr5*.70:atr5*.55)
+        sl=Math.max(structureStop-buffer,atrStop)
+        risk=entry-sl
+        if(risk<=0||risk/atr15>maxRiskATR||risk/entry>maxRiskPct)return null
 
-    tp=entry+Math.max(risk*1.50,atr15*.95)
-    if(resistance) tp=Math.min(tp,resistance-atr1*.10)
+        const resistanceCandidates=[recent5High,swingHigh15].filter(level=>level>entry+atr5*.30)
+        const resistance=resistanceCandidates.length?Math.min(...resistanceCandidates):null
+        targetLevel=resistance
 
-}else{
-    const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,structureHigh)
-    sl=Math.min(structureStop+buffer,entry+(isReversal?atr5*.75:atr5*.60)); risk=sl-entry
-    if(risk>atr15*1.45 || risk<=0) return null
+        if(resistance&&resistance-entry<risk*.95)return null
 
-    const supportCandidates=[recent5Low,Math.min(...l15.slice(-12,-1))].filter(level=>level<entry-atr5*.30)
-    const support=supportCandidates.length?Math.max(...supportCandidates):null; targetLevel=support
-    if(support&&entry-support<risk*.95) return null
+        tp=entry+Math.max(risk*1.50,atr15*.95)
+        if(resistance)tp=Math.min(tp,resistance-atr1*.10)
+    }else{
+        const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,structureHigh)
+        const atrStop=entry+(isReversal?atr5*.70:atr5*.55)
+        sl=Math.min(structureStop+buffer,atrStop)
+        risk=sl-entry
+        if(risk<=0||risk/atr15>maxRiskATR||risk/entry>maxRiskPct)return null
 
-    tp=entry-Math.max(risk*1.50,atr15*.95)
-    if(support) tp=Math.max(tp,support+atr1*.10)
-}
+        const supportCandidates=[recent5Low,swingLow15].filter(level=>level<entry-atr5*.30)
+        const support=supportCandidates.length?Math.max(...supportCandidates):null
+        targetLevel=support
+
+        if(support&&entry-support<risk*.95)return null
+
+        tp=entry-Math.max(risk*1.50,atr15*.95)
+        if(support)tp=Math.max(tp,support+atr1*.10)
+    }
+
     const finalRR=side==='LONG'?(tp-entry)/risk:(entry-tp)/risk
-    if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(finalRR)||finalRR<1.35) return null
+    if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(finalRR)||finalRR<1.40)return null
+
     scoreBreakdown.rr=round(finalRR,2)
-    const microLow=Math.min(...l1.slice(-8)), microHigh=Math.max(...h1.slice(-8))
-    const resistance=high(h5.slice(0,-1),18), support=low(l5.slice(0,-1),18)
-    const marketState=(bull15||bear15) && (gap15>=.002||gap1h>=.002)?'TREND_STRONG':(bull15||bear15)?'TREND_WEAK':'RANGE'
+
+    const microLow=Math.min(...l1.slice(-8)),microHigh=Math.max(...h1.slice(-8))
+    const resistance=high(h5.slice(0,-1),18),support=low(l5.slice(0,-1),18)
+    const marketState=(bull15||bear15)&&(gap15>=.002||gap1h>=.002)?'TREND_STRONG':(bull15||bear15)?'TREND_WEAK':'RANGE'
     const volatility=atrRatio5>=.004?'HIGH':atrRatio5<=.0012?'LOW':'NORMAL'
 
     return {
-        side, price:round(entry), sl:round(sl), tp:round(tp), setup, marketState, volatility, score:Math.round(score),
+        side,price:round(entry),sl:round(sl),tp:round(tp),setup,marketState,volatility,score:Math.round(score),
         scoreBreakdown,
         indicators:{ema20_15:round(ema20_15),ema50_15:round(ema50_15),ema20_1h:round(ema20_1h),ema50_1h:round(ema50_1h),ema9_5:round(ema9_5),ema20_5:round(ema20_5),ema50_5:round(ema50_5),atr:round(atr5),atr1m:round(atr1),rsi:round(rsi5,2),volumeNow:vol1Now,volumeAvg:vol1Avg,volumeRatio:round(vol1Ratio,3)},
         structure:{support,resistance,recent5Low,recent5High,structureLow,structureHigh,microLow,microHigh,sweepLow,sweepHigh},
@@ -3658,7 +3707,6 @@ if(side==='LONG'){
         debug:{reason:setup,timestamp:Date.now(),candle:{open:round(o0),high:round(h0),low:round(l0),close:round(c0)},targetLevel:targetLevel?round(targetLevel):null}
     }
 }
-
 // ================= SCAN =================
 async function scan(symbol){
 
