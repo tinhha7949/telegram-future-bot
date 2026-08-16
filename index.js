@@ -4267,17 +4267,6 @@ async function coreLogic(data15,data1h,data5,data1m){
 
     const trendLong5=p5>ema20_5&&ema9_5>ema20_5&&ema20_5>ema50_5&&slope9_5>.00003
     const trendShort5=p5<ema20_5&&ema9_5<ema20_5&&ema20_5<ema50_5&&slope9_5<-.00003
-    const cleanTrendLong5=
-    p5>ema20_5 &&
-    ema9_5>ema20_5 &&
-    ema20_5>ema50_5 &&
-    slope9_5>=.00005
-
-const cleanTrendShort5=
-    p5<ema20_5 &&
-    ema9_5<ema20_5 &&
-    ema20_5<ema50_5 &&
-    slope9_5<=-.00005
 
     const softLong5=ema9_5>ema20_5&&ema20_5>ema50_5
     const softShort5=ema9_5<ema20_5&&ema20_5<ema50_5
@@ -4311,7 +4300,7 @@ const cleanTrendShort5=
     const closeLong0=closeLong(h0,l0,c0)
     const closeShort0=closeShort(h0,l0,c0)
 
-    if(br0<.40)return null
+    if(br0<.35)return null
 
     const vol1Avg=avg(v1.slice(-21,-1))
     const vol1Now=v1.at(-1)
@@ -4358,21 +4347,6 @@ const cleanTrendShort5=
     // =========================================================
     const longAlignment=bull1h&&bull15
     const shortAlignment=bear1h&&bear15
-    const cleanLongAlignment=
-    bull1h &&
-    bull15 &&
-    ema200Bull &&
-    above200_15 &&
-    gap1h>=.0012 &&
-    gap15>=.0012
-
-const cleanShortAlignment=
-    bear1h &&
-    bear15 &&
-    ema200Bear &&
-    below200_15 &&
-    gap1h>=.0012 &&
-    gap15>=.0012
 
     const longPartialAlignment=(bull1h||bull15)&&!strongBear1h&&!strongBear15
     const shortPartialAlignment=(bear1h||bear15)&&!strongBull1h&&!strongBull15
@@ -4513,32 +4487,6 @@ const cleanShortAlignment=
     else if(pullbackShort)shortSetup="PULLBACK_RECLAIM"
     else if(continuationShort)shortSetup="TREND_CONTINUATION"
     else if(reversalShort)shortSetup="REVERSAL_SHORT"
-    // REVERSAL CHỈ ĐƯỢC PHÉP KHI TÍN HIỆU RẤT MẠNH
-if(longSetup==="REVERSAL_LONG"){
-    if(
-        !strongSweepLow ||
-        !microBreakLongStrong ||
-        !strongBullCandle ||
-        rsi5<35 ||
-        rsi5>48 ||
-        !bull15
-    ){
-        longSetup=null
-    }
-}
-
-if(shortSetup==="REVERSAL_SHORT"){
-    if(
-        !strongSweepHigh ||
-        !microBreakShortStrong ||
-        !strongBearCandle ||
-        rsi5<52 ||
-        rsi5>65 ||
-        !bear15
-    ){
-        shortSetup=null
-    }
-}
 
     // =========================================================
     // DIRECTION SCORE
@@ -4571,36 +4519,26 @@ if(shortSetup==="REVERSAL_SHORT"){
     let setup=null
 
     if(longSetup&&!shortSetup){
-    if(longDirection>=70){
-        side="LONG"
-        setup=longSetup
+        if(longDirection>=62||longSetup==="REVERSAL_LONG"){
+            side="LONG"
+            setup=longSetup
+        }
+    }else if(shortSetup&&!longSetup){
+        if(shortDirection>=62||shortSetup==="REVERSAL_SHORT"){
+            side="SHORT"
+            setup=shortSetup
+        }
+    }else if(longSetup&&shortSetup){
+        if(longDirection-shortDirection>=10){
+            side="LONG"
+            setup=longSetup
+        }else if(shortDirection-longDirection>=10){
+            side="SHORT"
+            setup=shortSetup
+        }
     }
-}else if(shortSetup&&!longSetup){
-    if(shortDirection>=70){
-        side="SHORT"
-        setup=shortSetup
-    }
-}else if(longSetup&&shortSetup){
-    if(longDirection-shortDirection>=15&&longDirection>=70){
-        side="LONG"
-        setup=longSetup
-    }else if(shortDirection-longDirection>=15&&shortDirection>=70){
-        side="SHORT"
-        setup=shortSetup
-    }
-}
 
     if(!side)return null
-
-    if(side==="LONG"){
-    if(c0<=o0)return null
-    if(closeLong0<.65)return null
-}
-
-if(side==="SHORT"){
-    if(c0>=o0)return null
-    if(closeShort0<.65)return null
-}
 
     // =========================================================
     // HARD DIRECTION FILTER
@@ -4616,31 +4554,14 @@ if(side==="SHORT"){
 
     if(side==="LONG"&&weakLong5&&setup!=="REVERSAL_LONG"&&setup!=="PULLBACK_RECLAIM")return null
     if(side==="SHORT"&&weakShort5&&setup!=="REVERSAL_SHORT"&&setup!=="PULLBACK_RECLAIM")return null
-    if(
-    setup!=="REVERSAL_LONG" &&
-    setup!=="REVERSAL_SHORT"
-){
-    if(side==="LONG"&&!cleanLongAlignment)return null
-    if(side==="SHORT"&&!cleanShortAlignment)return null
-}
-if(side==="LONG"&&setup==="TREND_CONTINUATION"&&!cleanTrendLong5)return null
-if(side==="SHORT"&&setup==="TREND_CONTINUATION"&&!cleanTrendShort5)return null
-if(side==="LONG"&&setup==="PULLBACK_RECLAIM"){
-    if(!softLong5)return null
-    if(slope9_5<0)return null
-}
 
-if(side==="SHORT"&&setup==="PULLBACK_RECLAIM"){
-    if(!softShort5)return null
-    if(slope9_5>0)return null
-}
     // =========================================================
     // CHASE FILTER
     // =========================================================
     const distEma5=Math.abs(price-ema9_5)/price
 
     if(setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT"){
-        if(distEma5>Math.max(atr5/price*1.35,.0065))return null
+        if(distEma5>Math.max(atr5/price*1.80,.008))return null
     }
 
     if(side==="LONG"&&price>ema9_5+atr5*1.60&&setup!=="REVERSAL_LONG")return null
@@ -4775,250 +4696,175 @@ if(side==="SHORT"&&setup==="PULLBACK_RECLAIM"){
     // RISK ENGINE
     // =========================================================
     // =========================================================
-// FIXED TPSL / STRUCTURE RISK ENGINE
-// =========================================================
+    // RISK ENGINE
+    // =========================================================
+    const entry=price
+    const buffer=Math.max(atr5*.12,atr1*.50)
 
-const entry=price
+    let sl,tp,risk,targetLevel
 
-const isReversal =
-    setup==="REVERSAL_LONG" ||
-    setup==="REVERSAL_SHORT"
+    const isReversal=setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"
+    const strongSetup=isReversal||setup==="PULLBACK_RECLAIM"||setup==="BREAKOUT_RETEST"
+    const momentumSetup=setup==="MOMENTUM"||setup==="CONTINUATION"
+    const volatilityRatio=atr15/entry
+    const highVol=volatilityRatio>=.006
+    const lowVol=volatilityRatio<=.0025
 
-const buffer=Math.max(
-    atr5*0.18,
-    atr1*0.70
-)
+    const maxRiskATR=strongSetup?1.35:momentumSetup?1.20:1.15
+    const maxRiskPct=strongSetup?.018:momentumSetup?.016:.014
 
-let sl
-let tp
-let risk
-let targetLevel
+    // Dynamic R target.
+    let targetR=1.65
+    if(strongSetup)targetR=1.85
+    if(momentumSetup)targetR=1.75
+    if(highVol)targetR+=.20
+    if(lowVol)targetR-=.10
+    if(isReversal)targetR=1.90
 
-// ---------------------------------------------
-// RISK LIMIT
-// ---------------------------------------------
+    if(targetR<1.55)targetR=1.55
 
-const maxRiskATR =
-    setup==="BREAKOUT_RETEST" ? 1.20 :
-    setup==="PULLBACK_RECLAIM" ? 1.15 :
-    setup==="TREND_CONTINUATION" ? 1.10 :
-    1.00
+    if(side==="LONG"){
+        const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,swingLow15)
+        const atrStop=entry-(isReversal?atr5*.80:atr5*.70)
+        const structureRisk=entry-(structureStop-buffer)
+        const atrRisk=entry-atrStop
 
-const maxRiskPct =
-    setup==="BREAKOUT_RETEST" ? 0.016 :
-    setup==="PULLBACK_RECLAIM" ? 0.015 :
-    setup==="TREND_CONTINUATION" ? 0.014 :
-    0.012
+        // Dynamic SL: choose the safer structural/volatility stop.
+        sl=Math.max(structureStop-buffer,atrStop)
 
+        // Extra volatility protection.
+        if(highVol){
+            const maxVolStop=entry-atr15*.95
+            sl=Math.min(sl,maxVolStop)
+        }else if(lowVol){
+            const tightStop=entry-atr5*.60
+            sl=Math.max(sl,tightStop)
+        }
 
-// =========================================================
-// LONG
-// =========================================================
+        risk=entry-sl
 
-if(side==="LONG"){
+        if(risk<=0)return null
+        if(!Number.isFinite(risk))return null
+        if(risk/atr15>maxRiskATR)return null
+        if(risk/entry>maxRiskPct)return null
 
-    // SL phải nằm dưới structure thực
-    const structureStop =
-        Math.min(
-            swingLow5,
-            swingLow15,
-            l5.at(-2),
-            l5.at(-3)
-        )
+        targetLevel=resistance
 
-    const atrStop =
-        entry -
-        atr5 * (
-            setup==="PULLBACK_RECLAIM"
-                ? 0.85
-                : 0.75
-        )
+        const roomAbs=roomToResistance*entry
+        const structureRoom=resistance?resistance-entry:roomAbs
+        const usableRoom=Math.max(0,structureRoom)
 
-    // Chọn mức SL hợp lý hơn:
-    // không đặt quá sát entry
-    sl=Math.min(
-        structureStop-buffer,
-        atrStop
-    )
+        if(resistance&&resistance-entry<risk*1.35)return null
 
-    risk=entry-sl
+        // Dynamic TP based on actual risk + available market room.
+        let dynamicTarget=entry+risk*targetR
+        const atrTarget=entry+atr15*(highVol?1.45:lowVol?1.05:1.25)
 
-    if(!Number.isFinite(risk)||risk<=0)return null
+        dynamicTarget=Math.max(dynamicTarget,atrTarget)
 
-    // Không nhận SL quá rộng
-    if(risk>atr15*maxRiskATR)return null
-    if(risk/entry>maxRiskPct)return null
+        if(resistance){
+            const safeTarget=resistance-Math.max(atr1*.15,atr5*.08)
+            if(safeTarget<=entry)return null
+            dynamicTarget=Math.min(dynamicTarget,safeTarget)
+        }else if(usableRoom>0){
+            dynamicTarget=Math.min(dynamicTarget,entry+usableRoom*.82)
+        }
 
-    // -----------------------------------------
-    // TP theo R cố định
-    // -----------------------------------------
-
-    const targetR =
-        setup==="BREAKOUT_RETEST" ? 1.80 :
-        setup==="PULLBACK_RECLAIM" ? 1.75 :
-        setup==="TREND_CONTINUATION" ? 1.70 :
-        1.60
-
-    let rawTP=entry+risk*targetR
-
-    targetLevel=resistance
-
-    // Nếu có resistance gần hơn TP:
-    // không ép TP xuyên qua resistance
-    if(resistance){
-
-        const safeResistance=
-            resistance-Math.max(
-                atr1*0.20,
-                atr5*0.05
-            )
-
-        if(safeResistance<=entry)return null
-
-        const availableRR=
-            (safeResistance-entry)/risk
-
-        // Không đủ room để đạt RR tối thiểu
-        if(availableRR<1.55)return null
-
-        tp=Math.min(
-            rawTP,
-            safeResistance
-        )
-
+        tp=dynamicTarget
     }else{
-        tp=rawTP
+        const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,swingHigh15)
+        const atrStop=entry+(isReversal?atr5*.80:atr5*.70)
+        const structureRisk=structureStop+buffer-entry
+        const atrRisk=atrStop-entry
+
+        // Dynamic SL: choose the safer structural/volatility stop.
+        sl=Math.min(structureStop+buffer,atrStop)
+
+        // Extra volatility protection.
+        if(highVol){
+            const maxVolStop=entry+atr15*.95
+            sl=Math.max(sl,maxVolStop)
+        }else if(lowVol){
+            const tightStop=entry+atr5*.60
+            sl=Math.min(sl,tightStop)
+        }
+
+        risk=sl-entry
+
+        if(risk<=0)return null
+        if(!Number.isFinite(risk))return null
+        if(risk/atr15>maxRiskATR)return null
+        if(risk/entry>maxRiskPct)return null
+
+        targetLevel=support
+
+        const roomAbs=roomToSupport*entry
+        const structureRoom=support?entry-support:roomAbs
+        const usableRoom=Math.max(0,structureRoom)
+
+        if(support&&entry-support<risk*1.35)return null
+
+        // Dynamic TP based on actual risk + available market room.
+        let dynamicTarget=entry-risk*targetR
+        const atrTarget=entry-atr15*(highVol?1.45:lowVol?1.05:1.25)
+
+        dynamicTarget=Math.min(dynamicTarget,atrTarget)
+
+        if(support){
+            const safeTarget=support+Math.max(atr1*.15,atr5*.08)
+            if(safeTarget>=entry)return null
+            dynamicTarget=Math.max(dynamicTarget,safeTarget)
+        }else if(usableRoom>0){
+            dynamicTarget=Math.max(dynamicTarget,entry-usableRoom*.82)
+        }
+
+        tp=dynamicTarget
     }
 
-}
+    // =========================================================
+    // FINAL RR / ROOM
+    // =========================================================
+    const finalRR=side==="LONG"?(tp-entry)/risk:(entry-tp)/risk
 
+    if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(risk)||!Number.isFinite(finalRR))return null
+    if(risk<=0)return null
+    if(finalRR<1.55)return null
 
-// =========================================================
-// SHORT
-// =========================================================
+    // Do not allow TP to be too close to the entry.
+    const minTPDistance=Math.max(risk*1.55,atr15*.90)
+    if(side==="LONG"&&tp<entry+minTPDistance)return null
+    if(side==="SHORT"&&tp>entry-minTPDistance)return null
 
-else{
+    if(finalRR>=1.55)add("rr",4)
+    if(finalRR>=1.80)add("rr",4)
+    if(finalRR>=2.10)add("rr",3)
 
-    const structureStop =
-        Math.max(
-            swingHigh5,
-            swingHigh15,
-            h5.at(-2),
-            h5.at(-3)
-        )
-
-    const atrStop =
-        entry +
-        atr5 * (
-            setup==="PULLBACK_RECLAIM"
-                ? 0.85
-                : 0.75
-        )
-
-    sl=Math.max(
-        structureStop+buffer,
-        atrStop
-    )
-
-    risk=sl-entry
-
-    if(!Number.isFinite(risk)||risk<=0)return null
-
-    if(risk>atr15*maxRiskATR)return null
-    if(risk/entry>maxRiskPct)return null
-
-    const targetR =
-        setup==="BREAKOUT_RETEST" ? 1.80 :
-        setup==="PULLBACK_RECLAIM" ? 1.75 :
-        setup==="TREND_CONTINUATION" ? 1.70 :
-        1.60
-
-    let rawTP=entry-risk*targetR
-
-    targetLevel=support
-
-    if(support){
-
-        const safeSupport=
-            support+Math.max(
-                atr1*0.20,
-                atr5*0.05
-            )
-
-        if(safeSupport>=entry)return null
-
-        const availableRR=
-            (entry-safeSupport)/risk
-
-        if(availableRR<1.55)return null
-
-        tp=Math.max(
-            rawTP,
-            safeSupport
-        )
-
+    // Room score.
+    if(side==="LONG"){
+        if(roomToResistance>=atr15/price*2.0)add("room",4)
+        if(roomToResistance>=atr15/price*3.0)add("room",4)
     }else{
-        tp=rawTP
+        if(roomToSupport>=atr15/price*2.0)add("room",4)
+        if(roomToSupport>=atr15/price*3.0)add("room",4)
     }
-}
-
-
-// =========================================================
-// FINAL TPSL VALIDATION
-// =========================================================
-
-if(
-    !Number.isFinite(sl) ||
-    !Number.isFinite(tp) ||
-    !Number.isFinite(risk) ||
-    risk<=0
-){
-    return null
-}
-
-const finalRR =
-    side==="LONG"
-        ? (tp-entry)/risk
-        : (entry-tp)/risk
-
-if(!Number.isFinite(finalRR))return null
-
-// Tuyệt đối không nhận RR thấp
-if(finalRR<1.55)return null
-
-// Ưu tiên RR >= 1.70
-if(finalRR<1.65)return null
-
-// Không để TP/SL quá sát
-if(Math.abs(tp-entry)<atr5*0.80)return null
-if(Math.abs(sl-entry)<atr5*0.45)return null
-
     // =========================================================
     // FINAL QUALITY FILTER
     // =========================================================
-    let minimumScore=82
+    let minimumScore=76
 
-if(setup==="PULLBACK_RECLAIM"){
-    minimumScore=82
-}
+    if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"){
+        minimumScore=78
+    }
 
-if(setup==="BREAKOUT_RETEST"){
-    minimumScore=84
-}
-
-if(setup==="TREND_CONTINUATION"){
-    minimumScore=85
-}
-
-if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"){
-    minimumScore=88
-}
+    if(setup==="TREND_CONTINUATION"){
+        minimumScore=78
+    }
 
     if(score<minimumScore)return null
 
     // Không cho entry nếu direction quá yếu.
     const finalDirection=side==="LONG"?longDirection:shortDirection
-    if(finalDirection<70&&setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT")return null
+    if(finalDirection<62&&setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT")return null
 
     // =========================================================
     // MARKET STATE
@@ -7796,7 +7642,7 @@ async function syncActiveTrades(){
 let DYNAMIC_TPSL_RUNNING = false
 const ENABLE_DYNAMIC_TPSL=false
 async function runDynamicTPSL(){
-     if(!ENABLE_DYNAMIC_TPSL)return
+    if(!ENABLE_DYNAMIC_TPSL)return
 
     if(DYNAMIC_TPSL_RUNNING){
         return
