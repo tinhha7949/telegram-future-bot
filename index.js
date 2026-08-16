@@ -4695,9 +4695,6 @@ async function coreLogic(data15,data1h,data5,data1m){
     // =========================================================
     // RISK ENGINE
     // =========================================================
-    // =========================================================
-    // RISK ENGINE
-    // =========================================================
     const entry=price
     const buffer=Math.max(atr5*.12,atr1*.50)
 
@@ -4705,7 +4702,8 @@ async function coreLogic(data15,data1h,data5,data1m){
 
     const isReversal=setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"
     const strongSetup=isReversal||setup==="PULLBACK_RECLAIM"||setup==="BREAKOUT_RETEST"
-    const momentumSetup=setup==="MOMENTUM"||setup==="CONTINUATION"
+    const momentumSetup=setup==="TREND_CONTINUATION"
+
     const volatilityRatio=atr15/entry
     const highVol=volatilityRatio>=.006
     const lowVol=volatilityRatio<=.0025
@@ -4713,32 +4711,35 @@ async function coreLogic(data15,data1h,data5,data1m){
     const maxRiskATR=strongSetup?1.35:momentumSetup?1.20:1.15
     const maxRiskPct=strongSetup?.018:momentumSetup?.016:.014
 
-    // Dynamic R target.
+    // =========================================================
+    // DYNAMIC TARGET R
+    // =========================================================
     let targetR=1.65
-    if(strongSetup)targetR=1.85
-    if(momentumSetup)targetR=1.75
-    if(highVol)targetR+=.20
-    if(lowVol)targetR-=.10
-    if(isReversal)targetR=1.90
 
-    if(targetR<1.55)targetR=1.55
+    if(setup==="PULLBACK_RECLAIM")targetR=1.70
+    if(setup==="BREAKOUT_RETEST")targetR=1.75
+    if(setup==="TREND_CONTINUATION")targetR=1.65
+    if(isReversal)targetR=1.70
+
+    if(highVol)targetR+=.10
+    if(lowVol)targetR-=.05
+
+    targetR=Math.max(1.55,Math.min(targetR,1.85))
 
     if(side==="LONG"){
         const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,swingLow15)
-        const atrStop=entry-(isReversal?atr5*.80:atr5*.70)
-        const structureRisk=entry-(structureStop-buffer)
-        const atrRisk=entry-atrStop
+        const atrStop=entry-(isReversal?atr5*.75:atr5*.65)
 
-        // Dynamic SL: choose the safer structural/volatility stop.
+        // Structure is the primary SL.
+        // ATR only prevents the stop from becoming excessively wide.
         sl=Math.max(structureStop-buffer,atrStop)
 
-        // Extra volatility protection.
         if(highVol){
-            const maxVolStop=entry-atr15*.95
-            sl=Math.min(sl,maxVolStop)
-        }else if(lowVol){
-            const tightStop=entry-atr5*.60
-            sl=Math.max(sl,tightStop)
+            sl=Math.min(sl,entry-atr15*.90)
+        }
+
+        if(lowVol){
+            sl=Math.max(sl,entry-atr5*.60)
         }
 
         risk=entry-sl
@@ -4750,43 +4751,34 @@ async function coreLogic(data15,data1h,data5,data1m){
 
         targetLevel=resistance
 
-        const roomAbs=roomToResistance*entry
-        const structureRoom=resistance?resistance-entry:roomAbs
-        const usableRoom=Math.max(0,structureRoom)
+        // Primary TP = risk x targetR.
+        let target=entry+risk*targetR
 
-        if(resistance&&resistance-entry<risk*1.35)return null
-
-        // Dynamic TP based on actual risk + available market room.
-        let dynamicTarget=entry+risk*targetR
-        const atrTarget=entry+atr15*(highVol?1.45:lowVol?1.05:1.25)
-
-        dynamicTarget=Math.max(dynamicTarget,atrTarget)
-
+        // Resistance is the real-world TP limit.
         if(resistance){
             const safeTarget=resistance-Math.max(atr1*.15,atr5*.08)
+
             if(safeTarget<=entry)return null
-            dynamicTarget=Math.min(dynamicTarget,safeTarget)
-        }else if(usableRoom>0){
-            dynamicTarget=Math.min(dynamicTarget,entry+usableRoom*.82)
+            if(safeTarget-entry<risk*1.55)return null
+
+            target=Math.min(target,safeTarget)
         }
 
-        tp=dynamicTarget
+        tp=target
     }else{
         const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,swingHigh15)
-        const atrStop=entry+(isReversal?atr5*.80:atr5*.70)
-        const structureRisk=structureStop+buffer-entry
-        const atrRisk=atrStop-entry
+        const atrStop=entry+(isReversal?atr5*.75:atr5*.65)
 
-        // Dynamic SL: choose the safer structural/volatility stop.
+        // Structure is the primary SL.
+        // ATR only prevents the stop from becoming excessively wide.
         sl=Math.min(structureStop+buffer,atrStop)
 
-        // Extra volatility protection.
         if(highVol){
-            const maxVolStop=entry+atr15*.95
-            sl=Math.max(sl,maxVolStop)
-        }else if(lowVol){
-            const tightStop=entry+atr5*.60
-            sl=Math.min(sl,tightStop)
+            sl=Math.max(sl,entry+atr15*.90)
+        }
+
+        if(lowVol){
+            sl=Math.min(sl,entry+atr5*.60)
         }
 
         risk=sl-entry
@@ -4798,27 +4790,20 @@ async function coreLogic(data15,data1h,data5,data1m){
 
         targetLevel=support
 
-        const roomAbs=roomToSupport*entry
-        const structureRoom=support?entry-support:roomAbs
-        const usableRoom=Math.max(0,structureRoom)
+        // Primary TP = risk x targetR.
+        let target=entry-risk*targetR
 
-        if(support&&entry-support<risk*1.35)return null
-
-        // Dynamic TP based on actual risk + available market room.
-        let dynamicTarget=entry-risk*targetR
-        const atrTarget=entry-atr15*(highVol?1.45:lowVol?1.05:1.25)
-
-        dynamicTarget=Math.min(dynamicTarget,atrTarget)
-
+        // Support is the real-world TP limit.
         if(support){
             const safeTarget=support+Math.max(atr1*.15,atr5*.08)
+
             if(safeTarget>=entry)return null
-            dynamicTarget=Math.max(dynamicTarget,safeTarget)
-        }else if(usableRoom>0){
-            dynamicTarget=Math.max(dynamicTarget,entry-usableRoom*.82)
+            if(entry-safeTarget<risk*1.55)return null
+
+            target=Math.max(target,safeTarget)
         }
 
-        tp=dynamicTarget
+        tp=target
     }
 
     // =========================================================
@@ -4829,11 +4814,6 @@ async function coreLogic(data15,data1h,data5,data1m){
     if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(risk)||!Number.isFinite(finalRR))return null
     if(risk<=0)return null
     if(finalRR<1.55)return null
-
-    // Do not allow TP to be too close to the entry.
-    const minTPDistance=Math.max(risk*1.55,atr15*.90)
-    if(side==="LONG"&&tp<entry+minTPDistance)return null
-    if(side==="SHORT"&&tp>entry-minTPDistance)return null
 
     if(finalRR>=1.55)add("rr",4)
     if(finalRR>=1.80)add("rr",4)
