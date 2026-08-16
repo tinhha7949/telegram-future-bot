@@ -4334,15 +4334,6 @@ const cleanTrendShort5=
 
     const strongBullCandle=bullishCandle&&br0>=.55&&closeLong0>=.68
     const strongBearCandle=bearishCandle&&br0>=.55&&closeShort0>=.68
-    if(side==="LONG"){
-    if(c0<=o0)return null
-    if(closeLong0<.65)return null
-}
-
-if(side==="SHORT"){
-    if(c0>=o0)return null
-    if(closeShort0<.65)return null
-}
 
     // =========================================================
     // MICRO STRUCTURE
@@ -4601,6 +4592,16 @@ if(shortSetup==="REVERSAL_SHORT"){
 
     if(!side)return null
 
+    if(side==="LONG"){
+    if(c0<=o0)return null
+    if(closeLong0<.65)return null
+}
+
+if(side==="SHORT"){
+    if(c0>=o0)return null
+    if(closeShort0<.65)return null
+}
+
     // =========================================================
     // HARD DIRECTION FILTER
     // =========================================================
@@ -4639,7 +4640,7 @@ if(side==="SHORT"&&setup==="PULLBACK_RECLAIM"){
     const distEma5=Math.abs(price-ema9_5)/price
 
     if(setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT"){
-        if(distEma5>Math.max(atr5/price*1.80,.008))return null
+        if(distEma5>Math.max(atr5/price*1.35,.0065))return null
     }
 
     if(side==="LONG"&&price>ema9_5+atr5*1.60&&setup!=="REVERSAL_LONG")return null
