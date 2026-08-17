@@ -2577,22 +2577,6 @@ try{
         return
     }
 
-    const openedAt=Number(
-        trade.openedAt||
-        trade.enteredAt||
-        trade.createdAt
-    )
-
-    if(
-        !Number.isFinite(openedAt)||
-        openedAt<=0
-    ){
-        return
-    }
-
-    const elapsedHours=
-        (now-openedAt)/3600000
-
     const recentHigh=Math.max(
         ...h5.slice(-13,-1)
     )
@@ -3057,171 +3041,362 @@ try{
     }
 
     // =========================================================
-    // DYNAMIC TP
-    // =========================================================
+// DYNAMIC TP - EXTREME RUNNER
+//
+// TP KHÔNG PHẢI CƠ CHẾ CHỐT LỜI CHÍNH.
+//
+// Dynamic SL = chốt lời thực tế
+// 24H        = hard exit
+// Dynamic TP = safety cap cực xa
+//
+// MỤC TIÊU:
+// - Không để wick/spike bình thường hit TP
+// - TP luôn nằm rất xa phía trước giá
+// - Volatility càng mạnh -> TP càng xa
+// - TP chỉ được mở rộng, tuyệt đối không thu hẹp
+// =========================================================
 
-    let targetR=1.70
+// =========================================================
+// ATR 5M
+//
+// ATR15 phản ứng chậm với spike.
+// ATR5 phản ứng nhanh hơn với volatility hiện tại.
+// =========================================================
 
-    if(effectivePhase>=1){
-        targetR=2.10
-    }
+const atr5Raw =
+    atr(
+        closed5.slice(-80)
+    )
 
-    if(effectivePhase>=2){
-        targetR=2.60
-    }
+const atr5 =
+    Number.isFinite(atr5Raw)&&
+    atr5Raw>0
+        ?atr5Raw
+        :atr15
 
-    if(effectivePhase>=3){
-        targetR=3.20
-    }
+// =========================================================
+// VOLATILITY FOR TP
+//
+// Không dùng ATR15 đơn độc.
+// Khi 5M giật mạnh -> khoảng cách TP tự động tăng.
+// =========================================================
 
-    if(effectivePhase>=4){
-        targetR=4.00
-    }
+const tpVolatility =
+    Math.max(
+        atr15,
+        atr5*1.50
+    )
 
-    const phaseTP=
-        side==="LONG"
-            ?currentEntry+
-                initialRisk*targetR
-            :currentEntry-
-                initialRisk*targetR
+if(
+    !Number.isFinite(tpVolatility)||
+    tpVolatility<=0
+){
+    return
+}
 
-    if(side==="LONG"){
+// =========================================================
+// SPIKE DETECTION
+//
+// Nếu candle 5M gần nhất có range cực lớn,
+// không cho TP nằm gần giá.
+// =========================================================
 
-        if(
-            phaseTP>newTP&&
-            phaseTP>current
-        ){
-            newTP=phaseTP
-        }
+const last5High=
+    h5.at(-1)
 
-    }else{
+const last5Low=
+    l5.at(-1)
 
-        if(
-            phaseTP<newTP&&
-            phaseTP<current
-        ){
-            newTP=phaseTP
-        }
-    }
+const last5Range=
+    last5High-last5Low
 
-    // =========================================================
-    // STRUCTURE TP EXTENSION
-    // =========================================================
+let spikeMultiplier=1
+
+if(
+    Number.isFinite(last5Range)&&
+    last5Range>tpVolatility*2.0
+){
+    spikeMultiplier=1.50
+}
+
+if(
+    Number.isFinite(last5Range)&&
+    last5Range>tpVolatility*3.0
+){
+    spikeMultiplier=2.00
+}
+
+if(
+    Number.isFinite(last5Range)&&
+    last5Range>tpVolatility*4.0
+){
+    spikeMultiplier=2.50
+}
+
+// =========================================================
+// RUNNER DISTANCE
+//
+// TP cực xa.
+// Không dùng targetR cố định nữa.
+//
+// R càng lớn -> TP càng xa.
+// =========================================================
+
+let runnerATR=5.0
+
+if(R>=1.50){
+    runnerATR=6.0
+}
+
+if(R>=2.50){
+    runnerATR=7.0
+}
+
+if(R>=3.50){
+    runnerATR=8.0
+}
+
+if(R>=5.00){
+    runnerATR=10.0
+}
+
+// =========================================================
+// VOLATILITY ADAPTATION
+// =========================================================
+
+const volatilityDistance=
+    tpVolatility*
+    runnerATR*
+    spikeMultiplier
+
+// =========================================================
+// RISK DISTANCE
+//
+// Không cho initialRisk quá nhỏ làm TP quá gần.
+// =========================================================
+
+const riskDistance=
+    initialRisk*
+    (
+        R>=5
+            ?8.0
+            :R>=3
+                ?6.0
+                :R>=1.5
+                    ?5.0
+                    :4.0
+    )
+
+// =========================================================
+// FINAL MINIMUM DISTANCE
+// =========================================================
+
+const minimumTPDistance=
+    Math.max(
+        volatilityDistance,
+        riskDistance
+    )
+
+// =========================================================
+// TARGET
+// =========================================================
+
+const runnerTP=
+    side==="LONG"
+        ?current+
+            minimumTPDistance
+        :current-
+            minimumTPDistance
+
+// =========================================================
+// EXTEND TP ONLY
+//
+// LONG:
+// TP chỉ được tăng.
+//
+// SHORT:
+// TP chỉ được giảm.
+// =========================================================
+
+if(side==="LONG"){
 
     if(
-        effectivePhase>=2
+        Number.isFinite(runnerTP)&&
+        runnerTP>newTP&&
+        runnerTP>current
     ){
-
-        if(side==="LONG"){
-
-            if(
-                runnerHigh>
-                current+atr15*.75
-            ){
-
-                const structureTP=
-                    runnerHigh+
-                    atr15*.25
-
-                if(
-                    structureTP>newTP&&
-                    structureTP>current
-                ){
-                    newTP=structureTP
-                }
-            }
-
-        }else{
-
-            if(
-                runnerLow<
-                current-atr15*.75
-            ){
-
-                const structureTP=
-                    runnerLow-
-                    atr15*.25
-
-                if(
-                    structureTP<newTP&&
-                    structureTP<current
-                ){
-                    newTP=structureTP
-                }
-            }
-        }
+        newTP=runnerTP
     }
 
-    // =========================================================
-    // NEVER MOVE TP BACKWARD
-    // =========================================================
-
-    if(side==="LONG"){
-
-        if(newTP<oldTP){
-            newTP=oldTP
-        }
-
-    }else{
-
-        if(newTP>oldTP){
-            newTP=oldTP
-        }
-    }
-
-    // =========================================================
-    // TP MUST STAY AHEAD
-    // =========================================================
-
-    if(side==="LONG"){
-
-        if(newTP<=current){
-            newTP=oldTP
-        }
-
-    }else{
-
-        if(newTP>=current){
-            newTP=oldTP
-        }
-    }
-
-    // =========================================================
-    // MAX TIME
-    // =========================================================
+}else{
 
     if(
-        elapsedHours>=24&&
-        R<.50
+        Number.isFinite(runnerTP)&&
+        runnerTP<newTP&&
+        runnerTP<current
     ){
+        newTP=runnerTP
+    }
+}
 
-        const qty=Math.abs(
-            Number(pos.positionAmt)
+// =========================================================
+// STRUCTURE EXTENSION
+//
+// Structure KHÔNG được kéo TP gần lại.
+// Chỉ dùng để mở rộng thêm.
+// =========================================================
+
+if(effectivePhase>=2){
+
+    if(side==="LONG"){
+
+        const structureTP=
+            runnerHigh+
+            tpVolatility*2.0
+
+        if(
+            Number.isFinite(structureTP)&&
+            structureTP>newTP&&
+            structureTP>current
+        ){
+            newTP=structureTP
+        }
+
+    }else{
+
+        const structureTP=
+            runnerLow-
+            tpVolatility*2.0
+
+        if(
+            Number.isFinite(structureTP)&&
+            structureTP<newTP&&
+            structureTP<current
+        ){
+            newTP=structureTP
+        }
+    }
+}
+
+// =========================================================
+// EXTREME RUNNER
+//
+// Khi R >= 3:
+// TP phải càng ngày càng xa.
+// =========================================================
+
+if(R>=3){
+
+    const extremeDistance=
+        Math.max(
+            tpVolatility*9.0,
+            initialRisk*7.0
         )
 
+    const extremeTP=
+        side==="LONG"
+            ?current+
+                extremeDistance
+            :current-
+                extremeDistance
+
+    if(side==="LONG"){
+
         if(
-            Number.isFinite(qty)&&
-            qty>0
+            Number.isFinite(extremeTP)&&
+            extremeTP>newTP
         ){
-
-            TPSL_CLOSING[symbol]=true
-
-            try{
-
-                await closePosition(
-                    symbol,
-                    side,
-                    qty
-                )
-
-            }finally{
-
-                delete TPSL_CLOSING[symbol]
-            }
+            newTP=extremeTP
         }
 
-        return
+    }else{
+
+        if(
+            Number.isFinite(extremeTP)&&
+            extremeTP<newTP
+        ){
+            newTP=extremeTP
+        }
     }
+}
+
+// =========================================================
+// NEVER MOVE TP BACKWARD
+// =========================================================
+
+if(side==="LONG"){
+
+    if(newTP<oldTP){
+        newTP=oldTP
+    }
+
+}else{
+
+    if(newTP>oldTP){
+        newTP=oldTP
+    }
+}
+
+// =========================================================
+// TP MUST STAY AHEAD
+// =========================================================
+
+if(side==="LONG"){
+
+    if(newTP<=current){
+
+        newTP=
+            current+
+            minimumTPDistance
+    }
+
+}else{
+
+    if(newTP>=current){
+
+        newTP=
+            current-
+            minimumTPDistance
+    }
+}
+
+// =========================================================
+// FINAL EXTREME DISTANCE PROTECTION
+//
+// Nếu TP vẫn còn quá gần giá vì bất kỳ lý do nào,
+// ép nó ra xa lần cuối.
+//
+// Đây là lớp chống TP bị ăn bởi wick.
+// =========================================================
+
+const finalSafetyDistance=
+    Math.max(
+        tpVolatility*5.0,
+        initialRisk*4.0
+    )
+
+if(side==="LONG"){
+
+    const safetyTP=
+        current+
+        finalSafetyDistance
+
+    if(newTP<safetyTP){
+
+        newTP=safetyTP
+    }
+
+}else{
+
+    const safetyTP=
+        current-
+        finalSafetyDistance
+
+    if(newTP>safetyTP){
+
+        newTP=safetyTP
+    }
+}
 
     // =========================================================
     // FINAL VALIDATION
@@ -6060,55 +6235,152 @@ let isTimeout =
     t.enteredAt &&
     Date.now() - t.enteredAt > 86400000 //43200000 // 12h
 
+// =====================================================
+// 24H AUTO CLOSE
+// =====================================================
+
+let isTimeout = t.enteredAt && Date.now() - t.enteredAt > 86400000
+
 if(isTimeout){
 
     console.log(`⏳ TIMEOUT CLOSE ${t.symbol}`)
-    // ===== CHECK POSITION THẬT =====
+
+    // =================================================
+    // 1. CHECK POSITION THẬT
+    // =================================================
+
     let positions = []
+
     try{
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
         positions = await getPositionsCached()
     }catch(e){
-        console.log("⚠ TIMEOUT POSITION FAIL")
+        console.log(`⚠ TIMEOUT POSITION FAIL ${t.symbol}:`, e.message)
+        continue
     }
-    let realPos = positions.find(p =>
+
+    const realPos = positions.find(p =>
         p.symbol === t.symbol &&
         Math.abs(parseFloat(p.positionAmt || "0")) > 0
     )
-    // ===== NẾU CÒN POSITION -> CLOSE =====
-    if(realPos){
-        let realQty = Math.abs(parseFloat(realPos.positionAmt || "0"))
-        let closed = await closePosition(
-    t.symbol,
-    t.side,
-    realQty
-)
 
-if(closed){
-    console.log(`✅ AUTO CLOSED ${t.symbol}`)
-}else{
-    console.log(`❌ AUTO CLOSE FAIL ${t.symbol}`)
-    continue
-}
+    // =================================================
+    // 2. NẾU CÒN POSITION -> ĐÓNG
+    // =================================================
+
+    if(realPos){
+
+        const realQty = Math.abs(parseFloat(realPos.positionAmt || "0"))
+
+        if(!Number.isFinite(realQty) || realQty <= 0){
+            console.log(`❌ TIMEOUT INVALID QTY ${t.symbol}`)
+            continue
+        }
+
+        const closed = await closePosition(t.symbol, t.side, realQty)
+
+        if(!closed){
+            console.log(`❌ AUTO CLOSE FAIL ${t.symbol}`)
+            continue
+        }
+
+        console.log(`✅ AUTO CLOSED ${t.symbol} AFTER 24H`)
     }
-    // ===== UPDATE DB =====
-    await trades.updateOne(
+
+    // =================================================
+    // 3. CHỜ BINANCE GHI NHẬN CLOSE
+    // =================================================
+
+    await new Promise(r => setTimeout(r,1500))
+
+    // =================================================
+    // 4. LẤY CLOSED TRADE RESULT
+    // =================================================
+
+    const closed = await getClosedTradeResult(t)
+
+    if(!closed){
+        console.log(`⏳ TIMEOUT RESULT NOT READY ${t.symbol}`)
+        continue
+    }
+
+    // =================================================
+    // 5. TÍNH WIN / LOSS THEO PNL THỰC TẾ
+    // =================================================
+
+    const pnl = Number(closed.pnl)
+
+    if(!Number.isFinite(pnl)){
+        console.log(`❌ TIMEOUT INVALID PNL ${t.symbol}`)
+        continue
+    }
+
+    const isWin = pnl > 0
+    const finalResult = isWin ? "WIN" : "LOSS"
+
+    console.log(
+        `📊 24H RESULT ${t.symbol} ` +
+        `${finalResult} PNL=${pnl.toFixed(4)}`
+    )
+
+    // =================================================
+    // 6. UPDATE DB
+    // =================================================
+
+    const dbResult = await trades.updateOne(
         {
             symbol: t.symbol,
-            createdAt: t.createdAt
+            result: "PENDING"
         },
         {
             $set:{
-                result:"TIMEOUT_CLOSED"
+                result: finalResult,
+                pnl: pnl,
+                exitOrderId: closed.exitOrderId,
+                closedAt: closed.closedAt,
+                timeoutClosed: true,
+                timeoutHours: 24,
+                updatedAt: Date.now()
             }
         }
     )
-    // ===== TELEGRAM =====
+
+    if(dbResult.matchedCount === 0){
+        console.log(`⚠️ TIMEOUT DB NOT FOUND ${t.symbol}`)
+        continue
+    }
+
+    // =================================================
+    // 7. UPDATE BALANCE
+    // =================================================
+
+    const latestBalance = await updateBalance()
+
+    if(Number.isFinite(latestBalance) && latestBalance > 0){
+        ACCOUNT_BALANCE = latestBalance
+    }
+
+    // =================================================
+    // 8. TELEGRAM
+    // =================================================
+
     await sendTelegram2(
-`⏳ AUTO CLOSE TIMEOUT
+`⏳ AUTO CLOSE 24H
 ${t.symbol}
-${t.side} | ₿ : ${t.btcRegime}`
+${t.side} | ₿ : ${t.btcRegime}
+${isWin ? "✅ WIN" : "❌ LOSS"}
+PnL: ${pnl.toFixed(4)} USDT
+💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
     )
+
+    // =================================================
+    // 9. CLEAN
+    // =================================================
+
     delete DATA_FAILS[t.symbol]
+    delete CLOSED_RESULT_FAILS[t.symbol]
+    delete TPSL_PHASE[t.symbol]
 
     activeTrades.splice(i,1)
 
