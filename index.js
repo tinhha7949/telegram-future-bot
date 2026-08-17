@@ -3917,13 +3917,6 @@ async function coreLogic(data15,data1h,data5,data1m){
     const round=(n,d=8)=>Number(Number(n).toFixed(d))
 
     // =========================================================
-    // 1M VOLUME
-    // =========================================================
-    const vol1Avg=avg(v1.slice(-21,-1))
-    const vol1Now=v1.at(-1)
-    const vol1Ratio=vol1Avg>0?vol1Now/vol1Avg:1
-
-    // =========================================================
     // ATR
     // =========================================================
     const atr15Raw=atr(data15.slice(-100)),atr5Raw=atr(data5.slice(-100)),atr1Raw=atr(data1m.slice(-100))
@@ -3940,18 +3933,25 @@ async function coreLogic(data15,data1h,data5,data1m){
     const ema20_1h=ema(c1h.slice(-60),20)
     const ema50_1h=ema(c1h.slice(-80),50)
     const ema200_1h=ema(c1h.slice(-80),80)
+
     const ema20_1hPrev=ema(c1h.slice(-61,-1),20)
     const price1h=c1h.at(-1)
+
     const slope1h=pct(ema20_1h,ema20_1hPrev)
     const gap1h=Math.abs(ema20_1h-ema50_1h)/price1h
+
     const bull1hBase=ema20_1h>ema50_1h&&price1h>ema20_1h
     const bear1hBase=ema20_1h<ema50_1h&&price1h<ema20_1h
+
     const bull1hSlope=slope1h>.00005
     const bear1hSlope=slope1h<-.00005
+
     const bull1h=bull1hBase&&bull1hSlope
     const bear1h=bear1hBase&&bear1hSlope
+
     const strongBull1h=bull1h&&gap1h>=.0015
     const strongBear1h=bear1h&&gap1h>=.0015
+
     const ema200Bull=price1h>ema200_1h
     const ema200Bear=price1h<ema200_1h
 
@@ -3961,51 +3961,52 @@ async function coreLogic(data15,data1h,data5,data1m){
     const ema20_15=ema(c15.slice(-60),20)
     const ema50_15=ema(c15.slice(-100),50)
     const ema200_15=ema(c15.slice(-120),120)
+
     const ema20_15Prev=ema(c15.slice(-61,-1),20)
     const price15=c15.at(-1)
+
     const slope15=pct(ema20_15,ema20_15Prev)
     const gap15=Math.abs(ema20_15-ema50_15)/price15
+
     const bull15Base=ema20_15>ema50_15&&price15>ema20_15
     const bear15Base=ema20_15<ema50_15&&price15<ema20_15
+
     const bull15Slope=slope15>.00007
     const bear15Slope=slope15<-.00007
+
     const bull15=bull15Base&&bull15Slope
     const bear15=bear15Base&&bear15Slope
+
     const strongBull15=bull15&&gap15>=.0015
     const strongBear15=bear15&&gap15>=.0015
+
     const structureHigh15=Math.max(...h15.slice(-24,-2))
     const structureLow15=Math.min(...l15.slice(-24,-2))
+
     const higherHigh15=price15>structureHigh15
     const lowerLow15=price15<structureLow15
+
     const above200_15=price15>ema200_15
     const below200_15=price15<ema200_15
 
     // =========================================================
     // 5M TREND ENGINE
     // =========================================================
-    const p5=c5.at(-1),p5Prev=c5.at(-2)
+    const p5=c5.at(-1)
+    const p5Prev=c5.at(-2)
+
     const ema9_5=ema(c5.slice(-40),9)
     const ema20_5=ema(c5.slice(-60),20)
     const ema50_5=ema(c5.slice(-100),50)
     const ema9_5Prev=ema(c5.slice(-41,-1),9)
+
     const slope9_5=pct(ema9_5,ema9_5Prev)
 
     const trendLong5=p5>ema20_5&&ema9_5>ema20_5&&ema20_5>ema50_5&&slope9_5>.00003
     const trendShort5=p5<ema20_5&&ema9_5<ema20_5&&ema20_5<ema50_5&&slope9_5<-.00003
+
     const softLong5=ema9_5>ema20_5&&ema20_5>ema50_5
     const softShort5=ema9_5<ema20_5&&ema20_5<ema50_5
-
-    const dist9Pct=Math.abs(p5-ema9_5)/p5
-    const dist20Pct=Math.abs(p5-ema20_5)/p5
-    const dist9ATR=Math.abs(p5-ema9_5)/Math.max(atr5,.00000001)
-    const dist20ATR=Math.abs(p5-ema20_5)/Math.max(atr5,.00000001)
-
-    const touchTolerance=Math.max(atr5/p5*.35,.0012)
-
-    const longExtended5=p5>ema9_5&&dist9ATR>1.15
-    const shortExtended5=p5<ema9_5&&dist9ATR>1.15
-    const longVeryExtended5=p5>ema9_5&&dist9ATR>1.60
-    const shortVeryExtended5=p5<ema9_5&&dist9ATR>1.60
 
     const weakLong5=p5<ema9_5||slope9_5<-.00018
     const weakShort5=p5>ema9_5||slope9_5>.00018
@@ -4015,34 +4016,36 @@ async function coreLogic(data15,data1h,data5,data1m){
     // =========================================================
     const recent5Low=Math.min(...l5.slice(-14,-2))
     const recent5High=Math.max(...h5.slice(-14,-2))
+
     const vol5Avg=avg(v5.slice(-21,-1))
     const vol5Now=v5.at(-1)
     const vol5Ratio=vol5Avg>0?vol5Now/vol5Avg:1
-
-    const volumeSpike5=vol5Ratio>=2.20
-    const volumeExtreme5=vol5Ratio>=4.00
-    const volumeDead5=vol5Ratio<.65
-    const volumeWeak5=vol5Ratio<.80
-    const volumeConfirmLong=vol5Ratio>=.80&&vol5Ratio<=3.50
-    const volumeConfirmShort=vol5Ratio>=.80&&vol5Ratio<=3.50
-    const volumeConfirm1=vol1Ratio>=.70&&vol1Ratio<=3.50
 
     // =========================================================
     // 1M CURRENT CANDLE
     // =========================================================
     const i=c1.length-1
     const o0=o1[i],h0=h1[i],l0=l1[i],c0=c1[i]
-    const cPrev=c1[i-1],hPrev=h1[i-1],lPrev=l1[i-1],h2=h1[i-2],l2=l1[i-2]
+    const cPrev=c1[i-1]
+    const hPrev=h1[i-1],lPrev=l1[i-1]
+    const h2=h1[i-2],l2=l1[i-2]
+
     const candleRange=range(h0,l0)
     if(candleRange<=0)return null
 
     const br0=bodyRatio(o0,h0,l0,c0)
     const closeLong0=closeLong(h0,l0,c0)
     const closeShort0=closeShort(h0,l0,c0)
-    if(br0<.28)return null
+
+    if(br0<.35)return null
+
+    const vol1Avg=avg(v1.slice(-21,-1))
+    const vol1Now=v1.at(-1)
+    const vol1Ratio=vol1Avg>0?vol1Now/vol1Avg:1
 
     const rsi5=rsi(c5.slice(-50))
     const rsi1=rsi(c1.slice(-50))
+
     if(!Number.isFinite(rsi5)||!Number.isFinite(rsi1))return null
 
     // =========================================================
@@ -4054,6 +4057,7 @@ async function coreLogic(data15,data1h,data5,data1m){
 
     const bullishCandle=c0>o0&&br0>=.45&&closeLong0>=.62
     const bearishCandle=c0<o0&&br0>=.45&&closeShort0>=.62
+
     const strongBullCandle=bullishCandle&&br0>=.55&&closeLong0>=.68
     const strongBearCandle=bearishCandle&&br0>=.55&&closeShort0>=.68
 
@@ -4062,72 +4066,76 @@ async function coreLogic(data15,data1h,data5,data1m){
     // =========================================================
     const microBreakLong=c0>Math.max(hPrev,h2)
     const microBreakShort=c0<Math.min(lPrev,l2)
-    const microBreakLongStrong=microBreakLong&&closeLong0>=.68
-    const microBreakShortStrong=microBreakShort&&closeShort0>=.68
+
+    const microBreakLongStrong=c0>Math.max(hPrev,h2)&&closeLong0>=.68
+    const microBreakShortStrong=c0<Math.min(lPrev,l2)&&closeShort0>=.68
 
     // =========================================================
     // LIQUIDITY SWEEP
     // =========================================================
     const sweepLow=l0<recent5Low&&c0>recent5Low&&bullishCandle
     const sweepHigh=h0>recent5High&&c0<recent5High&&bearishCandle
-    const strongSweepLow=sweepLow&&closeLong0>=.68&&br0>=.50
-    const strongSweepHigh=sweepHigh&&closeShort0>=.68&&br0>=.50
+
+    const strongSweepLow=sweepLow&&l0<recent5Low&&closeLong0>=.68&&br0>=.50
+    const strongSweepHigh=sweepHigh&&h0>recent5High&&closeShort0>=.68&&br0>=.50
 
     // =========================================================
     // CONTEXT
     // =========================================================
     const longAlignment=bull1h&&bull15
     const shortAlignment=bear1h&&bear15
+
     const longPartialAlignment=(bull1h||bull15)&&!strongBear1h&&!strongBear15
     const shortPartialAlignment=(bear1h||bear15)&&!strongBull1h&&!strongBull15
 
     // =========================================================
-// REAL PULLBACK LOCATION
-// =========================================================
-const pullbackLongLocation=
-    softLong5&&
-    (
-        Math.abs(l5.at(-1)-ema9_5)<=atr5*.70||
-        Math.abs(l5.at(-1)-ema20_5)<=atr5*.70||
-        Math.abs(l5.at(-2)-ema20_5)<=atr5*.80
-    )&&
-    p5>=ema20_5*(1-.0035)
+    // PULLBACK LOCATION
+    // =========================================================
+    const touchTolerance=Math.max(atr5/price*.65,.0018)
 
-const pullbackShortLocation=
-    softShort5&&
-    (
-        Math.abs(h5.at(-1)-ema9_5)<=atr5*.70||
-        Math.abs(h5.at(-1)-ema20_5)<=atr5*.70||
-        Math.abs(h5.at(-2)-ema20_5)<=atr5*.80
-    )&&
-    p5<=ema20_5*(1+.0035)
+    const pullbackLongLocation=
+        softLong5&&
+        (
+            l5.at(-1)<=ema9_5*(1+touchTolerance)||
+            l5.at(-2)<=ema20_5*(1+touchTolerance)
+        )
+
+    const pullbackShortLocation=
+        softShort5&&
+        (
+            h5.at(-1)>=ema9_5*(1-touchTolerance)||
+            h5.at(-2)>=ema20_5*(1-touchTolerance)
+        )
 
     // =========================================================
-    // RECLAIM ENGINE
+    // RECLAIM
     // =========================================================
     const reclaimLong=
         cPrev<=ema9_5&&
         c0>ema9_5&&
         bullishCandle&&
         closeLong0>=.68&&
-        microBreakLongStrong&&
-        c0>cPrev&&
-        move1>=-Math.max(atr1/price*1.2,.001)
+        microBreakLongStrong
 
     const reclaimShort=
         cPrev>=ema9_5&&
         c0<ema9_5&&
         bearishCandle&&
         closeShort0>=.68&&
-        microBreakShortStrong&&
-        c0<cPrev&&
-        move1<=Math.max(atr1/price*1.2,.001)
+        microBreakShortStrong
 
     // =========================================================
     // BREAKOUT + RETEST
     // =========================================================
-    const breakoutLong=p5Prev<=recent5High&&p5>recent5High&&vol5Ratio>=1.10
-    const breakoutShort=p5Prev>=recent5Low&&p5<recent5Low&&vol5Ratio>=1.10
+    const breakoutLong=
+        p5Prev<=recent5High&&
+        p5>recent5High&&
+        vol5Ratio>=1.10
+
+    const breakoutShort=
+        p5Prev>=recent5Low&&
+        p5<recent5Low&&
+        vol5Ratio>=1.10
 
     const retestLong=
         !breakoutLong&&
@@ -4148,72 +4156,46 @@ const pullbackShortLocation=
         microBreakShortStrong
 
     // =========================================================
-    // QUALITY CONTINUATION
+    // CONTINUATION
     // =========================================================
     const continuationLong=
         longAlignment&&
         trendLong5&&
         microBreakLongStrong&&
         strongBullCandle&&
-        !longVeryExtended5&&
-        (
-            pullbackLongLocation||
-            Math.abs(c5.at(-2)-ema9_5)<=atr5*.75||
-            Math.abs(c5.at(-2)-ema20_5)<=atr5*.75
-        )&&
-        move5<Math.max(atr5/price*2.8,.010)&&
-        price-ema9_5<atr5*1.25&&
-        !(volumeExtreme5&&move5>Math.max(atr5/price*2.5,.007))
+        move5<Math.max(atr5/price*3.2,.012)&&
+        price-ema9_5<atr5*1.50
 
     const continuationShort=
         shortAlignment&&
         trendShort5&&
         microBreakShortStrong&&
         strongBearCandle&&
-        !shortVeryExtended5&&
-        (
-            pullbackShortLocation||
-            Math.abs(c5.at(-2)-ema9_5)<=atr5*.75||
-            Math.abs(c5.at(-2)-ema20_5)<=atr5*.75
-        )&&
-        move5>-Math.max(atr5/price*2.8,.010)&&
-        ema9_5-price<atr5*1.25&&
-        !(volumeExtreme5&&move5<-Math.max(atr5/price*2.5,.007))
-
-    // =========================================================
-    // LATE ENTRY FILTER
-    // =========================================================
-    const lateLongEntry=
-        trendLong5&&
-        (
-            dist9ATR>1.15||
-            dist20ATR>1.80||
-            move5>Math.max(atr5/price*2.8,.008)
-        )
-
-    const lateShortEntry=
-        trendShort5&&
-        (
-            dist9ATR>1.15||
-            dist20ATR>1.80||
-            move5<-Math.max(atr5/price*2.8,.008)
-        )
+        move5>-Math.max(atr5/price*3.2,.012)&&
+        ema9_5-price<atr5*1.50
 
     // =========================================================
     // PULLBACK
     // =========================================================
-    const pullbackLong=longAlignment&&pullbackLongLocation&&reclaimLong
-    const pullbackShort=shortAlignment&&pullbackShortLocation&&reclaimShort
+    const pullbackLong=
+        longAlignment&&
+        pullbackLongLocation&&
+        reclaimLong
+
+    const pullbackShort=
+        shortAlignment&&
+        pullbackShortLocation&&
+        reclaimShort
 
     // =========================================================
     // REVERSAL
+    // Chỉ cho phép khi reversal có bằng chứng mạnh.
     // =========================================================
     const reversalLong=
         strongSweepLow&&
         microBreakLongStrong&&
         strongBullCandle&&
         !strongBear1h&&
-        !strongBear15&&
         rsi5>=32&&
         rsi5<=46&&
         closeLong0>=.70
@@ -4223,7 +4205,6 @@ const pullbackShortLocation=
         microBreakShortStrong&&
         strongBearCandle&&
         !strongBull1h&&
-        !strongBull15&&
         rsi5>=54&&
         rsi5<=68&&
         closeShort0>=.70
@@ -4231,7 +4212,8 @@ const pullbackShortLocation=
     // =========================================================
     // SETUP PRIORITY
     // =========================================================
-    let longSetup=null,shortSetup=null
+    let longSetup=null
+    let shortSetup=null
 
     if(retestLong)longSetup="BREAKOUT_RETEST"
     else if(pullbackLong)longSetup="PULLBACK_RECLAIM"
@@ -4246,7 +4228,8 @@ const pullbackShortLocation=
     // =========================================================
     // DIRECTION SCORE
     // =========================================================
-    let longDirection=0,shortDirection=0
+    let longDirection=0
+    let shortDirection=0
 
     if(bull1h)longDirection+=25
     if(strongBull1h)longDirection+=8
@@ -4269,106 +4252,97 @@ const pullbackShortLocation=
     // =========================================================
     // SIDE SELECTION
     // =========================================================
-    const MIN_DIRECTION=48
-    let side=null,setup=null
+    let side=null
+    let setup=null
 
     if(longSetup&&!shortSetup){
-        if(longDirection>=MIN_DIRECTION||longSetup==="REVERSAL_LONG"){
-            side="LONG";setup=longSetup
+        if(longDirection>=62||longSetup==="REVERSAL_LONG"){
+            side="LONG"
+            setup=longSetup
         }
     }else if(shortSetup&&!longSetup){
-        if(shortDirection>=MIN_DIRECTION||shortSetup==="REVERSAL_SHORT"){
-            side="SHORT";setup=shortSetup
+        if(shortDirection>=62||shortSetup==="REVERSAL_SHORT"){
+            side="SHORT"
+            setup=shortSetup
         }
     }else if(longSetup&&shortSetup){
-        if(longDirection-shortDirection>=5&&longDirection>=MIN_DIRECTION){
-            side="LONG";setup=longSetup
-        }else if(shortDirection-longDirection>=5&&shortDirection>=MIN_DIRECTION){
-            side="SHORT";setup=shortSetup
+        if(longDirection-shortDirection>=10){
+            side="LONG"
+            setup=longSetup
+        }else if(shortDirection-longDirection>=10){
+            side="SHORT"
+            setup=shortSetup
         }
     }
 
     if(!side)return null
 
     // =========================================================
-// HARD DIRECTION FILTER
-// =========================================================
-if(side==="LONG"&&!longPartialAlignment&&setup!=="REVERSAL_LONG"&&setup!=="PULLBACK_RECLAIM")return null
-if(side==="SHORT"&&!shortPartialAlignment&&setup!=="REVERSAL_SHORT"&&setup!=="PULLBACK_RECLAIM")return null
+    // HARD DIRECTION FILTER
+    // =========================================================
+    if(side==="LONG"&&!longPartialAlignment&&setup!=="REVERSAL_LONG")return null
+    if(side==="SHORT"&&!shortPartialAlignment&&setup!=="REVERSAL_SHORT")return null
 
-if(side==="LONG"&&strongBear1h&&setup!=="REVERSAL_LONG")return null
-if(side==="SHORT"&&strongBull1h&&setup!=="REVERSAL_SHORT")return null
+    if(side==="LONG"&&strongBear1h&&setup!=="REVERSAL_LONG")return null
+    if(side==="SHORT"&&strongBull1h&&setup!=="REVERSAL_SHORT")return null
 
-if(side==="LONG"&&strongBear15&&setup!=="REVERSAL_LONG")return null
-if(side==="SHORT"&&strongBull15&&setup!=="REVERSAL_SHORT")return null
+    if(side==="LONG"&&strongBear15&&setup!=="REVERSAL_LONG")return null
+    if(side==="SHORT"&&strongBull15&&setup!=="REVERSAL_SHORT")return null
 
-if(side==="LONG"&&weakLong5&&setup==="TREND_CONTINUATION")return null
-if(side==="SHORT"&&weakShort5&&setup==="TREND_CONTINUATION")return null
+    if(side==="LONG"&&weakLong5&&setup!=="REVERSAL_LONG"&&setup!=="PULLBACK_RECLAIM")return null
+    if(side==="SHORT"&&weakShort5&&setup!=="REVERSAL_SHORT"&&setup!=="PULLBACK_RECLAIM")return null
 
     // =========================================================
-// CHASE FILTER
-// =========================================================
-const distEma5=Math.abs(price-ema9_5)/price
-if(
-    setup!=="REVERSAL_LONG"&&
-    setup!=="REVERSAL_SHORT"&&
-    setup!=="PULLBACK_RECLAIM"&&
-    setup!=="BREAKOUT_RETEST"&&
-    distEma5>Math.max(atr5/price*2.35,.012)
-)return null
-if(
-    side==="LONG"&&
-    price>ema9_5+atr5*2.00&&
-    setup!=="REVERSAL_LONG"&&
-    setup!=="PULLBACK_RECLAIM"
-)return null
-if(
-    side==="SHORT"&&
-    price<ema9_5-atr5*2.00&&
-    setup!=="REVERSAL_SHORT"&&
-    setup!=="PULLBACK_RECLAIM"
-)return null
+    // CHASE FILTER
+    // =========================================================
+    const distEma5=Math.abs(price-ema9_5)/price
+
+    if(setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT"){
+        if(distEma5>Math.max(atr5/price*1.80,.008))return null
+    }
+
+    if(side==="LONG"&&price>ema9_5+atr5*1.60&&setup!=="REVERSAL_LONG")return null
+    if(side==="SHORT"&&price<ema9_5-atr5*1.60&&setup!=="REVERSAL_SHORT")return null
 
     // =========================================================
-// MOVE FILTER
-// =========================================================
-if(side==="LONG"&&move1<-Math.max(atr1/price*2.00,.0025)&&setup!=="PULLBACK_RECLAIM")return null
-if(side==="SHORT"&&move1>Math.max(atr1/price*2.00,.0025)&&setup!=="PULLBACK_RECLAIM")return null
-if(
-    side==="LONG"&&
-    move3<-Math.max(atr5/price*1.70,.006)&&
-    setup!=="REVERSAL_LONG"&&
-    setup!=="PULLBACK_RECLAIM"
-)return null
-if(
-    side==="SHORT"&&
-    move3>Math.max(atr5/price*1.70,.006)&&
-    setup!=="REVERSAL_SHORT"&&
-    setup!=="PULLBACK_RECLAIM"
-)return null
+    // MOVE FILTER
     // =========================================================
-// EXTREME RSI
-// =========================================================
-if(side==="LONG"&&rsi5>76&&setup!=="REVERSAL_LONG")return null
-if(side==="SHORT"&&rsi5<24&&setup!=="REVERSAL_SHORT")return null
+    if(side==="LONG"&&move1<-Math.max(atr1/price*1.60,.0020))return null
+    if(side==="SHORT"&&move1>Math.max(atr1/price*1.60,.0020))return null
 
-    if(setup==="TREND_CONTINUATION"&&side==="LONG"&&lateLongEntry)return null
-    if(setup==="TREND_CONTINUATION"&&side==="SHORT"&&lateShortEntry)return null
+    if(side==="LONG"&&move3<-Math.max(atr5/price*1.40,.005)&&setup!=="REVERSAL_LONG")return null
+    if(side==="SHORT"&&move3>Math.max(atr5/price*1.40,.005)&&setup!=="REVERSAL_SHORT")return null
 
     // =========================================================
-    // VOLUME HARD FILTER
+    // EXTREME RSI FILTER
     // =========================================================
-    if((setup==="TREND_CONTINUATION"||setup==="BREAKOUT_RETEST")&&vol5Ratio<.65)return null
+    if(side==="LONG"&&rsi5>72&&setup!=="REVERSAL_LONG")return null
+    if(side==="SHORT"&&rsi5<28&&setup!=="REVERSAL_SHORT")return null
 
     // =========================================================
     // SCORE ENGINE
     // =========================================================
     let score=0
+
     const scoreBreakdown={
-        direction:0,h1Trend:0,trend15:0,structure:0,setup:0,trigger:0,
-        volume:0,momentum:0,rsi:0,location:0,room:0,rr:0
+        direction:0,
+        h1Trend:0,
+        trend15:0,
+        structure:0,
+        setup:0,
+        trigger:0,
+        volume:0,
+        momentum:0,
+        rsi:0,
+        location:0,
+        room:0,
+        rr:0
     }
-    const add=(key,n)=>{score+=n;scoreBreakdown[key]+=n}
+
+    const add=(key,n)=>{
+        score+=n
+        scoreBreakdown[key]+=n
+    }
 
     if(side==="LONG"){
         if(bull1h)add("h1Trend",15)
@@ -4405,41 +4379,16 @@ if(side==="SHORT"&&rsi5<24&&setup!=="REVERSAL_SHORT")return null
     if(setup==="TREND_CONTINUATION")add("setup",8)
     if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT")add("setup",14)
 
-    // =========================================================
-    // VOLUME QUALITY SCORE
-    // =========================================================
-    if(vol1Ratio>=.80&&vol1Ratio<=2.50)add("volume",2)
-    if(vol1Ratio>=1.10&&vol1Ratio<=2.50)add("volume",2)
-    if(vol5Ratio>=.80&&vol5Ratio<=2.50)add("volume",2)
-    if(vol5Ratio>=1.10&&vol5Ratio<=3.00)add("volume",2)
-
-    if(vol5Ratio>4.00&&(
-        Math.abs(move5)>Math.max(atr5/price*2.5,.007)||
-        dist9ATR>1.60
-    ))add("volume",-3)
+    if(vol1Ratio>=1.10)add("volume",2)
+    if(vol1Ratio>=1.35)add("volume",2)
+    if(vol5Ratio>=1.08)add("volume",2)
+    if(vol5Ratio>=1.30)add("volume",2)
 
     if(side==="LONG"&&rsi5>=40&&rsi5<=68)add("rsi",3)
     if(side==="SHORT"&&rsi5>=32&&rsi5<=60)add("rsi",3)
 
     if(side==="LONG"&&move5>atr5/price*2.5)add("momentum",-5)
     if(side==="SHORT"&&move5<-atr5/price*2.5)add("momentum",-5)
-
-    // =========================================================
-    // ENTRY LOCATION SCORE
-    // =========================================================
-    if(side==="LONG"){
-        if(price>=ema9_5&&price<=ema9_5+atr5*.60)add("location",4)
-        if(price>=ema20_5-atr5*.35&&price<=ema20_5+atr5*.60)add("location",5)
-        if(pullbackLongLocation)add("location",4)
-        if(lateLongEntry)add("location",-7)
-    }
-
-    if(side==="SHORT"){
-        if(price<=ema9_5&&price>=ema9_5-atr5*.60)add("location",4)
-        if(price<=ema20_5+atr5*.35&&price>=ema20_5-atr5*.60)add("location",5)
-        if(pullbackShortLocation)add("location",4)
-        if(lateShortEntry)add("location",-7)
-    }
 
     // =========================================================
     // STRUCTURE / LOCATION
@@ -4450,116 +4399,164 @@ if(side==="SHORT"&&rsi5<24&&setup!=="REVERSAL_SHORT")return null
     const swingHigh15=high(h15.slice(0,-1),16)
 
     const resistanceCandidates=[
-        recent5High,swingHigh5,swingHigh15,structureHigh15
+        recent5High,
+        swingHigh5,
+        swingHigh15,
+        structureHigh15
     ].filter(x=>Number.isFinite(x)&&x>price)
 
     const supportCandidates=[
-        recent5Low,swingLow5,swingLow15,structureLow15
+        recent5Low,
+        swingLow5,
+        swingLow15,
+        structureLow15
     ].filter(x=>Number.isFinite(x)&&x<price)
 
     const resistance=resistanceCandidates.length?Math.min(...resistanceCandidates):null
     const support=supportCandidates.length?Math.max(...supportCandidates):null
 
-    let roomToResistance=resistance?(resistance-price)/price:Infinity
-    let roomToSupport=support?(price-support)/price:Infinity
+    let roomToResistance=resistance?((resistance-price)/price):Infinity
+    let roomToSupport=support?((price-support)/price):Infinity
 
-    // =========================================================
-// ROOM FILTER
-// =========================================================
-if(
-    side==="LONG"&&
-    resistance&&
-    setup!=="PULLBACK_RECLAIM"&&
-    setup!=="REVERSAL_LONG"&&
-    resistance-price<atr5*.50
-)return null
+    // Không vào khi cản gần quá.
+    if(side==="LONG"&&resistance){
+        if(resistance-price<atr5*.80)return null
+        if(resistance-price<atr15*.70)return null
+    }
 
-if(
-    side==="SHORT"&&
-    support&&
-    setup!=="PULLBACK_RECLAIM"&&
-    setup!=="REVERSAL_SHORT"&&
-    price-support<atr5*.50
-)return null
+    if(side==="SHORT"&&support){
+        if(price-support<atr5*.80)return null
+        if(price-support<atr15*.70)return null
+    }
 
     // =========================================================
     // RISK ENGINE
     // =========================================================
     const entry=price
-const buffer=Math.max(atr5*.15,atr1*.50)
-let sl,tp,risk,targetLevel
-const isReversal=setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"
-const strongSetup=isReversal||setup==="PULLBACK_RECLAIM"||setup==="BREAKOUT_RETEST"
-const momentumSetup=setup==="TREND_CONTINUATION"
-const volatilityRatio=atr15/entry
-const highVol=volatilityRatio>=.006
-const lowVol=volatilityRatio<=.0025
-const maxRiskATR=strongSetup?1.45:momentumSetup?1.30:1.20
-const maxRiskPct=strongSetup?.020:momentumSetup?.018:.016
-let targetR=1.55
-if(setup==="PULLBACK_RECLAIM")targetR=1.60
-if(setup==="BREAKOUT_RETEST")targetR=1.65
-if(setup==="TREND_CONTINUATION")targetR=1.55
-if(isReversal)targetR=1.60
-if(highVol)targetR+=.10
-if(lowVol)targetR-=.05
-targetR=Math.max(1.45,Math.min(targetR,1.80))
-if(side==="LONG"){
-    const structureStop=isReversal
-        ?Math.min(l0,swingLow5)
-        :Math.min(swingLow5,swingLow15)
-    sl=structureStop-buffer
-    risk=entry-sl
-    if(risk<=0||!Number.isFinite(risk))return null
-    if(risk/atr15>maxRiskATR)return null
-    if(risk/entry>maxRiskPct)return null
-    targetLevel=resistance
-    let target=entry+risk*targetR
-    if(resistance){
-        const safeTarget=resistance-Math.max(atr1*.15,atr5*.08)
-        if(safeTarget<=entry)return null
-        if(safeTarget-entry<risk*1.30)return null
-        target=Math.min(target,safeTarget)
-    }
-    tp=target
-}else{
-    const structureStop=isReversal
-        ?Math.max(h0,swingHigh5)
-        :Math.max(swingHigh5,swingHigh15)
+    const buffer=Math.max(atr5*.12,atr1*.50)
 
-    sl=structureStop+buffer
-    risk=sl-entry
-    if(risk<=0||!Number.isFinite(risk))return null
-    if(risk/atr15>maxRiskATR)return null
-    if(risk/entry>maxRiskPct)return null
+    let sl,tp,risk,targetLevel
 
-    targetLevel=support
+    const isReversal=setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"
+    const strongSetup=isReversal||setup==="PULLBACK_RECLAIM"||setup==="BREAKOUT_RETEST"
+    const momentumSetup=setup==="TREND_CONTINUATION"
 
-    let target=entry-risk*targetR
+    const volatilityRatio=atr15/entry
+    const highVol=volatilityRatio>=.006
+    const lowVol=volatilityRatio<=.0025
 
-    if(support){
-        const safeTarget=support+Math.max(atr1*.15,atr5*.08)
+    const maxRiskATR=strongSetup?1.35:momentumSetup?1.20:1.15
+    const maxRiskPct=strongSetup?.018:momentumSetup?.016:.014
 
-        if(safeTarget>=entry)return null
-        if(entry-safeTarget<risk*1.30)return null
-
-        target=Math.max(target,safeTarget)
-    }
-    tp=target
-}
     // =========================================================
-// FINAL RR / ROOM
-// =========================================================
-const finalRR=side==="LONG"?(tp-entry)/risk:(entry-tp)/risk
+    // DYNAMIC TARGET R
+    // =========================================================
+    let targetR=1.65
 
-if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(risk)||!Number.isFinite(finalRR))return null
-if(risk<=0)return null
-if(finalRR<1.30)return null
+    if(setup==="PULLBACK_RECLAIM")targetR=1.70
+    if(setup==="BREAKOUT_RETEST")targetR=1.75
+    if(setup==="TREND_CONTINUATION")targetR=1.65
+    if(isReversal)targetR=1.70
 
-if(finalRR>=1.45)add("rr",4)
-if(finalRR>=1.80)add("rr",4)
-if(finalRR>=2.10)add("rr",3)
+    if(highVol)targetR+=.10
+    if(lowVol)targetR-=.05
 
+    targetR=Math.max(1.55,Math.min(targetR,1.85))
+
+    if(side==="LONG"){
+        const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,swingLow15)
+        const atrStop=entry-(isReversal?atr5*.75:atr5*.65)
+
+        // Structure is the primary SL.
+        // ATR only prevents the stop from becoming excessively wide.
+        sl=Math.max(structureStop-buffer,atrStop)
+
+        if(highVol){
+            sl=Math.min(sl,entry-atr15*.90)
+        }
+
+        if(lowVol){
+            sl=Math.max(sl,entry-atr5*.60)
+        }
+
+        risk=entry-sl
+
+        if(risk<=0)return null
+        if(!Number.isFinite(risk))return null
+        if(risk/atr15>maxRiskATR)return null
+        if(risk/entry>maxRiskPct)return null
+
+        targetLevel=resistance
+
+        // Primary TP = risk x targetR.
+        let target=entry+risk*targetR
+
+        // Resistance is the real-world TP limit.
+        if(resistance){
+            const safeTarget=resistance-Math.max(atr1*.15,atr5*.08)
+
+            if(safeTarget<=entry)return null
+            if(safeTarget-entry<risk*1.55)return null
+
+            target=Math.min(target,safeTarget)
+        }
+
+        tp=target
+    }else{
+        const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,swingHigh15)
+        const atrStop=entry+(isReversal?atr5*.75:atr5*.65)
+
+        // Structure is the primary SL.
+        // ATR only prevents the stop from becoming excessively wide.
+        sl=Math.min(structureStop+buffer,atrStop)
+
+        if(highVol){
+            sl=Math.max(sl,entry+atr15*.90)
+        }
+
+        if(lowVol){
+            sl=Math.min(sl,entry+atr5*.60)
+        }
+
+        risk=sl-entry
+
+        if(risk<=0)return null
+        if(!Number.isFinite(risk))return null
+        if(risk/atr15>maxRiskATR)return null
+        if(risk/entry>maxRiskPct)return null
+
+        targetLevel=support
+
+        // Primary TP = risk x targetR.
+        let target=entry-risk*targetR
+
+        // Support is the real-world TP limit.
+        if(support){
+            const safeTarget=support+Math.max(atr1*.15,atr5*.08)
+
+            if(safeTarget>=entry)return null
+            if(entry-safeTarget<risk*1.55)return null
+
+            target=Math.max(target,safeTarget)
+        }
+
+        tp=target
+    }
+
+    // =========================================================
+    // FINAL RR / ROOM
+    // =========================================================
+    const finalRR=side==="LONG"?(tp-entry)/risk:(entry-tp)/risk
+
+    if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(risk)||!Number.isFinite(finalRR))return null
+    if(risk<=0)return null
+    if(finalRR<1.55)return null
+
+    if(finalRR>=1.55)add("rr",4)
+    if(finalRR>=1.80)add("rr",4)
+    if(finalRR>=2.10)add("rr",3)
+
+    // Room score.
     if(side==="LONG"){
         if(roomToResistance>=atr15/price*2.0)add("room",4)
         if(roomToResistance>=atr15/price*3.0)add("room",4)
@@ -4567,26 +4564,24 @@ if(finalRR>=2.10)add("rr",3)
         if(roomToSupport>=atr15/price*2.0)add("room",4)
         if(roomToSupport>=atr15/price*3.0)add("room",4)
     }
-
     // =========================================================
-// FINAL QUALITY FILTER
-// =========================================================
-let minimumScore=64
+    // FINAL QUALITY FILTER
+    // =========================================================
+    let minimumScore=76
 
-if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT")minimumScore=66
-if(setup==="TREND_CONTINUATION")minimumScore=67
-if(setup==="PULLBACK_RECLAIM")minimumScore=64
-if(setup==="BREAKOUT_RETEST")minimumScore=66
+    if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"){
+        minimumScore=78
+    }
 
-if(score<minimumScore)return null
+    if(setup==="TREND_CONTINUATION"){
+        minimumScore=78
+    }
 
-const finalDirection=side==="LONG"?longDirection:shortDirection
+    if(score<minimumScore)return null
 
-if(
-    finalDirection<48&&
-    setup!=="REVERSAL_LONG"&&
-    setup!=="REVERSAL_SHORT"
-)return null
+    // Không cho entry nếu direction quá yếu.
+    const finalDirection=side==="LONG"?longDirection:shortDirection
+    if(finalDirection<62&&setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT")return null
 
     // =========================================================
     // MARKET STATE
@@ -4596,12 +4591,7 @@ if(
             ?((gap15>=.002||gap1h>=.002)?"TREND_STRONG":"TREND_WEAK")
             :"RANGE"
 
-    if(
-    marketState==="RANGE"&&
-    setup!=="REVERSAL_LONG"&&
-    setup!=="REVERSAL_SHORT"&&
-    setup!=="PULLBACK_RECLAIM"
-)return null
+    if(marketState==="RANGE"&&setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT")return null
 
     const volatility=
         atrRatio5>=.004?"HIGH":
