@@ -1317,41 +1317,19 @@ if(side !== "LONG" && side !== "SHORT"){
         }
 
         // =================================================
-        // 5. DIRECTIONAL PRICE NORMALIZATION
-        // =================================================
+// 5. DIRECTIONAL PRICE NORMALIZATION
+// =================================================
 
-        let sl
-        let tp
+let sl
+let tp
 
-        if(positionSide === "LONG"){
-
-            // SL phải nằm phía dưới
-            sl =
-                Math.floor(
-                    rawSL / tickSize
-                ) * tickSize
-
-            // TP phải nằm phía trên
-            tp =
-                Math.ceil(
-                    rawTP / tickSize
-                ) * tickSize
-
-        }else{
-
-            // SHORT:
-            // SL phải nằm phía trên
-            sl =
-                Math.ceil(
-                    rawSL / tickSize
-                ) * tickSize
-
-            // TP phải nằm phía dưới
-            tp =
-                Math.floor(
-                    rawTP / tickSize
-                ) * tickSize
-        }
+if(positionSide==="LONG"){
+    sl=Math.ceil(rawSL/tickSize)*tickSize
+    tp=Math.ceil(rawTP/tickSize)*tickSize
+}else{
+    sl=Math.floor(rawSL/tickSize)*tickSize
+    tp=Math.floor(rawTP/tickSize)*tickSize
+}
 
         sl =
             Number(
@@ -1372,6 +1350,14 @@ if(side !== "LONG" && side !== "SHORT"){
                     )
                 )
             )
+
+            const previousSL=Number(trade.sl)
+
+if(Number.isFinite(previousSL)&&previousSL>0){
+    if(positionSide==="LONG"&&sl<previousSL)sl=previousSL
+    if(positionSide==="SHORT"&&sl>previousSL)sl=previousSL
+    sl=Number(sl.toFixed(Math.max(0,String(tickSize).split(".")[1]?.length||0)))
+}
 
         // =================================================
         // 6. HARD VALIDATION
