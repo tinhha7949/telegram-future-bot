@@ -2378,94 +2378,57 @@ async function updateTradeTPSLData(trade){
 async function manageDynamicTPSL(trade){
 
 try{
+
     // =========================================================
     // SAFETY
     // =========================================================
     if(!trade)return
-    if(!trade.symbol)return
-    if(!trade.side)return
+    if(!trade.symbol||!trade.side)return
+
     const symbol=trade.symbol
     const side=String(trade.side).toUpperCase()
+
     if(side!=="LONG"&&side!=="SHORT")return
     if(TPSL_CLOSING[symbol])return
     if(TPSL_PENDING[symbol])return
+
     // =========================================================
-    // ENTRY COOLDOWN
+    // ENTRY TIME
     // =========================================================
     const entryTime=Number(
-        trade.enteredAt ||
-        trade.openedAt ||
+        trade.enteredAt||
+        trade.openedAt||
         trade.createdAt
     )
 
-    if(!Number.isFinite(entryTime)||entryTime<=0){
-
-        console.log(
-            `⚠️ DYNAMIC NO ENTRY TIME ${symbol}`
-        )
-
-        return
-    }
+    if(!Number.isFinite(entryTime)||entryTime<=0)return
 
     const now=Date.now()
 
-    const elapsedSinceEntry=
-        now-entryTime
-
-    /*
-     * 90 giây đầu:
-     *
-     * KHÔNG dynamic.
-     * Cho entry có thời gian xác nhận hướng.
-     */
-
-    if(elapsedSinceEntry<90000){
-
-        console.log(
-            `⏳ DYNAMIC WAIT ${symbol} `+
-            `${Math.ceil(
-                (90000-elapsedSinceEntry)/1000
-            )}s`
-        )
-
-        return
-    }
+    // =========================================================
+    // 90s ENTRY PROTECTION
+    // =========================================================
+    if(now-entryTime<90000)return
 
     // =========================================================
     // UPDATE COOLDOWN
     // =========================================================
-
     const lastUpdate=
-        Number(
-            DYNAMIC_LAST_UPDATE[symbol] || 0
-        )
-
-    /*
-     * Không cho Dynamic sửa TPSL liên tục.
-     *
-     * 150 giây giữa hai lần update.
-     */
+        Number(DYNAMIC_LAST_UPDATE[symbol]||0)
 
     if(
-        lastUpdate>0 &&
+        lastUpdate>0&&
         now-lastUpdate<150000
     ){
-
         return
     }
-
-    // =========================================================
-    // LOCK
-    // =========================================================
 
     TPSL_PENDING[symbol]=true
 
     // =========================================================
-    // CHECK POSITION
+    // POSITION
     // =========================================================
-
-    const pos=
-        await hasPosition(symbol)
+    const pos=await hasPosition(symbol)
 
     if(!pos){
 
@@ -2476,26 +2439,14 @@ try{
     }
 
     // =========================================================
-    // GET MARKET DATA
+    // MARKET DATA
     // =========================================================
-
     const [
         data15,
         data5
     ]=await Promise.all([
-
-        getData(
-            symbol,
-            "15m",
-            160
-        ),
-
-        getData(
-            symbol,
-            "5m",
-            160
-        )
-
+        getData(symbol,"15m",160),
+        getData(symbol,"5m",160)
     ])
 
     if(
@@ -2513,16 +2464,10 @@ try{
     }
 
     // =========================================================
-    // REMOVE CURRENT / INCOMPLETE CANDLES
-    //
-    // Dynamic chỉ dùng candle ĐÃ ĐÓNG.
+    // CLOSED CANDLES ONLY
     // =========================================================
-
-    const closed15=
-        data15.slice(0,-1)
-
-    const closed5=
-        data5.slice(0,-1)
+    const closed15=data15.slice(0,-1)
+    const closed5=data5.slice(0,-1)
 
     if(
         closed15.length<60||
@@ -2531,18 +2476,9 @@ try{
         return
     }
 
-    // =========================================================
-    // 5M DATA
-    // =========================================================
-
-    const h5=
-        closed5.map(x=>Number(x[2]))
-
-    const l5=
-        closed5.map(x=>Number(x[3]))
-
-    const c5=
-        closed5.map(x=>Number(x[4]))
+    const h5=closed5.map(x=>Number(x[2]))
+    const l5=closed5.map(x=>Number(x[3]))
+    const c5=closed5.map(x=>Number(x[4]))
 
     if(
         h5.some(x=>!Number.isFinite(x))||
@@ -2555,13 +2491,11 @@ try{
     // =========================================================
     // CURRENT PRICE
     // =========================================================
-
-    const current=
-        Number(
-            pos.markPrice||
-            pos.entryPrice||
-            trade.entry
-        )
+    const current=Number(
+        pos.markPrice||
+        pos.entryPrice||
+        trade.entry
+    )
 
     if(
         !Number.isFinite(current)||
@@ -2573,12 +2507,10 @@ try{
     // =========================================================
     // ENTRY
     // =========================================================
-
-    const currentEntry=
-        Number(
-            pos.entryPrice||
-            trade.entry
-        )
+    const currentEntry=Number(
+        pos.entryPrice||
+        trade.entry
+    )
 
     if(
         !Number.isFinite(currentEntry)||
@@ -2590,9 +2522,7 @@ try{
     // =========================================================
     // INITIAL RISK
     // =========================================================
-
-    let initialRisk=
-        Number(trade.initialRisk)
+    let initialRisk=Number(trade.initialRisk)
 
     if(
         !Number.isFinite(initialRisk)||
@@ -2600,10 +2530,7 @@ try{
     ){
 
         const fallbackEntry=
-            Number(
-                trade.entry||
-                currentEntry
-            )
+            Number(trade.entry||currentEntry)
 
         const fallbackSL=
             Number(trade.sl)
@@ -2614,11 +2541,6 @@ try{
             fallbackEntry<=0||
             fallbackSL<=0
         ){
-
-            console.log(
-                `⚠️ DYNAMIC NO INITIAL RISK ${symbol}`
-            )
-
             return
         }
 
@@ -2647,28 +2569,18 @@ try{
                 }
             }
         )
-
-        console.log(
-            `♻️ DYNAMIC RISK RECOVERED `+
-            `${symbol} `+
-            `RISK=${initialRisk}`
-        )
     }
 
     // =========================================================
-    // ATR 15M
+    // ATR
     // =========================================================
-
     const atrRaw=
-        atr(
-            closed15.slice(-80)
-        )
+        atr(closed15.slice(-80))
 
     const atr15=
-        Number.isFinite(atrRaw)&&
-        atrRaw>0
+        Number.isFinite(atrRaw)&&atrRaw>0
             ?atrRaw
-            :current*0.003
+            :current*.003
 
     if(
         !Number.isFinite(atr15)||
@@ -2680,26 +2592,20 @@ try{
     // =========================================================
     // PROFIT / R
     // =========================================================
-
     const profit=
         side==="LONG"
             ?current-currentEntry
             :currentEntry-current
 
-    const R=
-        profit/initialRisk
+    const R=profit/initialRisk
 
     if(!Number.isFinite(R))return
 
     // =========================================================
     // CURRENT TPSL
     // =========================================================
-
-    const oldSL=
-        Number(trade.sl)
-
-    const oldTP=
-        Number(trade.tp)
+    const oldSL=Number(trade.sl)
+    const oldTP=Number(trade.tp)
 
     if(
         !Number.isFinite(oldSL)||
@@ -2714,25 +2620,13 @@ try{
     // =========================================================
     // TIME
     // =========================================================
+    const openedAt=Number(
+        trade.openedAt||
+        trade.enteredAt||
+        trade.createdAt
+    )
 
-    const openedAt=
-        Number(
-            trade.openedAt||
-            trade.enteredAt||
-            trade.createdAt
-        )
-
-    if(
-        !Number.isFinite(openedAt)||
-        openedAt<=0
-    ){
-
-        console.log(
-            `⚠️ DYNAMIC NO OPENED TIME ${symbol}`
-        )
-
-        return
-    }
+    if(!Number.isFinite(openedAt)||openedAt<=0)return
 
     const elapsedHours=
         (now-openedAt)/3600000
@@ -2740,64 +2634,31 @@ try{
     // =========================================================
     // CONFIRMED 5M STRUCTURE
     // =========================================================
-
-    /*
-     * Tất cả structure đều lấy từ candle đã đóng.
-     *
-     * Không dùng candle đang chạy.
-     */
-
     const recentHigh=
-        Math.max(
-            ...h5.slice(-12,-1)
-        )
+        Math.max(...h5.slice(-13,-1))
 
     const recentLow=
-        Math.min(
-            ...l5.slice(-12,-1)
-        )
+        Math.min(...l5.slice(-13,-1))
 
     const structureHigh=
-        Math.max(
-            ...h5.slice(-24,-1)
-        )
+        Math.max(...h5.slice(-25,-1))
 
     const structureLow=
-        Math.min(
-            ...l5.slice(-24,-1)
-        )
+        Math.min(...l5.slice(-25,-1))
 
-    const farHigh=
-        Math.max(
-            ...h5.slice(-48,-24)
-        )
+    const runnerHigh=
+        Math.max(...h5.slice(-49,-1))
 
-    const farLow=
-        Math.min(
-            ...l5.slice(-48,-24)
-        )
+    const runnerLow=
+        Math.min(...l5.slice(-49,-1))
 
-    // =========================================================
-    // LAST CLOSED 5M CANDLE
-    // =========================================================
-
-    const last5Close=
-        c5.at(-1)
+    const last5Close=c5.at(-1)
 
     const previous5High=
-        Math.max(
-            ...h5.slice(-13,-1)
-        )
+        Math.max(...h5.slice(-13,-1))
 
     const previous5Low=
-        Math.min(
-            ...l5.slice(-13,-1)
-        )
-
-    /*
-     * Breakout phải được xác nhận bởi
-     * candle 5m đã đóng.
-     */
+        Math.min(...l5.slice(-13,-1))
 
     const confirmedBreakoutLong=
         side==="LONG"&&
@@ -2808,47 +2669,24 @@ try{
         last5Close<previous5Low
 
     // =========================================================
-    // DETERMINE PHASE
+    // PHASE
     // =========================================================
-
     let phase=0
 
     if(R>=3.00){
-
         phase=5
-
-    }else if(R>=2.20){
-
+    }else if(R>=2.30){
         phase=4
-
-    }else if(R>=1.70){
-
+    }else if(R>=1.80){
         phase=3
-
-    }else if(R>=1.20){
-
+    }else if(R>=1.30){
         phase=2
-
-    }else if(R>=0.80){
-
+    }else if(R>=0.90){
         phase=1
-
-    }else{
-
-        phase=0
     }
 
-    /*
-     * Phase chỉ được phép tăng.
-     *
-     * Nếu R tụt từ 2R xuống 1.5R:
-     * Dynamic KHÔNG được nới SL lại.
-     */
-
     const previousPhase=
-        Number(
-            DYNAMIC_PHASE[symbol]||0
-        )
+        Number(DYNAMIC_PHASE[symbol]||0)
 
     const effectivePhase=
         Math.max(
@@ -2861,28 +2699,19 @@ try{
 
     // =========================================================
     // PHASE 0
-    //
-    // <0.80R
-    //
-    // KHÔNG ĐỤNG TPSL
     // =========================================================
-
     if(effectivePhase===0){
-
         return
     }
 
     // =========================================================
     // PHASE 1
-    //
-    // >=0.80R
-    //
-    // LOCK 0.10R
+    // >= 0.90R
+    // BE + 0.05R
     // =========================================================
-
     if(effectivePhase>=1){
 
-        const lockR=0.10
+        const lockR=.05
 
         if(side==="LONG"){
 
@@ -2908,15 +2737,12 @@ try{
 
     // =========================================================
     // PHASE 2
-    //
-    // >=1.20R
-    //
-    // LOCK 0.25R
+    // >= 1.30R
+    // LOCK +0.25R
     // =========================================================
-
     if(effectivePhase>=2){
 
-        const lockR=0.25
+        const lockR=.25
 
         if(side==="LONG"){
 
@@ -2942,17 +2768,12 @@ try{
 
     // =========================================================
     // PHASE 3
-    //
-    // >=1.70R
-    //
-    // LOCK 0.70R
-    //
-    // Không trailing theo markPrice.
+    // >= 1.80R
+    // LOCK +0.65R
     // =========================================================
-
     if(effectivePhase>=3){
 
-        const lockR=0.70
+        const lockR=.65
 
         if(side==="LONG"){
 
@@ -2978,30 +2799,25 @@ try{
 
     // =========================================================
     // PHASE 4
-    //
-    // >=2.20R
-    //
+    // >= 2.30R
     // STRUCTURE TRAILING
-    //
-    // Chỉ dùng confirmed 5m structure.
     // =========================================================
-
     if(effectivePhase>=4){
 
         if(side==="LONG"){
 
-            const structureCandidate=
+            const structureSL=
                 recentLow-
-                atr15*0.20
+                atr15*.20
 
-            const profitCandidate=
+            const minimumProfitSL=
                 currentEntry+
-                initialRisk*1.10
+                initialRisk*.90
 
             const candidate=
                 Math.max(
-                    structureCandidate,
-                    profitCandidate
+                    structureSL,
+                    minimumProfitSL
                 )
 
             if(candidate>newSL){
@@ -3010,18 +2826,18 @@ try{
 
         }else{
 
-            const structureCandidate=
+            const structureSL=
                 recentHigh+
-                atr15*0.20
+                atr15*.20
 
-            const profitCandidate=
+            const minimumProfitSL=
                 currentEntry-
-                initialRisk*1.10
+                initialRisk*.90
 
             const candidate=
                 Math.min(
-                    structureCandidate,
-                    profitCandidate
+                    structureSL,
+                    minimumProfitSL
                 )
 
             if(candidate<newSL){
@@ -3032,49 +2848,56 @@ try{
 
     // =========================================================
     // PHASE 5
-    //
-    // >=3R
-    //
-    // WINNER RUNNER
+    // >= 3R
+    // RUNNER STRUCTURE
     // =========================================================
-
     if(effectivePhase>=5){
 
         if(side==="LONG"){
 
-            const structureCandidate=
-                structureLow-
-                atr15*0.15
+            const runnerSL=
+                runnerLow-
+                atr15*.15
 
-            if(
-                structureCandidate>newSL
-            ){
-                newSL=
-                    structureCandidate
+            const minimumProfitSL=
+                currentEntry+
+                initialRisk*1.20
+
+            const candidate=
+                Math.max(
+                    runnerSL,
+                    minimumProfitSL
+                )
+
+            if(candidate>newSL){
+                newSL=candidate
             }
 
         }else{
 
-            const structureCandidate=
-                structureHigh+
-                atr15*0.15
+            const runnerSL=
+                runnerHigh+
+                atr15*.15
 
-            if(
-                structureCandidate<newSL
-            ){
-                newSL=
-                    structureCandidate
+            const minimumProfitSL=
+                currentEntry-
+                initialRisk*1.20
+
+            const candidate=
+                Math.min(
+                    runnerSL,
+                    minimumProfitSL
+                )
+
+            if(candidate<newSL){
+                newSL=candidate
             }
         }
     }
 
     // =========================================================
     // CONFIRMED BREAKOUT
-    //
-    // Chỉ xử lý khi R >= 1R
-    // và nến 5m ĐÃ ĐÓNG xác nhận.
     // =========================================================
-
     if(
         R>=1.00&&
         confirmedBreakoutLong
@@ -3082,36 +2905,10 @@ try{
 
         const breakoutSL=
             previous5High-
-            atr15*0.25
+            atr15*.20
 
         if(breakoutSL>newSL){
-
-            newSL=
-                breakoutSL
-        }
-
-        /*
-         * TP chỉ mở rộng tới structure xa
-         * nếu structure thực sự nằm phía trước.
-         */
-
-        if(
-            Number.isFinite(farHigh)&&
-            farHigh>current
-        ){
-
-            const breakoutTP=
-                farHigh-
-                atr15*0.15
-
-            if(
-                breakoutTP>newTP&&
-                breakoutTP>current
-            ){
-
-                newTP=
-                    breakoutTP
-            }
+            newSL=breakoutSL
         }
     }
 
@@ -3122,63 +2919,23 @@ try{
 
         const breakoutSL=
             previous5Low+
-            atr15*0.25
+            atr15*.20
 
         if(breakoutSL<newSL){
-
-            newSL=
-                breakoutSL
-        }
-
-        if(
-            Number.isFinite(farLow)&&
-            farLow<current
-        ){
-
-            const breakoutTP=
-                farLow+
-                atr15*0.15
-
-            if(
-                breakoutTP<newTP&&
-                breakoutTP<current
-            ){
-
-                newTP=
-                    breakoutTP
-            }
+            newSL=breakoutSL
         }
     }
 
     // =========================================================
-    // DYNAMIC TP BY PHASE
-    //
-    // TP chỉ tăng theo phase.
-    // Không dùng R + 0.70.
-    // Không kéo TP theo markPrice.
+    // DYNAMIC TP
     // =========================================================
+    let targetR=1.55
 
-    let targetR=1.50
-
-    if(effectivePhase>=1){
-        targetR=1.70
-    }
-
-    if(effectivePhase>=2){
-        targetR=2.00
-    }
-
-    if(effectivePhase>=3){
-        targetR=2.30
-    }
-
-    if(effectivePhase>=4){
-        targetR=2.70
-    }
-
-    if(effectivePhase>=5){
-        targetR=3.20
-    }
+    if(effectivePhase>=1)targetR=1.70
+    if(effectivePhase>=2)targetR=2.00
+    if(effectivePhase>=3)targetR=2.30
+    if(effectivePhase>=4)targetR=2.70
+    if(effectivePhase>=5)targetR=3.20
 
     const phaseTP=
         side==="LONG"
@@ -3187,25 +2944,13 @@ try{
             :currentEntry-
                 initialRisk*targetR
 
-    /*
-     * TP chỉ được mở rộng.
-     *
-     * LONG:
-     * phaseTP > oldTP
-     *
-     * SHORT:
-     * phaseTP < oldTP
-     */
-
     if(side==="LONG"){
 
         if(
             phaseTP>newTP&&
             phaseTP>current
         ){
-
-            newTP=
-                phaseTP
+            newTP=phaseTP
         }
 
     }else{
@@ -3214,16 +2959,13 @@ try{
             phaseTP<newTP&&
             phaseTP<current
         ){
-
-            newTP=
-                phaseTP
+            newTP=phaseTP
         }
     }
 
     // =========================================================
     // NEVER MOVE SL BACKWARD
     // =========================================================
-
     if(side==="LONG"){
 
         if(newSL<oldSL){
@@ -3238,20 +2980,15 @@ try{
     }
 
     // =========================================================
-    // SL MUST STAY ON PROFITABLE SIDE OF ENTRY
-    //
-    // Chỉ áp dụng khi phase đã lock.
-    //
-    // KHÔNG dùng current để kéo SL ngược.
+    // PROFITABLE SIDE
     // =========================================================
-
     if(effectivePhase>=1){
 
         if(side==="LONG"){
 
             const minimumSL=
                 currentEntry+
-                initialRisk*0.05
+                initialRisk*.03
 
             if(newSL<minimumSL){
                 newSL=minimumSL
@@ -3261,7 +2998,7 @@ try{
 
             const maximumSL=
                 currentEntry-
-                initialRisk*0.05
+                initialRisk*.03
 
             if(newSL>maximumSL){
                 newSL=maximumSL
@@ -3270,100 +3007,70 @@ try{
     }
 
     // =========================================================
-    // IMPORTANT:
-    //
-    // NEVER FORCE SL TO current - ATR
-    //
-    // Nếu candidate SL >= current:
-    // KHÔNG kéo nó ngược xuống.
-    //
-    // Chỉ bỏ candidate không hợp lệ.
+    // SL / TP CURRENT PRICE VALIDATION
     // =========================================================
-
     if(side==="LONG"){
 
         if(newSL>=current){
-
-            /*
-             * Giữ oldSL nếu oldSL vẫn hợp lệ.
-             *
-             * Nếu oldSL cũng >= current,
-             * tuyệt đối KHÔNG tự động kéo xuống.
-             *
-             * Binance/order layer sẽ xử lý trạng thái
-             * theo TPSL hiện tại.
-             */
-
             newSL=oldSL
         }
-
-    }else{
-
-        if(newSL<=current){
-
-            newSL=oldSL
-        }
-    }
-
-    // =========================================================
-    // TP MUST STAY AHEAD
-    //
-    // KHÔNG tạo TP mới dựa trên current.
-    //
-    // Đây là điểm quan trọng để tránh TP nhảy.
-    // =========================================================
-
-    if(side==="LONG"){
 
         if(newTP<=current){
-
-            /*
-             * TP đã vượt qua current.
-             *
-             * Không tự động kéo TP lên mỗi vòng.
-             */
-
             newTP=oldTP
         }
 
     }else{
 
-        if(newTP>=current){
+        if(newSL<=current){
+            newSL=oldSL
+        }
 
+        if(newTP>=current){
+            newTP=oldTP
+        }
+    }
+
+    // =========================================================
+    // FINAL DIRECTION PROTECTION
+    // =========================================================
+    if(side==="LONG"){
+
+        if(newSL<oldSL){
+            newSL=oldSL
+        }
+
+        if(newTP<oldTP){
+            newTP=oldTP
+        }
+
+    }else{
+
+        if(newSL>oldSL){
+            newSL=oldSL
+        }
+
+        if(newTP>oldTP){
             newTP=oldTP
         }
     }
 
     // =========================================================
     // MAX TIME
-    //
-    // Chỉ đóng trade bị treo rất lâu
-    // và chưa tạo được profit đáng kể.
     // =========================================================
-
     if(
         elapsedHours>=24&&
-        R<0.50
+        R<.50
     ){
 
         const qty=
             Math.abs(
-                Number(
-                    pos.positionAmt
-                )
+                Number(pos.positionAmt)
             )
 
         if(
             Number.isFinite(qty)&&
             qty>0
         ){
-
-            console.log(
-                `🚨 DYNAMIC MAX TIME EXIT `+
-                `${symbol} `+
-                `R=${R.toFixed(2)} `+
-                `H=${elapsedHours.toFixed(2)}`
-            )
 
             TPSL_CLOSING[symbol]=true
 
@@ -3385,58 +3092,24 @@ try{
     }
 
     // =========================================================
-    // VALIDATE FINAL TPSL
+    // VALIDATE
     // =========================================================
-
     if(
         !Number.isFinite(newSL)||
-        !Number.isFinite(newTP)
+        !Number.isFinite(newTP)||
+        newSL<=0||
+        newTP<=0
     ){
         return
     }
 
-    if(newSL<=0||newTP<=0){
-        return
-    }
-
-    // =========================================================
-    // FINAL DIRECTION CHECK
-    // =========================================================
-
     if(side==="LONG"){
-
-        /*
-         * SL phải thấp hơn current.
-         *
-         * Nếu candidate mới không hợp lệ,
-         * giữ nguyên oldSL.
-         */
 
         if(newSL>=current){
             newSL=oldSL
         }
 
-        /*
-         * TP phải cao hơn current.
-         */
-
         if(newTP<=current){
-            newTP=oldTP
-        }
-
-        /*
-         * tuyệt đối không lùi SL
-         */
-
-        if(newSL<oldSL){
-            newSL=oldSL
-        }
-
-        /*
-         * TP chỉ tăng
-         */
-
-        if(newTP<oldTP){
             newTP=oldTP
         }
 
@@ -3449,111 +3122,52 @@ try{
         if(newTP>=current){
             newTP=oldTP
         }
-
-        if(newSL>oldSL){
-            newSL=oldSL
-        }
-
-        if(newTP>oldTP){
-            newTP=oldTP
-        }
     }
 
     // =========================================================
-    // REAL CHANGE CHECK
+    // MINIMUM CHANGE
     // =========================================================
-
     const minimumChange=
         Math.max(
-            currentEntry*0.00005,
-            atr15*0.03
+            currentEntry*.00005,
+            atr15*.03
         )
 
     const slChanged=
-        Math.abs(
-            newSL-oldSL
-        )>=minimumChange
+        Math.abs(newSL-oldSL)>=minimumChange
 
     const tpChanged=
-        Math.abs(
-            newTP-oldTP
-        )>=minimumChange
+        Math.abs(newTP-oldTP)>=minimumChange
 
-    if(
-        !slChanged&&
-        !tpChanged
-    ){
-
+    if(!slChanged&&!tpChanged){
         return
     }
 
     // =========================================================
-    // PHASE CHANGE CHECK
-    //
-    // Nếu chỉ là cùng một phase và không có
-    // structure breakout mới, hạn chế update.
+    // UPDATE
     // =========================================================
-
-    const phaseChanged=
-        effectivePhase>
-        previousPhase
-
-    const structureEvent=
-        confirmedBreakoutLong||
-        confirmedBreakoutShort
-
-    /*
-     * Nếu chỉ có SL thay đổi rất nhỏ do structure,
-     * cooldown + minimumChange đã lọc.
-     *
-     * Không cần ép update.
-     */
-
-    if(
-        !phaseChanged&&
-        !structureEvent&&
-        !tpChanged&&
-        !slChanged
-    ){
-        return
-    }
-
-    // =========================================================
-    // FINAL SNAPSHOT
-    // =========================================================
-
     const updateTrade={
         ...trade,
-
         symbol,
-
         side,
-
-        entry:
-            currentEntry,
-
-        sl:
-            newSL,
-
-        tp:
-            newTP,
-
+        entry:currentEntry,
+        sl:newSL,
+        tp:newTP,
         initialRisk
     }
 
     console.log(
-        `🎯 DYNAMIC SIGNAL ${symbol} `+
+        `🎯 DYNAMIC ${symbol} `+
         `${side} `+
         `R=${R.toFixed(2)} `+
         `PHASE=${effectivePhase} `+
-        `SL ${oldSL} -> ${newSL} `+
-        `TP ${oldTP} -> ${newTP}`
+        `SL ${oldSL}->${newSL} `+
+        `TP ${oldTP}->${newTP}`
     )
 
     // =========================================================
-    // UPDATE BINANCE
+    // BINANCE
     // =========================================================
-
     try{
 
         const result=
@@ -3562,18 +3176,11 @@ try{
             )
 
         if(!result?.ok){
-
             console.log(
-                `⚠️ DYNAMIC TPSL UPDATE FAILED `+
-                `${symbol}`
+                `⚠️ DYNAMIC TPSL FAILED ${symbol}`
             )
-
             return
         }
-
-        // =====================================================
-        // BINANCE SUCCESS
-        // =====================================================
 
         const finalSL=
             Number(result.sl)
@@ -3587,157 +3194,91 @@ try{
             finalSL<=0||
             finalTP<=0
         ){
-
-            console.log(
-                `⚠️ DYNAMIC INVALID BINANCE RESULT `+
-                `${symbol}`
-            )
-
             return
         }
 
         // =====================================================
-        // VERIFY DIRECTION OF RESULT
+        // RESULT PROTECTION
         // =====================================================
-
         if(side==="LONG"){
 
-            /*
-             * Binance result không được phép
-             * làm SL lùi.
-             */
-
             if(finalSL<oldSL){
-
                 console.log(
-                    `🚨 DYNAMIC REJECT BACKWARD SL `+
-                    `${symbol} `+
-                    `OLD=${oldSL} `+
-                    `NEW=${finalSL}`
+                    `🚨 REJECT BACKWARD SL ${symbol}`
                 )
-
                 return
             }
 
-            /*
-             * TP không được lùi.
-             */
-
             if(finalTP<oldTP){
-
                 console.log(
-                    `🚨 DYNAMIC REJECT BACKWARD TP `+
-                    `${symbol} `+
-                    `OLD=${oldTP} `+
-                    `NEW=${finalTP}`
+                    `🚨 REJECT BACKWARD TP ${symbol}`
                 )
-
                 return
             }
 
         }else{
 
             if(finalSL>oldSL){
-
                 console.log(
-                    `🚨 DYNAMIC REJECT BACKWARD SL `+
-                    `${symbol} `+
-                    `OLD=${oldSL} `+
-                    `NEW=${finalSL}`
+                    `🚨 REJECT BACKWARD SL ${symbol}`
                 )
-
                 return
             }
 
             if(finalTP>oldTP){
-
                 console.log(
-                    `🚨 DYNAMIC REJECT BACKWARD TP `+
-                    `${symbol} `+
-                    `OLD=${oldTP} `+
-                    `NEW=${finalTP}`
+                    `🚨 REJECT BACKWARD TP ${symbol}`
                 )
-
                 return
             }
         }
 
         // =====================================================
-        // UPDATE MEMORY
+        // MEMORY
         // =====================================================
+        trade.sl=finalSL
+        trade.tp=finalTP
 
-        trade.sl=
-            finalSL
-
-        trade.tp=
-            finalTP
-
-        // =====================================================
-        // UPDATE LAST UPDATE TIME
-        //
-        // Chỉ ghi cooldown sau khi Binance thành công.
-        // =====================================================
-
-        DYNAMIC_LAST_UPDATE[symbol]=
-            Date.now()
+        DYNAMIC_LAST_UPDATE[symbol]=Date.now()
 
         DYNAMIC_PHASE[symbol]=
             Math.max(
-                Number(
-                    DYNAMIC_PHASE[symbol]||0
-                ),
+                Number(DYNAMIC_PHASE[symbol]||0),
                 effectivePhase
             )
 
         // =====================================================
-        // SAVE DB
+        // DB
         // =====================================================
-
         const dbResult=
             await trades.updateOne(
-
                 {
                     symbol,
                     result:"PENDING"
                 },
-
                 {
                     $set:{
-                        sl:
-                            finalSL,
-
-                        tp:
-                            finalTP,
-
+                        sl:finalSL,
+                        tp:finalTP,
                         initialRisk,
-
                         dynamicPhase:
                             DYNAMIC_PHASE[symbol],
-
                         dynamicUpdatedAt:
                             Date.now(),
-
                         updatedAt:
                             Date.now()
                     }
                 }
             )
 
-        if(
-            dbResult.matchedCount===0
-        ){
+        if(dbResult.matchedCount===0){
 
             console.log(
-                `⚠️ DYNAMIC DB NOT FOUND `+
-                `${symbol}`
+                `⚠️ DYNAMIC DB NOT FOUND ${symbol}`
             )
 
             return
         }
-
-        // =====================================================
-        // LOG
-        // =====================================================
 
         console.log(
             `💾 DYNAMIC TPSL SAVED `+
@@ -3772,10 +3313,7 @@ try{
 }finally{
 
     if(trade?.symbol){
-
-        delete TPSL_PENDING[
-            trade.symbol
-        ]
+        delete TPSL_PENDING[trade.symbol]
     }
 }
 
@@ -4180,6 +3718,13 @@ async function coreLogic(data15,data1h,data5,data1m){
     const round=(n,d=8)=>Number(Number(n).toFixed(d))
 
     // =========================================================
+    // 1M VOLUME
+    // =========================================================
+    const vol1Avg=avg(v1.slice(-21,-1))
+    const vol1Now=v1.at(-1)
+    const vol1Ratio=vol1Avg>0?vol1Now/vol1Avg:1
+
+    // =========================================================
     // ATR
     // =========================================================
     const atr15Raw=atr(data15.slice(-100)),atr5Raw=atr(data5.slice(-100)),atr1Raw=atr(data1m.slice(-100))
@@ -4196,25 +3741,18 @@ async function coreLogic(data15,data1h,data5,data1m){
     const ema20_1h=ema(c1h.slice(-60),20)
     const ema50_1h=ema(c1h.slice(-80),50)
     const ema200_1h=ema(c1h.slice(-80),80)
-
     const ema20_1hPrev=ema(c1h.slice(-61,-1),20)
     const price1h=c1h.at(-1)
-
     const slope1h=pct(ema20_1h,ema20_1hPrev)
     const gap1h=Math.abs(ema20_1h-ema50_1h)/price1h
-
     const bull1hBase=ema20_1h>ema50_1h&&price1h>ema20_1h
     const bear1hBase=ema20_1h<ema50_1h&&price1h<ema20_1h
-
     const bull1hSlope=slope1h>.00005
     const bear1hSlope=slope1h<-.00005
-
     const bull1h=bull1hBase&&bull1hSlope
     const bear1h=bear1hBase&&bear1hSlope
-
     const strongBull1h=bull1h&&gap1h>=.0015
     const strongBear1h=bear1h&&gap1h>=.0015
-
     const ema200Bull=price1h>ema200_1h
     const ema200Bear=price1h<ema200_1h
 
@@ -4224,52 +3762,51 @@ async function coreLogic(data15,data1h,data5,data1m){
     const ema20_15=ema(c15.slice(-60),20)
     const ema50_15=ema(c15.slice(-100),50)
     const ema200_15=ema(c15.slice(-120),120)
-
     const ema20_15Prev=ema(c15.slice(-61,-1),20)
     const price15=c15.at(-1)
-
     const slope15=pct(ema20_15,ema20_15Prev)
     const gap15=Math.abs(ema20_15-ema50_15)/price15
-
     const bull15Base=ema20_15>ema50_15&&price15>ema20_15
     const bear15Base=ema20_15<ema50_15&&price15<ema20_15
-
     const bull15Slope=slope15>.00007
     const bear15Slope=slope15<-.00007
-
     const bull15=bull15Base&&bull15Slope
     const bear15=bear15Base&&bear15Slope
-
     const strongBull15=bull15&&gap15>=.0015
     const strongBear15=bear15&&gap15>=.0015
-
     const structureHigh15=Math.max(...h15.slice(-24,-2))
     const structureLow15=Math.min(...l15.slice(-24,-2))
-
     const higherHigh15=price15>structureHigh15
     const lowerLow15=price15<structureLow15
-
     const above200_15=price15>ema200_15
     const below200_15=price15<ema200_15
 
     // =========================================================
     // 5M TREND ENGINE
     // =========================================================
-    const p5=c5.at(-1)
-    const p5Prev=c5.at(-2)
-
+    const p5=c5.at(-1),p5Prev=c5.at(-2)
     const ema9_5=ema(c5.slice(-40),9)
     const ema20_5=ema(c5.slice(-60),20)
     const ema50_5=ema(c5.slice(-100),50)
     const ema9_5Prev=ema(c5.slice(-41,-1),9)
-
     const slope9_5=pct(ema9_5,ema9_5Prev)
 
     const trendLong5=p5>ema20_5&&ema9_5>ema20_5&&ema20_5>ema50_5&&slope9_5>.00003
     const trendShort5=p5<ema20_5&&ema9_5<ema20_5&&ema20_5<ema50_5&&slope9_5<-.00003
-
     const softLong5=ema9_5>ema20_5&&ema20_5>ema50_5
     const softShort5=ema9_5<ema20_5&&ema20_5<ema50_5
+
+    const dist9Pct=Math.abs(p5-ema9_5)/p5
+    const dist20Pct=Math.abs(p5-ema20_5)/p5
+    const dist9ATR=Math.abs(p5-ema9_5)/Math.max(atr5,.00000001)
+    const dist20ATR=Math.abs(p5-ema20_5)/Math.max(atr5,.00000001)
+
+    const touchTolerance=Math.max(atr5/p5*.35,.0012)
+
+    const longExtended5=p5>ema9_5&&dist9ATR>1.15
+    const shortExtended5=p5<ema9_5&&dist9ATR>1.15
+    const longVeryExtended5=p5>ema9_5&&dist9ATR>1.60
+    const shortVeryExtended5=p5<ema9_5&&dist9ATR>1.60
 
     const weakLong5=p5<ema9_5||slope9_5<-.00018
     const weakShort5=p5>ema9_5||slope9_5>.00018
@@ -4279,36 +3816,34 @@ async function coreLogic(data15,data1h,data5,data1m){
     // =========================================================
     const recent5Low=Math.min(...l5.slice(-14,-2))
     const recent5High=Math.max(...h5.slice(-14,-2))
-
     const vol5Avg=avg(v5.slice(-21,-1))
     const vol5Now=v5.at(-1)
     const vol5Ratio=vol5Avg>0?vol5Now/vol5Avg:1
+
+    const volumeSpike5=vol5Ratio>=2.20
+    const volumeExtreme5=vol5Ratio>=4.00
+    const volumeDead5=vol5Ratio<.65
+    const volumeWeak5=vol5Ratio<.80
+    const volumeConfirmLong=vol5Ratio>=.80&&vol5Ratio<=3.50
+    const volumeConfirmShort=vol5Ratio>=.80&&vol5Ratio<=3.50
+    const volumeConfirm1=vol1Ratio>=.70&&vol1Ratio<=3.50
 
     // =========================================================
     // 1M CURRENT CANDLE
     // =========================================================
     const i=c1.length-1
     const o0=o1[i],h0=h1[i],l0=l1[i],c0=c1[i]
-    const cPrev=c1[i-1]
-    const hPrev=h1[i-1],lPrev=l1[i-1]
-    const h2=h1[i-2],l2=l1[i-2]
-
+    const cPrev=c1[i-1],hPrev=h1[i-1],lPrev=l1[i-1],h2=h1[i-2],l2=l1[i-2]
     const candleRange=range(h0,l0)
     if(candleRange<=0)return null
 
     const br0=bodyRatio(o0,h0,l0,c0)
     const closeLong0=closeLong(h0,l0,c0)
     const closeShort0=closeShort(h0,l0,c0)
-
-    if(br0<.35)return null
-
-    const vol1Avg=avg(v1.slice(-21,-1))
-    const vol1Now=v1.at(-1)
-    const vol1Ratio=vol1Avg>0?vol1Now/vol1Avg:1
+    if(br0<.28)return null
 
     const rsi5=rsi(c5.slice(-50))
     const rsi1=rsi(c1.slice(-50))
-
     if(!Number.isFinite(rsi5)||!Number.isFinite(rsi1))return null
 
     // =========================================================
@@ -4320,7 +3855,6 @@ async function coreLogic(data15,data1h,data5,data1m){
 
     const bullishCandle=c0>o0&&br0>=.45&&closeLong0>=.62
     const bearishCandle=c0<o0&&br0>=.45&&closeShort0>=.62
-
     const strongBullCandle=bullishCandle&&br0>=.55&&closeLong0>=.68
     const strongBearCandle=bearishCandle&&br0>=.55&&closeShort0>=.68
 
@@ -4329,76 +3863,72 @@ async function coreLogic(data15,data1h,data5,data1m){
     // =========================================================
     const microBreakLong=c0>Math.max(hPrev,h2)
     const microBreakShort=c0<Math.min(lPrev,l2)
-
-    const microBreakLongStrong=c0>Math.max(hPrev,h2)&&closeLong0>=.68
-    const microBreakShortStrong=c0<Math.min(lPrev,l2)&&closeShort0>=.68
+    const microBreakLongStrong=microBreakLong&&closeLong0>=.68
+    const microBreakShortStrong=microBreakShort&&closeShort0>=.68
 
     // =========================================================
     // LIQUIDITY SWEEP
     // =========================================================
     const sweepLow=l0<recent5Low&&c0>recent5Low&&bullishCandle
     const sweepHigh=h0>recent5High&&c0<recent5High&&bearishCandle
-
-    const strongSweepLow=sweepLow&&l0<recent5Low&&closeLong0>=.68&&br0>=.50
-    const strongSweepHigh=sweepHigh&&h0>recent5High&&closeShort0>=.68&&br0>=.50
+    const strongSweepLow=sweepLow&&closeLong0>=.68&&br0>=.50
+    const strongSweepHigh=sweepHigh&&closeShort0>=.68&&br0>=.50
 
     // =========================================================
     // CONTEXT
     // =========================================================
     const longAlignment=bull1h&&bull15
     const shortAlignment=bear1h&&bear15
-
     const longPartialAlignment=(bull1h||bull15)&&!strongBear1h&&!strongBear15
     const shortPartialAlignment=(bear1h||bear15)&&!strongBull1h&&!strongBull15
 
     // =========================================================
-    // PULLBACK LOCATION
+// REAL PULLBACK LOCATION
+// =========================================================
+const pullbackLongLocation=
+    softLong5&&
+    (
+        Math.abs(l5.at(-1)-ema9_5)<=atr5*.70||
+        Math.abs(l5.at(-1)-ema20_5)<=atr5*.70||
+        Math.abs(l5.at(-2)-ema20_5)<=atr5*.80
+    )&&
+    p5>=ema20_5*(1-.0035)
+
+const pullbackShortLocation=
+    softShort5&&
+    (
+        Math.abs(h5.at(-1)-ema9_5)<=atr5*.70||
+        Math.abs(h5.at(-1)-ema20_5)<=atr5*.70||
+        Math.abs(h5.at(-2)-ema20_5)<=atr5*.80
+    )&&
+    p5<=ema20_5*(1+.0035)
+
     // =========================================================
-    const touchTolerance=Math.max(atr5/price*.65,.0018)
-
-    const pullbackLongLocation=
-        softLong5&&
-        (
-            l5.at(-1)<=ema9_5*(1+touchTolerance)||
-            l5.at(-2)<=ema20_5*(1+touchTolerance)
-        )
-
-    const pullbackShortLocation=
-        softShort5&&
-        (
-            h5.at(-1)>=ema9_5*(1-touchTolerance)||
-            h5.at(-2)>=ema20_5*(1-touchTolerance)
-        )
-
-    // =========================================================
-    // RECLAIM
+    // RECLAIM ENGINE
     // =========================================================
     const reclaimLong=
         cPrev<=ema9_5&&
         c0>ema9_5&&
         bullishCandle&&
         closeLong0>=.68&&
-        microBreakLongStrong
+        microBreakLongStrong&&
+        c0>cPrev&&
+        move1>=-Math.max(atr1/price*1.2,.001)
 
     const reclaimShort=
         cPrev>=ema9_5&&
         c0<ema9_5&&
         bearishCandle&&
         closeShort0>=.68&&
-        microBreakShortStrong
+        microBreakShortStrong&&
+        c0<cPrev&&
+        move1<=Math.max(atr1/price*1.2,.001)
 
     // =========================================================
     // BREAKOUT + RETEST
     // =========================================================
-    const breakoutLong=
-        p5Prev<=recent5High&&
-        p5>recent5High&&
-        vol5Ratio>=1.10
-
-    const breakoutShort=
-        p5Prev>=recent5Low&&
-        p5<recent5Low&&
-        vol5Ratio>=1.10
+    const breakoutLong=p5Prev<=recent5High&&p5>recent5High&&vol5Ratio>=1.10
+    const breakoutShort=p5Prev>=recent5Low&&p5<recent5Low&&vol5Ratio>=1.10
 
     const retestLong=
         !breakoutLong&&
@@ -4419,46 +3949,72 @@ async function coreLogic(data15,data1h,data5,data1m){
         microBreakShortStrong
 
     // =========================================================
-    // CONTINUATION
+    // QUALITY CONTINUATION
     // =========================================================
     const continuationLong=
         longAlignment&&
         trendLong5&&
         microBreakLongStrong&&
         strongBullCandle&&
-        move5<Math.max(atr5/price*3.2,.012)&&
-        price-ema9_5<atr5*1.50
+        !longVeryExtended5&&
+        (
+            pullbackLongLocation||
+            Math.abs(c5.at(-2)-ema9_5)<=atr5*.75||
+            Math.abs(c5.at(-2)-ema20_5)<=atr5*.75
+        )&&
+        move5<Math.max(atr5/price*2.8,.010)&&
+        price-ema9_5<atr5*1.25&&
+        !(volumeExtreme5&&move5>Math.max(atr5/price*2.5,.007))
 
     const continuationShort=
         shortAlignment&&
         trendShort5&&
         microBreakShortStrong&&
         strongBearCandle&&
-        move5>-Math.max(atr5/price*3.2,.012)&&
-        ema9_5-price<atr5*1.50
+        !shortVeryExtended5&&
+        (
+            pullbackShortLocation||
+            Math.abs(c5.at(-2)-ema9_5)<=atr5*.75||
+            Math.abs(c5.at(-2)-ema20_5)<=atr5*.75
+        )&&
+        move5>-Math.max(atr5/price*2.8,.010)&&
+        ema9_5-price<atr5*1.25&&
+        !(volumeExtreme5&&move5<-Math.max(atr5/price*2.5,.007))
+
+    // =========================================================
+    // LATE ENTRY FILTER
+    // =========================================================
+    const lateLongEntry=
+        trendLong5&&
+        (
+            dist9ATR>1.15||
+            dist20ATR>1.80||
+            move5>Math.max(atr5/price*2.8,.008)
+        )
+
+    const lateShortEntry=
+        trendShort5&&
+        (
+            dist9ATR>1.15||
+            dist20ATR>1.80||
+            move5<-Math.max(atr5/price*2.8,.008)
+        )
 
     // =========================================================
     // PULLBACK
     // =========================================================
-    const pullbackLong=
-        longAlignment&&
-        pullbackLongLocation&&
-        reclaimLong
-
-    const pullbackShort=
-        shortAlignment&&
-        pullbackShortLocation&&
-        reclaimShort
+    const pullbackLong=longAlignment&&pullbackLongLocation&&reclaimLong
+    const pullbackShort=shortAlignment&&pullbackShortLocation&&reclaimShort
 
     // =========================================================
     // REVERSAL
-    // Chỉ cho phép khi reversal có bằng chứng mạnh.
     // =========================================================
     const reversalLong=
         strongSweepLow&&
         microBreakLongStrong&&
         strongBullCandle&&
         !strongBear1h&&
+        !strongBear15&&
         rsi5>=32&&
         rsi5<=46&&
         closeLong0>=.70
@@ -4468,6 +4024,7 @@ async function coreLogic(data15,data1h,data5,data1m){
         microBreakShortStrong&&
         strongBearCandle&&
         !strongBull1h&&
+        !strongBull15&&
         rsi5>=54&&
         rsi5<=68&&
         closeShort0>=.70
@@ -4475,8 +4032,7 @@ async function coreLogic(data15,data1h,data5,data1m){
     // =========================================================
     // SETUP PRIORITY
     // =========================================================
-    let longSetup=null
-    let shortSetup=null
+    let longSetup=null,shortSetup=null
 
     if(retestLong)longSetup="BREAKOUT_RETEST"
     else if(pullbackLong)longSetup="PULLBACK_RECLAIM"
@@ -4491,8 +4047,7 @@ async function coreLogic(data15,data1h,data5,data1m){
     // =========================================================
     // DIRECTION SCORE
     // =========================================================
-    let longDirection=0
-    let shortDirection=0
+    let longDirection=0,shortDirection=0
 
     if(bull1h)longDirection+=25
     if(strongBull1h)longDirection+=8
@@ -4515,97 +4070,106 @@ async function coreLogic(data15,data1h,data5,data1m){
     // =========================================================
     // SIDE SELECTION
     // =========================================================
-    let side=null
-    let setup=null
+    const MIN_DIRECTION=48
+    let side=null,setup=null
 
     if(longSetup&&!shortSetup){
-        if(longDirection>=62||longSetup==="REVERSAL_LONG"){
-            side="LONG"
-            setup=longSetup
+        if(longDirection>=MIN_DIRECTION||longSetup==="REVERSAL_LONG"){
+            side="LONG";setup=longSetup
         }
     }else if(shortSetup&&!longSetup){
-        if(shortDirection>=62||shortSetup==="REVERSAL_SHORT"){
-            side="SHORT"
-            setup=shortSetup
+        if(shortDirection>=MIN_DIRECTION||shortSetup==="REVERSAL_SHORT"){
+            side="SHORT";setup=shortSetup
         }
     }else if(longSetup&&shortSetup){
-        if(longDirection-shortDirection>=10){
-            side="LONG"
-            setup=longSetup
-        }else if(shortDirection-longDirection>=10){
-            side="SHORT"
-            setup=shortSetup
+        if(longDirection-shortDirection>=5&&longDirection>=MIN_DIRECTION){
+            side="LONG";setup=longSetup
+        }else if(shortDirection-longDirection>=5&&shortDirection>=MIN_DIRECTION){
+            side="SHORT";setup=shortSetup
         }
     }
 
     if(!side)return null
 
     // =========================================================
-    // HARD DIRECTION FILTER
-    // =========================================================
-    if(side==="LONG"&&!longPartialAlignment&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&!shortPartialAlignment&&setup!=="REVERSAL_SHORT")return null
+// HARD DIRECTION FILTER
+// =========================================================
+if(side==="LONG"&&!longPartialAlignment&&setup!=="REVERSAL_LONG"&&setup!=="PULLBACK_RECLAIM")return null
+if(side==="SHORT"&&!shortPartialAlignment&&setup!=="REVERSAL_SHORT"&&setup!=="PULLBACK_RECLAIM")return null
 
-    if(side==="LONG"&&strongBear1h&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&strongBull1h&&setup!=="REVERSAL_SHORT")return null
+if(side==="LONG"&&strongBear1h&&setup!=="REVERSAL_LONG")return null
+if(side==="SHORT"&&strongBull1h&&setup!=="REVERSAL_SHORT")return null
 
-    if(side==="LONG"&&strongBear15&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&strongBull15&&setup!=="REVERSAL_SHORT")return null
+if(side==="LONG"&&strongBear15&&setup!=="REVERSAL_LONG")return null
+if(side==="SHORT"&&strongBull15&&setup!=="REVERSAL_SHORT")return null
 
-    if(side==="LONG"&&weakLong5&&setup!=="REVERSAL_LONG"&&setup!=="PULLBACK_RECLAIM")return null
-    if(side==="SHORT"&&weakShort5&&setup!=="REVERSAL_SHORT"&&setup!=="PULLBACK_RECLAIM")return null
-
-    // =========================================================
-    // CHASE FILTER
-    // =========================================================
-    const distEma5=Math.abs(price-ema9_5)/price
-
-    if(setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT"){
-        if(distEma5>Math.max(atr5/price*1.80,.008))return null
-    }
-
-    if(side==="LONG"&&price>ema9_5+atr5*1.60&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&price<ema9_5-atr5*1.60&&setup!=="REVERSAL_SHORT")return null
+if(side==="LONG"&&weakLong5&&setup==="TREND_CONTINUATION")return null
+if(side==="SHORT"&&weakShort5&&setup==="TREND_CONTINUATION")return null
 
     // =========================================================
-    // MOVE FILTER
-    // =========================================================
-    if(side==="LONG"&&move1<-Math.max(atr1/price*1.60,.0020))return null
-    if(side==="SHORT"&&move1>Math.max(atr1/price*1.60,.0020))return null
+// CHASE FILTER
+// =========================================================
+const distEma5=Math.abs(price-ema9_5)/price
+if(
+    setup!=="REVERSAL_LONG"&&
+    setup!=="REVERSAL_SHORT"&&
+    setup!=="PULLBACK_RECLAIM"&&
+    setup!=="BREAKOUT_RETEST"&&
+    distEma5>Math.max(atr5/price*2.35,.012)
+)return null
+if(
+    side==="LONG"&&
+    price>ema9_5+atr5*2.00&&
+    setup!=="REVERSAL_LONG"&&
+    setup!=="PULLBACK_RECLAIM"
+)return null
+if(
+    side==="SHORT"&&
+    price<ema9_5-atr5*2.00&&
+    setup!=="REVERSAL_SHORT"&&
+    setup!=="PULLBACK_RECLAIM"
+)return null
 
-    if(side==="LONG"&&move3<-Math.max(atr5/price*1.40,.005)&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&move3>Math.max(atr5/price*1.40,.005)&&setup!=="REVERSAL_SHORT")return null
+    // =========================================================
+// MOVE FILTER
+// =========================================================
+if(side==="LONG"&&move1<-Math.max(atr1/price*2.00,.0025)&&setup!=="PULLBACK_RECLAIM")return null
+if(side==="SHORT"&&move1>Math.max(atr1/price*2.00,.0025)&&setup!=="PULLBACK_RECLAIM")return null
+if(
+    side==="LONG"&&
+    move3<-Math.max(atr5/price*1.70,.006)&&
+    setup!=="REVERSAL_LONG"&&
+    setup!=="PULLBACK_RECLAIM"
+)return null
+if(
+    side==="SHORT"&&
+    move3>Math.max(atr5/price*1.70,.006)&&
+    setup!=="REVERSAL_SHORT"&&
+    setup!=="PULLBACK_RECLAIM"
+)return null
+    // =========================================================
+// EXTREME RSI
+// =========================================================
+if(side==="LONG"&&rsi5>76&&setup!=="REVERSAL_LONG")return null
+if(side==="SHORT"&&rsi5<24&&setup!=="REVERSAL_SHORT")return null
+
+    if(setup==="TREND_CONTINUATION"&&side==="LONG"&&lateLongEntry)return null
+    if(setup==="TREND_CONTINUATION"&&side==="SHORT"&&lateShortEntry)return null
 
     // =========================================================
-    // EXTREME RSI FILTER
+    // VOLUME HARD FILTER
     // =========================================================
-    if(side==="LONG"&&rsi5>72&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&rsi5<28&&setup!=="REVERSAL_SHORT")return null
+    if((setup==="TREND_CONTINUATION"||setup==="BREAKOUT_RETEST")&&vol5Ratio<.65)return null
 
     // =========================================================
     // SCORE ENGINE
     // =========================================================
     let score=0
-
     const scoreBreakdown={
-        direction:0,
-        h1Trend:0,
-        trend15:0,
-        structure:0,
-        setup:0,
-        trigger:0,
-        volume:0,
-        momentum:0,
-        rsi:0,
-        location:0,
-        room:0,
-        rr:0
+        direction:0,h1Trend:0,trend15:0,structure:0,setup:0,trigger:0,
+        volume:0,momentum:0,rsi:0,location:0,room:0,rr:0
     }
-
-    const add=(key,n)=>{
-        score+=n
-        scoreBreakdown[key]+=n
-    }
+    const add=(key,n)=>{score+=n;scoreBreakdown[key]+=n}
 
     if(side==="LONG"){
         if(bull1h)add("h1Trend",15)
@@ -4642,16 +4206,41 @@ async function coreLogic(data15,data1h,data5,data1m){
     if(setup==="TREND_CONTINUATION")add("setup",8)
     if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT")add("setup",14)
 
-    if(vol1Ratio>=1.10)add("volume",2)
-    if(vol1Ratio>=1.35)add("volume",2)
-    if(vol5Ratio>=1.08)add("volume",2)
-    if(vol5Ratio>=1.30)add("volume",2)
+    // =========================================================
+    // VOLUME QUALITY SCORE
+    // =========================================================
+    if(vol1Ratio>=.80&&vol1Ratio<=2.50)add("volume",2)
+    if(vol1Ratio>=1.10&&vol1Ratio<=2.50)add("volume",2)
+    if(vol5Ratio>=.80&&vol5Ratio<=2.50)add("volume",2)
+    if(vol5Ratio>=1.10&&vol5Ratio<=3.00)add("volume",2)
+
+    if(vol5Ratio>4.00&&(
+        Math.abs(move5)>Math.max(atr5/price*2.5,.007)||
+        dist9ATR>1.60
+    ))add("volume",-3)
 
     if(side==="LONG"&&rsi5>=40&&rsi5<=68)add("rsi",3)
     if(side==="SHORT"&&rsi5>=32&&rsi5<=60)add("rsi",3)
 
     if(side==="LONG"&&move5>atr5/price*2.5)add("momentum",-5)
     if(side==="SHORT"&&move5<-atr5/price*2.5)add("momentum",-5)
+
+    // =========================================================
+    // ENTRY LOCATION SCORE
+    // =========================================================
+    if(side==="LONG"){
+        if(price>=ema9_5&&price<=ema9_5+atr5*.60)add("location",4)
+        if(price>=ema20_5-atr5*.35&&price<=ema20_5+atr5*.60)add("location",5)
+        if(pullbackLongLocation)add("location",4)
+        if(lateLongEntry)add("location",-7)
+    }
+
+    if(side==="SHORT"){
+        if(price<=ema9_5&&price>=ema9_5-atr5*.60)add("location",4)
+        if(price<=ema20_5+atr5*.35&&price>=ema20_5-atr5*.60)add("location",5)
+        if(pullbackShortLocation)add("location",4)
+        if(lateShortEntry)add("location",-7)
+    }
 
     // =========================================================
     // STRUCTURE / LOCATION
@@ -4662,164 +4251,116 @@ async function coreLogic(data15,data1h,data5,data1m){
     const swingHigh15=high(h15.slice(0,-1),16)
 
     const resistanceCandidates=[
-        recent5High,
-        swingHigh5,
-        swingHigh15,
-        structureHigh15
+        recent5High,swingHigh5,swingHigh15,structureHigh15
     ].filter(x=>Number.isFinite(x)&&x>price)
 
     const supportCandidates=[
-        recent5Low,
-        swingLow5,
-        swingLow15,
-        structureLow15
+        recent5Low,swingLow5,swingLow15,structureLow15
     ].filter(x=>Number.isFinite(x)&&x<price)
 
     const resistance=resistanceCandidates.length?Math.min(...resistanceCandidates):null
     const support=supportCandidates.length?Math.max(...supportCandidates):null
 
-    let roomToResistance=resistance?((resistance-price)/price):Infinity
-    let roomToSupport=support?((price-support)/price):Infinity
+    let roomToResistance=resistance?(resistance-price)/price:Infinity
+    let roomToSupport=support?(price-support)/price:Infinity
 
-    // Không vào khi cản gần quá.
-    if(side==="LONG"&&resistance){
-        if(resistance-price<atr5*.80)return null
-        if(resistance-price<atr15*.70)return null
-    }
+    // =========================================================
+// ROOM FILTER
+// =========================================================
+if(
+    side==="LONG"&&
+    resistance&&
+    setup!=="PULLBACK_RECLAIM"&&
+    setup!=="REVERSAL_LONG"&&
+    resistance-price<atr5*.50
+)return null
 
-    if(side==="SHORT"&&support){
-        if(price-support<atr5*.80)return null
-        if(price-support<atr15*.70)return null
-    }
+if(
+    side==="SHORT"&&
+    support&&
+    setup!=="PULLBACK_RECLAIM"&&
+    setup!=="REVERSAL_SHORT"&&
+    price-support<atr5*.50
+)return null
 
     // =========================================================
     // RISK ENGINE
     // =========================================================
     const entry=price
-    const buffer=Math.max(atr5*.12,atr1*.50)
-
-    let sl,tp,risk,targetLevel
-
-    const isReversal=setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"
-    const strongSetup=isReversal||setup==="PULLBACK_RECLAIM"||setup==="BREAKOUT_RETEST"
-    const momentumSetup=setup==="TREND_CONTINUATION"
-
-    const volatilityRatio=atr15/entry
-    const highVol=volatilityRatio>=.006
-    const lowVol=volatilityRatio<=.0025
-
-    const maxRiskATR=strongSetup?1.35:momentumSetup?1.20:1.15
-    const maxRiskPct=strongSetup?.018:momentumSetup?.016:.014
-
-    // =========================================================
-    // DYNAMIC TARGET R
-    // =========================================================
-    let targetR=1.65
-
-    if(setup==="PULLBACK_RECLAIM")targetR=1.70
-    if(setup==="BREAKOUT_RETEST")targetR=1.75
-    if(setup==="TREND_CONTINUATION")targetR=1.65
-    if(isReversal)targetR=1.70
-
-    if(highVol)targetR+=.10
-    if(lowVol)targetR-=.05
-
-    targetR=Math.max(1.55,Math.min(targetR,1.85))
-
-    if(side==="LONG"){
-        const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,swingLow15)
-        const atrStop=entry-(isReversal?atr5*.75:atr5*.65)
-
-        // Structure is the primary SL.
-        // ATR only prevents the stop from becoming excessively wide.
-        sl=Math.max(structureStop-buffer,atrStop)
-
-        if(highVol){
-            sl=Math.min(sl,entry-atr15*.90)
-        }
-
-        if(lowVol){
-            sl=Math.max(sl,entry-atr5*.60)
-        }
-
-        risk=entry-sl
-
-        if(risk<=0)return null
-        if(!Number.isFinite(risk))return null
-        if(risk/atr15>maxRiskATR)return null
-        if(risk/entry>maxRiskPct)return null
-
-        targetLevel=resistance
-
-        // Primary TP = risk x targetR.
-        let target=entry+risk*targetR
-
-        // Resistance is the real-world TP limit.
-        if(resistance){
-            const safeTarget=resistance-Math.max(atr1*.15,atr5*.08)
-
-            if(safeTarget<=entry)return null
-            if(safeTarget-entry<risk*1.55)return null
-
-            target=Math.min(target,safeTarget)
-        }
-
-        tp=target
-    }else{
-        const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,swingHigh15)
-        const atrStop=entry+(isReversal?atr5*.75:atr5*.65)
-
-        // Structure is the primary SL.
-        // ATR only prevents the stop from becoming excessively wide.
-        sl=Math.min(structureStop+buffer,atrStop)
-
-        if(highVol){
-            sl=Math.max(sl,entry+atr15*.90)
-        }
-
-        if(lowVol){
-            sl=Math.min(sl,entry+atr5*.60)
-        }
-
-        risk=sl-entry
-
-        if(risk<=0)return null
-        if(!Number.isFinite(risk))return null
-        if(risk/atr15>maxRiskATR)return null
-        if(risk/entry>maxRiskPct)return null
-
-        targetLevel=support
-
-        // Primary TP = risk x targetR.
-        let target=entry-risk*targetR
-
-        // Support is the real-world TP limit.
-        if(support){
-            const safeTarget=support+Math.max(atr1*.15,atr5*.08)
-
-            if(safeTarget>=entry)return null
-            if(entry-safeTarget<risk*1.55)return null
-
-            target=Math.max(target,safeTarget)
-        }
-
-        tp=target
+const buffer=Math.max(atr5*.15,atr1*.50)
+let sl,tp,risk,targetLevel
+const isReversal=setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"
+const strongSetup=isReversal||setup==="PULLBACK_RECLAIM"||setup==="BREAKOUT_RETEST"
+const momentumSetup=setup==="TREND_CONTINUATION"
+const volatilityRatio=atr15/entry
+const highVol=volatilityRatio>=.006
+const lowVol=volatilityRatio<=.0025
+const maxRiskATR=strongSetup?1.45:momentumSetup?1.30:1.20
+const maxRiskPct=strongSetup?.020:momentumSetup?.018:.016
+let targetR=1.55
+if(setup==="PULLBACK_RECLAIM")targetR=1.60
+if(setup==="BREAKOUT_RETEST")targetR=1.65
+if(setup==="TREND_CONTINUATION")targetR=1.55
+if(isReversal)targetR=1.60
+if(highVol)targetR+=.10
+if(lowVol)targetR-=.05
+targetR=Math.max(1.45,Math.min(targetR,1.80))
+if(side==="LONG"){
+    const structureStop=isReversal
+        ?Math.min(l0,swingLow5)
+        :Math.min(swingLow5,swingLow15)
+    sl=structureStop-buffer
+    risk=entry-sl
+    if(risk<=0||!Number.isFinite(risk))return null
+    if(risk/atr15>maxRiskATR)return null
+    if(risk/entry>maxRiskPct)return null
+    targetLevel=resistance
+    let target=entry+risk*targetR
+    if(resistance){
+        const safeTarget=resistance-Math.max(atr1*.15,atr5*.08)
+        if(safeTarget<=entry)return null
+        if(safeTarget-entry<risk*1.30)return null
+        target=Math.min(target,safeTarget)
     }
+    tp=target
+}else{
+    const structureStop=isReversal
+        ?Math.max(h0,swingHigh5)
+        :Math.max(swingHigh5,swingHigh15)
 
+    sl=structureStop+buffer
+    risk=sl-entry
+    if(risk<=0||!Number.isFinite(risk))return null
+    if(risk/atr15>maxRiskATR)return null
+    if(risk/entry>maxRiskPct)return null
+
+    targetLevel=support
+
+    let target=entry-risk*targetR
+
+    if(support){
+        const safeTarget=support+Math.max(atr1*.15,atr5*.08)
+
+        if(safeTarget>=entry)return null
+        if(entry-safeTarget<risk*1.30)return null
+
+        target=Math.max(target,safeTarget)
+    }
+    tp=target
+}
     // =========================================================
-    // FINAL RR / ROOM
-    // =========================================================
-    const finalRR=side==="LONG"?(tp-entry)/risk:(entry-tp)/risk
+// FINAL RR / ROOM
+// =========================================================
+const finalRR=side==="LONG"?(tp-entry)/risk:(entry-tp)/risk
 
-    if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(risk)||!Number.isFinite(finalRR))return null
-    if(risk<=0)return null
-    if(finalRR<1.55)return null
+if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(risk)||!Number.isFinite(finalRR))return null
+if(risk<=0)return null
+if(finalRR<1.30)return null
 
-    if(finalRR>=1.55)add("rr",4)
-    if(finalRR>=1.80)add("rr",4)
-    if(finalRR>=2.10)add("rr",3)
+if(finalRR>=1.45)add("rr",4)
+if(finalRR>=1.80)add("rr",4)
+if(finalRR>=2.10)add("rr",3)
 
-    // Room score.
     if(side==="LONG"){
         if(roomToResistance>=atr15/price*2.0)add("room",4)
         if(roomToResistance>=atr15/price*3.0)add("room",4)
@@ -4827,24 +4368,26 @@ async function coreLogic(data15,data1h,data5,data1m){
         if(roomToSupport>=atr15/price*2.0)add("room",4)
         if(roomToSupport>=atr15/price*3.0)add("room",4)
     }
+
     // =========================================================
-    // FINAL QUALITY FILTER
-    // =========================================================
-    let minimumScore=76
+// FINAL QUALITY FILTER
+// =========================================================
+let minimumScore=64
 
-    if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"){
-        minimumScore=78
-    }
+if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT")minimumScore=66
+if(setup==="TREND_CONTINUATION")minimumScore=67
+if(setup==="PULLBACK_RECLAIM")minimumScore=64
+if(setup==="BREAKOUT_RETEST")minimumScore=66
 
-    if(setup==="TREND_CONTINUATION"){
-        minimumScore=78
-    }
+if(score<minimumScore)return null
 
-    if(score<minimumScore)return null
+const finalDirection=side==="LONG"?longDirection:shortDirection
 
-    // Không cho entry nếu direction quá yếu.
-    const finalDirection=side==="LONG"?longDirection:shortDirection
-    if(finalDirection<62&&setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT")return null
+if(
+    finalDirection<48&&
+    setup!=="REVERSAL_LONG"&&
+    setup!=="REVERSAL_SHORT"
+)return null
 
     // =========================================================
     // MARKET STATE
@@ -4854,7 +4397,12 @@ async function coreLogic(data15,data1h,data5,data1m){
             ?((gap15>=.002||gap1h>=.002)?"TREND_STRONG":"TREND_WEAK")
             :"RANGE"
 
-    if(marketState==="RANGE"&&setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT")return null
+    if(
+    marketState==="RANGE"&&
+    setup!=="REVERSAL_LONG"&&
+    setup!=="REVERSAL_SHORT"&&
+    setup!=="PULLBACK_RECLAIM"
+)return null
 
     const volatility=
         atrRatio5>=.004?"HIGH":
@@ -7620,9 +7168,9 @@ async function syncActiveTrades(){
 }
 
 let DYNAMIC_TPSL_RUNNING = false
-const ENABLE_DYNAMIC_TPSL=false
+//const ENABLE_DYNAMIC_TPSL=false
 async function runDynamicTPSL(){
-    if(!ENABLE_DYNAMIC_TPSL)return
+    //if(!ENABLE_DYNAMIC_TPSL)return
 
     if(DYNAMIC_TPSL_RUNNING){
         return
