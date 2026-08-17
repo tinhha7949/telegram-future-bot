@@ -6231,10 +6231,6 @@ if(!t.entry) continue
 if(!t.enteredAt){
     t.enteredAt = Date.now()
 }
-let isTimeout =
-    t.enteredAt &&
-    Date.now() - t.enteredAt > 86400000 //43200000 // 12h
-
 // =====================================================
 // 24H AUTO CLOSE
 // =====================================================
