@@ -1351,7 +1351,7 @@ if(positionSide==="LONG"){
                 )
             )
 
-            const previousSL=Number(trade.sl)
+            const previousSL=Number(trade.previousSL)
 
 if(Number.isFinite(previousSL)&&previousSL>0){
     if(positionSide==="LONG"&&sl<previousSL)sl=previousSL
@@ -3445,6 +3445,45 @@ if(side==="LONG"){
     // =========================================================
     // MINIMUM CHANGE
     // =========================================================
+    const info=await getSymbolInfo(symbol)
+
+const priceFilter=
+    info?.filters?.find(
+        f=>f.filterType==="PRICE_FILTER"
+    )
+
+const tickSize=
+    Number(priceFilter?.tickSize)
+
+if(
+    !Number.isFinite(tickSize)||
+    tickSize<=0
+){
+    return
+}
+
+const precision=
+    Math.max(
+        0,
+        String(tickSize).split(".")[1]?.length||0
+    )
+
+if(side==="LONG"){
+    newSL=Math.ceil(newSL/tickSize)*tickSize
+    newTP=Math.ceil(newTP/tickSize)*tickSize
+}else{
+    newSL=Math.floor(newSL/tickSize)*tickSize
+    newTP=Math.floor(newTP/tickSize)*tickSize
+}
+
+newSL=Number(newSL.toFixed(precision))
+newTP=Number(newTP.toFixed(precision))
+
+if(side==="LONG"&&newSL<oldSL)newSL=oldSL
+if(side==="SHORT"&&newSL>oldSL)newSL=oldSL
+
+newSL=Number(newSL.toFixed(precision))
+newTP=Number(newTP.toFixed(precision))
 
     const minimumChange=
         Math.max(
@@ -3476,7 +3515,8 @@ if(side==="LONG"){
         entry:currentEntry,
         sl:newSL,
         tp:newTP,
-        initialRisk
+        initialRisk,
+        previousSL:oldSL
     }
 
     console.log(
