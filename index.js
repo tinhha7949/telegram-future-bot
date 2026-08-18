@@ -4058,109 +4058,268 @@ async function getData(symbol, interval, limit){
 }
 // ================= SYMBOL (PRO) =================
 async function getTopSymbols(){
-    const urls=[
+
+    const urls = [
         "https://api.binance.com/api/v3/ticker/24hr",
         "https://data-api.binance.vision/api/v3/ticker/24hr"
     ]
 
-    for(let url of urls){
-        for(let attempt=0;attempt<2;attempt++){
+    for(const url of urls){
+
+        for(let attempt = 0; attempt < 2; attempt++){
+
             try{
-                const res=await safeFetch(url,{headers:{"User-Agent":"Mozilla/5.0"}})
-                if(!res||!res.ok)continue
 
-                const data=await res.json()
-                if(!Array.isArray(data)||!data.length)continue
-
-                const base=data
-                    .filter(c=>
-                        c.symbol.endsWith("USDT")&&
-                        !c.symbol.includes("UP")&&
-                        !c.symbol.includes("DOWN")&&
-                        !c.symbol.includes("BUSD")&&
-                        !c.symbol.includes("USD1")&&
-                        !c.symbol.includes("FDUSD")&&
-                        !c.symbol.includes("USDC")&&
-                        !c.symbol.includes("EUR")&&
-                        !c.symbol.includes("TRY")&&
-                        !c.symbol.includes("RLUSD")
-                    )
-                    .filter(c=>{
-                        const change=Math.abs(Number(c.priceChangePercent))
-                        return change>=1&&change<=100
-                    })
-                    .filter(c=>Number(c.quoteVolume)>2_000_000)
-                    .filter(c=>{
-                        const high=Number(c.highPrice),low=Number(c.lowPrice),last=Number(c.lastPrice)
-                        if(high<=0||low<=0||last<=0)return false
-                        return (high-low)/last>=0.015
-                    })
-                    .filter(c=>validFuturesSymbols&&validFuturesSymbols.size>0&&validFuturesSymbols.has(c.symbol))
-
-                const scoreCoin=c=>{
-                    const move=Math.abs(Number(c.priceChangePercent))
-                    const volume=Number(c.quoteVolume)
-                    return Math.min(move,20)*2.2+Math.log10(Math.max(volume,1))*2
-                }
-
-                const moving=base
-                    .filter(c=>{
-                        const move=Math.abs(Number(c.priceChangePercent))
-                        return move>=1&&move<=20
-                    })
-                    .sort((a,b)=>scoreCoin(b)-scoreCoin(a))
-
-                const reversal=base
-                    .filter(c=>{
-                        const move=Math.abs(Number(c.priceChangePercent))
-                        return move>20&&move<=100
-                    })
-                    .sort((a,b)=>scoreCoin(b)-scoreCoin(a))
-
-                const quiet=moving
-                    .filter(c=>{
-                        const move=Math.abs(Number(c.priceChangePercent))
-                        return move>=1&&move<=5
-                    })
-                    .sort((a,b)=>{
-                        const moveA=Math.abs(Number(a.priceChangePercent)),moveB=Math.abs(Number(b.priceChangePercent))
-                        const volA=Number(a.quoteVolume),volB=Number(b.quoteVolume)
-                        const sA=moveA*1.5+Math.log10(Math.max(volA,1))*2.5
-                        const sB=moveB*1.5+Math.log10(Math.max(volB,1))*2.5
-                        return sB-sA
-                    })
-
-                const selected=[],used=new Set()
-
-                const addSymbols=(list,limit)=>{
-                    for(const c of list){
-                        if(selected.length>=limit)break
-                        if(used.has(c.symbol))continue
-                        used.add(c.symbol)
-                        selected.push(c.symbol)
+                const res = await safeFetch(
+                    url,
+                    {
+                        headers:{
+                            "User-Agent":"Mozilla/5.0"
+                        }
                     }
+                )
+
+                if(!res || !res.ok){
+                    continue
                 }
 
-                addSymbols(quiet,25)
-                addSymbols(reversal,30)
-                addSymbols(moving,45)
+                const data = await res.json()
 
-                if(selected.length<120){
-                    const remaining=base
-                        .filter(c=>!used.has(c.symbol))
-                        .sort((a,b)=>scoreCoin(b)-scoreCoin(a))
-
-                    addSymbols(remaining,120-selected.length)
+                if(
+                    !Array.isArray(data) ||
+                    data.length === 0
+                ){
+                    continue
                 }
+
+                // =====================================================
+                // 1. BASE FILTER
+                //
+                // Chỉ loại những coin thực sự không phù hợp.
+                //
+                // Không dùng 24H movement để quyết định coin có
+                // được scan hay không.
+                // CoreLogic mới sẽ tự quyết định trend/pullback.
+                // =====================================================
+
+                const base = data
+                    .filter(c => {
+
+                        const symbol =
+                            String(c.symbol || "")
+
+                        return (
+                            symbol.endsWith("USDT") &&
+                            !symbol.includes("UP") &&
+                            !symbol.includes("DOWN") &&
+                            !symbol.includes("BUSD") &&
+                            !symbol.includes("USD1") &&
+                            !symbol.includes("FDUSD") &&
+                            !symbol.includes("USDC") &&
+                            !symbol.includes("EUR") &&
+                            !symbol.includes("TRY") &&
+                            !symbol.includes("RLUSD")
+                        )
+                    })
+
+                    // =================================================
+                    // Chỉ lấy Futures symbol hợp lệ
+                    // =================================================
+
+                    .filter(c =>
+                        validFuturesSymbols &&
+                        validFuturesSymbols.size > 0 &&
+                        validFuturesSymbols.has(c.symbol)
+                    )
+
+                    // =================================================
+                    // Thanh khoản tối thiểu
+                    //
+                    // 1.5M vẫn đủ an toàn nhưng rộng hơn bản cũ 2M.
+                    // =================================================
+
+                    .filter(c => {
+
+                        const volume =
+                            Number(c.quoteVolume)
+
+                        return (
+                            Number.isFinite(volume) &&
+                            volume >= 1_500_000
+                        )
+                    })
+
+                    // =================================================
+                    // Range tối thiểu
+                    //
+                    // Không lấy coin quá chết.
+                    //
+                    // 1.2% thay vì 1.5% bản cũ.
+                    // =================================================
+
+                    .filter(c => {
+
+                        const high =
+                            Number(c.highPrice)
+
+                        const low =
+                            Number(c.lowPrice)
+
+                        const last =
+                            Number(c.lastPrice)
+
+                        if(
+                            !Number.isFinite(high) ||
+                            !Number.isFinite(low) ||
+                            !Number.isFinite(last)
+                        ){
+                            return false
+                        }
+
+                        if(
+                            high <= 0 || low <= 0 ||
+                            last <= 0
+                        ){
+                            return false
+                        }
+
+                        const range24 =
+                            (high - low) / last
+
+                        return range24 >= 0.012
+                    })
+
+                // =====================================================
+                // 2. SCORE
+                //
+                // Đây KHÔNG phải score entry.
+                //
+                // Chỉ dùng để xếp coin nào đáng cho Core soi trước.
+                //
+                // Không ưu tiên coin tăng mạnh vô hạn.
+                //
+                // 0.5% -> vẫn có thể được chọn
+                // 3-8% -> rất tốt
+                // >8% -> điểm movement bị giới hạn
+                //
+                // Điều này hợp với:
+                //
+                // TREND
+                // +
+                // PULLBACK
+                //
+                // hơn việc ưu tiên coin đang pump mạnh.
+                // =====================================================
+
+                const scoreCoin = c => {
+
+                    const move =
+                        Math.abs(
+                            Number(
+                                c.priceChangePercent
+                            )
+                        )
+
+                    const volume =
+                        Number(c.quoteVolume)
+
+                    if(
+                        !Number.isFinite(move) ||
+                        !Number.isFinite(volume)
+                    ){
+                        return -Infinity
+                    }
+
+                    const movementScore =
+                        Math.min(move, 8) * 1.5
+
+                    const volumeScore =
+                        Math.log10(
+                            Math.max(volume, 1)
+                        ) * 2.5
+
+                    return (
+                        movementScore +
+                        volumeScore
+                    )
+                }
+
+                // =====================================================
+                // 3. SORT
+                //
+                // Không còn:
+                //
+                // quiet 30
+                // moving 40
+                // strong 35
+                // extreme 15
+                //
+                // Tất cả coin hợp lệ được xếp chung.
+                // =====================================================
+
+                const ranked =
+                    base
+                        .map(c => ({
+                            symbol: c.symbol,
+                            score: scoreCoin(c)
+                        }))
+                        .filter(x =>
+                            Number.isFinite(x.score)
+                        )
+                        .sort(
+                            (a,b) =>
+                                b.score - a.score
+                        )
+
+                // =====================================================
+                // 4. SELECT
+                //
+                // Lấy tối đa 120 coin.
+                //
+                // Nếu base chỉ có 80 coin thì lấy 80.
+                // Không ép thêm coin rác chỉ để đủ 120.
+                // =====================================================
+
+                const selected =
+                    ranked
+                        .slice(0, 120)
+                        .map(x => x.symbol)
+
+                // =====================================================
+                // 5. LOG
+                // =====================================================
 
                 console.log(
-                    `📊 SYMBOLS ${selected.length} MOVING=${moving.length} REVERSAL=${reversal.length} QUIET=${quiet.length}`
+                    `📊 SYMBOLS ${selected.length} ` +
+                    `BASE=${base.length} ` +
+                    `RANKED=${ranked.length}`
                 )
+
+                if(
+                    selected.length > 0
+                ){
+
+                    console.log(
+                        `🎯 TOP SYMBOLS: ` +
+                        `${selected.slice(0,10).join(", ")}`
+                    )
+                }
+// =====================================================
+                // 6. RETURN
+                // =====================================================
 
                 return selected
 
             }catch(e){
-                if(attempt===1)console.log("❌ SYMBOL FAIL:",url)
+
+                if(attempt === 1){
+
+                    console.log(
+                        "❌ SYMBOL FAIL:",
+                        url,
+                        e?.message || e
+                    )
+                }
             }
         }
     }
@@ -5248,7 +5407,7 @@ const h0 = h1[i]
 
     if (
         !Number.isFinite(finalRR) ||
-        finalRR < 1.65
+        finalRR < 1.80
     ) {
         return null
     }
