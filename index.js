@@ -5248,7 +5248,7 @@ const h0 = h1[i]
 
     if (
         !Number.isFinite(finalRR) ||
-        finalRR < 1.80
+        finalRR < 1.65
     ) {
         return null
     }
