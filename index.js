@@ -2563,29 +2563,163 @@ try{
         return
     }
 
-    const recentHigh=Math.max(
-        ...h5.slice(-13,-1)
+    // =========================================================
+// STRUCTURE WINDOWS
+// =========================================================
+
+const recentHigh=Math.max(
+    ...h5.slice(-13,-1)
+)
+
+const recentLow=Math.min(
+    ...l5.slice(-13,-1)
+)
+
+const previousHigh=Math.max(
+    ...h5.slice(-25,-13)
+)
+
+const previousLow=Math.min(
+    ...l5.slice(-25,-13)
+)
+
+const runnerHigh=Math.max(
+    ...h5.slice(-49,-1)
+)
+
+const runnerLow=Math.min(
+    ...l5.slice(-49,-1)
+)
+
+
+// =========================================================
+// CONFIRMED 5M SWING
+//
+// Không dùng wick đơn lẻ làm structure trailing.
+//
+// Swing Low:
+//
+//        candle
+//           ↓
+//      \    ↓    /
+//       \   ↓   /
+//        \_____/
+//
+// Phải có 2 candle xác nhận bên phải.
+//
+// Swing High ngược lại.
+//
+// Chỉ lấy swing trong vùng 5M gần đây.
+// =========================================================
+
+function getConfirmedSwingLow(highs,lows,closes){
+
+    const start=Math.max(2,lows.length-30)
+    const end=lows.length-3
+
+    for(let i=end;i>=start;i--){
+
+        const left1=lows[i-1]
+        const left2=lows[i-2]
+        const current=lows[i]
+        const right1=lows[i+1]
+        const right2=lows[i+2]
+
+        if(
+            !Number.isFinite(left1)||
+            !Number.isFinite(left2)||
+            !Number.isFinite(current)||
+            !Number.isFinite(right1)||
+            !Number.isFinite(right2)
+        ){
+            continue
+        }
+
+        if(
+            current<left1&&
+            current<=left2&&
+            current<right1&&
+            current<=right2
+        ){
+            return current
+        }
+    }
+
+    return null
+}
+
+
+function getConfirmedSwingHigh(highs,lows,closes){
+
+    const start=Math.max(2,highs.length-30)
+    const end=highs.length-3
+
+    for(let i=end;i>=start;i--){
+
+        const left1=highs[i-1]
+        const left2=highs[i-2]
+        const current=highs[i]
+        const right1=highs[i+1]
+        const right2=highs[i+2]
+
+        if(
+            !Number.isFinite(left1)||
+            !Number.isFinite(left2)||
+            !Number.isFinite(current)||
+            !Number.isFinite(right1)||
+            !Number.isFinite(right2)
+        ){
+            continue
+        }
+
+        if(
+            current>left1&&
+            current>=left2&&
+            current>right1&&
+            current>=right2
+        ){
+            return current
+        }
+    }
+
+    return null
+}
+
+
+const confirmedSwingLow=
+    getConfirmedSwingLow(
+        h5,
+        l5,
+        c5
     )
 
-    const recentLow=Math.min(
-        ...l5.slice(-13,-1)
+const confirmedSwingHigh=
+    getConfirmedSwingHigh(
+        h5,
+        l5,
+        c5
     )
 
-    const previousHigh=Math.max(
-        ...h5.slice(-25,-13)
-    )
 
-    const previousLow=Math.min(
-        ...l5.slice(-25,-13)
-    )
+// =========================================================
+// TRAILING STRUCTURE
+//
+// Nếu chưa có confirmed swing thì fallback
+// về recent structure cũ.
+//
+// Như vậy không làm bot mất khả năng trailing
+// chỉ vì thiếu swing.
+// =========================================================
 
-    const runnerHigh=Math.max(
-        ...h5.slice(-49,-1)
-    )
+const trailingLow=
+    Number.isFinite(confirmedSwingLow)
+        ?confirmedSwingLow
+        :recentLow
 
-    const runnerLow=Math.min(
-        ...l5.slice(-49,-1)
-    )
+const trailingHigh=
+    Number.isFinite(confirmedSwingHigh)
+        ?confirmedSwingHigh
+        :recentHigh
 
     if(
         !Number.isFinite(recentHigh)||
@@ -2699,7 +2833,7 @@ try{
         ){
 
             const structureSL=
-                recentLow-
+                trailingLow-
                 atr15*.45
 
             const profitFloor=
@@ -2725,7 +2859,7 @@ try{
         ){
 
             const structureSL=
-                recentHigh+
+                trailingHigh+
                 atr15*.45
 
             const profitFloor=
@@ -2765,7 +2899,7 @@ try{
         ){
 
             const structureSL=
-                recentLow-
+                trailingLow-
                 atr15*.40
 
             const profitFloor=
@@ -2791,7 +2925,7 @@ try{
         ){
 
             const structureSL=
-                recentHigh+
+                trailingHigh+
                 atr15*.40
 
             const profitFloor=
@@ -2828,7 +2962,7 @@ try{
         if(side==="LONG"){
 
             const structureSL=
-                recentLow-
+                trailingLow-
                 atr15*.35
 
             const profitFloor=
@@ -2851,7 +2985,7 @@ try{
         }else{
 
             const structureSL=
-                recentHigh+
+                trailingHigh+
                 atr15*.35
 
             const profitFloor=
@@ -4092,834 +4226,1467 @@ function getDynamicMinVol(volAvgUSDT, price, atrRatio){
     return base
 }
 
-async function coreLogic(data15,data1h,data5,data1m){
-    if(!Array.isArray(data15)||!Array.isArray(data1h)||!Array.isArray(data5)||!Array.isArray(data1m))return null
-    data15=data15.slice(0,-1);data1h=data1h.slice(0,-1);data5=data5.slice(0,-1);data1m=data1m.slice(0,-1)
-    if(data15.length<120||data1h.length<80||data5.length<100||data1m.length<100)return null
-
-    const col=(data,n)=>data.map(x=>Number(x[n]))
-    const o15=col(data15,1),h15=col(data15,2),l15=col(data15,3),c15=col(data15,4)
-    const o1h=col(data1h,1),h1h=col(data1h,2),l1h=col(data1h,3),c1h=col(data1h,4)
-    const o5=col(data5,1),h5=col(data5,2),l5=col(data5,3),c5=col(data5,4),v5=col(data5,5)
-    const o1=col(data1m,1),h1=col(data1m,2),l1=col(data1m,3),c1=col(data1m,4),v1=col(data1m,5)
-    if([o15,h15,l15,c15,o1h,h1h,l1h,c1h,o5,h5,l5,c5,v5,o1,h1,l1,c1,v1].flat().some(x=>!Number.isFinite(x)))return null
-
-    const price=c1.at(-1)
-    if(!Number.isFinite(price)||price<=0)return null
-
-    const pct=(a,b)=>b?(a-b)/b:0
-    const avg=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:0
-    const high=(a,n)=>Math.max(...a.slice(-n))
-    const low=(a,n)=>Math.min(...a.slice(-n))
-    const range=(h,l)=>Math.max(h-l,0)
-    const bodyRatio=(o,h,l,c)=>range(h,l)?Math.abs(c-o)/range(h,l):0
-    const closeLong=(h,l,c)=>range(h,l)?(c-l)/range(h,l):0
-    const closeShort=(h,l,c)=>range(h,l)?(h-c)/range(h,l):0
-    const round=(n,d=8)=>Number(Number(n).toFixed(d))
+async function coreLogic(data15, data1h, data5, data1m) {
 
     // =========================================================
-    // ATR
+    // 0. VALIDATION
     // =========================================================
-    const atr15Raw=atr(data15.slice(-100)),atr5Raw=atr(data5.slice(-100)),atr1Raw=atr(data1m.slice(-100))
-    const atr15=Number.isFinite(atr15Raw)&&atr15Raw>0?atr15Raw:price*.003
-    const atr5=Number.isFinite(atr5Raw)&&atr5Raw>0?atr5Raw:price*.002
-    const atr1=Number.isFinite(atr1Raw)&&atr1Raw>0?atr1Raw:price*.0008
-    const atrRatio15=atr15/price
-    const atrRatio5=atr5/price
-    if(!Number.isFinite(atrRatio5)||atrRatio5>.025)return null
 
-    // =========================================================
-    // 1H DIRECTION ENGINE
-    // =========================================================
-    const ema20_1h=ema(c1h.slice(-60),20)
-    const ema50_1h=ema(c1h.slice(-80),50)
-    const ema200_1h=ema(c1h.slice(-80),80)
+    if (
+        !Array.isArray(data15) ||
+        !Array.isArray(data1h) ||
+        !Array.isArray(data5) ||
+        !Array.isArray(data1m)
+    ) return null
 
-    const ema20_1hPrev=ema(c1h.slice(-61,-1),20)
-    const price1h=c1h.at(-1)
+    // Bỏ candle đang chạy
+    data15 = data15.slice(0, -1)
+    data1h = data1h.slice(0, -1)
+    data5  = data5.slice(0, -1)
+    data1m = data1m.slice(0, -1)
 
-    const slope1h=pct(ema20_1h,ema20_1hPrev)
-    const gap1h=Math.abs(ema20_1h-ema50_1h)/price1h
+    if (
+        data15.length < 120 ||
+        data1h.length < 100 ||
+        data5.length < 100 ||
+        data1m.length < 100
+    ) return null
 
-    const bull1hBase=ema20_1h>ema50_1h&&price1h>ema20_1h
-    const bear1hBase=ema20_1h<ema50_1h&&price1h<ema20_1h
+    const col = (data, n) =>
+        data.map(x => Number(x[n]))
 
-    const bull1hSlope=slope1h>.00005
-    const bear1hSlope=slope1h<-.00005
+    const o15 = col(data15, 1)
+    const h15 = col(data15, 2)
+    const l15 = col(data15, 3)
+    const c15 = col(data15, 4)
 
-    const bull1h=bull1hBase&&bull1hSlope
-    const bear1h=bear1hBase&&bear1hSlope
+    const o1h = col(data1h, 1)
+    const h1h = col(data1h, 2)
+    const l1h = col(data1h, 3)
+    const c1h = col(data1h, 4)
 
-    const strongBull1h=bull1h&&gap1h>=.0015
-    const strongBear1h=bear1h&&gap1h>=.0015
+    const o5 = col(data5, 1)
+    const h5 = col(data5, 2)
+    const l5 = col(data5, 3)
+    const c5 = col(data5, 4)
+    const v5 = col(data5, 5)
 
-    const ema200Bull=price1h>ema200_1h
-    const ema200Bear=price1h<ema200_1h
+    const o1 = col(data1m, 1)
+    const h1 = col(data1m, 2)
+    const l1 = col(data1m, 3)
+    const c1 = col(data1m, 4)
+    const v1 = col(data1m, 5)
 
-    // =========================================================
-    // 15M STRUCTURE / DIRECTION
-    // =========================================================
-    const ema20_15=ema(c15.slice(-60),20)
-    const ema50_15=ema(c15.slice(-100),50)
-    const ema200_15=ema(c15.slice(-120),120)
+    const all = [
+        o15, h15, l15, c15,
+        o1h, h1h, l1h, c1h,
+        o5, h5, l5, c5, v5,
+        o1, h1, l1, c1, v1
+    ]
 
-    const ema20_15Prev=ema(c15.slice(-61,-1),20)
-    const price15=c15.at(-1)
-
-    const slope15=pct(ema20_15,ema20_15Prev)
-    const gap15=Math.abs(ema20_15-ema50_15)/price15
-
-    const bull15Base=ema20_15>ema50_15&&price15>ema20_15
-    const bear15Base=ema20_15<ema50_15&&price15<ema20_15
-
-    const bull15Slope=slope15>.00007
-    const bear15Slope=slope15<-.00007
-
-    const bull15=bull15Base&&bull15Slope
-    const bear15=bear15Base&&bear15Slope
-
-    const strongBull15=bull15&&gap15>=.0015
-    const strongBear15=bear15&&gap15>=.0015
-
-    const structureHigh15=Math.max(...h15.slice(-24,-2))
-    const structureLow15=Math.min(...l15.slice(-24,-2))
-
-    const higherHigh15=price15>structureHigh15
-    const lowerLow15=price15<structureLow15
-
-    const above200_15=price15>ema200_15
-    const below200_15=price15<ema200_15
-
-    // =========================================================
-    // 5M TREND ENGINE
-    // =========================================================
-    const p5=c5.at(-1)
-    const p5Prev=c5.at(-2)
-
-    const ema9_5=ema(c5.slice(-40),9)
-    const ema20_5=ema(c5.slice(-60),20)
-    const ema50_5=ema(c5.slice(-100),50)
-    const ema9_5Prev=ema(c5.slice(-41,-1),9)
-
-    const slope9_5=pct(ema9_5,ema9_5Prev)
-
-    const trendLong5=p5>ema20_5&&ema9_5>ema20_5&&ema20_5>ema50_5&&slope9_5>.00003
-    const trendShort5=p5<ema20_5&&ema9_5<ema20_5&&ema20_5<ema50_5&&slope9_5<-.00003
-
-    const softLong5=ema9_5>ema20_5&&ema20_5>ema50_5
-    const softShort5=ema9_5<ema20_5&&ema20_5<ema50_5
-
-    const weakLong5=p5<ema9_5||slope9_5<-.00018
-    const weakShort5=p5>ema9_5||slope9_5>.00018
-
-    // =========================================================
-    // 5M VOLUME
-    // =========================================================
-    const recent5Low=Math.min(...l5.slice(-14,-2))
-    const recent5High=Math.max(...h5.slice(-14,-2))
-
-    const vol5Avg=avg(v5.slice(-21,-1))
-    const vol5Now=v5.at(-1)
-    const vol5Ratio=vol5Avg>0?vol5Now/vol5Avg:1
-
-    // =========================================================
-    // 1M CURRENT CANDLE
-    // =========================================================
-    const i=c1.length-1
-    const o0=o1[i],h0=h1[i],l0=l1[i],c0=c1[i]
-    const cPrev=c1[i-1]
-    const hPrev=h1[i-1],lPrev=l1[i-1]
-    const h2=h1[i-2],l2=l1[i-2]
-
-    const candleRange=range(h0,l0)
-    if(candleRange<=0)return null
-
-    const br0=bodyRatio(o0,h0,l0,c0)
-    const closeLong0=closeLong(h0,l0,c0)
-    const closeShort0=closeShort(h0,l0,c0)
-
-    if(br0<.35)return null
-
-    const vol1Avg=avg(v1.slice(-21,-1))
-    const vol1Now=v1.at(-1)
-    const vol1Ratio=vol1Avg>0?vol1Now/vol1Avg:1
-
-    const rsi5=rsi(c5.slice(-50))
-    const rsi1=rsi(c1.slice(-50))
-
-    if(!Number.isFinite(rsi5)||!Number.isFinite(rsi1))return null
-
-    // =========================================================
-    // PRICE MOVEMENT
-    // =========================================================
-    const move1=pct(c0,cPrev)
-    const move3=pct(c0,c1.at(-4))
-    const move5=pct(c0,c1.at(-6))
-
-    const bullishCandle=c0>o0&&br0>=.45&&closeLong0>=.62
-    const bearishCandle=c0<o0&&br0>=.45&&closeShort0>=.62
-
-    const strongBullCandle=bullishCandle&&br0>=.55&&closeLong0>=.68
-    const strongBearCandle=bearishCandle&&br0>=.55&&closeShort0>=.68
-
-    // =========================================================
-    // MICRO STRUCTURE
-    // =========================================================
-    const microBreakLong=c0>Math.max(hPrev,h2)
-    const microBreakShort=c0<Math.min(lPrev,l2)
-
-    const microBreakLongStrong=c0>Math.max(hPrev,h2)&&closeLong0>=.68
-    const microBreakShortStrong=c0<Math.min(lPrev,l2)&&closeShort0>=.68
-
-    // =========================================================
-    // LIQUIDITY SWEEP
-    // =========================================================
-    const sweepLow=l0<recent5Low&&c0>recent5Low&&bullishCandle
-    const sweepHigh=h0>recent5High&&c0<recent5High&&bearishCandle
-
-    const strongSweepLow=sweepLow&&l0<recent5Low&&closeLong0>=.68&&br0>=.50
-    const strongSweepHigh=sweepHigh&&h0>recent5High&&closeShort0>=.68&&br0>=.50
-
-    // =========================================================
-    // CONTEXT
-    // =========================================================
-    const longAlignment=bull1h&&bull15
-    const shortAlignment=bear1h&&bear15
-
-    const longPartialAlignment=(bull1h||bull15)&&!strongBear1h&&!strongBear15
-    const shortPartialAlignment=(bear1h||bear15)&&!strongBull1h&&!strongBull15
-
-    // =========================================================
-    // PULLBACK LOCATION
-    // =========================================================
-    const touchTolerance=Math.max(atr5/price*.65,.0018)
-
-    const pullbackLongLocation=
-        softLong5&&
-        (
-            l5.at(-1)<=ema9_5*(1+touchTolerance)||
-            l5.at(-2)<=ema20_5*(1+touchTolerance)
+    if (
+        all.flat().some(
+            x => !Number.isFinite(x)
         )
+    ) {
+        return null
+    }
 
-    const pullbackShortLocation=
-        softShort5&&
-        (
-            h5.at(-1)>=ema9_5*(1-touchTolerance)||
-            h5.at(-2)>=ema20_5*(1-touchTolerance)
+    const price = c1.at(-1)
+
+    if (
+        !Number.isFinite(price) ||
+        price <= 0
+    ) {
+        return null
+    }
+
+    // =========================================================
+    // HELPERS
+    // =========================================================
+
+    const avg = arr =>
+        arr.length
+            ? arr.reduce(
+                (sum, x) => sum + x,
+                0
+            ) / arr.length
+            : 0
+
+    const highest = (arr, n) =>
+        arr.length >= n
+            ? Math.max(...arr.slice(-n))
+            : Math.max(...arr)
+
+    const lowest = (arr, n) =>
+        arr.length >= n
+            ? Math.min(...arr.slice(-n))
+            : Math.min(...arr)
+
+    const range = (h, l) =>
+        Math.max(h - l, 0)
+
+    const bodyRatio = (o, h, l, c) => {
+
+        const r = range(h, l)
+
+        return r > 0
+            ? Math.abs(c - o) / r
+            : 0
+    }
+
+    const closeLocationLong = (h, l, c) => {
+
+        const r = range(h, l)
+
+        return r > 0
+            ? (c - l) / r
+            : 0
+    }
+
+    const closeLocationShort = (h, l, c) => {
+
+        const r = range(h, l)
+
+        return r > 0
+            ? (h - c) / r
+            : 0
+    }
+
+    const pct = (a, b) =>
+        b !== 0
+            ? (a - b) / b
+            : 0
+
+    const round = (n, d = 8) =>
+        Number(
+            Number(n).toFixed(d)
         )
 
     // =========================================================
-    // RECLAIM
+    // 1. ATR
     // =========================================================
-    const reclaimLong=
-        cPrev<=ema9_5&&
-        c0>ema9_5&&
-        bullishCandle&&
-        closeLong0>=.68&&
-        microBreakLongStrong
 
-    const reclaimShort=
-        cPrev>=ema9_5&&
-        c0<ema9_5&&
-        bearishCandle&&
-        closeShort0>=.68&&
-        microBreakShortStrong
+    const atr1hRaw =
+        atr(data1h.slice(-80))
 
+    const atr15Raw =
+        atr(data15.slice(-80))
+
+    const atr5Raw =
+        atr(data5.slice(-80))
+
+    const atr1Raw =
+        atr(data1m.slice(-80))
+
+    const atr1h =
+        Number.isFinite(atr1hRaw) &&
+        atr1hRaw > 0
+            ? atr1hRaw
+            : price * 0.004
+
+    const atr15 =
+        Number.isFinite(atr15Raw) &&
+        atr15Raw > 0
+            ? atr15Raw
+            : price * 0.002
+
+    const atr5 =
+        Number.isFinite(atr5Raw) &&
+        atr5Raw > 0
+            ? atr5Raw
+            : price * 0.001
+
+    const atr1 =
+        Number.isFinite(atr1Raw) &&
+        atr1Raw > 0
+            ? atr1Raw
+            : price * 0.0005
+
+    const atrRatio1h =
+        atr1h / price
+
+    const atrRatio15 =
+        atr15 / price
+
+    const atrRatio5 =
+        atr5 / price
+
+    if (
+        !Number.isFinite(atrRatio5) ||
+        atrRatio5 <= 0 ||
+        atrRatio5 > 0.025
+    ) {
+        return null
+    }
+// =========================================================
+    // 2. 1H DIRECTION
+    //
+    // 1H chỉ xác định phe.
+    // Không dùng 1H để trigger entry.
     // =========================================================
-    // BREAKOUT + RETEST
-    // =========================================================
-    const breakoutLong=
-        p5Prev<=recent5High&&
-        p5>recent5High&&
-        vol5Ratio>=1.10
 
-    const breakoutShort=
-        p5Prev>=recent5Low&&
-        p5<recent5Low&&
-        vol5Ratio>=1.10
+    const ema20_1h =
+        ema(c1h.slice(-60), 20)
 
-    const retestLong=
-        !breakoutLong&&
-        longAlignment&&
-        p5>recent5High&&
-        l0<=recent5High*(1+touchTolerance*.50)&&
-        c0>recent5High&&
-        strongBullCandle&&
-        microBreakLongStrong
+    const ema50_1h =
+        ema(c1h.slice(-90), 50)
 
-    const retestShort=
-        !breakoutShort&&
-        shortAlignment&&
-        p5<recent5Low&&
-        h0>=recent5Low*(1-touchTolerance*.50)&&
-        c0<recent5Low&&
-        strongBearCandle&&
-        microBreakShortStrong
+    const ema20_1hPrev =
+        ema(c1h.slice(-61, -1), 20)
 
-    // =========================================================
-    // CONTINUATION
-    // =========================================================
-    const continuationLong=
-        longAlignment&&
-        trendLong5&&
-        microBreakLongStrong&&
-        strongBullCandle&&
-        move5<Math.max(atr5/price*3.2,.012)&&
-        price-ema9_5<atr5*1.50
+    const price1h =
+        c1h.at(-1)
 
-    const continuationShort=
-        shortAlignment&&
-        trendShort5&&
-        microBreakShortStrong&&
-        strongBearCandle&&
-        move5>-Math.max(atr5/price*3.2,.012)&&
-        ema9_5-price<atr5*1.50
+    const slope1h =
+        pct(
+            ema20_1h,
+            ema20_1hPrev
+        )
 
-    // =========================================================
-    // PULLBACK
-    // =========================================================
-    const pullbackLong=
-        longAlignment&&
-        pullbackLongLocation&&
-        reclaimLong
+    const gap1h =
+        Math.abs(
+            ema20_1h -
+            ema50_1h
+        ) / price1h
 
-    const pullbackShort=
-        shortAlignment&&
-        pullbackShortLocation&&
-        reclaimShort
+    const bull1h =
+        ema20_1h > ema50_1h &&
+        price1h > ema20_1h &&
+        slope1h > 0
 
-    // =========================================================
-    // REVERSAL
-    // Chỉ cho phép khi reversal có bằng chứng mạnh.
-    // =========================================================
-    const reversalLong=
-        strongSweepLow&&
-        microBreakLongStrong&&
-        strongBullCandle&&
-        !strongBear1h&&
-        rsi5>=32&&
-        rsi5<=46&&
-        closeLong0>=.70
+    const bear1h =
+        ema20_1h < ema50_1h &&
+        price1h < ema20_1h &&
+        slope1h < 0
 
-    const reversalShort=
-        strongSweepHigh&&
-        microBreakShortStrong&&
-        strongBearCandle&&
-        !strongBull1h&&
-        rsi5>=54&&
-        rsi5<=68&&
-        closeShort0>=.70
-
-    // =========================================================
-    // SETUP PRIORITY
-    // =========================================================
-    let longSetup=null
-    let shortSetup=null
-
-    if(retestLong)longSetup="BREAKOUT_RETEST"
-    else if(pullbackLong)longSetup="PULLBACK_RECLAIM"
-    else if(continuationLong)longSetup="TREND_CONTINUATION"
-    else if(reversalLong)longSetup="REVERSAL_LONG"
-
-    if(retestShort)shortSetup="BREAKOUT_RETEST"
-    else if(pullbackShort)shortSetup="PULLBACK_RECLAIM"
-    else if(continuationShort)shortSetup="TREND_CONTINUATION"
-    else if(reversalShort)shortSetup="REVERSAL_SHORT"
-
-    // =========================================================
-    // DIRECTION SCORE
-    // =========================================================
-    let longDirection=0
-    let shortDirection=0
-
-    if(bull1h)longDirection+=25
-    if(strongBull1h)longDirection+=8
-    if(ema200Bull)longDirection+=4
-    if(bull15)longDirection+=25
-    if(strongBull15)longDirection+=7
-    if(above200_15)longDirection+=3
-    if(trendLong5)longDirection+=8
-    if(slope15>.00020)longDirection+=5
-
-    if(bear1h)shortDirection+=25
-    if(strongBear1h)shortDirection+=8
-    if(ema200Bear)shortDirection+=4
-    if(bear15)shortDirection+=25
-    if(strongBear15)shortDirection+=7
-    if(below200_15)shortDirection+=3
-    if(trendShort5)shortDirection+=8
-    if(slope15<-.00020)shortDirection+=5
-
-    // =========================================================
-    // SIDE SELECTION
-    // =========================================================
-    let side=null
-    let setup=null
-
-    if(longSetup&&!shortSetup){
-        if(longDirection>=62||longSetup==="REVERSAL_LONG"){
-            side="LONG"
-            setup=longSetup
-        }
-    }else if(shortSetup&&!longSetup){
-        if(shortDirection>=62||shortSetup==="REVERSAL_SHORT"){
-            side="SHORT"
-            setup=shortSetup
-        }
-    }else if(longSetup&&shortSetup){
-        if(longDirection-shortDirection>=10){
-            side="LONG"
-            setup=longSetup
-        }else if(shortDirection-longDirection>=10){
-            side="SHORT"
-            setup=shortSetup
-        }
+    if (
+        !bull1h &&
+        !bear1h
+    ) {
+        return null
     }
 
-    if(!side)return null
-
     // =========================================================
-    // HARD DIRECTION FILTER
+    // 3. 15M TREND
     // =========================================================
-    if(side==="LONG"&&!longPartialAlignment&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&!shortPartialAlignment&&setup!=="REVERSAL_SHORT")return null
 
-    if(side==="LONG"&&strongBear1h&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&strongBull1h&&setup!=="REVERSAL_SHORT")return null
+    const ema20_15 =
+        ema(c15.slice(-70), 20)
 
-    if(side==="LONG"&&strongBear15&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&strongBull15&&setup!=="REVERSAL_SHORT")return null
+    const ema50_15 =
+        ema(c15.slice(-110), 50)
 
-    if(side==="LONG"&&weakLong5&&setup!=="REVERSAL_LONG"&&setup!=="PULLBACK_RECLAIM")return null
-    if(side==="SHORT"&&weakShort5&&setup!=="REVERSAL_SHORT"&&setup!=="PULLBACK_RECLAIM")return null
+    const ema20_15Prev =
+        ema(c15.slice(-71, -1), 20)
 
-    // =========================================================
-    // CHASE FILTER
-    // =========================================================
-    const distEma5=Math.abs(price-ema9_5)/price
+    const price15 =
+        c15.at(-1)
 
-    if(setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT"){
-        if(distEma5>Math.max(atr5/price*1.80,.008))return null
+    const slope15 =
+        pct(
+            ema20_15,
+            ema20_15Prev
+        )
+
+    const gap15 =
+        Math.abs(
+            ema20_15 -
+            ema50_15
+        ) / price15
+
+    const bull15 =
+        ema20_15 > ema50_15 &&
+        price15 > ema20_15 &&
+        slope15 > 0
+
+    const bear15 =
+        ema20_15 < ema50_15 &&
+        price15 < ema20_15 &&
+        slope15 < 0
+
+    const longBias =
+        bull1h &&
+        bull15
+
+    const shortBias =
+        bear1h &&
+        bear15
+
+    if (
+        !longBias &&
+        !shortBias
+    ) {
+        return null
     }
 
-    if(side==="LONG"&&price>ema9_5+atr5*1.60&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&price<ema9_5-atr5*1.60&&setup!=="REVERSAL_SHORT")return null
+    // =========================================================
+    // 4. 15M STRUCTURE
+    //
+    // Không yêu cầu structure quá cứng.
+    // Chỉ cần structure không đi ngược trend.
+    // =========================================================
+
+    const structureHigh15 =
+        highest(
+            h15.slice(0, -2),
+            24
+        )
+
+    const structureLow15 =
+        lowest(
+            l15.slice(0, -2),
+            24
+        )
+
+    const oldHigh15 =
+        highest(
+            h15.slice(0, -14),
+            12
+        )
+
+    const oldLow15 =
+        lowest(
+            l15.slice(0, -14),
+            12
+        )
+
+    const bullishStructure15 =
+        structureHigh15 >= oldHigh15 &&
+        structureLow15 >= oldLow15
+
+    const bearishStructure15 =
+        structureHigh15 <= oldHigh15 &&
+        structureLow15 <= oldLow15
+
+    // Không bắt structure quá cứng.
+    // EMA + slope đã xác nhận trend.
+    const structureOKLong =
+        bullishStructure15 ||
+        (
+            longBias &&
+            structureLow15 >= oldLow15 * 0.998
+        )
+
+    const structureOKShort =
+        bearishStructure15 ||
+        (
+            shortBias &&
+            structureHigh15 <= oldHigh15 * 1.002
+        )
 
     // =========================================================
-    // MOVE FILTER
+    // 5. 5M TREND
     // =========================================================
-    if(side==="LONG"&&move1<-Math.max(atr1/price*1.60,.0020))return null
-    if(side==="SHORT"&&move1>Math.max(atr1/price*1.60,.0020))return null
 
-    if(side==="LONG"&&move3<-Math.max(atr5/price*1.40,.005)&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&move3>Math.max(atr5/price*1.40,.005)&&setup!=="REVERSAL_SHORT")return null
+    const p5 =
+        c5.at(-1)
+
+    const ema9_5 =
+        ema(c5.slice(-40), 9)
+
+    const ema20_5 =
+        ema(c5.slice(-60), 20)
+
+    const ema50_5 =
+        ema(c5.slice(-100), 50)
+
+    const ema9_5Prev =
+        ema(c5.slice(-41, -1), 9)
+
+    const slope9_5 =
+        pct(
+            ema9_5,
+            ema9_5Prev
+        )
+
+    const trendLong5 =
+        p5 > ema20_5 &&
+        ema9_5 > ema20_5 &&
+        ema20_5 > ema50_5 &&
+        slope9_5 > 0
+
+    const trendShort5 =
+        p5 < ema20_5 &&
+        ema9_5 < ema20_5 &&
+        ema20_5 < ema50_5 &&
+        slope9_5 < 0
 
     // =========================================================
-    // EXTREME RSI FILTER
+    // 6. 5M VOLUME
     // =========================================================
-    if(side==="LONG"&&rsi5>72&&setup!=="REVERSAL_LONG")return null
-    if(side==="SHORT"&&rsi5<28&&setup!=="REVERSAL_SHORT")return null
 
-    // =========================================================
-    // SCORE ENGINE
-    // =========================================================
-    let score=0
+    const vol5Avg =
+        avg(v5.slice(-21, -1))
 
-    const scoreBreakdown={
-        direction:0,
-        h1Trend:0,
-        trend15:0,
-        structure:0,
-        setup:0,
-        trigger:0,
-        volume:0,
-        momentum:0,
-        rsi:0,
-        location:0,
-        room:0,
-        rr:0
+    const vol5Now =
+        v5.at(-1)
+const vol5Ratio =
+        vol5Avg > 0
+            ? vol5Now / vol5Avg
+            : 1
+
+    // Không bắt buộc volume spike.
+    if (
+        vol5Ratio < 0.45
+    ) {
+        return null
     }
 
-    const add=(key,n)=>{
-        score+=n
-        scoreBreakdown[key]+=n
+    // =========================================================
+    // 7. PULLBACK LOCATION
+    //
+    // 3 kiểu pullback:
+    //
+    // A. EMA20
+    // B. EMA50
+    // C. Retest structure
+    //
+    // Chỉ cần MỘT kiểu hợp lệ.
+    // =========================================================
+
+    const recentLow5 =
+        lowest(
+            l5.slice(0, -1),
+            8
+        )
+
+    const recentHigh5 =
+        highest(
+            h5.slice(0, -1),
+            8
+        )
+
+    const recentClose5 =
+        c5.at(-1)
+
+    const pullbackTolerance =
+        Math.max(
+            atr5 * 0.40,
+            price * 0.0010
+        )
+
+    // EMA20 pullback
+    const pullbackEMA20Long =
+        recentLow5 <=
+        ema20_5 +
+        pullbackTolerance
+
+    const pullbackEMA20Short =
+        recentHigh5 >=
+        ema20_5 -
+        pullbackTolerance
+
+    // EMA50 pullback
+    const pullbackEMA50Long =
+        recentLow5 <=
+        ema50_5 +
+        pullbackTolerance
+
+    const pullbackEMA50Short =
+        recentHigh5 >=
+        ema50_5 -
+        pullbackTolerance
+
+    // Structure retest
+    const structureTolerance =
+        Math.max(
+            atr5 * 0.55,
+            price * 0.0015
+        )
+
+    const structureRetestLong =
+        recentLow5 <=
+        structureHigh15 +
+        structureTolerance &&
+        recentClose5 >=
+        structureHigh15 -
+        structureTolerance
+
+    const structureRetestShort =
+        recentHigh5 >=
+        structureLow15 -
+        structureTolerance &&
+        recentClose5 <=
+        structureLow15 +
+        structureTolerance
+
+    const pullbackLong =
+        trendLong5 &&
+        (
+            pullbackEMA20Long ||
+            pullbackEMA50Long ||
+            structureRetestLong
+        )
+
+    const pullbackShort =
+        trendShort5 &&
+        (
+            pullbackEMA20Short ||
+            pullbackEMA50Short ||
+            structureRetestShort
+        )
+
+    if (
+        !pullbackLong &&
+        !pullbackShort
+    ) {
+        return null
     }
-
-    if(side==="LONG"){
-        if(bull1h)add("h1Trend",15)
-        if(strongBull1h)add("h1Trend",5)
-        if(bull15)add("trend15",15)
-        if(strongBull15)add("trend15",5)
-        if(above200_15)add("direction",3)
-        if(higherHigh15)add("structure",5)
-        if(trendLong5)add("structure",5)
-        if(microBreakLongStrong)add("trigger",8)
-        if(strongBullCandle)add("trigger",5)
-        if(pullbackLongLocation)add("location",7)
-        if(reclaimLong)add("location",5)
-        if(strongSweepLow)add("setup",8)
-    }
-
-    if(side==="SHORT"){
-        if(bear1h)add("h1Trend",15)
-        if(strongBear1h)add("h1Trend",5)
-        if(bear15)add("trend15",15)
-        if(strongBear15)add("trend15",5)
-        if(below200_15)add("direction",3)
-        if(lowerLow15)add("structure",5)
-        if(trendShort5)add("structure",5)
-        if(microBreakShortStrong)add("trigger",8)
-        if(strongBearCandle)add("trigger",5)
-        if(pullbackShortLocation)add("location",7)
-        if(reclaimShort)add("location",5)
-        if(strongSweepHigh)add("setup",8)
-    }
-
-    if(setup==="PULLBACK_RECLAIM")add("setup",10)
-    if(setup==="BREAKOUT_RETEST")add("setup",12)
-    if(setup==="TREND_CONTINUATION")add("setup",8)
-    if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT")add("setup",14)
-
-    if(vol1Ratio>=1.10)add("volume",2)
-    if(vol1Ratio>=1.35)add("volume",2)
-    if(vol5Ratio>=1.08)add("volume",2)
-    if(vol5Ratio>=1.30)add("volume",2)
-
-    if(side==="LONG"&&rsi5>=40&&rsi5<=68)add("rsi",3)
-    if(side==="SHORT"&&rsi5>=32&&rsi5<=60)add("rsi",3)
-
-    if(side==="LONG"&&move5>atr5/price*2.5)add("momentum",-5)
-    if(side==="SHORT"&&move5<-atr5/price*2.5)add("momentum",-5)
 
     // =========================================================
-    // STRUCTURE / LOCATION
+    // 8. 5M REJECTION
+    //
+    // Không bắt buộc phải là candle khổng lồ.
+    // Chỉ cần có phản ứng rõ.
     // =========================================================
-    const swingLow5=low(l5.slice(0,-1),24)
-    const swingHigh5=high(h5.slice(0,-1),24)
-    const swingLow15=low(l15.slice(0,-1),16)
-    const swingHigh15=high(h15.slice(0,-1),16)
 
-    const resistanceCandidates=[
-        recent5High,
+    const o5Now =
+        o5.at(-1)
+
+    const h5Now =
+        h5.at(-1)
+
+    const l5Now =
+        l5.at(-1)
+
+    const c5Now =
+        c5.at(-1)
+
+    const body5 =
+        bodyRatio(
+            o5Now,
+            h5Now,
+            l5Now,
+            c5Now
+        )
+
+    const closeLong5 =
+        closeLocationLong(
+            h5Now,
+            l5Now,
+            c5Now
+        )
+
+    const closeShort5 =
+        closeLocationShort(
+            h5Now,
+            l5Now,
+            c5Now
+        )
+
+    const lowerWick5 =
+        Math.min(
+            o5Now,
+            c5Now
+        ) - l5Now
+
+    const upperWick5 =
+        h5Now -
+        Math.max(
+            o5Now,
+            c5Now
+        )
+
+    const bullishRejection =
+        (
+            c5Now > o5Now &&
+            body5 >= 0.30 &&
+            closeLong5 >= 0.58
+        )
+        ||
+        (
+            lowerWick5 >=
+            Math.abs(c5Now - o5Now) * 0.8 &&
+            closeLong5 >= 0.62
+        )
+
+    const bearishRejection =
+        (
+            c5Now < o5Now &&
+            body5 >= 0.30 &&
+            closeShort5 >= 0.58
+        )
+        ||
+        (
+            upperWick5 >=
+            Math.abs(c5Now - o5Now) * 0.8 &&
+            closeShort5 >= 0.62
+        )
+
+    // =========================================================
+    // 9. 1M MICRO TRIGGER
+    //
+    // Hai kiểu:
+    //
+    // A. Micro breakout
+    // B. Strong close sau rejection
+    //
+    // Không chase.
+    // =========================================================
+
+    const i =
+        c1.length - 1
+
+    if (i < 3) {
+        return null
+    }
+
+    const o0 = o1[i]
+const h0 = h1[i]
+    const l0 = l1[i]
+    const c0 = c1[i]
+
+    const oPrev = o1[i - 1]
+    const hPrev = h1[i - 1]
+    const lPrev = l1[i - 1]
+    const cPrev = c1[i - 1]
+
+    const h2 = h1[i - 2]
+    const l2 = l1[i - 2]
+
+    const br1 =
+        bodyRatio(
+            o0,
+            h0,
+            l0,
+            c0
+        )
+
+    const closeLong1 =
+        closeLocationLong(
+            h0,
+            l0,
+            c0
+        )
+
+    const closeShort1 =
+        closeLocationShort(
+            h0,
+            l0,
+            c0
+        )
+
+    const microHigh =
+        Math.max(
+            hPrev,
+            h2
+        )
+
+    const microLow =
+        Math.min(
+            lPrev,
+            l2
+        )
+
+    const bullishMicroBreak =
+        c0 > o0 &&
+        br1 >= 0.32 &&
+        closeLong1 >= 0.58 &&
+        c0 > microHigh
+
+    const bearishMicroBreak =
+        c0 < o0 &&
+        br1 >= 0.32 &&
+        closeShort1 >= 0.58 &&
+        c0 < microLow
+
+    // Strong continuation candle
+    const bullishStrongClose =
+        c0 > o0 &&
+        br1 >= 0.55 &&
+        closeLong1 >= 0.72 &&
+        c0 > cPrev
+
+    const bearishStrongClose =
+        c0 < o0 &&
+        br1 >= 0.55 &&
+        closeShort1 >= 0.72 &&
+        c0 < cPrev
+
+    const bullishTrigger =
+        bullishMicroBreak ||
+        bullishStrongClose
+
+    const bearishTrigger =
+        bearishMicroBreak ||
+        bearishStrongClose
+
+    // =========================================================
+    // 10. 1M VOLUME
+    // =========================================================
+
+    const vol1Avg =
+        avg(v1.slice(-21, -1))
+
+    const vol1Now =
+        v1.at(-1)
+
+    const vol1Ratio =
+        vol1Avg > 0
+            ? vol1Now / vol1Avg
+            : 1
+
+    // Volume chỉ loại khi quá yếu.
+    if (
+        vol1Ratio < 0.50
+    ) {
+        return null
+    }
+
+    // =========================================================
+    // 11. CHASE FILTER
+    //
+    // Đây là filter rất quan trọng.
+    // Không mua/short khi giá đã chạy quá xa.
+    // =========================================================
+
+    const distFromEMA20 =
+        Math.abs(
+            price - ema20_5
+        ) / price
+
+    const maxChase =
+        Math.max(
+            (atr5 / price) * 1.80,
+            0.006
+        )
+
+    if (
+        distFromEMA20 >
+        maxChase
+    ) {
+        return null
+    }
+
+    // =========================================================
+    // 12. RSI EXTREME FILTER
+    //
+    // RSI chỉ dùng để tránh entry quá nóng.
+    // Không dùng RSI để reversal.
+    // =========================================================
+
+    const rsi5 =
+        rsi(c5.slice(-50))
+
+    const rsi1 =
+        rsi(c1.slice(-50))
+
+    if (
+        !Number.isFinite(rsi5) ||
+        !Number.isFinite(rsi1)
+    ) {
+        return null
+    }
+
+    if (
+        longBias &&
+        rsi5 > 76
+    ) {
+        return null
+    }
+
+    if (
+        shortBias &&
+        rsi5 < 24
+    ) {
+        return null
+    }
+
+    // =========================================================
+    // 13. FINAL SETUP
+    // =========================================================
+
+    const longSetup =
+        longBias &&
+        structureOKLong &&
+        trendLong5 &&
+        pullbackLong &&
+        bullishRejection &&
+        bullishTrigger
+
+    const shortSetup =
+        shortBias &&
+        structureOKShort &&
+        trendShort5 &&
+        pullbackShort &&
+        bearishRejection &&
+        bearishTrigger
+
+    if (
+        !longSetup &&
+        !shortSetup
+    ) {
+        return null
+    }
+
+    // =========================================================
+    // 14. SWING / STRUCTURE FOR SL
+    // =========================================================
+
+    const swingHigh5 =
+        highest(
+            h5.slice(0, -1),
+            20
+        )
+
+    const swingLow5 =
+        lowest(
+            l5.slice(0, -1),
+            20
+        )
+
+    const swingHigh15 =
+        highest(
+            h15.slice(0, -1),
+            16
+        )
+
+    const swingLow15 =
+        lowest(
+            l15.slice(0, -1),
+            16
+        )
+
+    // =========================================================
+    // 15. SUPPORT / RESISTANCE
+    // =========================================================
+
+    const resistanceCandidates = [
         swingHigh5,
         swingHigh15,
         structureHigh15
-    ].filter(x=>Number.isFinite(x)&&x>price)
+    ]
+        .filter(
+            x =>
+                Number.isFinite(x) &&
+                x > price
+        )
 
-    const supportCandidates=[
-        recent5Low,
+    const supportCandidates = [
         swingLow5,
         swingLow15,
         structureLow15
-    ].filter(x=>Number.isFinite(x)&&x<price)
+    ]
+        .filter(
+            x =>
+                Number.isFinite(x) &&
+                x < price
+        )
 
-    const resistance=resistanceCandidates.length?Math.min(...resistanceCandidates):null
-    const support=supportCandidates.length?Math.max(...supportCandidates):null
+    const resistance =
+        resistanceCandidates.length
+            ? Math.min(
+                ...resistanceCandidates
+            )
+            : null
 
-    let roomToResistance=resistance?((resistance-price)/price):Infinity
-    let roomToSupport=support?((price-support)/price):Infinity
-
-    // Không vào khi cản gần quá.
-    if(side==="LONG"&&resistance){
-        if(resistance-price<atr5*.80)return null
-        if(resistance-price<atr15*.70)return null
-    }
-
-    if(side==="SHORT"&&support){
-        if(price-support<atr5*.80)return null
-        if(price-support<atr15*.70)return null
-    }
-
-    // =========================================================
-    // RISK ENGINE
-    // =========================================================
-    const entry=price
-    const buffer=Math.max(atr5*.12,atr1*.50)
-
-    let sl,tp,risk,targetLevel
-
-    const isReversal=setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"
-    const strongSetup=isReversal||setup==="PULLBACK_RECLAIM"||setup==="BREAKOUT_RETEST"
-    const momentumSetup=setup==="TREND_CONTINUATION"
-
-    const volatilityRatio=atr15/entry
-    const highVol=volatilityRatio>=.006
-    const lowVol=volatilityRatio<=.0025
-
-    const maxRiskATR=strongSetup?1.35:momentumSetup?1.20:1.15
-    const maxRiskPct=strongSetup?.018:momentumSetup?.016:.014
+    const support =
+        supportCandidates.length
+            ? Math.max(
+                ...supportCandidates
+            )
+            : null
 
     // =========================================================
-    // DYNAMIC TARGET R
+    // 16. STOP LOSS
+    //
+    // SL theo structure.
+    // Không bóp SL quá sát.
+    // Không cho SL quá rộng.
     // =========================================================
-    let targetR=1.65
 
-    if(setup==="PULLBACK_RECLAIM")targetR=1.70
-    if(setup==="BREAKOUT_RETEST")targetR=1.75
-    if(setup==="TREND_CONTINUATION")targetR=1.65
-    if(isReversal)targetR=1.70
+    const slBuffer =
+        Math.max(
+            atr1 * 0.50,
+            atr5 * 0.15
+        )
 
-    if(highVol)targetR+=.10
-    if(lowVol)targetR-=.05
+    const entry =
+        price
 
-    targetR=Math.max(1.55,Math.min(targetR,1.85))
+    let sl
+    let risk
+    let tp
 
-    if(side==="LONG"){
-        const structureStop=isReversal?Math.min(l0,swingLow5):Math.min(swingLow5,swingLow15)
-        const atrStop=entry-(isReversal?atr5*.75:atr5*.65)
+    if (longSetup) {
 
-        // Structure is the primary SL.
-        // ATR only prevents the stop from becoming excessively wide.
-        sl=Math.max(structureStop-buffer,atrStop)
+        const structureStop =
+            Math.min(
+                swingLow5,
+                swingLow15
+            )
 
-        if(highVol){
-            sl=Math.min(sl,entry-atr15*.90)
+        sl =
+            structureStop -
+            slBuffer
+
+        risk =
+            entry -
+            sl
+
+        if (
+            !Number.isFinite(risk) ||
+            risk <= 0
+        ) {
+            return null
         }
 
-        if(lowVol){
-            sl=Math.max(sl,entry-atr5*.60)
+        // Không quá nhỏ
+        if (
+            risk <
+            atr5 * 0.45
+        ) {
+            return null
         }
 
-        risk=entry-sl
-
-        if(risk<=0)return null
-        if(!Number.isFinite(risk))return null
-        if(risk/atr15>maxRiskATR)return null
-        if(risk/entry>maxRiskPct)return null
-
-        targetLevel=resistance
-
-        // Primary TP = risk x targetR.
-        let target=entry+risk*targetR
-
-        // Resistance is the real-world TP limit.
-        if(resistance){
-            const safeTarget=resistance-Math.max(atr1*.15,atr5*.08)
-
-            if(safeTarget<=entry)return null
-            if(safeTarget-entry<risk*1.55)return null
-
-            target=Math.min(target,safeTarget)
+        // Không quá rộng
+        if (
+            risk >
+            atr5 * 2.00
+        ) {
+            return null
         }
 
-        tp=target
-    }else{
-        const structureStop=isReversal?Math.max(h0,swingHigh5):Math.max(swingHigh5,swingHigh15)
-        const atrStop=entry+(isReversal?atr5*.75:atr5*.65)
-
-        // Structure is the primary SL.
-        // ATR only prevents the stop from becoming excessively wide.
-        sl=Math.min(structureStop+buffer,atrStop)
-
-        if(highVol){
-            sl=Math.max(sl,entry+atr15*.90)
+        if (
+            risk / entry >
+            0.018
+        ) {
+            return null
         }
 
-        if(lowVol){
-            sl=Math.min(sl,entry+atr5*.60)
+        // Room phía trước
+        if (resistance) {
+
+            const room =
+                resistance -
+                entry
+
+            if (
+                room <
+                risk * 1.50
+            ) {
+                return null
+            }
         }
 
-        risk=sl-entry
+        tp =
+            entry +
+            risk * 2.0
 
-        if(risk<=0)return null
-        if(!Number.isFinite(risk))return null
-        if(risk/atr15>maxRiskATR)return null
-        if(risk/entry>maxRiskPct)return null
+    } else {
 
-        targetLevel=support
+        const structureStop =
+            Math.max(
+                swingHigh5,
+                swingHigh15
+            )
 
-        // Primary TP = risk x targetR.
-        let target=entry-risk*targetR
+        sl =
+            structureStop +
+            slBuffer
 
-        // Support is the real-world TP limit.
-        if(support){
-            const safeTarget=support+Math.max(atr1*.15,atr5*.08)
+        risk =
+            sl -
+            entry
 
-            if(safeTarget>=entry)return null
-            if(entry-safeTarget<risk*1.55)return null
-
-            target=Math.max(target,safeTarget)
+        if (
+            !Number.isFinite(risk) ||
+            risk <= 0
+        ) {
+            return null
         }
 
-        tp=target
+        if (
+            risk <
+            atr5 * 0.45
+        ) {
+            return null
+        }
+
+        if (
+            risk >
+            atr5 * 2.00
+        ) {
+            return null
+        }
+
+        if (
+            risk / entry >
+            0.018
+        ) {
+            return null
+        }
+
+        if (support) {
+
+            const room =
+                entry -
+                support
+
+            if (
+                room <
+                risk * 1.50
+            ) {
+                return null
+            }
+        }
+
+        tp =
+            entry -
+            risk * 2.0
     }
 
     // =========================================================
-    // FINAL RR / ROOM
+    // 17. FINAL RR
     // =========================================================
-    const finalRR=side==="LONG"?(tp-entry)/risk:(entry-tp)/risk
 
-    if(!Number.isFinite(sl)||!Number.isFinite(tp)||!Number.isFinite(risk)||!Number.isFinite(finalRR))return null
-    if(risk<=0)return null
-    if(finalRR<1.55)return null
+    const finalRR =
+        longSetup
+            ? (tp - entry) / risk
+            : (entry - tp) / risk
 
-    if(finalRR>=1.55)add("rr",4)
-    if(finalRR>=1.80)add("rr",4)
-    if(finalRR>=2.10)add("rr",3)
-
-    // Room score.
-    if(side==="LONG"){
-        if(roomToResistance>=atr15/price*2.0)add("room",4)
-        if(roomToResistance>=atr15/price*3.0)add("room",4)
-    }else{
-        if(roomToSupport>=atr15/price*2.0)add("room",4)
-        if(roomToSupport>=atr15/price*3.0)add("room",4)
-    }
-    // =========================================================
-    // FINAL QUALITY FILTER
-    // =========================================================
-    let minimumScore=76
-
-    if(setup==="REVERSAL_LONG"||setup==="REVERSAL_SHORT"){
-        minimumScore=78
+    if (
+        !Number.isFinite(finalRR) ||
+        finalRR < 1.80
+    ) {
+        return null
     }
 
-    if(setup==="TREND_CONTINUATION"){
-        minimumScore=78
+    // =========================================================
+    // 18. QUALITY
+    //
+    // Không cộng điểm trùng.
+    // Chỉ kiểm tra những yếu tố quan trọng.
+    // =========================================================
+
+    const quality = {
+
+        higherTimeframeAligned:
+            longSetup
+                ? bull1h && bull15: bear1h && bear15,
+
+        structureConfirmed:
+            longSetup
+                ? structureOKLong
+                : structureOKShort,
+
+        trend5Confirmed:
+            longSetup
+                ? trendLong5
+                : trendShort5,
+
+        pullbackConfirmed:
+            longSetup
+                ? pullbackLong
+                : pullbackShort,
+
+        rejectionConfirmed:
+            longSetup
+                ? bullishRejection
+                : bearishRejection,
+
+        triggerConfirmed:
+            longSetup
+                ? bullishTrigger
+                : bearishTrigger,
+
+        volumeAcceptable:
+            vol1Ratio >= 0.50,
+
+        chaseControlled:
+            distFromEMA20 <= maxChase,
+
+        roomAcceptable:
+            longSetup
+                ? (
+                    !resistance ||
+                    resistance - entry >=
+                    risk * 1.50
+                )
+                : (
+                    !support ||
+                    entry - support >=
+                    risk * 1.50
+                )
     }
 
-    if(score<minimumScore)return null
+    const qualityCount =
+        Object.values(quality)
+            .filter(Boolean)
+            .length
 
-    // Không cho entry nếu direction quá yếu.
-    const finalDirection=side==="LONG"?longDirection:shortDirection
-    if(finalDirection<62&&setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT")return null
+    if (
+        qualityCount < 8
+    ) {
+        return null
+    }
 
     // =========================================================
-    // MARKET STATE
+    // 19. MARKET STATE
     // =========================================================
-    const marketState=
-        longAlignment||shortAlignment
-            ?((gap15>=.002||gap1h>=.002)?"TREND_STRONG":"TREND_WEAK")
-            :"RANGE"
 
-    if(marketState==="RANGE"&&setup!=="REVERSAL_LONG"&&setup!=="REVERSAL_SHORT")return null
+    const strongTrend =
+        gap1h >= 0.0015 &&
+        gap15 >= 0.0010
 
-    const volatility=
-        atrRatio5>=.004?"HIGH":
-        atrRatio5<=.0012?"LOW":
-        "NORMAL"
+    const marketState =
+        strongTrend
+            ? "TREND_STRONG"
+            : "TREND_NORMAL"
 
-    scoreBreakdown.direction=finalDirection
-    scoreBreakdown.rr=round(finalRR,2)
+    // =========================================================
+    // 20. VOLATILITY
+    // =========================================================
 
-    const microLow=Math.min(...l1.slice(-8))
-    const microHigh=Math.max(...h1.slice(-8))
+    const volatility =
+        atrRatio5 >= 0.004
+            ? "HIGH"
+            : atrRatio5 <= 0.0012
+                ? "LOW"
+                : "NORMAL"
+
+    // =========================================================
+    // 21. PULLBACK TYPE
+    // =========================================================
+
+    let pullbackType = "EMA20"
+
+    if (
+        pullbackEMA50Long ||
+        pullbackEMA50Short
+    ) {
+        pullbackType = "EMA50"
+    }
+
+    if (
+        structureRetestLong ||
+        structureRetestShort
+    ) {
+        pullbackType = "STRUCTURE_RETEST"
+    }
+
+    // =========================================================
+    // 22. TRIGGER TYPE
+    // =========================================================
+
+    let triggerType = "STRONG_CLOSE"
+
+    if (
+        bullishMicroBreak ||
+        bearishMicroBreak
+    ) {
+        triggerType = "MICRO_BREAK"
+    }
+
+    // =========================================================
+    // 23. SETUP
+    // =========================================================
+
+    const setup =
+        "TREND_PULLBACK_CONTINUATION"
+
+    // =========================================================
+    // 24. RETURN
+    // =========================================================
 
     return {
-        side,
-        price:round(entry),
-        sl:round(sl),
-        tp:round(tp),
+
+        side:
+            longSetup
+                ? "LONG"
+                : "SHORT",
+
+        price:
+            round(entry),
+
+        sl:
+            round(sl),
+
+        tp:
+            round(tp),
+
         setup,
+
+        pullbackType,
+
+        triggerType,
+
         marketState,
+
         volatility,
-        score:Math.round(score),
-        scoreBreakdown,
-        indicators:{
-            ema20_15:round(ema20_15),
-            ema50_15:round(ema50_15),
-            ema20_1h:round(ema20_1h),
-            ema50_1h:round(ema50_1h),
-            ema200_1h:round(ema200_1h),
-            ema200_15:round(ema200_15),
-            ema9_5:round(ema9_5),
-            ema20_5:round(ema20_5),
-            ema50_5:round(ema50_5),
-            atr15:round(atr15),
-            atr5:round(atr5),
-            atr1m:round(atr1),
-            rsi5:round(rsi5,2),
-            rsi1m:round(rsi1,2),
-            volumeNow:vol1Now,
-            volumeAvg:vol1Avg,
-            volumeRatio:round(vol1Ratio,3),
-            volume5Ratio:round(vol5Ratio,3)
+
+        qualityScore:
+            qualityCount,
+
+        indicators: {
+
+            ema20_1h:
+                round(ema20_1h),
+
+            ema50_1h:
+                round(ema50_1h),
+
+            ema20_15:
+                round(ema20_15),
+
+            ema50_15:
+                round(ema50_15),
+
+            ema9_5:
+                round(ema9_5),
+
+            ema20_5:
+                round(ema20_5),
+
+            ema50_5:
+                round(ema50_5),
+
+            atr1h:
+                round(atr1h),
+
+            atr15:
+                round(atr15),
+
+            atr5:
+                round(atr5),
+
+            atr1m:
+                round(atr1),
+
+            rsi5:
+                round(rsi5, 2),
+
+            rsi1m:
+                round(rsi1, 2),
+
+            volume1mRatio:round(vol1Ratio, 3),
+
+            volume5mRatio:
+                round(vol5Ratio, 3),
+
+            atrRatio1h:
+                round(atrRatio1h, 6),
+
+            atrRatio15:
+                round(atrRatio15, 6),
+
+            atrRatio5:
+                round(atrRatio5, 6)
         },
-        structure:{
-            support,
-            resistance,
-            recent5Low,
-            recent5High,
-            structureLow15,
-            structureHigh15,
-            swingLow5,
-            swingHigh5,
-            swingLow15,
-            swingHigh15,
-            microLow,
-            microHigh,
-            sweepLow,
-            sweepHigh,
-            strongSweepLow,
-            strongSweepHigh,
-            higherHigh15,
-            lowerLow15
+
+        structure: {
+
+            structureHigh15:
+                round(structureHigh15),
+
+            structureLow15:
+                round(structureLow15),
+
+            swingHigh5:
+                round(swingHigh5),
+
+            swingLow5:
+                round(swingLow5),
+
+            swingHigh15:
+                round(swingHigh15),
+
+            swingLow15:
+                round(swingLow15),
+
+            resistance:
+                resistance !== null
+                    ? round(resistance)
+                    : null,
+
+            support:
+                support !== null
+                    ? round(support)
+                    : null
         },
-        context:{
-            h1Bull:bull1h,
-            h1Bear:bear1h,
-            strongBull1h,
-            strongBear1h,
+
+        context: {
+
+            h1Bull:
+                bull1h,
+
+            h1Bear:
+                bear1h,
+
             bull15,
+
             bear15,
-            strongBull15,
-            strongBear15,
+
             trendLong5,
+
             trendShort5,
-            slope1h:round(slope1h,6),
-            slope15:round(slope15,6),
-            slope9_5:round(slope9_5,6),
-            gap1h:round(gap1h,6),
-            gap15:round(gap15,6),
-            longDirection,
-            shortDirection,
-            finalDirection,
-            move1:round(move1,6),
-            move3:round(move3,6),
-            move5:round(move5,6),
-            distEma5:round(distEma5,6),
-            roomToResistance:round(roomToResistance,6),
-            roomToSupport:round(roomToSupport,6)
-        },
-        risk:{
-            risk:round(risk),
-            rr:round(finalRR,2),
-            tpDistance:round(Math.abs(tp-entry)),
-            slDistance:round(Math.abs(entry-sl)),
-            atr15:round(atr15),
-            atr5:round(atr5),
-            atr1m:round(atr1)
-        },
-        flags:{
-            longAlignment,
-            shortAlignment,
+
+            bullishStructure15:
+                bullishStructure15,
+
+            bearishStructure15:
+                bearishStructure15,
+
+            structureOKLong,
+
+            structureOKShort,
+
             pullbackLong,
+
             pullbackShort,
-            retestLong,
-            retestShort,
-            continuationLong,
-            continuationShort,
-            reversalLong,
-            reversalShort,
-            reclaimLong,
-            reclaimShort,
-            microBreakLong,
-            microBreakShort
+
+            pullbackEMA20Long,
+
+            pullbackEMA20Short,
+
+            pullbackEMA50Long,
+
+            pullbackEMA50Short,
+
+            structureRetestLong,
+
+            structureRetestShort,
+
+            bullishRejection,
+
+            bearishRejection,
+
+            bullishMicroBreak,
+
+            bearishMicroBreak,
+
+            bullishStrongClose,
+
+            bearishStrongClose,
+
+            bullishTrigger,
+
+            bearishTrigger,
+
+            slope1h:
+                round(slope1h, 6),
+
+            slope15:
+                round(slope15, 6),
+
+            slope9_5:
+                round(slope9_5, 6),
+
+            gap1h:
+                round(gap1h, 6),
+
+            gap15:
+                round(gap15, 6),
+
+            distFromEMA20:
+                round(distFromEMA20, 6),
+
+            maxChase:
+                round(maxChase, 6)
         },
-        debug:{
+
+        risk: {
+
+            risk:
+                round(risk),
+
+            rr:
+                round(finalRR, 2),
+
+            slDistance:
+                round(
+                    Math.abs(
+                        entry - sl
+                    )
+                ),
+
+            tpDistance:
+                round(
+                    Math.abs(
+                        tp - entry
+                    )
+                ),
+
+            riskATR5:
+                round(
+                    risk / atr5,
+                    3
+                ),
+
+            riskPercent:
+                round(
+                    risk / entry,
+                    6
+                )
+        },
+
+        quality,
+
+        flags: {
+
+            longBias,
+
+            shortBias,
+
+            pullbackLong,
+
+            pullbackShort,
+
+            bullishRejection,
+
+            bearishRejection,
+
+            bullishTrigger,
+
+            bearishTrigger,
+
+            bullishMicroBreak,
+
+            bearishMicroBreak,
+
+            bullishStrongClose,
+
+            bearishStrongClose
+        },
+
+        debug: {
+
             reason:
-                score>=88?"VERY_HIGH_CONVICTION":
-                score>=82?"HIGH_CONVICTION":
-                score>=76?"GOOD_SETUP":
-                "WEAK",
-            timestamp:Date.now(),
-            candle:{
-                open:round(o0),
-                high:round(h0),
-                low:round(l0),
-                close:round(c0)
+                "TREND_PULLBACK_CONTINUATION",
+
+            timestamp:
+                Date.now(),
+
+            candle1m: {
+
+                open:
+                    round(o0),
+
+                high:
+                    round(h0),
+
+                low:
+                    round(l0),
+
+                close:
+                    round(c0)
             },
-            targetLevel:targetLevel?round(targetLevel):null
+
+            candle5m: {
+
+                open:
+                    round(o5Now),
+
+                high:
+                    round(h5Now),
+
+                low:
+                    round(l5Now),
+
+                close:
+                    round(c5Now)
+            }
         }
     }
 }
@@ -5158,14 +5925,21 @@ async function getBtcRegime() {
 // Returns a DB-ready trade, or null when the signal is invalid.
 function buildTradeFromCoreSignal(best, btcRegime, riskBudget){
 
+    // =========================================================
+    // CORE VALUES
+    // =========================================================
+
     const entry = Number(best?.price)
     const sl = Number(best?.sl)
     const tp = Number(best?.tp)
 
-    // The current filtered core returns risk as an object.
     const initialRisk = Number(best?.risk?.risk)
     const rr = Number(best?.risk?.rr)
     const budget = Number(riskBudget)
+
+    // =========================================================
+    // VALIDATION
+    // =========================================================
 
     if(
         !best?.symbol ||
@@ -5177,6 +5951,7 @@ function buildTradeFromCoreSignal(best, btcRegime, riskBudget){
         !Number.isFinite(budget) || budget <= 0 ||
         !Number.isFinite(rr) || rr <= 0
     ){
+
         console.log(
             `❌ INVALID CORE SIGNAL ${best?.symbol || "UNKNOWN"}`
         )
@@ -5184,11 +5959,18 @@ function buildTradeFromCoreSignal(best, btcRegime, riskBudget){
         return null
     }
 
-    // Direction safety: never persist an invalid SL/TP layout.
+    // =========================================================
+    // TPSL DIRECTION SAFETY
+    // =========================================================
+
     if(
-        (best.side === "LONG" && (sl >= entry || tp <= entry)) ||
-        (best.side === "SHORT" && (sl <= entry || tp >= entry))
+        (best.side === "LONG" &&
+            (sl >= entry || tp <= entry)) ||
+
+        (best.side === "SHORT" &&
+            (sl <= entry || tp >= entry))
     ){
+
         console.log(
             `❌ INVALID TPSL DIRECTION ${best.symbol} ` +
             `SIDE=${best.side} ENTRY=${entry} SL=${sl} TP=${tp}`
@@ -5197,127 +5979,435 @@ function buildTradeFromCoreSignal(best, btcRegime, riskBudget){
         return null
     }
 
-    const scoreBreakdown = best.scoreBreakdown || {}
+    // =========================================================
+    // CORE OBJECTS
+    // =========================================================
+
     const indicators = best.indicators || {}
     const structure = best.structure || {}
     const context = best.context || {}
     const riskDetail = best.risk || {}
+    const flags = best.flags || {}
+    const debug = best.debug || {}
+
     const now = Date.now()
 
+    // =========================================================
+    // FINAL TRADE OBJECT
+    // =========================================================
+
     return {
-        symbol: best.symbol,
-        side: best.side,
 
-        entry,
-        price: entry,
-        sl,
-        tp,
+        // =====================================================
+        // BASIC
+        // =====================================================
 
-        // Dynamic TPSL needs both values. `initialRisk` is recalculated
-        // again from Binance's real entry after the order fills.
-        // Monetary loss budget. The scanner uses this for quantity sizing.
-        risk: budget,
-        initialRisk,
-        rr,
+        symbol:
+            best.symbol,
 
-        score: Number(best.score ?? 0),
-        finalScore: Number(best.finalScore ?? best.score ?? 0),
+        side:
+            best.side,
 
-        setup: best.setup,
-        marketState: best.marketState,
-        volatility: best.volatility,
-        btcRegime,
+        entry:
+            entry,
 
-        // These names match the output contract of coreLogic_filtered.js.
-        scoreDetail: {
-            h1Trend: scoreBreakdown.h1Trend ?? 0,
-            trend15: scoreBreakdown.trend15 ?? 0,
-            setup: scoreBreakdown.setup ?? 0,
-            sweep: scoreBreakdown.sweep ?? 0,
-            breakoutRetest: scoreBreakdown.breakoutRetest ?? 0,
-            momentum: scoreBreakdown.momentum ?? 0,
-            microBreak: scoreBreakdown.microBreak ?? 0,
-            bodyRatio: scoreBreakdown.bodyRatio ?? 0,
-            volume1m: scoreBreakdown.volume1m ?? 0,
-            volume5m: scoreBreakdown.volume5m ?? 0,
-            rsi1m: scoreBreakdown.rsi1m ?? 0,
-            rsi5m: scoreBreakdown.rsi5m ?? 0,
-            atrRatio: scoreBreakdown.atrRatio ?? 0,
-            rr: scoreBreakdown.rr ?? rr
-        },
+        price:
+            entry,
 
-        indicators: {
-            ema20_15: indicators.ema20_15 ?? null,
-            ema50_15: indicators.ema50_15 ?? null,
-            ema20_1h: indicators.ema20_1h ?? null,
-            ema50_1h: indicators.ema50_1h ?? null,
-            ema9_5: indicators.ema9_5 ?? null,
-            ema20_5: indicators.ema20_5 ?? null,
-            ema50_5: indicators.ema50_5 ?? null,
-            atr: indicators.atr ?? null,
-            atr1m: indicators.atr1m ?? null,
-            rsi: indicators.rsi ?? null,
-            volumeNow: indicators.volumeNow ?? null,
-            volumeAvg: indicators.volumeAvg ?? null,
-            volumeRatio: indicators.volumeRatio ?? null
-        },
+        sl:
+            sl,
 
-        structure: {
-            support: structure.support ?? null,
-            resistance: structure.resistance ?? null,
-            recent5Low: structure.recent5Low ?? null,
-            recent5High: structure.recent5High ?? null,
-            structureLow: structure.structureLow ?? null,
-            structureHigh: structure.structureHigh ?? null,
-            microLow: structure.microLow ?? null,
-            microHigh: structure.microHigh ?? null,
-            sweepLow: structure.sweepLow ?? false,
-            sweepHigh: structure.sweepHigh ?? false
-        },
+        tp:
+            tp,
 
-        context: {
-            h1Bull: context.h1Bull ?? false,
-            h1Bear: context.h1Bear ?? false,
-            bull15: context.bull15 ?? false,
-            bear15: context.bear15 ?? false,
-            slope1h: context.slope1h ?? null,
-            slope15: context.slope15 ?? null,
-            gap1h: context.gap1h ?? null,
-            gap15: context.gap15 ?? null,
-            move1: context.move1 ?? null,
-            move3: context.move3 ?? null,
-            move5: context.move5 ?? null,
-            longBias: context.longBias ?? 0,
-            shortBias: context.shortBias ?? 0
-        },
+        setup:
+            best.setup,
+
+        pullbackType:
+            best.pullbackType,
+
+        triggerType:
+            best.triggerType,
+
+        marketState:
+            best.marketState,
+
+        volatility:
+            best.volatility,
+
+        btcRegime:
+            btcRegime,
+
+        qualityScore:
+            Number(best.qualityScore ?? 0),
+
+        // =====================================================
+        // RISK
+        // =====================================================
+
+        // Monetary risk budget used for position sizing
+        risk:
+            budget,
+
+        // Price distance Entry -> SL
+        initialRisk:
+            initialRisk,
+
+        rr:
+            rr,
 
         riskDetail: {
-            risk: initialRisk,
-            riskBudget: budget,
-            rr,
-            tpDistance: Number(
-                riskDetail.tpDistance ?? Math.abs(tp-entry)
-            ),
-            atr: riskDetail.atr ?? indicators.atr ?? null,
-            atr1m: riskDetail.atr1m ?? indicators.atr1m ?? null
+
+            risk:
+                Number(
+                    riskDetail.risk ??
+                    initialRisk
+                ),
+
+            rr:
+                Number(
+                    riskDetail.rr ??
+                    rr
+                ),
+
+            slDistance:
+                Number(
+                    riskDetail.slDistance ??
+                    Math.abs(entry - sl)
+                ),
+
+            tpDistance:
+                Number(
+                    riskDetail.tpDistance ??
+                    Math.abs(tp - entry)
+                ),
+
+            riskATR5:
+                Number(
+                    riskDetail.riskATR5 ??
+                    (
+                        Number.isFinite(Number(indicators.atr5)) &&
+                        Number(indicators.atr5) > 0
+                            ? initialRisk / Number(indicators.atr5)
+                            : 0
+                    )
+                ),
+
+            riskPercent:
+                Number(
+                    riskDetail.riskPercent ??
+                    (
+                        entry > 0
+                            ? initialRisk / entry
+                            : 0
+                    )
+                ),
+
+            riskBudget:
+                budget
         },
 
-        debug: best.debug || {},
+        // =====================================================
+        // INDICATORS
+        // EXACTLY MATCH CORE RETURN
+        // =====================================================
 
-        quantity: 0,
-        notional: 0,
-        finalRisk: 0,
+        indicators: {
 
-        waitingEntry: false,
-        breakoutTriggered: best.setup === "BREAKOUT_RETEST",
+            ema20_1h:
+                indicators.ema20_1h ?? null,
 
-        createdAt: now,
-        enteredAt: null,
-        openedAt: null,
-        closedAt: null,
-        updatedAt: now,
+            ema50_1h:
+                indicators.ema50_1h ?? null,
 
-        result: "PENDING"
+            ema20_15:
+                indicators.ema20_15 ?? null,
+
+            ema50_15:
+                indicators.ema50_15 ?? null,
+
+            ema9_5:
+                indicators.ema9_5 ?? null,
+
+            ema20_5:
+                indicators.ema20_5 ?? null,
+
+            ema50_5:
+                indicators.ema50_5 ?? null,
+
+            atr1h:
+                indicators.atr1h ?? null,
+
+            atr15:
+                indicators.atr15 ?? null,
+
+            atr5:
+                indicators.atr5 ?? null,
+
+            atr1m:
+                indicators.atr1m ?? null,
+
+            rsi5:
+                indicators.rsi5 ?? null,
+
+            rsi1m:
+                indicators.rsi1m ?? null,
+
+            volume1mRatio:
+                indicators.volume1mRatio ?? null,
+
+            volume5mRatio:
+                indicators.volume5mRatio ?? null,
+
+            atrRatio1h:
+                indicators.atrRatio1h ?? null,
+
+            atrRatio15:
+                indicators.atrRatio15 ?? null,
+
+            atrRatio5:
+                indicators.atrRatio5 ?? null
+        },
+
+        // =====================================================
+        // STRUCTURE
+        // EXACTLY MATCH CORE RETURN
+        // =====================================================
+
+        structure: {
+
+            structureHigh15:
+                structure.structureHigh15 ?? null,
+
+            structureLow15:
+                structure.structureLow15 ?? null,
+
+            swingHigh5:
+                structure.swingHigh5 ?? null,
+
+            swingLow5:
+                structure.swingLow5 ?? null,
+
+            swingHigh15:
+                structure.swingHigh15 ?? null,
+
+            swingLow15:
+                structure.swingLow15 ?? null,
+
+            resistance:
+                structure.resistance ?? null,
+
+            support:
+                structure.support ?? null
+        },
+
+        // =====================================================
+        // CONTEXT
+        // EXACTLY MATCH CORE RETURN
+        // =====================================================
+
+        context: {
+
+            h1Bull:
+                context.h1Bull ?? false,
+
+            h1Bear:
+                context.h1Bear ?? false,
+
+            bull15:
+                context.bull15 ?? false,
+
+            bear15:
+                context.bear15 ?? false,
+
+            trendLong5:
+                context.trendLong5 ?? false,
+
+            trendShort5:
+                context.trendShort5 ?? false,
+
+            bullishStructure15:
+                context.bullishStructure15 ?? false,
+
+            bearishStructure15:
+                context.bearishStructure15 ?? false,
+
+            structureOKLong:
+                context.structureOKLong ?? false,
+
+            structureOKShort:
+                context.structureOKShort ?? false,
+
+            pullbackLong:
+                context.pullbackLong ?? false,
+
+            pullbackShort:
+                context.pullbackShort ?? false,
+
+            pullbackEMA20Long:
+                context.pullbackEMA20Long ?? false,
+
+            pullbackEMA20Short:
+                context.pullbackEMA20Short ?? false,
+
+            pullbackEMA50Long:
+                context.pullbackEMA50Long ?? false,
+
+            pullbackEMA50Short:
+                context.pullbackEMA50Short ?? false,
+
+            structureRetestLong:
+                context.structureRetestLong ?? false,
+
+            structureRetestShort:
+                context.structureRetestShort ?? false,
+
+            bullishRejection:
+                context.bullishRejection ?? false,
+
+            bearishRejection:
+                context.bearishRejection ?? false,
+
+            bullishMicroBreak:
+                context.bullishMicroBreak ?? false,
+
+            bearishMicroBreak:
+                context.bearishMicroBreak ?? false,
+
+            bullishStrongClose:
+                context.bullishStrongClose ?? false,
+
+            bearishStrongClose:
+                context.bearishStrongClose ?? false,
+
+            bullishTrigger:
+                context.bullishTrigger ?? false,
+
+            bearishTrigger:
+                context.bearishTrigger ?? false,
+
+            slope1h:
+                context.slope1h ?? null,
+
+            slope15:
+                context.slope15 ?? null,
+
+            slope9_5:
+                context.slope9_5 ?? null,
+
+            gap1h:
+                context.gap1h ?? null,
+
+            gap15:
+                context.gap15 ?? null,
+
+            distFromEMA20:
+                context.distFromEMA20 ?? null,
+
+            maxChase:
+                context.maxChase ?? null
+        },
+
+        // =====================================================
+        // QUALITY
+        // =====================================================
+
+        quality:
+            best.quality ?? null,
+
+        // =====================================================
+        // FLAGS
+        // EXACTLY MATCH CORE RETURN
+        // =====================================================
+
+        flags: {
+
+            longBias:
+                flags.longBias ?? false,
+
+            shortBias:
+                flags.shortBias ?? false,
+
+            pullbackLong:
+                flags.pullbackLong ?? false,
+
+            pullbackShort:
+                flags.pullbackShort ?? false,
+
+            bullishRejection:
+                flags.bullishRejection ?? false,
+
+            bearishRejection:
+                flags.bearishRejection ?? false,
+
+            bullishTrigger:
+                flags.bullishTrigger ?? false,
+
+            bearishTrigger:
+                flags.bearishTrigger ?? false,
+
+            bullishMicroBreak:
+                flags.bullishMicroBreak ?? false,
+
+            bearishMicroBreak:
+                flags.bearishMicroBreak ?? false,
+
+            bullishStrongClose:
+                flags.bullishStrongClose ?? false,
+
+            bearishStrongClose:
+                flags.bearishStrongClose ?? false
+        },
+
+        // =====================================================
+        // DEBUG
+        // =====================================================
+
+        debug: {
+
+            ...debug
+        },
+
+        // =====================================================
+        // EXECUTION STATE
+        // =====================================================
+
+        quantity:
+            0,
+
+        notional:
+            0,
+
+        finalRisk:
+            0,
+
+        waitingEntry:
+            false,
+
+        breakoutTriggered:
+            best.setup === "BREAKOUT_RETEST",
+
+        // =====================================================
+        // TIMESTAMPS
+        // =====================================================
+
+        createdAt:
+            now,
+
+        enteredAt:
+            null,
+
+        openedAt:
+            null,
+
+        closedAt:
+            null,
+
+        updatedAt:
+            now,
+
+        result:
+            "PENDING"
     }
 }
 
