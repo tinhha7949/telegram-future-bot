@@ -4357,36 +4357,388 @@ async function loadValidFuturesSymbols(){
         console.log("❌ LOAD FUTURES SYMBOL:", e.message)
     }
 }
-// ============== dyminic minvol15m========
-function getDynamicMinVol(volAvgUSDT, price, atrRatio){
 
-    let base = MIN_VOL_15M
+// =========================================================
+// CORE 24H ANALYTICS
+// =========================================================
 
-    // coin giá thấp → cần vol cao hơn
-    if(price < 1){
-        base *= 1.5
-    }
+const CORE_REJECT_STATS = {
 
-    // coin giá cao → giảm yêu cầu
-    if(price > 100){
-        base *= 0.7
-    }
+    VALIDATION: 0,
+    DATA_LENGTH: 0,
+    INVALID_DATA: 0,
 
-    // volatility cao → giảm yêu cầu
-    if(atrRatio > 0.005){
-        base *= 0.8
-    }
+    ATR5: 0,
 
-    // volatility thấp → tăng yêu cầu
-    if(atrRatio < 0.002){
-        base *= 1.3
-    }
+    "1H_DIRECTION": 0,
+    BIAS: 0,
 
-    return base
+    VOL5: 0,
+    PULLBACK: 0,
+    CONFIRMATION: 0,
+    VOL1: 0,
+    CHASE: 0,
+
+    RSI_INVALID: 0,
+    RSI_LONG_EXTREME: 0,
+    RSI_SHORT_EXTREME: 0,
+
+    FINAL_SETUP: 0,
+
+    RISK_INVALID: 0,
+    RISK_TOO_SMALL: 0,
+    RISK_TOO_WIDE: 0,
+    RISK_PERCENT: 0,
+
+    ROOM_LONG: 0,
+    ROOM_SHORT: 0,
+
+    FINAL_RR: 0,
+
+    ACCEPT: 0,
+    ACCEPT_LONG: 0,
+    ACCEPT_SHORT: 0
 }
 
-async function coreLogic(data15, data1h, data5, data1m) {
+const CORE_SIDE_STATS = {
+    LONG: 0,
+    SHORT: 0
+}
 
+// Số lần scan core được gọi
+let CORE_TOTAL_CALLS = 0
+
+// Lưu một vài detail tiêu biểu cho mỗi reject
+const CORE_REJECT_DETAILS = {}
+
+// Thời điểm bắt đầu chu kỳ thống kê
+let CORE_STATS_START =
+    Date.now()
+
+
+// =========================================================
+// REJECT
+// =========================================================
+
+const reject = (stage, details = {}) => {
+
+    CORE_REJECT_STATS[stage] =
+        (CORE_REJECT_STATS[stage] || 0) + 1
+
+    // Chỉ giữ detail mới nhất
+    CORE_REJECT_DETAILS[stage] = {
+        ...details,
+        timestamp: Date.now()
+    }
+
+    return null
+}
+// =========================================================
+// BUILD CORE 24H REPORT
+// =========================================================
+
+function buildCore24hReport() {
+
+    const now = Date.now()
+
+    const hours =
+        (now - CORE_STATS_START) /
+        (60 * 60 * 1000)
+
+    const total =
+        CORE_TOTAL_CALLS
+
+    const accepted =
+        CORE_REJECT_STATS.ACCEPT
+
+    const rejected =
+        Math.max(
+            total - accepted,
+            0
+        )
+
+    const acceptRate =
+        total > 0
+            ? accepted / total * 100
+            : 0
+
+    const rejectRate =
+        total > 0
+            ? rejected / total * 100
+            : 0
+
+
+    // =====================================================
+    // SORT REJECT
+    // =====================================================
+
+    const rejectList =
+        Object.entries(
+            CORE_REJECT_STATS
+        )
+        .filter(
+            ([stage, count]) =>
+                stage !== "ACCEPT" &&
+                count > 0
+        )
+        .sort(
+            (a, b) =>
+                b[1] - a[1]
+        )
+
+
+    // =====================================================
+    // TOP REJECTS
+    // =====================================================
+
+    const topRejects =
+        rejectList
+            .slice(0, 10)
+
+
+    // =====================================================
+    // SIDE
+    // =====================================================
+
+    const long =
+        CORE_SIDE_STATS.LONG
+
+    const short =
+        CORE_SIDE_STATS.SHORT
+
+    const sideTotal =
+        long + short
+
+    const longPct =
+        sideTotal > 0
+            ? long / sideTotal * 100
+            : 0
+
+    const shortPct =
+        sideTotal > 0
+            ? short / sideTotal * 100
+            : 0
+
+
+    // =====================================================
+    // REPORT
+    // =====================================================
+
+    let msg = ""
+
+    msg +=
+        `📊 CORE 24H REPORT\n`
+
+    msg +=
+        `━━━━━━━━━━━━━━━━━━━━\n`
+
+    msg +=
+        `⏱ Period: ${hours.toFixed(1)}h\n`
+
+    msg +=
+        `🔎 Total scans: ${total.toLocaleString()}\n`
+
+    msg +=
+        `✅ Accept: ${accepted.toLocaleString()} (${acceptRate.toFixed(2)}%)\n`
+
+    msg +=
+        `❌ Reject: ${rejected.toLocaleString()} (${rejectRate.toFixed(2)}%)\n`
+
+    msg +=
+        `\n`
+
+    msg +=
+        `📈 ACCEPT SIDE\n`
+
+    msg +=
+        `LONG: ${long.toLocaleString()} (${longPct.toFixed(1)}%)\n`
+
+    msg +=
+        `SHORT: ${short.toLocaleString()} (${shortPct.toFixed(1)}%)\n`
+
+    msg +=
+        `\n`
+
+    msg +=
+        `🚫 TOP REJECTS\n`
+
+    msg +=
+        `━━━━━━━━━━━━━━━━━━━━\n`
+
+
+    if (!topRejects.length) {
+
+        msg +=
+            `Không có reject.\n`
+
+    } else {
+
+        topRejects.forEach(
+            ([stage, count], index) => {
+
+                const pctTotal =
+                    total > 0
+                        ? count / total * 100
+                        : 0
+
+                msg +=
+                    `${index + 1}. ${stage}: ` +
+                    `${count.toLocaleString()} ` +
+                    `(${pctTotal.toFixed(2)}%)\n`
+            }
+        )
+    }
+
+
+    // =====================================================
+    // FULL STATS
+    // =====================================================
+
+    msg +=
+        `\n📋 FULL CORE STATS\n`
+
+    msg +=
+        `━━━━━━━━━━━━━━━━━━━━\n`
+
+    Object.entries(
+        CORE_REJECT_STATS
+    ).forEach(
+        ([stage, count]) => {
+
+            if (count <= 0)
+                return
+
+            msg +=
+                `${stage}: ` +
+                `${count.toLocaleString()}\n`
+        }
+    )
+
+
+    // =====================================================
+    // DEBUG DETAILS
+    // =====================================================
+
+    msg +=
+        `\n🔬 LAST REJECT DETAILS\n`
+
+    msg +=
+        `━━━━━━━━━━━━━━━━━━━━\n`
+
+    topRejects
+        .slice(0, 5)
+        .forEach(
+            ([stage]) => {
+
+                const detail =
+                    CORE_REJECT_DETAILS[stage]
+
+                if (!detail)
+                    return
+
+                const copy = {
+                    ...detail
+                }
+
+                delete copy.timestamp
+
+                msg +=
+                    `\n${stage}:\n`
+
+                msg +=
+                    JSON.stringify(
+                        copy
+                    )
+            }
+        )
+
+    return msg
+}
+// =========================================================
+// RESET CORE 24H STATS
+// =========================================================
+
+function resetCore24hStats() {
+
+    Object.keys(
+        CORE_REJECT_STATS
+    ).forEach(
+        key => {
+            CORE_REJECT_STATS[key] = 0
+        }
+    )
+
+    CORE_SIDE_STATS.LONG = 0
+    CORE_SIDE_STATS.SHORT = 0
+
+    CORE_TOTAL_CALLS = 0
+
+    Object.keys(
+        CORE_REJECT_DETAILS
+    ).forEach(
+        key => {
+            delete CORE_REJECT_DETAILS[key]
+        }
+    )
+
+    CORE_STATS_START =
+        Date.now()
+}
+// =========================================================
+// CORE DAILY TELEGRAM REPORT
+// =========================================================
+
+async function sendCore24hReport() {
+
+    try {
+
+        const report =
+            buildCore24hReport()
+
+        console.log(
+            "\n========== CORE 24H REPORT ==========\n"
+        )
+
+        console.log(report)
+
+        console.log(
+            "\n======================================\n"
+        )
+
+        // Telegram phụ
+        const sent =
+            await sendTelegram(report)
+
+        // CHỈ RESET KHI GỬI THÀNH CÔNG
+        if (sent) {
+
+            console.log(
+                "✅ CORE 24H REPORT SENT"
+            )
+
+            resetCore24hStats()
+
+        } else {
+
+            console.error(
+                "❌ CORE 24H REPORT NOT SENT"
+            )
+
+            // Không reset
+        }
+
+    } catch (err) {
+
+        console.error(
+            "❌ CORE 24H REPORT ERROR:",
+            err.message
+        )
+
+        // Không reset
+    }
+}
+async function coreLogic(data15, data1h, data5, data1m) {
+    CORE_TOTAL_CALLS++
     // =========================================================
     // 0. VALIDATION
     // =========================================================
@@ -4396,7 +4748,7 @@ async function coreLogic(data15, data1h, data5, data1m) {
         !Array.isArray(data1h) ||
         !Array.isArray(data5) ||
         !Array.isArray(data1m)
-    ) return null
+    ) return reject("VALIDATION")
 
     // Bỏ candle đang chạy
     data15 = data15.slice(0, -1)
@@ -4409,7 +4761,14 @@ async function coreLogic(data15, data1h, data5, data1m) {
         data1h.length < 100 ||
         data5.length < 100 ||
         data1m.length < 100
-    ) return null
+    ) {
+    return reject("DATA_LENGTH", {
+        data15: data15.length,
+        data1h: data1h.length,
+        data5: data5.length,
+        data1m: data1m.length
+    })
+}
 
     const col = (data, n) =>
         data.map(x => Number(x[n]))
@@ -4448,7 +4807,7 @@ async function coreLogic(data15, data1h, data5, data1m) {
             x => !Number.isFinite(x)
         )
     ) {
-        return null
+        return reject("INVALID_DATA")
     }
 
     const price = c1.at(-1)
@@ -4457,7 +4816,7 @@ async function coreLogic(data15, data1h, data5, data1m) {
         !Number.isFinite(price) ||
         price <= 0
     ) {
-        return null
+        return reject("INVALID_DATA")
     }
 
     // =========================================================
@@ -4576,8 +4935,10 @@ async function coreLogic(data15, data1h, data5, data1m) {
         atrRatio5 <= 0 ||
         atrRatio5 > 0.025
     ) {
-        return null
-    }
+    return reject("ATR5", {
+        atrRatio5: round(atrRatio5, 6)
+    })
+}
 // =========================================================
 // 2. 1H DIRECTION
 //
@@ -4631,7 +4992,13 @@ if (
     !bull1h &&
     !bear1h
 ) {
-    return null
+    return reject("1H_DIRECTION", {
+        price1h: round(price1h),
+        ema20: round(ema20_1h),
+        ema50: round(ema50_1h),
+        slope: round(slope1h, 6),
+        gap: round(gap1h, 6)
+    })
 }
     // =========================================================
     // 3. 15M TREND
@@ -4691,7 +5058,29 @@ const shortBias =
             price1h <= ema20_1h * 1.008
         )
     )
-
+    if (
+    !longBias &&
+    !shortBias
+) {
+    return reject("BIAS", {
+        bull1h,
+        bear1h,
+        bull15,
+        bear15,
+        longBias,
+        shortBias,
+        slope1h: round(slope1h, 6),
+        slope15: round(slope15, 6),
+        gap1h: round(gap1h, 6),
+        gap15: round(gap15, 6)
+    })
+}
+const coreSide =
+    longBias
+        ? "LONG"
+        : shortBias
+            ? "SHORT"
+            : "NONE"
     // =========================================================
     // 4. 15M STRUCTURE
     //
@@ -4831,7 +5220,10 @@ const vol5Ratio =
     if (
         vol5Ratio < 0.45
     ) {
-        return null
+        return reject("VOL5", {
+            side: coreSide,
+        vol5Ratio: round(vol5Ratio, 3)
+    })
     }
 
     // =========================================================
@@ -4932,7 +5324,28 @@ const vol5Ratio =
         !pullbackLong &&
         !pullbackShort
     ) {
-        return null
+        return reject("PULLBACK", {
+            side: coreSide,
+
+        longBias,
+        shortBias,
+
+        trendLong5,
+        trendShort5,
+
+        pullbackEMA20Long,
+        pullbackEMA20Short,
+
+        pullbackEMA50Long,
+        pullbackEMA50Short,
+
+        structureRetestLong,
+        structureRetestShort,
+
+        atr5: round(atr5),
+        pullbackTolerance:
+            round(pullbackTolerance)
+    })
     }
 
     // =========================================================
@@ -5030,7 +5443,9 @@ const vol5Ratio =
         c1.length - 1
 
     if (i < 3) {
-        return null
+        return reject("INVALID_DATA", {
+        index: i
+    })
     }
 
     const o0 = o1[i]
@@ -5135,6 +5550,29 @@ const shortConfirmation =
         bearishStrongClose &&
         closeShort1 >= 0.65
     )
+    if (
+    !longConfirmation &&
+    !shortConfirmation
+) {
+    return reject("CONFIRMATION", {
+        side: coreSide,
+
+        pullbackLong,
+        pullbackShort,
+
+        bullishRejection,
+        bearishRejection,
+
+        bullishTrigger,
+        bearishTrigger,
+
+        bullishMicroBreak,
+        bearishMicroBreak,
+
+        bullishStrongClose,
+        bearishStrongClose
+    })
+}
 
     // =========================================================
     // 10. 1M VOLUME
@@ -5155,7 +5593,10 @@ const shortConfirmation =
     if (
         vol1Ratio < 0.40
     ) {
-        return null
+        return reject("VOL1", {
+            side: coreSide,
+        vol1Ratio: round(vol1Ratio, 3)
+    })
     }
 
     // =========================================================
@@ -5180,7 +5621,11 @@ const shortConfirmation =
         distFromEMA20 >
         maxChase
     ) {
-        return null
+        return reject("CHASE", {
+            side: coreSide,
+            distFromEMA20: round(distFromEMA20, 6),
+            maxChase: round(maxChase, 6)
+        })
     }
 
     // =========================================================
@@ -5200,21 +5645,31 @@ const shortConfirmation =
         !Number.isFinite(rsi5) ||
         !Number.isFinite(rsi1)
     ) {
-        return null
+        return reject("RSI_INVALID", {
+            side: coreSide,
+            rsi5,
+            rsi1
+        })
     }
 
     if (
         longBias &&
         rsi5 > 79
     ) {
-        return null
+        return reject("RSI_LONG_EXTREME", {
+            side: "LONG",
+        rsi5: round(rsi5, 2)
+    })
     }
 
     if (
         shortBias &&
         rsi5 < 21
     ) {
-        return null
+        return reject("RSI_SHORT_EXTREME", {
+            side: "SHORT",
+        rsi5: round(rsi5, 2)
+    })
     }
 
     // =========================================================
@@ -5236,11 +5691,28 @@ const shortSetup =
     shortConfirmation
 
     if (
-        !longSetup &&
-        !shortSetup
-    ) {
-        return null
-    }
+    !longSetup &&
+    !shortSetup
+) {
+    return reject("FINAL_SETUP", {
+        side: coreSide,
+
+        longBias,
+        shortBias,
+
+        structureOKLong,
+        structureOKShort,
+
+        trendLong5,
+        trendShort5,
+
+        pullbackLong,
+        pullbackShort,
+
+        longConfirmation,
+        shortConfirmation
+    })
+}
 
     // =========================================================
     // 14. SWING / STRUCTURE FOR SL
@@ -5351,7 +5823,10 @@ const shortSetup =
             !Number.isFinite(risk) ||
             risk <= 0
         ) {
-            return null
+            return reject("RISK_INVALID", {
+        side: "LONG",
+        risk: round(risk)
+    })
         }
 
         // Không quá nhỏ
@@ -5359,7 +5834,12 @@ const shortSetup =
             risk <
             atr5 * 0.45
         ) {
-            return null
+            return reject("RISK_TOO_SMALL", {
+        side: "LONG",
+        risk: round(risk),
+        atr5: round(atr5),
+        riskATR: round(risk / atr5, 3)
+    })
         }
 
         // Không quá rộng
@@ -5367,14 +5847,24 @@ const shortSetup =
             risk >
             atr5 * 2.00
         ) {
-            return null
+            return reject("RISK_TOO_WIDE", {
+        side: "LONG",
+        risk: round(risk),
+        atr5: round(atr5),
+        riskATR: round(risk / atr5, 3)
+    })
         }
 
         if (
             risk / entry >
             0.018
         ) {
-            return null
+            return reject("RISK_PERCENT", {
+        side: "LONG",
+        riskPercent: round(risk / entry, 6),
+        risk: round(risk),
+        entry: round(entry)
+    })
         }
 
         // Room phía trước
@@ -5388,7 +5878,14 @@ const shortSetup =
                 room <
                 risk * 1.30
             ) {
-                return null
+                return reject("ROOM_LONG", {
+                    side: "LONG",
+        room: round(room),
+        required: round(risk * 1.30),
+        risk: round(risk),
+        resistance: round(resistance),
+        entry: round(entry)
+    })
             }
         }
 
@@ -5416,28 +5913,46 @@ const shortSetup =
             !Number.isFinite(risk) ||
             risk <= 0
         ) {
-            return null
+            return reject("RISK_INVALID", {
+        side: "SHORT",
+        risk: round(risk)
+    })
         }
 
         if (
             risk <
             atr5 * 0.45
         ) {
-            return null
+            return reject("RISK_TOO_SMALL", {
+        side: "SHORT",
+        risk: round(risk),
+        atr5: round(atr5),
+        riskATR: round(risk / atr5, 3)
+    })
         }
 
         if (
             risk >
             atr5 * 2.00
         ) {
-            return null
+            return reject("RISK_TOO_WIDE", {
+        side: "SHORT",
+        risk: round(risk),
+        atr5: round(atr5),
+        riskATR: round(risk / atr5, 3)
+    })
         }
 
         if (
             risk / entry >
             0.018
         ) {
-            return null
+            return reject("RISK_PERCENT", {
+        side: "SHORT",
+        riskPercent: round(risk / entry, 6),
+        risk: round(risk),
+        entry: round(entry)
+    })
         }
 
         if (support) {
@@ -5450,7 +5965,14 @@ const shortSetup =
                 room <
                 risk * 1.30
             ) {
-                return null
+                return reject("ROOM_SHORT", {
+                    side: "SHORT",
+        room: round(room),
+        required: round(risk * 1.30),
+        risk: round(risk),
+        support: round(support),
+        entry: round(entry)
+    })
             }
         }
 
@@ -5472,7 +5994,14 @@ const shortSetup =
         !Number.isFinite(finalRR) ||
         finalRR < 1.65
     ) {
-        return null
+        return reject("FINAL_RR", {
+            side: coreSide,
+        finalRR: round(finalRR, 2),
+        requiredRR: 1.65,
+        risk: round(risk),
+        entry: round(entry),
+        tp: round(tp)
+    })
     }
 
     // =========================================================
@@ -5604,6 +6133,29 @@ const shortSetup =
 
     const setup =
         "TREND_PULLBACK_CONTINUATION"
+        // =========================================================
+// CORE ACCEPT STATS
+// =========================================================
+
+CORE_REJECT_STATS.ACCEPT++
+
+if (longSetup) {
+
+    CORE_REJECT_STATS.ACCEPT_LONG++
+
+} else if (shortSetup) {
+
+    CORE_REJECT_STATS.ACCEPT_SHORT++
+}
+
+if (longSetup) {
+
+    CORE_SIDE_STATS.LONG++
+
+} else if (shortSetup) {
+
+    CORE_SIDE_STATS.SHORT++
+}
 
     // =========================================================
     // 24. RETURN
@@ -5909,6 +6461,94 @@ const shortSetup =
         }
     }
 }
+// =========================================================
+// START CORE DAILY REPORT
+// GỬI CHÍNH XÁC 19:00 GIỜ VIỆT NAM
+// =========================================================
+
+function startCoreDailyReport() {
+
+    const getVNTime =
+        () =>
+            new Date(
+                new Date().toLocaleString(
+                    "en-US",
+                    {
+                        timeZone:
+                            "Asia/Ho_Chi_Minh"
+                    }
+                )
+            )
+
+    const now =
+        getVNTime()
+
+    const next =
+        new Date(now)
+
+    // Chưa tới 19:00 hôm nay
+    if (
+        now.getHours() < 19
+    ) {
+
+        next.setHours(
+            19,
+            0,
+            0,
+            0
+        )
+
+    } else {
+
+        // Đã qua 19:00
+        next.setDate(
+            next.getDate() + 1
+        )
+
+        next.setHours(
+            19,
+            0,
+            0,
+            0
+        )
+    }
+
+    const delay =
+        next.getTime() -
+        now.getTime()
+
+    console.log(
+        "📊 CORE DAILY REPORT STARTED"
+    )
+
+    console.log(
+        "🇻🇳 Timezone: Asia/Ho_Chi_Minh"
+    )
+
+    console.log(
+        `⏰ Next report: ${next.toLocaleString()}`
+    )
+
+    console.log(
+        `⏳ Waiting: ${Math.round(delay / 60000)} minutes`
+    )
+
+    setTimeout(
+        async () => {
+
+            await sendCore24hReport()
+
+            setInterval(
+                sendCore24hReport,
+                24 * 60 * 60 * 1000
+            )
+
+        },
+        delay
+    )
+}
+
+startCoreDailyReport()
 // ================= SCAN =================
 async function scan(symbol){
 
