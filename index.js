@@ -4664,13 +4664,26 @@ async function coreLogic(data15, data1h, data5, data1m) {
         price15 < ema20_15 &&
         slope15 < 0
 
-    const longBias =
-        bull1h &&
-        bull15
+    // 1H không cần hoàn hảo tuyệt đối
+const longBias =
+    bull15 &&
+    (
+        bull1h ||
+        (
+            ema20_1h > ema50_1h &&
+            price1h >= ema20_1h * 0.997
+        )
+    )
 
-    const shortBias =
-        bear1h &&
-        bear15
+const shortBias =
+    bear15 &&
+    (
+        bear1h ||
+        (
+            ema20_1h < ema50_1h &&
+            price1h <= ema20_1h * 1.003
+        )
+    )
 
     if (
         !longBias &&
@@ -4759,17 +4772,38 @@ async function coreLogic(data15, data1h, data5, data1m) {
             ema9_5Prev
         )
 
-    const trendLong5 =
-        p5 > ema20_5 &&
-        ema9_5 > ema20_5 &&
-        ema20_5 > ema50_5 &&
-        slope9_5 > 0
+    // 5M trend nới nhẹ
+const trendLong5 =
+    ema20_5 > ema50_5 &&
+    (
+        (
+            p5 > ema20_5 &&
+            ema9_5 > ema20_5 &&
+            slope9_5 > 0
+        )
+        ||
+        (
+            p5 >= ema20_5 * 0.997 &&
+            ema9_5 >= ema20_5 * 0.998 &&
+            slope9_5 >= 0
+        )
+    )
 
-    const trendShort5 =
-        p5 < ema20_5 &&
-        ema9_5 < ema20_5 &&
-        ema20_5 < ema50_5 &&
-        slope9_5 < 0
+const trendShort5 =
+    ema20_5 < ema50_5 &&
+    (
+        (
+            p5 < ema20_5 &&
+            ema9_5 < ema20_5 &&
+            slope9_5 < 0
+        )
+        ||
+        (
+            p5 <= ema20_5 * 1.003 &&
+            ema9_5 <= ema20_5 * 1.002 &&
+            slope9_5 <= 0
+        )
+    )
 
     // =========================================================
     // 6. 5M VOLUME
@@ -5040,13 +5074,13 @@ const h0 = h1[i]
 
     const bullishMicroBreak =
         c0 > o0 &&
-        br1 >= 0.32 &&
+        br1 >= 0.30 &&
         closeLong1 >= 0.58 &&
         c0 > microHigh
 
     const bearishMicroBreak =
         c0 < o0 &&
-        br1 >= 0.32 &&
+        br1 >= 0.30 &&
         closeShort1 >= 0.58 &&
         c0 < microLow
 
@@ -5071,6 +5105,12 @@ const h0 = h1[i]
         bearishMicroBreak ||
         bearishStrongClose
 
+        const longConfirmation =
+    bullishRejection || bullishTrigger
+
+const shortConfirmation =
+    bearishRejection || bearishTrigger
+
     // =========================================================
     // 10. 1M VOLUME
     // =========================================================
@@ -5088,7 +5128,7 @@ const h0 = h1[i]
 
     // Volume chỉ loại khi quá yếu.
     if (
-        vol1Ratio < 0.50
+        vol1Ratio < 0.40
     ) {
         return null
     }
@@ -5157,20 +5197,18 @@ const h0 = h1[i]
     // =========================================================
 
     const longSetup =
-        longBias &&
-        structureOKLong &&
-        trendLong5 &&
-        pullbackLong &&
-        bullishRejection &&
-        bullishTrigger
+    longBias &&
+    structureOKLong &&
+    trendLong5 &&
+    pullbackLong &&
+    longConfirmation
 
-    const shortSetup =
-        shortBias &&
-        structureOKShort &&
-        trendShort5 &&
-        pullbackShort &&
-        bearishRejection &&
-        bearishTrigger
+const shortSetup =
+    shortBias &&
+    structureOKShort &&
+    trendShort5 &&
+    pullbackShort &&
+    shortConfirmation
 
     if (
         !longSetup &&
@@ -5323,7 +5361,7 @@ const h0 = h1[i]
 
             if (
                 room <
-                risk * 1.50
+                risk * 1.30
             ) {
                 return null
             }
@@ -5385,7 +5423,7 @@ const h0 = h1[i]
 
             if (
                 room <
-                risk * 1.50
+                risk * 1.30
             ) {
                 return null
             }
@@ -5407,7 +5445,7 @@ const h0 = h1[i]
 
     if (
         !Number.isFinite(finalRR) ||
-        finalRR < 1.80
+        finalRR < 1.65
     ) {
         return null
     }
@@ -5475,11 +5513,8 @@ const h0 = h1[i]
             .filter(Boolean)
             .length
 
-    if (
-        qualityCount < 8
-    ) {
-        return null
-    }
+// KHÔNG dùng qualityCount để reject setup
+// if (qualityCount < 8) return null
 
     // =========================================================
     // 19. MARKET STATE
