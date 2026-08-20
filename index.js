@@ -6589,60 +6589,68 @@ async function sendCore24hReport() {
 // GỬI THỐNG KÊ MỖI 4 GIỜ
 // =========================================================
 
+// =========================================================
+// CORE REPORT WATCHDOG
+// =========================================================
+
+console.log("🔥 CORE REPORT CODE LOADED")
+
 function startCoreDailyReport() {
 
-    const REPORT_INTERVAL =
-        4 * 60 * 60 * 1000
+    const REPORT_INTERVAL = 4 * 60 * 60 * 1000
 
+    console.log("🔥 startCoreDailyReport() CALLED")
+    console.log("⏰ CORE REPORT: EVERY 4 HOURS")
     console.log(
-        "📊 CORE REPORT STARTED"
+        "🕐 Current time:",
+        new Date().toLocaleString("vi-VN", {
+            timeZone: "Asia/Ho_Chi_Minh"
+        })
     )
 
-    console.log(
-        "⏰ Report interval: 4 hours"
-    )
+    // TEST TIMER
+    setTimeout(() => {
 
-    console.log(
-        "📈 CORE statistics started from bot startup"
-    )
+        console.log(
+            "🚨🚨🚨 CORE REPORT TIMER FIRED 🚨🚨🚨"
+        )
 
-    console.log(
-        "⏳ Next CORE REPORT in 4 hours"
-    )
+        sendCore24hReport()
+            .then(() => {
+                console.log(
+                    "🏁 CORE REPORT SEND FUNCTION FINISHED"
+                )
+            })
+            .catch(err => {
+                console.error(
+                    "💥 CORE REPORT SEND CRASH:",
+                    err
+                )
+            })
 
-    setTimeout(
-        async () => {
+    }, REPORT_INTERVAL)
 
-            console.log(
-                "\n🚨 CORE REPORT TIMER FIRED"
-            )
+    // Các lần tiếp theo
+    setInterval(() => {
 
-            await sendCore24hReport()
+        console.log(
+            "🚨🚨🚨 CORE REPORT INTERVAL FIRED 🚨🚨🚨"
+        )
 
-            console.log(
-                "⏳ Next CORE REPORT in 4 hours"
-            )
+        sendCore24hReport()
+            .then(() => {
+                console.log(
+                    "🏁 CORE REPORT SEND FUNCTION FINISHED"
+                )
+            })
+            .catch(err => {
+                console.error(
+                    "💥 CORE REPORT SEND CRASH:",
+                    err
+                )
+            })
 
-            setInterval(
-                async () => {
-
-                    console.log(
-                        "\n🚨 CORE REPORT TIMER FIRED"
-                    )
-
-                    await sendCore24hReport()
-
-                    console.log(
-                        "⏳ Next CORE REPORT in 4 hours"
-                    )
-
-                },
-                REPORT_INTERVAL
-            )
-
-        },
-        REPORT_INTERVAL
-    )
+    }, REPORT_INTERVAL)
 }
 
 startCoreDailyReport()
