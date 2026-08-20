@@ -5029,14 +5029,14 @@ if (
         ) / price15
 
     const bull15 =
-        ema20_15 > ema50_15 &&
-        price15 > ema20_15 &&
-        slope15 > 0
+    ema20_15 > ema50_15 &&
+    slope15 > -0.0003 &&
+    price15 >= ema20_15 * 0.993
 
-    const bear15 =
-        ema20_15 < ema50_15 &&
-        price15 < ema20_15 &&
-        slope15 < 0
+const bear15 =
+    ema20_15 < ema50_15 &&
+    slope15 < 0.0003 &&
+    price15 <= ema20_15 * 1.007
 
     // 1H không cần hoàn hảo tuyệt đối
 const longBias =
@@ -5176,14 +5176,14 @@ const trendLong5 =
     ema20_5 > ema50_5 &&
     (
         (
-            p5 >= ema20_5 * 0.995 &&
-            ema9_5 >= ema20_5 * 0.996 &&
-            slope9_5 >= -0.0005
+            p5 >= ema20_5 * 0.992 &&
+            ema9_5 >= ema20_5 * 0.993 &&
+            slope9_5 >= -0.0008
         )
         ||
         (
-            p5 >= ema50_5 * 0.998 &&
-            ema9_5 >= ema20_5 * 0.994
+            p5 >= ema50_5 * 0.996 &&
+            ema9_5 >= ema20_5 * 0.991
         )
     )
 
@@ -5191,14 +5191,14 @@ const trendShort5 =
     ema20_5 < ema50_5 &&
     (
         (
-            p5 <= ema20_5 * 1.005 &&
-            ema9_5 <= ema20_5 * 1.004 &&
-            slope9_5 <= 0.0005
+            p5 <= ema20_5 * 1.008 &&
+            ema9_5 <= ema20_5 * 1.007 &&
+            slope9_5 <= 0.0008
         )
         ||
         (
-            p5 <= ema50_5 * 1.002 &&
-            ema9_5 <= ema20_5 * 1.006
+            p5 <= ema50_5 * 1.004 &&
+            ema9_5 <= ema20_5 * 1.009
         )
     )
 
@@ -5218,7 +5218,7 @@ const vol5Ratio =
 
     // Không bắt buộc volume spike.
     if (
-        vol5Ratio < 0.45
+        vol5Ratio < 0.30
     ) {
         return reject("VOL5", {
             side: coreSide,
@@ -5254,10 +5254,10 @@ const vol5Ratio =
         c5.at(-1)
 
     const pullbackTolerance =
-    Math.max(
-        atr5 * 0.60,
-        price * 0.0015
-    )
+Math.max(
+    atr5 * 0.85,
+    price * 0.0020
+)
 
     // EMA20 pullback
     const pullbackEMA20Long =
@@ -5305,48 +5305,48 @@ const vol5Ratio =
         structureTolerance
 
     const pullbackLong =
-        trendLong5 &&
-        (
-            pullbackEMA20Long ||
-            pullbackEMA50Long ||
-            structureRetestLong
-        )
+    pullbackEMA20Long ||
+    pullbackEMA50Long ||
+    structureRetestLong
 
-    const pullbackShort =
-        trendShort5 &&
-        (
-            pullbackEMA20Short ||
-            pullbackEMA50Short ||
-            structureRetestShort
-        )
+const pullbackShort =
+    pullbackEMA20Short ||
+    pullbackEMA50Short ||
+    structureRetestShort
 
-    if (
-        !pullbackLong &&
-        !pullbackShort
-    ) {
-        return reject("PULLBACK", {
-            side: coreSide,
-
-        longBias,
-        shortBias,
-
-        trendLong5,
-        trendShort5,
+if (
+    longBias &&
+    !pullbackLong &&
+    !pullbackShort
+) {
+    return reject("PULLBACK", {
+        side: "LONG",
 
         pullbackEMA20Long,
-        pullbackEMA20Short,
-
         pullbackEMA50Long,
-        pullbackEMA50Short,
-
         structureRetestLong,
+
+        atr5: round(atr5),
+        pullbackTolerance: round(pullbackTolerance)
+    })
+}
+
+if (
+    shortBias &&
+    !pullbackShort &&
+    !pullbackLong
+) {
+    return reject("PULLBACK", {
+        side: "SHORT",
+
+        pullbackEMA20Short,
+        pullbackEMA50Short,
         structureRetestShort,
 
         atr5: round(atr5),
-        pullbackTolerance:
-            round(pullbackTolerance)
+        pullbackTolerance: round(pullbackTolerance)
     })
-    }
+}
 
     // =========================================================
     // 8. 5M REJECTION
@@ -5495,16 +5495,17 @@ const h0 = h1[i]
             l2
         )
 
-    const bullishMicroBreak =
+    
+        const bullishMicroBreak =
     c0 > o0 &&
-    br1 >= 0.25 &&
-    closeLong1 >= 0.55 &&
+    br1 >= 0.20 &&
+    closeLong1 >= 0.52 &&
     c0 > microHigh
 
 const bearishMicroBreak =
     c0 < o0 &&
-    br1 >= 0.25 &&
-    closeShort1 >= 0.55 &&
+    br1 >= 0.20 &&
+    closeShort1 >= 0.52 &&
     c0 < microLow
 
     // Strong continuation candle
@@ -5537,19 +5538,19 @@ const bearishStrongClose =
 
 const longConfirmation =
     bullishRejection ||
-    bullishTrigger ||
-    (
-        bullishStrongClose &&
-        closeLong1 >= 0.65
-    )
+    bullishTrigger //||
+    //(
+        //bullishStrongClose &&
+        //closeLong1 >= 0.65
+    //)
 
 const shortConfirmation =
     bearishRejection ||
-    bearishTrigger ||
-    (
-        bearishStrongClose &&
-        closeShort1 >= 0.65
-    )
+    bearishTrigger //||
+   // (
+       // bearishStrongClose &&
+        //closeShort1 >= 0.65
+    //)
     if (
     !longConfirmation &&
     !shortConfirmation
@@ -5591,7 +5592,7 @@ const shortConfirmation =
 
     // Volume chỉ loại khi quá yếu.
     if (
-        vol1Ratio < 0.40
+        vol1Ratio < 0.25
     ) {
         return reject("VOL1", {
             side: coreSide,
@@ -5613,8 +5614,8 @@ const shortConfirmation =
 
     const maxChase =
     Math.max(
-        (atr5 / price) * 2.10,
-        0.0075
+        (atr5 / price) * 2.60,
+        0.0100
     )
 
     if (
@@ -5654,7 +5655,7 @@ const shortConfirmation =
 
     if (
         longBias &&
-        rsi5 > 79
+        rsi5 > 83
     ) {
         return reject("RSI_LONG_EXTREME", {
             side: "LONG",
@@ -5664,7 +5665,7 @@ const shortConfirmation =
 
     if (
         shortBias &&
-        rsi5 < 21
+        rsi5 < 17
     ) {
         return reject("RSI_SHORT_EXTREME", {
             side: "SHORT",
@@ -5678,14 +5679,12 @@ const shortConfirmation =
 
     const longSetup =
     longBias &&
-    structureOKLong &&
     trendLong5 &&
     pullbackLong &&
     longConfirmation
 
 const shortSetup =
     shortBias &&
-    structureOKShort &&
     trendShort5 &&
     pullbackShort &&
     shortConfirmation
@@ -5832,7 +5831,7 @@ const shortSetup =
         // Không quá nhỏ
         if (
             risk <
-            atr5 * 0.45
+            atr5 * 0.30
         ) {
             return reject("RISK_TOO_SMALL", {
         side: "LONG",
@@ -5876,7 +5875,7 @@ const shortSetup =
 
             if (
                 room <
-                risk * 1.30
+                risk * 1.15
             ) {
                 return reject("ROOM_LONG", {
                     side: "LONG",
@@ -5921,7 +5920,7 @@ const shortSetup =
 
         if (
             risk <
-            atr5 * 0.45
+            atr5 * 0.30
         ) {
             return reject("RISK_TOO_SMALL", {
         side: "SHORT",
@@ -5963,7 +5962,7 @@ const shortSetup =
 
             if (
                 room <
-                risk * 1.30
+                risk * 1.15
             ) {
                 return reject("ROOM_SHORT", {
                     side: "SHORT",
@@ -6462,89 +6461,41 @@ if (longSetup) {
     }
 }
 // =========================================================
-// START CORE DAILY REPORT
-// GỬI CHÍNH XÁC 19:00 GIỜ VIỆT NAM
+// START CORE REPORT
+// GỬI THỐNG KÊ MỖI 6 GIỜ
 // =========================================================
 
 function startCoreDailyReport() {
 
-    const getVNTime =
-        () =>
-            new Date(
-                new Date().toLocaleString(
-                    "en-US",
-                    {
-                        timeZone:
-                            "Asia/Ho_Chi_Minh"
-                    }
-                )
-            )
-
-    const now =
-        getVNTime()
-
-    const next =
-        new Date(now)
-
-    // Chưa tới 19:00 hôm nay
-    if (
-        now.getHours() < 19
-    ) {
-
-        next.setHours(
-            19,
-            0,
-            0,
-            0
-        )
-
-    } else {
-
-        // Đã qua 19:00
-        next.setDate(
-            next.getDate() + 1
-        )
-
-        next.setHours(
-            19,
-            0,
-            0,
-            0
-        )
-    }
-
-    const delay =
-        next.getTime() -
-        now.getTime()
+    const REPORT_INTERVAL =
+        6 * 60 * 60 * 1000
 
     console.log(
-        "📊 CORE DAILY REPORT STARTED"
+        "📊 CORE REPORT STARTED"
     )
 
     console.log(
-        "🇻🇳 Timezone: Asia/Ho_Chi_Minh"
+        "⏰ Report interval: 6 hours"
     )
 
     console.log(
-        `⏰ Next report: ${next.toLocaleString()}`
+        "📈 CORE statistics started from bot startup"
     )
 
-    console.log(
-        `⏳ Waiting: ${Math.round(delay / 60000)} minutes`
-    )
-
+    // Gửi lần đầu sau 6 tiếng
     setTimeout(
         async () => {
 
             await sendCore24hReport()
 
+            // Sau đó cứ mỗi 6 tiếng
             setInterval(
                 sendCore24hReport,
-                24 * 60 * 60 * 1000
+                REPORT_INTERVAL
             )
 
         },
-        delay
+        REPORT_INTERVAL
     )
 }
 
