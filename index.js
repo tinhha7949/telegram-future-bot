@@ -6597,7 +6597,8 @@ console.log("🔥 CORE REPORT CODE LOADED")
 
 function startCoreDailyReport() {
 
-    const REPORT_INTERVAL = 4 * 60 * 60 * 1000
+    //const REPORT_INTERVAL = 4 * 60 * 60 * 1000
+    const REPORT_INTERVAL = 30 * 1000
 
     console.log("🔥 startCoreDailyReport() CALLED")
     console.log("⏰ CORE REPORT: EVERY 4 HOURS")
