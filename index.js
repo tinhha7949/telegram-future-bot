@@ -5056,19 +5056,17 @@ if (
     slope15 > -0.0003 &&
     price15 >= ema20_15 * 0.993
 
-const bear15 =
-    ema20_15 < ema50_15 &&
-    slope15 < 0.0003 &&
-    price15 <= ema20_15 * 1.007
-
-    // 1H không cần hoàn hảo tuyệt đối
 const longBias =
     bull15 &&
     (
         bull1h ||
         (
             ema20_1h > ema50_1h &&
-            price1h >= ema20_1h * 0.992
+            price1h >= ema20_1h * 0.990
+        ) ||
+        (
+            price1h >= ema20_1h * 0.985 &&
+            slope15 > 0
         )
     )
 
@@ -5078,7 +5076,11 @@ const shortBias =
         bear1h ||
         (
             ema20_1h < ema50_1h &&
-            price1h <= ema20_1h * 1.008
+            price1h <= ema20_1h * 1.010
+        ) ||
+        (
+            price1h <= ema20_1h * 1.015 &&
+            slope15 < 0
         )
     )
     if (
@@ -5284,25 +5286,21 @@ Math.max(
 
     // EMA20 pullback
     const pullbackEMA20Long =
-        recentLow5 <=
-        ema20_5 +
-        pullbackTolerance
+    recentLow5 <= ema20_5 + pullbackTolerance &&
+    recentClose5 >= ema20_5 * 0.997
 
     const pullbackEMA20Short =
-        recentHigh5 >=
-        ema20_5 -
-        pullbackTolerance
+    recentHigh5 >= ema20_5 - pullbackTolerance &&
+    recentClose5 <= ema20_5 * 1.003
 
     // EMA50 pullback
     const pullbackEMA50Long =
-        recentLow5 <=
-        ema50_5 +
-        pullbackTolerance
+    recentLow5 <= ema50_5 + pullbackTolerance &&
+    recentClose5 >= ema50_5 * 0.994
 
     const pullbackEMA50Short =
-        recentHigh5 >=
-        ema50_5 -
-        pullbackTolerance
+    recentHigh5 >= ema50_5 - pullbackTolerance &&
+    recentClose5 <= ema50_5 * 1.006
 
     // Structure retest
     const structureTolerance =
@@ -5615,7 +5613,7 @@ const shortConfirmation =
 
     // Volume chỉ loại khi quá yếu.
     if (
-        vol1Ratio < 0.25
+        vol1Ratio < 0.18
     ) {
         return reject("VOL1", {
             side: coreSide,
@@ -5702,15 +5700,27 @@ const shortConfirmation =
 
     const longSetup =
     longBias &&
-    trendLong5 &&
     pullbackLong &&
-    longConfirmation
+    (
+        longConfirmation ||
+        bullishTrigger
+    ) &&
+    (
+        trendLong5 ||
+        bullishTrigger
+    )
 
 const shortSetup =
     shortBias &&
-    trendShort5 &&
     pullbackShort &&
-    shortConfirmation
+    (
+        shortConfirmation ||
+        bearishTrigger
+    ) &&
+    (
+        trendShort5 ||
+        bearishTrigger
+    )
 
     if (
     !longSetup &&
@@ -5867,7 +5877,7 @@ const shortSetup =
         // Không quá rộng
         if (
             risk >
-            atr5 * 2.00
+            atr5 * 2.50
         ) {
             return reject("RISK_TOO_WIDE", {
         side: "LONG",
@@ -5955,7 +5965,7 @@ const shortSetup =
 
         if (
             risk >
-            atr5 * 2.00
+            atr5 * 2.50
         ) {
             return reject("RISK_TOO_WIDE", {
         side: "SHORT",
