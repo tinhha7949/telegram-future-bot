@@ -5055,6 +5055,11 @@ if (
     ema20_15 > ema50_15 &&
     slope15 > -0.0003 &&
     price15 >= ema20_15 * 0.993
+    
+    const bear15 =
+    ema20_15 < ema50_15 &&
+    slope15 < 0.0003 &&
+    price15 <= ema20_15 * 1.007
 
 const longBias =
     bull15 &&
