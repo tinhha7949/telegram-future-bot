@@ -6484,24 +6484,30 @@ if (longSetup) {
     }
 }
 // =========================================================
-// CORE REPORT — MỖI 4 GIỜ
+// CORE REPORT — MỖI 6 GIỜ
 // =========================================================
 
 const CORE_REPORT_INTERVAL =
-    4 * 60 * 60 * 1000
+    6 * 60 * 60 * 1000
 
+let CORE_REPORT_TIMER = null
 let CORE_REPORT_RUNNING = false
 
 
-async function sendCore24hReport() {
+// =========================================================
+// SEND CORE REPORT
+// =========================================================
 
+async function sendCoreReport() {
+
+    // Không cho phép 2 report chạy cùng lúc
     if (CORE_REPORT_RUNNING) {
 
         console.log(
             "⚠️ CORE REPORT ALREADY RUNNING -> SKIP"
         )
 
-        return
+        return false
     }
 
     CORE_REPORT_RUNNING = true
@@ -6509,18 +6515,29 @@ async function sendCore24hReport() {
     try {
 
         console.log(
-            "\n🚨 CORE 4H REPORT TRIGGERED"
+            "\n🚨🚨🚨 CORE 6H REPORT TRIGGERED 🚨🚨🚨"
         )
 
         console.log(
             "🕐 TIME:",
-            new Date().toLocaleString("vi-VN")
+            new Date().toLocaleString(
+                "vi-VN",
+                {
+                    timeZone:
+                        "Asia/Ho_Chi_Minh"
+                }
+            )
         )
 
         console.log(
-            "🔎 TOTAL SCANS:",
+            "🔎 SCANS SINCE LAST REPORT:",
             CORE_TOTAL_CALLS
         )
+
+
+        // =====================================================
+        // BUILD REPORT
+        // =====================================================
 
         const report =
             buildCore24hReport()
@@ -6529,7 +6546,20 @@ async function sendCore24hReport() {
             "📊 CORE REPORT BUILT"
         )
 
+        console.log(
+            "━━━━━━━━━━━━━━━━━━━━"
+        )
+
         console.log(report)
+
+        console.log(
+            "━━━━━━━━━━━━━━━━━━━━"
+        )
+
+
+        // =====================================================
+        // SEND TELEGRAM
+        // =====================================================
 
         console.log(
             "📤 SENDING TO TELEGRAM..."
@@ -6543,118 +6573,206 @@ async function sendCore24hReport() {
             sent
         )
 
+
+        // =====================================================
+        // SUCCESS
+        // =====================================================
+
         if (sent === true) {
 
             console.log(
-                "✅ CORE REPORT SENT"
+                "✅ CORE REPORT SENT SUCCESSFULLY"
             )
 
+            // Chỉ reset khi Telegram xác nhận gửi thành công
             resetCore24hStats()
 
             console.log(
                 "♻️ CORE STATS RESET"
             )
 
-        } else {
-
-            console.error(
-                "❌ CORE REPORT NOT SENT"
+            console.log(
+                "📊 NEW SCAN COUNT:",
+                CORE_TOTAL_CALLS
             )
 
-            console.error(
-                "⚠️ STATS NOT RESET"
-            )
+            return true
         }
+
+
+        // =====================================================
+        // FAIL
+        // =====================================================
+
+        console.error(
+            "❌ CORE REPORT NOT SENT"
+        )
+
+        console.error(
+            "⚠️ CORE STATS NOT RESET"
+        )
+
+        console.error(
+            "⚠️ NEXT REPORT WILL KEEP CURRENT STATS"
+        )
+
+        return false
+
 
     } catch (err) {
 
         console.error(
             "❌ CORE REPORT ERROR:",
+            err?.message || err
+        )
+
+        console.error(
             err
         )
+
+        console.error(
+            "⚠️ CORE STATS NOT RESET"
+        )
+
+        return false
+
 
     } finally {
 
         CORE_REPORT_RUNNING = false
 
         console.log(
-            "🏁 CORE REPORT FINISHED"
+            "🏁 CORE REPORT SEND FUNCTION FINISHED"
         )
     }
 }
 
 
 // =========================================================
-// START CORE REPORT
-// GỬI THỐNG KÊ MỖI 4 GIỜ
+// START CORE 6H REPORT TIMER
 // =========================================================
 
-// =========================================================
-// CORE REPORT WATCHDOG
-// =========================================================
+function startCore6hReport() {
 
-console.log("🔥 CORE REPORT CODE LOADED")
-
-function startCoreDailyReport() {
-
-    //const REPORT_INTERVAL = 4 * 60 * 60 * 1000
-    const REPORT_INTERVAL = 30 * 1000
-
-    console.log("🔥 startCoreDailyReport() CALLED")
-    console.log("⏰ CORE REPORT: EVERY 4 HOURS")
     console.log(
-        "🕐 Current time:",
-        new Date().toLocaleString("vi-VN", {
-            timeZone: "Asia/Ho_Chi_Minh"
-        })
+        "\n🔥 CORE REPORT SYSTEM STARTED"
     )
 
-    // TEST TIMER
-    setTimeout(() => {
+    console.log(
+        "⏰ CORE REPORT: EVERY 6 HOURS"
+    )
+
+    console.log(
+        "🕐 START TIME:",
+        new Date().toLocaleString(
+            "vi-VN",
+            {
+                timeZone:
+                    "Asia/Ho_Chi_Minh"
+            }
+        )
+    )
+
+
+    // =====================================================
+    // CHỐNG START TIMER 2 LẦN
+    // =====================================================
+
+    if (CORE_REPORT_TIMER) {
 
         console.log(
-            "🚨🚨🚨 CORE REPORT TIMER FIRED 🚨🚨🚨"
+            "⚠️ CORE REPORT TIMER ALREADY EXISTS -> SKIP"
         )
 
-        sendCore24hReport()
-            .then(() => {
+        return
+    }
+
+
+    // =====================================================
+    // TẠO TIMER DUY NHẤT
+    // =====================================================
+
+    CORE_REPORT_TIMER =
+        setInterval(
+            async () => {
+
                 console.log(
-                    "🏁 CORE REPORT SEND FUNCTION FINISHED"
+                    "\n🚨🚨🚨 CORE REPORT INTERVAL FIRED 🚨🚨🚨"
                 )
-            })
-            .catch(err => {
-                console.error(
-                    "💥 CORE REPORT SEND CRASH:",
-                    err
+
+                console.log(
+                    "🕐 TIME:",
+                    new Date().toLocaleString(
+                        "vi-VN",
+                        {
+                            timeZone:
+                                "Asia/Ho_Chi_Minh"
+                        }
+                    )
                 )
-            })
 
-    }, REPORT_INTERVAL)
+                console.log(
+                    "🔎 SCANS SINCE LAST REPORT:",
+                    CORE_TOTAL_CALLS
+                )
 
-    // Các lần tiếp theo
-    setInterval(() => {
 
-        console.log(
-            "🚨🚨🚨 CORE REPORT INTERVAL FIRED 🚨🚨🚨"
+                // =================================================
+                // GỌI SEND
+                // =================================================
+
+                const result =
+                    await sendCoreReport()
+
+
+                // =================================================
+                // RESULT LOG
+                // =================================================
+
+                if (result === true) {
+
+                    console.log(
+                        "✅ CORE 6H REPORT COMPLETED"
+                    )
+
+                } else {
+
+                    console.error(
+                        "❌ CORE 6H REPORT FAILED"
+                    )
+
+                }
+
+
+                console.log(
+                    "⏳ NEXT CORE REPORT IN: 6 HOURS"
+                )
+
+            },
+            CORE_REPORT_INTERVAL
         )
 
-        sendCore24hReport()
-            .then(() => {
-                console.log(
-                    "🏁 CORE REPORT SEND FUNCTION FINISHED"
-                )
-            })
-            .catch(err => {
-                console.error(
-                    "💥 CORE REPORT SEND CRASH:",
-                    err
-                )
-            })
 
-    }, REPORT_INTERVAL)
+    // =====================================================
+    // TIMER CREATED
+    // =====================================================
+
+    console.log(
+        "✅ CORE REPORT TIMER CREATED"
+    )
+
+    console.log(
+        "⏳ NEXT CORE REPORT IN: 6 HOURS"
+    )
+
 }
 
-startCoreDailyReport()
+
+// =========================================================
+// START ON BOT STARTUP
+// =========================================================
+
+startCore6hReport()
 // ================= SCAN =================
 async function scan(symbol){
 
