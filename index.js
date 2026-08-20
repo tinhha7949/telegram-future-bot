@@ -497,22 +497,97 @@ exchangeInfoTime = Date.now()
     }
 }
 // ================= TELEGRAM =================
-async function sendTelegram(msg){
-    try{
-        let url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
-        let res = await safeFetch(url,{
-            method:"POST",
-            headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ chat_id: CHAT_ID, text: msg })
+async function sendTelegram(msg) {
+
+    try {
+
+        const url =
+            `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`
+
+        console.log("📤 TELEGRAM: sending message...")
+        console.log("📏 TELEGRAM message length:", msg?.length || 0)
+
+        const res = await safeFetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                chat_id: CHAT_ID,
+                text: String(msg || "")
+            })
         })
 
-       if(!res) return false
+        // safeFetch không trả response
+        if (!res) {
 
-let data = await res.json()
-        return data.ok   // 👈 QUAN TRỌNG
+            console.error(
+                "❌ TELEGRAM: safeFetch returned NULL"
+            )
 
-    }catch(e){
-        console.log("❌ TELE:", e.message)
+            return false
+        }
+
+        console.log(
+            "📡 TELEGRAM HTTP:",
+            res.status,
+            res.statusText
+        )
+
+        let data
+
+        try {
+
+            data = await res.json()
+
+        } catch (jsonErr) {
+
+            console.error(
+                "❌ TELEGRAM JSON PARSE ERROR:",
+                jsonErr.message
+            )
+
+            return false
+        }
+
+        console.log(
+            "📨 TELEGRAM RESPONSE:",
+            JSON.stringify(data)
+        )
+
+        if (data?.ok === true) {
+
+            console.log(
+                "✅ TELEGRAM SENT SUCCESSFULLY"
+            )
+
+            return true
+        }
+
+        console.error(
+            "❌ TELEGRAM API REJECTED:",
+            data?.error_code || "UNKNOWN"
+        )
+
+        console.error(
+            "❌ TELEGRAM DESCRIPTION:",
+            data?.description || "NO DESCRIPTION"
+        )
+
+        return false
+
+    } catch (e) {
+
+        console.error(
+            "❌ TELEGRAM EXCEPTION:",
+            e?.message || e
+        )
+
+        console.error(
+            "❌ TELEGRAM STACK:",
+            e?.stack || "NO STACK"
+        )
+
         return false
     }
 }
@@ -4684,59 +4759,7 @@ function resetCore24hStats() {
     CORE_STATS_START =
         Date.now()
 }
-// =========================================================
-// CORE DAILY TELEGRAM REPORT
-// =========================================================
 
-async function sendCore24hReport() {
-
-    try {
-
-        const report =
-            buildCore24hReport()
-
-        console.log(
-            "\n========== CORE 24H REPORT ==========\n"
-        )
-
-        console.log(report)
-
-        console.log(
-            "\n======================================\n"
-        )
-
-        // Telegram phụ
-        const sent =
-            await sendTelegram(report)
-
-        // CHỈ RESET KHI GỬI THÀNH CÔNG
-        if (sent) {
-
-            console.log(
-                "✅ CORE 24H REPORT SENT"
-            )
-
-            resetCore24hStats()
-
-        } else {
-
-            console.error(
-                "❌ CORE 24H REPORT NOT SENT"
-            )
-
-            // Không reset
-        }
-
-    } catch (err) {
-
-        console.error(
-            "❌ CORE 24H REPORT ERROR:",
-            err.message
-        )
-
-        // Không reset
-    }
-}
 async function coreLogic(data15, data1h, data5, data1m) {
     CORE_TOTAL_CALLS++
     // =========================================================
@@ -6561,66 +6584,68 @@ async function sendCore24hReport() {
 }
 
 
+// =========================================================
+// START CORE REPORT
+// GỬI THỐNG KÊ MỖI 4 GIỜ
+// =========================================================
+
 function startCoreDailyReport() {
 
+    const REPORT_INTERVAL =
+        4 * 60 * 60 * 1000
+
     console.log(
-        "\n=========================================="
+        "📊 CORE REPORT STARTED"
     )
 
     console.log(
-        "🔥 CORE REPORT SYSTEM STARTED"
+        "⏰ Report interval: 4 hours"
     )
 
     console.log(
-        "🕐 START:",
-        new Date().toLocaleString("vi-VN")
+        "📈 CORE statistics started from bot startup"
     )
 
     console.log(
-        "⏰ INTERVAL: 4 HOURS"
+        "⏳ Next CORE REPORT in 4 hours"
     )
 
-    console.log(
-        "⏳ FIRST REPORT:",
-        new Date(
-            Date.now() +
-            CORE_REPORT_INTERVAL
-        ).toLocaleString("vi-VN")
-    )
-
-    console.log(
-        "=========================================="
-    )
-
-
-    setInterval(
+    setTimeout(
         async () => {
 
             console.log(
-                "\n🚨🚨 CORE 4H TIMER FIRED 🚨🚨"
+                "\n🚨 CORE REPORT TIMER FIRED"
             )
 
             await sendCore24hReport()
 
-        },
-        CORE_REPORT_INTERVAL
-    )
+            console.log(
+                "⏳ Next CORE REPORT in 4 hours"
+            )
 
-    console.log(
-        "✅ CORE REPORT TIMER REGISTERED"
+            setInterval(
+                async () => {
+
+                    console.log(
+                        "\n🚨 CORE REPORT TIMER FIRED"
+                    )
+
+                    await sendCore24hReport()
+
+                    console.log(
+                        "⏳ Next CORE REPORT in 4 hours"
+                    )
+
+                },
+                REPORT_INTERVAL
+            )
+
+        },
+        REPORT_INTERVAL
     )
 }
 
-
-console.log(
-    "🔥 CALLING startCoreDailyReport()"
-)
-
 startCoreDailyReport()
-
-console.log(
-    "🔥 CORE REPORT TIMER ACTIVE"
-)
 // ================= SCAN =================
 async function scan(symbol){
 
