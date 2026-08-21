@@ -9392,42 +9392,56 @@ async function start(){
         }
         console.log("🚀 START BOT...")
         // ==================================================
-        // 2. CONNECT + VERIFY MONGODB
-        // ==================================================
-        let dbOK = false
+// 2. CONNECT + VERIFY MONGODB
+//    RETRY UNTIL MONGODB IS AVAILABLE
+// ==================================================
+let dbOK = false
+while(!dbOK){
+    try{
+        console.log("🔌 Connecting MongoDB...")
+        // Nếu connection cũ đang lỗi thì đóng nó
         try{
-            console.log("🔌 Connecting MongoDB...")
-            await client.connect()
-            await client.db("admin").command({
-                ping: 1
-            })
-            db = client.db("trading")
-            trades = db.collection("trades")
-            // TEST DB THỰC SỰ ĐỌC ĐƯỢC
-            await trades.findOne(
-                {},
-                {
-                    projection: { _id: 1 }
+            await client.close()
+        }catch(e){}
+        await client.connect()
+        await client.db("admin").command({
+            ping: 1
+        })
+        db = client.db("trading")
+        trades = db.collection("trades")
+        // TEST DB THỰC SỰ ĐỌC ĐƯỢC
+        await trades.findOne(
+            {},
+            {
+                projection: {
+                    _id: 1
                 }
-            )
-            dbOK = true
-            console.log("🟢 MongoDB CONNECTED + VERIFIED")
-        }catch(e){
-            console.error(
-                "🔴 MongoDB CONNECTION FAILED:",
-                e.message
-            )
-            dbOK = false
-        }
-        // ==================================================
-        // 3. KHÔNG CÓ DB -> KHÔNG CHẠY BOT
-        // ==================================================
-        if(!dbOK){
-            console.log(
-                "🛑 BOT STOPPED: MongoDB unavailable"
-            )
-            return
-        }
+            }
+        )
+        dbOK = true
+        console.log(
+            "🟢 MongoDB CONNECTED + VERIFIED"
+        )
+    }catch(e){
+        dbOK = false
+        console.error(
+            "🔴 MongoDB CONNECTION FAILED:",
+            e.message
+        )
+        console.log(
+            "⏳ MongoDB unavailable — retry in 10 seconds..."
+        )
+        await new Promise(r =>
+            setTimeout(r,10000)
+        )
+    }
+}
+// ==================================================
+// 3. MONGODB READY
+// ==================================================
+console.log(
+    "🟢 MongoDB READY — BOT CONTINUES"
+)
         // =================================================
         // 4. SYNC BINANCE TIME
         // ==================================================
