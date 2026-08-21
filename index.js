@@ -122,68 +122,67 @@ async function getPositionsCached(){
     return POS_CACHE
 }
 async function safeFetch(url, options = {}, retry = 3){
+
     for(let i = 0; i < retry; i++){
-        let timeout
 
         try{
-           let isTelegramGetUpdates = url.includes("api.telegram.org") && url.includes("getUpdates")
 
-let controller = new AbortController()
-
-let signal = options.signal || controller.signal
-
-if(!options.signal){
-    timeout = setTimeout(() => {
-        controller.abort()
-    }, 10000)
-}
-
-            let res = await fetch(url, {
+            const res = await fetch(url, {
                 ...options,
-                signal,
-                ...(url.includes("telegram.org") ? {} : { agent })
+                ...(url.includes("telegram.org")
+                    ? {}
+                    : { agent })
             })
 
-            if(timeout) clearTimeout(timeout)
-
             if(res && res.ok){
-    if(timeout) clearTimeout(timeout)
-    return res
-}
+                return res
+            }
 
-            if(res && (res.status === 429 || res.status === 418)){
-                await new Promise(r => setTimeout(r, 3000))
+            if(
+                res &&
+                (res.status === 429 || res.status === 418)
+            ){
+                await new Promise(r =>
+                    setTimeout(r, 3000)
+                )
                 continue
             }
 
             let text = ""
 
-try{
-    text = await res.text()
-}catch(e){}
+            try{
+                text = await res.text()
+            }catch(e){}
 
-console.log(
-    `❌ FETCH STATUS ${res?.status}:`,
-    text.slice(0,300)
-)
+            console.log(
+                `❌ FETCH STATUS ${res?.status}:`,
+                text.slice(0,300)
+            )
 
         }catch(e){
-            if(
-    e.message &&
-    (
-        e.message.includes("recvWindow") ||
-        e.message.includes("Timestamp")
-    )
-){
-    await syncTime()
-}
-            if(timeout) clearTimeout(timeout)
 
-            if(!url.includes("telegram.org")){
-                console.log(`❌ FETCH FAIL: ${url}`)
+            if(
+                e?.message &&
+                (
+                    e.message.includes("recvWindow") ||
+                    e.message.includes("Timestamp")
+                )
+            ){
+                await syncTime()
             }
 
-            await new Promise(r => setTimeout(r, 1500))
+            if(!url.includes("telegram.org")){
+                console.log(
+                    `❌ FETCH FAIL: ${url}`,
+                    e?.message || e
+                )
+            }
+        }
+
+        if(i < retry - 1){
+            await new Promise(r =>
+                setTimeout(r, 1000)
+            )
         }
     }
 
@@ -4102,12 +4101,16 @@ async function getData(symbol, interval, limit){
             10000
         )
 
-        const res = await safeFetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0"
+        const res = await safeFetch(
+            url,
+            {
+                headers: {
+                    "User-Agent": "Mozilla/5.0"
+                },
+                signal: controller.signal
             },
-            signal: controller.signal
-        })
+            1
+        )
 
         clearTimeout(timeout)
 
@@ -6924,64 +6927,224 @@ startCore6hReport()
 // ================= SCAN =================
 async function scan(symbol){
 
-    const [
-        data15,
-        data1h,
-        data5,
-        data1m
-    ] = await Promise.all([
+    const scanStart = Date.now()
 
-        getData(
-            symbol,
-            "15m",
-            LIMIT_15M
-        ),
+    console.log(
+        `🔵 SCAN START: ${symbol}`
+    )
 
-        getData(
-            symbol,
-            "1h",
-            LIMIT_1H
-        ),
+    try{
 
-        getData(
-            symbol,
-            "5m",
-            160
-        ),
+        // ==================================================
+        // 1. LOAD MARKET DATA
+        // ==================================================
 
-        getData(
-            symbol,
-            "1m",
-            160
+        console.log(
+            `📥 DATA START: ${symbol}`
         )
-    ])
 
-    if(
-        !data15 ||
-        !data1h ||
-        !data5 ||
-        !data1m
-    ){
-        console.log(`❌ No data: ${symbol}`)
-        return null
-    }
+        const dataStart = Date.now()
 
-    const r =
-        await coreLogic(
+        const [
             data15,
             data1h,
             data5,
             data1m
+        ] = await Promise.all([
+
+            getData(
+                symbol,
+                "15m",
+                LIMIT_15M
+            ),
+
+            getData(
+                symbol,
+                "1h",
+                LIMIT_1H
+            ),
+
+            getData(
+                symbol,
+                "5m",
+                160
+            ),
+
+            getData(
+                symbol,
+                "1m",
+                160
+            )
+
+        ])
+
+        const dataTime =
+            Date.now() - dataStart
+
+        console.log(
+            `📦 DATA DONE: ${symbol} | ${dataTime}ms | ` +
+            `15m=${Array.isArray(data15) ? data15.length : 0} | ` +
+            `1h=${Array.isArray(data1h) ? data1h.length : 0} | ` +
+            `5m=${Array.isArray(data5) ? data5.length : 0} | ` +
+            `1m=${Array.isArray(data1m) ? data1m.length : 0}`
         )
 
-    if(!r || !r.side){
+        // ==================================================
+        // 2. DATA VALIDATION
+        // ==================================================
+
+        if(!data15){
+
+            console.log(
+                `❌ DATA MISSING: ${symbol} 15m`
+            )
+
+            return null
+        }
+
+        if(!data1h){
+
+            console.log(
+                `❌ DATA MISSING: ${symbol} 1h`
+            )
+
+            return null
+        }
+
+        if(!data5){
+
+            console.log(
+                `❌ DATA MISSING: ${symbol} 5m`
+            )
+
+            return null
+        }
+
+        if(!data1m){
+
+            console.log(
+                `❌ DATA MISSING: ${symbol} 1m`
+            )
+
+            return null
+        }
+
+        // ==================================================
+        // 3. CORE LOGIC
+        // ==================================================
+
+        console.log(
+            `🧠 CORE START: ${symbol}`
+        )
+
+        const coreStart =
+            Date.now()
+
+        let r
+
+        try{
+
+            r = await coreLogic(
+                data15,
+                data1h,
+                data5,
+                data1m
+            )
+
+        }catch(coreErr){
+
+            console.error(
+                `🔥 CORE ERROR: ${symbol}`,
+                coreErr?.message || coreErr
+            )
+
+            console.error(
+                coreErr?.stack || ""
+            )
+
+            return null
+        }
+
+        const coreTime =
+            Date.now() - coreStart
+
+        console.log(
+            `🧠 CORE DONE: ${symbol} | ${coreTime}ms`
+        )
+
+        // ==================================================
+        // 4. CORE RESULT
+        // ==================================================
+
+        if(!r){
+
+            console.log(
+                `⚪ CORE NO RESULT: ${symbol} | ` +
+                `total=${Date.now() - scanStart}ms`
+            )
+
+            return null
+        }
+
+        if(!r.side){
+
+            console.log(
+                `⚪ CORE NO SIDE: ${symbol} | ` +
+                `setup=${r.setup || "N/A"} | ` +
+                `score=${r.score ?? "N/A"}`
+            )
+
+            return null
+        }
+
+        // ==================================================
+        // 5. SIGNAL FOUND
+        // ==================================================
+
+        console.log(
+            `🟢 SIGNAL FOUND: ${symbol} | ` +
+            `SIDE=${r.side} | ` +
+            `SETUP=${r.setup || "N/A"} | ` +
+            `SCORE=${r.score ?? "N/A"} | ` +
+            `TIME=${Date.now() - scanStart}ms`
+        )
+
+        // ==================================================
+        // 6. RETURN
+        // ==================================================
+
+        return {
+            symbol,
+            ...r
+        }
+
+    }catch(e){
+
+        // ==================================================
+        // GLOBAL SCAN ERROR
+        // ==================================================
+
+        console.error(
+            `🔥 SCAN ERROR: ${symbol}`
+        )
+
+        console.error(
+            `MESSAGE:`,
+            e?.message || e
+        )
+
+        console.error(
+            `STACK:`,
+            e?.stack || "NO STACK"
+        )
+
+        console.error(
+            `⏱ SCAN TIME: ${Date.now() - scanStart}ms`
+        )
+
         return null
     }
 
-    return {
-        symbol,
-        ...r
-    }
 }
 // ================= BTC REGIME =================
 async function getBtcRegime() {
