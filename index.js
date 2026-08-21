@@ -7703,7 +7703,7 @@ for(let i=0; i<symbols.length; i+=10){
         setTimeout(() => {
             console.log(`⏰ SCAN TIMEOUT: ${s}`)
             resolve(null)
-        }, 20000)
+        }, 40000)
     )
 ])
 
