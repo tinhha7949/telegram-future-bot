@@ -7057,6 +7057,16 @@ async function scan(symbol){
         return null
     }
 }
+function safeFixed(value, digits = 2){
+
+    const n = Number(value)
+
+    if(!Number.isFinite(n)){
+        return "0.00"
+    }
+
+    return n.toFixed(digits)
+}
 // ================= BTC REGIME =================
 async function getBtcRegime() {
 
@@ -7970,7 +7980,7 @@ let filtered = candidates.filter(c => {
 
     console.log(
         `🚫 FILTER RR: ${c.symbol} | ` +
-        `RR=${rr.toFixed(2)} | ` +
+        `RR=${safeFixed(rr, 2)} | ` +
         `required=${RR_THRESHOLD}`
     )
 
@@ -8068,11 +8078,6 @@ console.log(`⛔ ${best.symbol} đang có lệnh`)
 continue
 }
 
-    if(existing){
-        console.log(`⛔ ${best.symbol} đang có lệnh`)
-        continue
-    }
-
     // ===== DB AI =====
 
 let dbAI =
@@ -8100,8 +8105,8 @@ let minRR =
 if(rr < minRR){
     console.log(
         `🚫 FILTER MIN RR: ${best.symbol} | ` +
-        `RR=${rr.toFixed(2)} | ` +
-        `required=${minRR} | ` +
+        `RR=${safeFixed(rr, 2)} | ` +
+        `required=${safeFixed(minRR, 2)} | ` +
         `state=${best.marketState}`
     )
     continue
@@ -8147,7 +8152,7 @@ risk = Math.min(
 if(risk <= 0){
     console.log(
         `🚫 FILTER RISK: ${best.symbol} | ` +
-        `risk=${risk}`
+        `risk=${safeFixed(risk)}`
     )
     continue
 }
@@ -8157,7 +8162,7 @@ if(risk <= 0){
 
     console.log(
         `🚫 FILTER SL DISTANCE: ${best.symbol} | ` +
-        `price=${best.price} | sl=${best.sl}`
+        `price=${safeFixed(best.price)} | sl=${safeFixed(best.sl)}`
     )
 
     continue
@@ -8178,11 +8183,11 @@ const trade = buildTradeFromCoreSignal(
 if(!trade){
 
     console.log(
-    `🚫 FILTER BUILD TRADE: ${best.symbol} | ` +
-    `side=${best.side} | ` +
-    `setup=${best.setup} | ` +
-    `quality=${best.qualityScore} | ` +
-    `db=${best.finalScore.toFixed(1)}`
+`🚫 FILTER BUILD TRADE: ${best.symbol} | ` +
+`side=${best.side} | ` +
+`setup=${best.setup} | ` +
+`quality=${best.qualityScore ?? 0} | ` +
+`db=${safeFixed(best.finalScore, 1)}`
 )
 
     continue
@@ -8569,17 +8574,17 @@ activeTrades.push(trade)
     continue
 }
         let msg =
-            `🔥 BEST SIGNAL\n\n` +
-            `📊 ${trade.symbol}\n` +
-            `📈 ${trade.side}\n` +
-            `🎯 Entry: ${trade.entry}\n` +
-            `🟢 TP: ${trade.tp}\n` +
-            `🔴 SL: ${trade.sl}\n` +
-            `⚖️ RR: ${trade.rr.toFixed(2)}\n` +
-            `🧠 Setup: ${trade.setup}\n` +
-            `⭐ Quality: ${trade.qualityScore}\n` +
-            `🧠 DB Edge: ${Number(best.finalScore ?? 0).toFixed(1)}\n`
-            `💰 Risk: ${trade.risk.toFixed(4)}`
+`🔥 BEST SIGNAL\n\n` +
+`📊 ${trade.symbol}\n` +
+`📈 ${trade.side}\n` +
+`🎯 Entry: ${trade.entry}\n` +
+`🟢 TP: ${trade.tp}\n` +
+`🔴 SL: ${trade.sl}\n` +
+`⚖️ RR: ${safeFixed(trade.rr, 2)}\n` +
+`🧠 Setup: ${trade.setup}\n` +
+`⭐ Quality: ${safeFixed(trade.qualityScore, 2)}\n` +
+`🧠 DB Edge: ${safeFixed(best.finalScore, 1)}\n` +
+`💰 Risk: ${safeFixed(trade.risk, 4)}`
 
         await sendTelegram(msg)
 
@@ -8601,7 +8606,7 @@ activeTrades.push(trade)
 
 
     console.log(
-    `✅ ADD: ${best.symbol} | DB Edge: ${Number(best.finalScore ?? 0).toFixed(1)}`
+    `✅ ADD: ${best.symbol} | DB Edge: ${safeFixed(best.finalScore, 1)}`
 )
 }
 
