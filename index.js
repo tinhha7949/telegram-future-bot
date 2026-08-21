@@ -8578,7 +8578,7 @@ activeTrades.push(trade)
             `⚖️ RR: ${trade.rr.toFixed(2)}\n` +
             `🧠 Setup: ${trade.setup}\n` +
             `⭐ Quality: ${trade.qualityScore}\n` +
-            `🧠 DB Edge: ${trade.finalScore.toFixed(1)}\n` +
+            `🧠 DB Edge: ${Number(best.finalScore ?? 0).toFixed(1)}\n`
             `💰 Risk: ${trade.risk.toFixed(4)}`
 
         await sendTelegram(msg)
@@ -8600,7 +8600,9 @@ activeTrades.push(trade)
 
 
 
-    console.log(`✅ ADD: ${best.symbol} | Score: ${best.finalScore.toFixed(1)}`)
+    console.log(
+    `✅ ADD: ${best.symbol} | DB Edge: ${Number(best.finalScore ?? 0).toFixed(1)}`
+)
 }
 
     }catch(e){
