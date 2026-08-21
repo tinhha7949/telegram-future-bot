@@ -4818,6 +4818,19 @@ async function coreLogic(data15, data1h, data5, data1m) {
     const c1 = col(data1m, 4)
     const v1 = col(data1m, 5)
 
+    const o0 = o1[i]
+const h0 = h1[i]
+    const l0 = l1[i]
+    const c0 = c1[i]
+
+    const oPrev = o1[i - 1]
+    const hPrev = h1[i - 1]
+    const lPrev = l1[i - 1]
+    const cPrev = c1[i - 1]
+
+    const h2 = h1[i - 2]
+    const l2 = l1[i - 2]
+
     const all = [
         o15, h15, l15, c15,
         o1h, h1h, l1h, c1h,
@@ -4965,8 +4978,9 @@ async function coreLogic(data15, data1h, data5, data1m) {
 // =========================================================
 // 2. 1H DIRECTION
 //
-// 1H chỉ xác định phe.
-// Cho phép giá pullback nhẹ quanh EMA20.
+// 1H chỉ xác định xu hướng chính.
+// Cho phép pullback quanh EMA20/EMA50.
+// Không bắt giá phải nằm đúng phía EMA20.
 // =========================================================
 
 const ema20_1h =
@@ -4992,28 +5006,33 @@ const gap1h =
         ema20_1h - ema50_1h
     ) / price1h
 
-// Nới 1H:
-// Không bắt giá phải nằm đúng phía EMA20.
-// Chỉ cần EMA20/EMA50 xác nhận hướng,
-// hoặc giá đang pullback rất gần EMA20.
-
+// Trend chính
 const bull1h =
     ema20_1h > ema50_1h &&
-    (
-        slope1h > -0.0008 &&
-        price1h >= ema20_1h * 0.994
-    )
+    slope1h > -0.0012 &&
+    price1h >= ema20_1h * 0.985
 
 const bear1h =
     ema20_1h < ema50_1h &&
-    (
-        slope1h < 0.0008 &&
-        price1h <= ema20_1h * 1.006
-    )
+    slope1h < 0.0012 &&
+    price1h <= ema20_1h * 1.015
+
+// Trend vẫn còn hợp lệ dù giá đang pullback sâu hơn
+const bull1hPullback =
+    ema20_1h > ema50_1h &&
+    price1h >= ema50_1h * 0.992 &&
+    slope1h > -0.0018
+
+const bear1hPullback =
+    ema20_1h < ema50_1h &&
+    price1h <= ema50_1h * 1.008 &&
+    slope1h < 0.0018
 
 if (
     !bull1h &&
-    !bear1h
+    !bear1h &&
+    !bull1hPullback &&
+    !bear1hPullback
 ) {
     return reject("1H_DIRECTION", {
         price1h: round(price1h),
@@ -5024,71 +5043,119 @@ if (
     })
 }
     // =========================================================
-    // 3. 15M TREND
-    // =========================================================
+// 3. 15M TREND + BIAS
+//
+// 15M KHÔNG bắt buộc phải cùng hướng hoàn toàn với 1H.
+// Cho phép 15M pullback ngược hướng 1H,
+// miễn là chưa phá cấu trúc chính.
+//
+// Đây là điểm quan trọng để không bỏ lỡ pullback.
+// =========================================================
 
-    const ema20_15 =
-        ema(c15.slice(-70), 20)
+const ema20_15 =
+    ema(c15.slice(-70), 20)
 
-    const ema50_15 =
-        ema(c15.slice(-110), 50)
+const ema50_15 =
+    ema(c15.slice(-110), 50)
 
-    const ema20_15Prev =
-        ema(c15.slice(-71, -1), 20)
+const ema20_15Prev =
+    ema(c15.slice(-71, -1), 20)
 
-    const price15 =
-        c15.at(-1)
+const price15 =
+    c15.at(-1)
 
-    const slope15 =
-        pct(
-            ema20_15,
-            ema20_15Prev
-        )
+const slope15 =
+    pct(
+        ema20_15,
+        ema20_15Prev
+    )
 
-    const gap15 =
-        Math.abs(
-            ema20_15 -
-            ema50_15
-        ) / price15
+const gap15 =
+    Math.abs(
+        ema20_15 - ema50_15
+    ) / price15
 
-    const bull15 =
+const bull15 =
     ema20_15 > ema50_15 &&
-    slope15 > -0.0003 &&
-    price15 >= ema20_15 * 0.993
-    
-    const bear15 =
+    slope15 > -0.0007 &&
+    price15 >= ema20_15 * 0.989
+
+const bear15 =
     ema20_15 < ema50_15 &&
-    slope15 < 0.0003 &&
-    price15 <= ema20_15 * 1.007
+    slope15 < 0.0007 &&
+    price15 <= ema20_15 * 1.011
+
+// =========================================================
+// 15M PULLBACK STATES
+// =========================================================
+
+const long15Pullback =
+    (
+        ema20_15 >= ema50_15 &&
+        price15 >= ema50_15 * 0.985 &&
+        slope15 > -0.0015
+    )
+    ||
+    (
+        ema20_15 < ema50_15 &&
+        price15 >= ema50_15 * 0.985 &&
+        slope15 > 0
+    )
+
+const short15Pullback =
+    (
+        ema20_15 <= ema50_15 &&
+        price15 <= ema50_15 * 1.015 &&
+        slope15 < 0.0015
+    )
+    ||
+    (
+        ema20_15 > ema50_15 &&
+        price15 <= ema50_15 * 1.015 &&
+        slope15 < 0
+    )
+
+// =========================================================
+// FINAL BIAS
+// =========================================================
 
 const longBias =
-    bull15 &&
     (
-        bull1h ||
+        bull1h &&
         (
-            ema20_1h > ema50_1h &&
-            price1h >= ema20_1h * 0.990
-        ) ||
-        (
-            price1h >= ema20_1h * 0.985 &&
-            slope15 > 0
+            bull15 ||
+            long15Pullback
         )
+    )
+    ||
+    (
+        bull1hPullback &&
+        long15Pullback
     )
 
 const shortBias =
-    bear15 &&
     (
-        bear1h ||
+        bear1h &&
         (
-            ema20_1h < ema50_1h &&
-            price1h <= ema20_1h * 1.010
-        ) ||
-        (
-            price1h <= ema20_1h * 1.015 &&
-            slope15 < 0
+            bear15 ||
+            short15Pullback
         )
     )
-    if (
+    ||
+    (
+        bear1hPullback &&
+        short15Pullback
+    )
+    if (longBias && shortBias) {
+    return reject("BIAS_CONFLICT", {
+        longBias,
+        shortBias,
+        slope1h: round(slope1h, 6),
+        slope15: round(slope15, 6)
+    })
+}
+
+if (
     !longBias &&
     !shortBias
 ) {
@@ -5097,6 +5164,8 @@ const shortBias =
         bear1h,
         bull15,
         bear15,
+        long15Pullback,
+        short15Pullback,
         longBias,
         shortBias,
         slope1h: round(slope1h, 6),
@@ -5105,6 +5174,7 @@ const shortBias =
         gap15: round(gap15, 6)
     })
 }
+
 const coreSide =
     longBias
         ? "LONG"
@@ -5156,24 +5226,24 @@ const coreSide =
     bullishStructure15 ||
     (
         longBias &&
-        structureLow15 >= oldLow15 * 0.996
+        structureLow15 >= oldLow15 * 0.992
     ) ||
     (
         longBias &&
-        structureLow15 >= oldLow15 * 0.994 &&
-        ema20_15 > ema50_15
+        structureLow15 >= oldLow15 * 0.988 &&
+        ema20_15 >= ema50_15 * 0.995
     )
 
 const structureOKShort =
     bearishStructure15 ||
     (
         shortBias &&
-        structureHigh15 <= oldHigh15 * 1.004
+        structureHigh15 <= oldHigh15 * 1.008
     ) ||
     (
         shortBias &&
-        structureHigh15 <= oldHigh15 * 1.006 &&
-        ema20_15 < ema50_15
+        structureHigh15 <= oldHigh15 * 1.012 &&
+        ema20_15 <= ema50_15 * 1.005
     )
 
     // =========================================================
@@ -5206,14 +5276,14 @@ const trendLong5 =
     ema20_5 > ema50_5 &&
     (
         (
-            p5 >= ema20_5 * 0.992 &&
-            ema9_5 >= ema20_5 * 0.993 &&
-            slope9_5 >= -0.0008
+            p5 >= ema20_5 * 0.988 &&
+            ema9_5 >= ema20_5 * 0.990 &&
+            slope9_5 >= -0.0012
         )
         ||
         (
-            p5 >= ema50_5 * 0.996 &&
-            ema9_5 >= ema20_5 * 0.991
+            p5 >= ema50_5 * 0.994 &&
+            ema9_5 >= ema20_5 * 0.988
         )
     )
 
@@ -5221,14 +5291,14 @@ const trendShort5 =
     ema20_5 < ema50_5 &&
     (
         (
-            p5 <= ema20_5 * 1.008 &&
-            ema9_5 <= ema20_5 * 1.007 &&
-            slope9_5 <= 0.0008
+            p5 <= ema20_5 * 1.012 &&
+            ema9_5 <= ema20_5 * 1.010 &&
+            slope9_5 <= 0.0012
         )
         ||
         (
-            p5 <= ema50_5 * 1.004 &&
-            ema9_5 <= ema20_5 * 1.009
+            p5 <= ema50_5 * 1.006 &&
+            ema9_5 <= ema20_5 * 1.012
         )
     )
 
@@ -5289,6 +5359,14 @@ Math.max(
     price * 0.0020
 )
 
+const bullishTrigger =
+        bullishMicroBreak ||
+        bullishStrongClose
+
+    const bearishTrigger =
+        bearishMicroBreak ||
+        bearishStrongClose
+
     // EMA20 pullback
     const pullbackEMA20Long =
     recentLow5 <= ema20_5 + pullbackTolerance &&
@@ -5339,6 +5417,26 @@ const pullbackShort =
     pullbackEMA20Short ||
     pullbackEMA50Short ||
     structureRetestShort
+
+    const longPullbackRecovery =
+    longBias &&
+    pullbackLong &&
+    (
+        trendLong5 ||
+        bullishTrigger ||
+        bullishRejection
+    ) &&
+    c0 > cPrev
+
+const shortPullbackRecovery =
+    shortBias &&
+    pullbackShort &&
+    (
+        trendShort5 ||
+        bearishTrigger ||
+        bearishRejection
+    ) &&
+    c0 < cPrev
 
 if (
     longBias &&
@@ -5474,19 +5572,6 @@ if (
     })
     }
 
-    const o0 = o1[i]
-const h0 = h1[i]
-    const l0 = l1[i]
-    const c0 = c1[i]
-
-    const oPrev = o1[i - 1]
-    const hPrev = h1[i - 1]
-    const lPrev = l1[i - 1]
-    const cPrev = c1[i - 1]
-
-    const h2 = h1[i - 2]
-    const l2 = l1[i - 2]
-
     const br1 =
         bodyRatio(
             o0,
@@ -5546,15 +5631,6 @@ const bearishStrongClose =
     br1 >= 0.50 &&
     closeShort1 >= 0.68 &&
     c0 <= cPrev
-
-    const bullishTrigger =
-        bullishMicroBreak ||
-        bullishStrongClose
-
-    const bearishTrigger =
-        bearishMicroBreak ||
-        bearishStrongClose
-
         // =========================================================
 // FLEXIBLE CONFIRMATION
 //
@@ -5564,7 +5640,8 @@ const bearishStrongClose =
 
 const longConfirmation =
     bullishRejection ||
-    bullishTrigger //||
+    bullishTrigger ||
+    longPullbackRecovery //||
     //(
         //bullishStrongClose &&
         //closeLong1 >= 0.65
@@ -5572,7 +5649,8 @@ const longConfirmation =
 
 const shortConfirmation =
     bearishRejection ||
-    bearishTrigger //||
+    bearishTrigger ||
+    shortPullbackRecovery //||
    // (
        // bearishStrongClose &&
         //closeShort1 >= 0.65
@@ -5700,34 +5778,37 @@ const shortConfirmation =
     }
 
     // =========================================================
-    // 13. FINAL SETUP
-    // =========================================================
+// 13. FINAL SETUP
+//
+// Core ưu tiên:
+// 1. HTF trend
+// 2. Pullback
+// 3. Một confirmation đủ tốt
+//
+// Không bắt trend5 + trigger đồng thời.
+// =========================================================
 
-    const longSetup =
+const longSetup =
     longBias &&
     pullbackLong &&
-    (
-        longConfirmation ||
-        bullishTrigger
-    ) &&
+    longConfirmation &&
     (
         trendLong5 ||
-        bullishTrigger
+        bullishTrigger ||
+        bullishRejection
     )
 
 const shortSetup =
     shortBias &&
     pullbackShort &&
-    (
-        shortConfirmation ||
-        bearishTrigger
-    ) &&
+    shortConfirmation &&
     (
         trendShort5 ||
-        bearishTrigger
+        bearishTrigger ||
+        bearishRejection
     )
 
-    if (
+if (
     !longSetup &&
     !shortSetup
 ) {
@@ -5747,10 +5828,15 @@ const shortSetup =
         pullbackShort,
 
         longConfirmation,
-        shortConfirmation
+        shortConfirmation,
+
+        bullishTrigger,
+        bearishTrigger,
+
+        longPullbackRecovery,
+        shortPullbackRecovery
     })
 }
-
     // =========================================================
     // 14. SWING / STRUCTURE FOR SL
     // =========================================================
@@ -5867,17 +5953,29 @@ const shortSetup =
         }
 
         // Không quá nhỏ
-        if (
-            risk <
-            atr5 * 0.30
-        ) {
-            return reject("RISK_TOO_SMALL", {
+        const maxRiskATRLong =
+    (
+        gap1h >= 0.0015 &&
+        gap15 >= 0.0010
+    )
+        ? 5.00
+        : 4.50
+
+const riskATRLong =
+    risk / atr5
+
+if (
+    riskATRLong >
+    maxRiskATRLong
+) {
+    return reject("RISK_TOO_WIDE", {
         side: "LONG",
         risk: round(risk),
         atr5: round(atr5),
-        riskATR: round(risk / atr5, 3)
+        riskATR: round(riskATRLong, 3),
+        maxRiskATR: maxRiskATRLong
     })
-        }
+}
 
         // Không quá rộng
         if (
@@ -5968,17 +6066,29 @@ const shortSetup =
     })
         }
 
-        if (
-            risk >
-            atr5 * 2.50
-        ) {
-            return reject("RISK_TOO_WIDE", {
+        const maxRiskATRShort =
+    (
+        gap1h >= 0.0015 &&
+        gap15 >= 0.0010
+    )
+        ? 5.00
+        : 4.50
+
+const riskATRShort =
+    risk / atr5
+
+if (
+    riskATRShort >
+    maxRiskATRShort
+) {
+    return reject("RISK_TOO_WIDE", {
         side: "SHORT",
         risk: round(risk),
         atr5: round(atr5),
-        riskATR: round(risk / atr5, 3)
+        riskATR: round(riskATRShort, 3),
+        maxRiskATR: maxRiskATRShort
     })
-        }
+}
 
         if (
             risk / entry >
@@ -6137,19 +6247,25 @@ const shortSetup =
 
     let pullbackType = "EMA20"
 
-    if (
-        pullbackEMA50Long ||
-        pullbackEMA50Short
-    ) {
-        pullbackType = "EMA50"
-    }
-
-    if (
-        structureRetestLong ||
-        structureRetestShort
-    ) {
+if (
+    longSetup
+) {
+    if (structureRetestLong) {
         pullbackType = "STRUCTURE_RETEST"
+    } else if (pullbackEMA50Long) {
+        pullbackType = "EMA50"
+    } else {
+        pullbackType = "EMA20"
     }
+} else {
+    if (structureRetestShort) {
+        pullbackType = "STRUCTURE_RETEST"
+    } else if (pullbackEMA50Short) {
+        pullbackType = "EMA50"
+    } else {
+        pullbackType = "EMA20"
+    }
+}
 
     // =========================================================
     // 22. TRIGGER TYPE
