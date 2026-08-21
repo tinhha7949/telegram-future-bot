@@ -4090,46 +4090,51 @@ return slice.reduce((a,b)=>a+b,0) / slice.length
 }
 async function getData(symbol, interval, limit){
 
-    const urls = [
+    const url =
         `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
-    ]
 
-    for(let url of urls){
+    try{
 
-        for(let attempt=0; attempt<2; attempt++){
+        const controller = new AbortController()
 
-            try{
+        const timeout = setTimeout(
+            () => controller.abort(),
+            10000
+        )
 
-                const controller = new AbortController()
-                const timeout = setTimeout(() => controller.abort(), 8000)
+        const res = await safeFetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0"
+            },
+            signal: controller.signal
+        })
 
-                let res = await safeFetch(url, {
-                    headers: { "User-Agent": "Mozilla/5.0" },
-                    signal: controller.signal
-                })
+        clearTimeout(timeout)
 
-                clearTimeout(timeout)
-
-                if(!res || !res.ok) continue
-
-                let data = await res.json()
-
-                if(Array.isArray(data) && data.length > 0){
-                    return data
-                }
-
-            }catch(e){
-
-    await new Promise(r =>
-        setTimeout(r, 1000 + attempt * 2000)
-    )
-
-    console.log("❌ DATA FAIL:", symbol)
-}
+        if(!res || !res.ok){
+            return null
         }
-    }
 
-    return null
+        const data = await res.json()
+
+        if(
+            Array.isArray(data) &&
+            data.length > 0
+        ){
+            return data
+        }
+
+        return null
+
+    }catch(e){
+
+        console.log(
+            `❌ DATA FAIL ${symbol} ${interval}:`,
+            e?.message || e
+        )
+
+        return null
+    }
 }
 // ================= SYMBOL (PRO) =================
 async function getTopSymbols(){
