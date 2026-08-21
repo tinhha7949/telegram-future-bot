@@ -4818,19 +4818,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
     const c1 = col(data1m, 4)
     const v1 = col(data1m, 5)
 
-    const o0 = o1[i]
-const h0 = h1[i]
-    const l0 = l1[i]
-    const c0 = c1[i]
-
-    const oPrev = o1[i - 1]
-    const hPrev = h1[i - 1]
-    const lPrev = l1[i - 1]
-    const cPrev = c1[i - 1]
-
-    const h2 = h1[i - 2]
-    const l2 = l1[i - 2]
-
     const all = [
         o15, h15, l15, c15,
         o1h, h1h, l1h, c1h,
@@ -4854,7 +4841,6 @@ const h0 = h1[i]
     ) {
         return reject("INVALID_DATA")
     }
-
     // =========================================================
     // HELPERS
     // =========================================================
@@ -4916,6 +4902,101 @@ const h0 = h1[i]
         Number(
             Number(n).toFixed(d)
         )
+
+    // =========================================================
+// 1M CURRENT CANDLE INDEX
+// =========================================================
+
+const i = c1.length - 1
+
+if (i < 3) {
+    return reject("INVALID_DATA", {
+        index: i
+    })
+}
+
+const o0 = o1[i]
+const h0 = h1[i]
+const l0 = l1[i]
+const c0 = c1[i]
+
+const oPrev = o1[i - 1]
+const hPrev = h1[i - 1]
+const lPrev = l1[i - 1]
+const cPrev = c1[i - 1]
+
+const h2 = h1[i - 2]
+const l2 = l1[i - 2]
+
+// =========================================================
+// 1M MICRO TRIGGER
+// =========================================================
+
+const br1 =
+    bodyRatio(
+        o0,
+        h0,
+        l0,
+        c0
+    )
+
+const closeLong1 =
+    closeLocationLong(
+        h0,
+        l0,
+        c0
+    )
+
+const closeShort1 =
+    closeLocationShort(
+        h0,
+        l0,
+        c0
+    )
+
+const microHigh =
+    Math.max(
+        hPrev,
+        h2
+    )
+
+const microLow =
+    Math.min(
+        lPrev,
+        l2
+    )
+
+const bullishMicroBreak =
+    c0 > o0 &&
+    br1 >= 0.20 &&
+    closeLong1 >= 0.52 &&
+    c0 > microHigh
+
+const bearishMicroBreak =
+    c0 < o0 &&
+    br1 >= 0.20 &&
+    closeShort1 >= 0.52 &&
+    c0 < microLow
+
+const bullishStrongClose =
+    c0 > o0 &&
+    br1 >= 0.50 &&
+    closeLong1 >= 0.68 &&
+    c0 >= cPrev
+
+const bearishStrongClose =
+    c0 < o0 &&
+    br1 >= 0.50 &&
+    closeShort1 >= 0.68 &&
+    c0 <= cPrev
+
+const bullishTrigger =
+    bullishMicroBreak ||
+    bullishStrongClose
+
+const bearishTrigger =
+    bearishMicroBreak ||
+    bearishStrongClose
 
     // =========================================================
     // 1. ATR
@@ -5359,14 +5440,6 @@ Math.max(
     price * 0.0020
 )
 
-const bullishTrigger =
-        bullishMicroBreak ||
-        bullishStrongClose
-
-    const bearishTrigger =
-        bearishMicroBreak ||
-        bearishStrongClose
-
     // EMA20 pullback
     const pullbackEMA20Long =
     recentLow5 <= ema20_5 + pullbackTolerance &&
@@ -5418,30 +5491,9 @@ const pullbackShort =
     pullbackEMA50Short ||
     structureRetestShort
 
-    const longPullbackRecovery =
-    longBias &&
-    pullbackLong &&
-    (
-        trendLong5 ||
-        bullishTrigger ||
-        bullishRejection
-    ) &&
-    c0 > cPrev
-
-const shortPullbackRecovery =
-    shortBias &&
-    pullbackShort &&
-    (
-        trendShort5 ||
-        bearishTrigger ||
-        bearishRejection
-    ) &&
-    c0 < cPrev
-
 if (
     longBias &&
-    !pullbackLong &&
-    !pullbackShort
+    !pullbackLong
 ) {
     return reject("PULLBACK", {
         side: "LONG",
@@ -5457,8 +5509,7 @@ if (
 
 if (
     shortBias &&
-    !pullbackShort &&
-    !pullbackLong
+    !pullbackShort
 ) {
     return reject("PULLBACK", {
         side: "SHORT",
@@ -5551,86 +5602,27 @@ if (
             Math.abs(c5Now - o5Now) * 0.8 &&
             closeShort5 >= 0.62
         )
+        const longPullbackRecovery =
+    longBias &&
+    pullbackLong &&
+    (
+        trendLong5 ||
+        bullishTrigger ||
+        bullishRejection
+    ) &&
+    c0 > cPrev
+
+const shortPullbackRecovery =
+    shortBias &&
+    pullbackShort &&
+    (
+        trendShort5 ||
+        bearishTrigger ||
+        bearishRejection
+    ) &&
+    c0 < cPrev
 
     // =========================================================
-    // 9. 1M MICRO TRIGGER
-    //
-    // Hai kiểu:
-    //
-    // A. Micro breakout
-    // B. Strong close sau rejection
-    //
-    // Không chase.
-    // =========================================================
-
-    const i =
-        c1.length - 1
-
-    if (i < 3) {
-        return reject("INVALID_DATA", {
-        index: i
-    })
-    }
-
-    const br1 =
-        bodyRatio(
-            o0,
-            h0,
-            l0,
-            c0
-        )
-
-    const closeLong1 =
-        closeLocationLong(
-            h0,
-            l0,
-            c0
-        )
-
-    const closeShort1 =
-        closeLocationShort(
-            h0,
-            l0,
-            c0
-        )
-
-    const microHigh =
-        Math.max(
-            hPrev,
-            h2
-        )
-
-    const microLow =
-        Math.min(
-            lPrev,
-            l2
-        )
-
-    
-        const bullishMicroBreak =
-    c0 > o0 &&
-    br1 >= 0.20 &&
-    closeLong1 >= 0.52 &&
-    c0 > microHigh
-
-const bearishMicroBreak =
-    c0 < o0 &&
-    br1 >= 0.20 &&
-    closeShort1 >= 0.52 &&
-    c0 < microLow
-
-    // Strong continuation candle
-    const bullishStrongClose =
-    c0 > o0 &&
-    br1 >= 0.50 &&
-    closeLong1 >= 0.68 &&
-    c0 >= cPrev
-
-const bearishStrongClose =
-    c0 < o0 &&
-    br1 >= 0.50 &&
-    closeShort1 >= 0.68 &&
-    c0 <= cPrev
         // =========================================================
 // FLEXIBLE CONFIRMATION
 //
@@ -5656,25 +5648,33 @@ const shortConfirmation =
         //closeShort1 >= 0.65
     //)
     if (
-    !longConfirmation &&
+    !longConfirmation
+) {
+    return reject("CONFIRMATION", {
+        side: "LONG",
+
+        pullbackLong,
+
+        bullishRejection,
+        bullishTrigger,
+
+        bullishMicroBreak,
+        bullishStrongClose
+    })
+}
+
+if (
     !shortConfirmation
 ) {
     return reject("CONFIRMATION", {
-        side: coreSide,
+        side: "SHORT",
 
-        pullbackLong,
         pullbackShort,
 
-        bullishRejection,
         bearishRejection,
-
-        bullishTrigger,
         bearishTrigger,
 
-        bullishMicroBreak,
         bearishMicroBreak,
-
-        bullishStrongClose,
         bearishStrongClose
     })
 }
@@ -5952,6 +5952,18 @@ if (
     })
         }
 
+        if (
+    risk <
+    atr5 * 0.30
+) {
+    return reject("RISK_TOO_SMALL", {
+        side: "LONG",
+        risk: round(risk),
+        atr5: round(atr5),
+        riskATR: round(risk / atr5, 3)
+    })
+}
+
         // Không quá nhỏ
         const maxRiskATRLong =
     (
@@ -6011,7 +6023,7 @@ if (
 
             if (
                 room <
-                risk * 1.15
+                risk * 1.2
             ) {
                 return reject("ROOM_LONG", {
                     side: "LONG",
@@ -6026,7 +6038,7 @@ if (
 
         tp =
             entry +
-            risk * 2.0
+            risk * 1.3
 
     } else {
 
@@ -6110,7 +6122,7 @@ if (
 
             if (
                 room <
-                risk * 1.15
+                risk * 1.2
             ) {
                 return reject("ROOM_SHORT", {
                     side: "SHORT",
@@ -6125,7 +6137,7 @@ if (
 
         tp =
             entry -
-            risk * 2.0
+            risk * 1.3
     }
 
     // =========================================================
@@ -6139,7 +6151,7 @@ if (
 
     if (
         !Number.isFinite(finalRR) ||
-        finalRR < 1.65
+        finalRR < 1.3
     ) {
         return reject("FINAL_RR", {
             side: coreSide,
