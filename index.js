@@ -7697,16 +7697,15 @@ for(let i=0; i<symbols.length; i+=10){
 
             try{
 
-                let result =
-                    await Promise.race([
-                        scan(s),
-                        new Promise(resolve =>
-                            setTimeout(
-                                () => resolve(null),
-                                20000
-                            )
-                        )
-                    ])
+                let result = await Promise.race([
+    scan(s),
+    new Promise(resolve =>
+        setTimeout(() => {
+            console.log(`⏰ SCAN TIMEOUT: ${s}`)
+            resolve(null)
+        }, 20000)
+    )
+])
 
                 if(result){
                     return {
