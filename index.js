@@ -7905,68 +7905,39 @@ if(dbMain.total >= 30){
         edge * 60 * confidence
 }
 
+// DB chỉ loại setup có lịch sử rất xấu
 if(
     dbMain.total >= 30 &&
     dbMain.winrate < 0.42
 ){
+    console.log(
+        `🚫 DB BAD EDGE: ${s.symbol} | ` +
+        `WR=${(dbMain.winrate * 100).toFixed(1)}% | ` +
+        `N=${dbMain.total}`
+    )
+
     continue
 }
 
-let finalMain =
-    (s.score * 0.45) +
-    aiMain
+// CORE MỚI KHÔNG CÒN SCORE CŨ
+// Không dùng s.score nữa
 
-if(finalMain >= -5){
-    candidates.push({
-        ...s,
-        finalScore: finalMain,
-        type: "MAIN"
-    })
-    }else{
-
-    console.log(
-        `🚫 FILTER FINAL SCORE: ${s.symbol} | ` +
-        `score=${s.score} | ` +
-        `ai=${aiMain.toFixed(2)} | ` +
-        `final=${finalMain.toFixed(2)}`
-    )
-
-}
+candidates.push({
+    ...s,
+    finalScore: aiMain,
+    type: "MAIN"
+})
 }
 
 // ================= BTC CONTEXT =================
 
-candidates = candidates.filter(c => {
+// Chỉ lưu BTC regime.
+// Không cộng/trừ score của CORE.
 
-    if(btcRegime === "BULL"){
-
-    if(c.side === "LONG"){
-        c.finalScore += 4
-    }
-
-    if(c.side === "SHORT"){
-        c.finalScore -= 1
-    }
-
-    return true
-}
-
-if(btcRegime === "BEAR"){
-
-    if(c.side === "SHORT"){
-        c.finalScore += 4
-    }
-
-    if(c.side === "LONG"){
-        c.finalScore -= 1
-    }
-
-    return true
-}
-
-    // BTC neutral: không can thiệp
-    return true
-})
+candidates = candidates.map(c => ({
+    ...c,
+    btcRegime
+}))
 
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
@@ -7977,10 +7948,17 @@ if(btcRegime === "BEAR"){
         // ===== SORT =====
       candidates.sort((a,b)=>{
 
-    if(a.marketState === "TREND_STRONG" && b.marketState !== "TREND_STRONG") return -1
-    if(b.marketState === "TREND_STRONG" && a.marketState !== "TREND_STRONG") return 1
+    if(
+        a.marketState === "TREND_STRONG" &&
+        b.marketState !== "TREND_STRONG"
+    ) return -1
 
-    return b.finalScore - a.finalScore
+    if(
+        b.marketState === "TREND_STRONG" &&
+        a.marketState !== "TREND_STRONG"
+    ) return 1
+
+    return b.qualityScore - a.qualityScore
 })
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
@@ -8003,8 +7981,7 @@ return true
 })
 // ===== SORT LẠI =====
 filtered = filtered
-    .sort((a,b)=>b.finalScore - a.finalScore)
-    //.slice(0, 15)
+.sort((a,b)=>b.qualityScore - a.qualityScore)
 
 // ===== UNIQUE COIN =====
 let unique = []
@@ -8201,12 +8178,12 @@ const trade = buildTradeFromCoreSignal(
 if(!trade){
 
     console.log(
-        `🚫 FILTER BUILD TRADE: ${best.symbol} | ` +
-        `side=${best.side} | ` +
-        `setup=${best.setup} | ` +
-        `score=${best.score} | ` +
-        `final=${best.finalScore.toFixed(1)}`
-    )
+    `🚫 FILTER BUILD TRADE: ${best.symbol} | ` +
+    `side=${best.side} | ` +
+    `setup=${best.setup} | ` +
+    `quality=${best.qualityScore} | ` +
+    `db=${best.finalScore.toFixed(1)}`
+)
 
     continue
 }
@@ -8600,8 +8577,8 @@ activeTrades.push(trade)
             `🔴 SL: ${trade.sl}\n` +
             `⚖️ RR: ${trade.rr.toFixed(2)}\n` +
             `🧠 Setup: ${trade.setup}\n` +
-            `⭐ Score: ${trade.score}\n` +
-            `🏆 Final: ${trade.finalScore.toFixed(1)}\n` +
+            `⭐ Quality: ${trade.qualityScore}\n` +
+            `🧠 DB Edge: ${trade.finalScore.toFixed(1)}\n` +
             `💰 Risk: ${trade.risk.toFixed(4)}`
 
         await sendTelegram(msg)
