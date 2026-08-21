@@ -6927,23 +6927,11 @@ startCore6hReport()
 // ================= SCAN =================
 async function scan(symbol){
 
-    const scanStart = Date.now()
-
-    console.log(
-        `🔵 SCAN START: ${symbol}`
-    )
-
     try{
 
         // ==================================================
         // 1. LOAD MARKET DATA
         // ==================================================
-
-        console.log(
-            `📥 DATA START: ${symbol}`
-        )
-
-        const dataStart = Date.now()
 
         const [
             data15,
@@ -6978,67 +6966,33 @@ async function scan(symbol){
 
         ])
 
-        const dataTime =
-            Date.now() - dataStart
-
-        console.log(
-            `📦 DATA DONE: ${symbol} | ${dataTime}ms | ` +
-            `15m=${Array.isArray(data15) ? data15.length : 0} | ` +
-            `1h=${Array.isArray(data1h) ? data1h.length : 0} | ` +
-            `5m=${Array.isArray(data5) ? data5.length : 0} | ` +
-            `1m=${Array.isArray(data1m) ? data1m.length : 0}`
-        )
-
         // ==================================================
         // 2. DATA VALIDATION
         // ==================================================
 
         if(!data15){
-
-            console.log(
-                `❌ DATA MISSING: ${symbol} 15m`
-            )
-
+            console.error(`❌ DATA ERROR: ${symbol} 15m`)
             return null
         }
 
         if(!data1h){
-
-            console.log(
-                `❌ DATA MISSING: ${symbol} 1h`
-            )
-
+            console.error(`❌ DATA ERROR: ${symbol} 1h`)
             return null
         }
 
         if(!data5){
-
-            console.log(
-                `❌ DATA MISSING: ${symbol} 5m`
-            )
-
+            console.error(`❌ DATA ERROR: ${symbol} 5m`)
             return null
         }
 
         if(!data1m){
-
-            console.log(
-                `❌ DATA MISSING: ${symbol} 1m`
-            )
-
+            console.error(`❌ DATA ERROR: ${symbol} 1m`)
             return null
         }
 
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
-
-        console.log(
-            `🧠 CORE START: ${symbol}`
-        )
-
-        const coreStart =
-            Date.now()
 
         let r
 
@@ -7065,35 +7019,11 @@ async function scan(symbol){
             return null
         }
 
-        const coreTime =
-            Date.now() - coreStart
-
-        console.log(
-            `🧠 CORE DONE: ${symbol} | ${coreTime}ms`
-        )
-
         // ==================================================
-        // 4. CORE RESULT
+        // 4. NO SIGNAL
         // ==================================================
 
-        if(!r){
-
-            console.log(
-                `⚪ CORE NO RESULT: ${symbol} | ` +
-                `total=${Date.now() - scanStart}ms`
-            )
-
-            return null
-        }
-
-        if(!r.side){
-
-            console.log(
-                `⚪ CORE NO SIDE: ${symbol} | ` +
-                `setup=${r.setup || "N/A"} | ` +
-                `score=${r.score ?? "N/A"}`
-            )
-
+        if(!r || !r.side){
             return null
         }
 
@@ -7102,16 +7032,11 @@ async function scan(symbol){
         // ==================================================
 
         console.log(
-            `🟢 SIGNAL FOUND: ${symbol} | ` +
+            `🟢 SIGNAL: ${symbol} | ` +
             `SIDE=${r.side} | ` +
             `SETUP=${r.setup || "N/A"} | ` +
-            `SCORE=${r.score ?? "N/A"} | ` +
-            `TIME=${Date.now() - scanStart}ms`
+            `SCORE=${r.score ?? "N/A"}`
         )
-
-        // ==================================================
-        // 6. RETURN
-        // ==================================================
 
         return {
             symbol,
@@ -7120,31 +7045,17 @@ async function scan(symbol){
 
     }catch(e){
 
-        // ==================================================
-        // GLOBAL SCAN ERROR
-        // ==================================================
-
         console.error(
-            `🔥 SCAN ERROR: ${symbol}`
-        )
-
-        console.error(
-            `MESSAGE:`,
+            `🔥 SCAN ERROR: ${symbol}`,
             e?.message || e
         )
 
         console.error(
-            `STACK:`,
-            e?.stack || "NO STACK"
-        )
-
-        console.error(
-            `⏱ SCAN TIME: ${Date.now() - scanStart}ms`
+            e?.stack || ""
         )
 
         return null
     }
-
 }
 // ================= BTC REGIME =================
 async function getBtcRegime() {
@@ -7865,15 +7776,46 @@ for(let i=0; i<symbols.length; i+=10){
 
             try{
 
-                let result = await Promise.race([
-    scan(s),
-    new Promise(resolve =>
-        setTimeout(() => {
-            console.log(`⏰ SCAN TIMEOUT: ${s}`)
+                let timer
+
+let timeoutPromise =
+    new Promise(resolve => {
+
+        timer = setTimeout(() => {
+
+            console.log(
+                `⏰ SCAN TIMEOUT: ${s}`
+            )
+
             resolve(null)
+
         }, 40000)
+
+    })
+
+let result
+
+try{
+
+    result = await Promise.race([
+        scan(s),
+        timeoutPromise
+    ])
+
+}catch(e){
+
+    console.error(
+        `❌ SCAN RACE ERROR ${s}:`,
+        e?.message || e
     )
-])
+
+    result = null
+
+}finally{
+
+    clearTimeout(timer)
+
+}
 
                 if(result){
                     return {
