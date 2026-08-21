@@ -7922,6 +7922,15 @@ if(finalMain >= -5){
         finalScore: finalMain,
         type: "MAIN"
     })
+    }else{
+
+    console.log(
+        `🚫 FILTER FINAL SCORE: ${s.symbol} | ` +
+        `score=${s.score} | ` +
+        `ai=${aiMain.toFixed(2)} | ` +
+        `final=${finalMain.toFixed(2)}`
+    )
+
 }
 }
 
@@ -7979,8 +7988,18 @@ let filtered = candidates.filter(c => {
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
     // ❌ loại kèo quá xấu
-    if(rr < RR_THRESHOLD) return false
-    return true
+    if(rr < RR_THRESHOLD){
+
+    console.log(
+        `🚫 FILTER RR: ${c.symbol} | ` +
+        `RR=${rr.toFixed(2)} | ` +
+        `required=${RR_THRESHOLD}`
+    )
+
+    return false
+}
+
+return true
 })
 // ===== SORT LẠI =====
 filtered = filtered
@@ -8102,6 +8121,12 @@ let minRR =
         : 1.15
 
 if(rr < minRR){
+    console.log(
+        `🚫 FILTER MIN RR: ${best.symbol} | ` +
+        `RR=${rr.toFixed(2)} | ` +
+        `required=${minRR} | ` +
+        `state=${best.marketState}`
+    )
     continue
 }
 
@@ -8143,11 +8168,23 @@ risk = Math.min(
 )
 
 if(risk <= 0){
+    console.log(
+        `🚫 FILTER RISK: ${best.symbol} | ` +
+        `risk=${risk}`
+    )
     continue
 }
 
     let diff = Math.abs(best.price - best.sl)
-    if(!diff) continue
+    if(!diff){
+
+    console.log(
+        `🚫 FILTER SL DISTANCE: ${best.symbol} | ` +
+        `price=${best.price} | sl=${best.sl}`
+    )
+
+    continue
+}
 
 
 
@@ -8162,6 +8199,15 @@ const trade = buildTradeFromCoreSignal(
 )
 
 if(!trade){
+
+    console.log(
+        `🚫 FILTER BUILD TRADE: ${best.symbol} | ` +
+        `side=${best.side} | ` +
+        `setup=${best.setup} | ` +
+        `score=${best.score} | ` +
+        `final=${best.finalScore.toFixed(1)}`
+    )
+
     continue
 }
 
@@ -8230,8 +8276,13 @@ if(!trade){
         await getSymbolInfo(trade.symbol)
 
     if(!info || !info.filters){
-        continue
-    }
+
+    console.log(
+        `🚫 SYMBOL INFO FAIL: ${best.symbol}`
+    )
+
+    continue
+}
 
     let lotFilter =
         info.filters.find(
@@ -8400,8 +8451,11 @@ if(!trade){
 
 if(!execution?.ok){
 
-    console.log(
-        `❌ ENTRY FAIL ${trade.symbol}`
+    console.error(
+        `❌ ENTRY FAIL ${trade.symbol}:`,
+        execution?.error ||
+        execution?.message ||
+        "UNKNOWN"
     )
 
     continue
