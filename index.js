@@ -9668,9 +9668,8 @@ setInterval(
             "❌ START ERROR:",
             e.message
         )
-        // Quan trọng:
-        // Không chạy scanner nếu start thất bại.
-        return
+        // khởi động lại bot nếu start lỗi
+        process.exit(1)
     }
 }
 async function getDBStats(setup, market, side, volatility){
