@@ -10682,13 +10682,6 @@ async function runDynamicTPSL(){
                     i + DYNAMIC_BATCH_SIZE
                 )
 
-
-            console.log(
-                `🔄 DYNAMIC BATCH ${Math.floor(i / DYNAMIC_BATCH_SIZE) + 1}` +
-                ` | ${batch.length} TRADES`
-            )
-
-
             // ==================================================
             // CHẠY TỐI ĐA 5 LỆNH SONG SONG
             // ==================================================
@@ -10720,14 +10713,6 @@ async function runDynamicTPSL(){
 
             )
 
-
-            console.log(
-                `✅ DYNAMIC BATCH DONE` +
-                ` | ${Math.min(
-                    i + DYNAMIC_BATCH_SIZE,
-                    tradesToManage.length
-                )}/${tradesToManage.length}`
-            )
         }
 
 
