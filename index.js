@@ -5655,9 +5655,7 @@ const shortConfirmation =
        // bearishStrongClose &&
         //closeShort1 >= 0.65
     //)
-    if (
-    !longConfirmation
-) {
+    if (longBias && !longConfirmation) {
     return reject("CONFIRMATION", {
         side: "LONG",
 
@@ -5671,9 +5669,7 @@ const shortConfirmation =
     })
 }
 
-if (
-    !shortConfirmation
-) {
+if (shortBias && !shortConfirmation) {
     return reject("CONFIRMATION", {
         side: "SHORT",
 
