@@ -10496,9 +10496,19 @@ async function syncActiveTrades(){
 }
 
 let DYNAMIC_TPSL_RUNNING = false
-//const ENABLE_DYNAMIC_TPSL=false
+
+// =========================================================
+// DYNAMIC TPSL BATCH CONFIG
+// =========================================================
+
+const DYNAMIC_BATCH_SIZE = 5
+
+
+// =========================================================
+// DYNAMIC TPSL LOOP
+// =========================================================
+
 async function runDynamicTPSL(){
-    //if(!ENABLE_DYNAMIC_TPSL)return
 
     if(DYNAMIC_TPSL_RUNNING){
         return
@@ -10539,6 +10549,11 @@ async function runDynamicTPSL(){
             return
         }
 
+
+        // ==================================================
+        // POSITION MAP
+        // ==================================================
+
         const positionMap =
             new Map()
 
@@ -10562,9 +10577,15 @@ async function runDynamicTPSL(){
             }
         }
 
+
         // ==================================================
-        // CHỈ DYNAMIC CHO POSITION THẬT
+        // LỌC TRADE HỢP LỆ TRƯỚC
+        //
+        // Không gọi Dynamic ở đây.
+        // Chỉ lấy danh sách cần xử lý.
         // ==================================================
+
+        const tradesToManage = []
 
         for(const trade of [...activeTrades]){
 
@@ -10579,17 +10600,28 @@ async function runDynamicTPSL(){
             const symbol =
                 trade.symbol
 
+
+            // ==============================================
+            // TPSL PHASE
+            // ==============================================
+
             if(
                 TPSL_PHASE[symbol] !== "ACTIVE"
             ){
                 continue
             }
 
+
+            // ==============================================
+            // ĐANG CÓ DYNAMIC KHÁC CHẠY
+            // ==============================================
+
             if(
                 TPSL_PENDING[symbol]
             ){
                 continue
             }
+
 
             // ==============================================
             // BINANCE KHÔNG CÒN POSITION
@@ -10608,24 +10640,96 @@ async function runDynamicTPSL(){
                 continue
             }
 
+
             // ==============================================
-            // DYNAMIC
+            // THÊM VÀO QUEUE
             // ==============================================
 
-            try{
-
-                await manageDynamicTPSL(
-                    trade
-                )
-
-            }catch(e){
-
-                console.log(
-                    `❌ RUN DYNAMIC ${symbol}:`,
-                    e?.message || e
-                )
-            }
+            tradesToManage.push(
+                trade
+            )
         }
+
+
+        // ==================================================
+        // KHÔNG CÓ TRADE CẦN DYNAMIC
+        // ==================================================
+
+        if(
+            tradesToManage.length === 0
+        ){
+            return
+        }
+
+
+        // ==================================================
+        // BATCH PROCESSING
+        //
+        // Tối đa 5 lệnh chạy cùng lúc.
+        //
+        // Batch sau CHỈ chạy khi batch trước xong.
+        // ==================================================
+
+        for(
+            let i = 0;
+            i < tradesToManage.length;
+            i += DYNAMIC_BATCH_SIZE
+        ){
+
+            const batch =
+                tradesToManage.slice(
+                    i,
+                    i + DYNAMIC_BATCH_SIZE
+                )
+
+
+            console.log(
+                `🔄 DYNAMIC BATCH ${Math.floor(i / DYNAMIC_BATCH_SIZE) + 1}` +
+                ` | ${batch.length} TRADES`
+            )
+
+
+            // ==================================================
+            // CHẠY TỐI ĐA 5 LỆNH SONG SONG
+            // ==================================================
+
+            await Promise.all(
+
+                batch.map(
+                    async(trade)=>{
+
+                        const symbol =
+                            trade.symbol
+
+                        try{
+
+                            await manageDynamicTPSL(
+                                trade
+                            )
+
+                        }catch(e){
+
+                            console.log(
+                                `❌ RUN DYNAMIC ${symbol}:`,
+                                e?.message || e
+                            )
+                        }
+
+                    }
+                )
+
+            )
+
+
+            console.log(
+                `✅ DYNAMIC BATCH DONE` +
+                ` | ${Math.min(
+                    i + DYNAMIC_BATCH_SIZE,
+                    tradesToManage.length
+                )}/${tradesToManage.length}`
+            )
+        }
+
 
     }catch(e){
 
