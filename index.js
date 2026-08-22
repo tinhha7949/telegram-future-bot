@@ -8577,7 +8577,6 @@ activeTrades.push(trade)
 `🟢 TP: ${trade.tp}\n` +
 `🔴 SL: ${trade.sl}\n` +
 `⚖️ RR: ${safeFixed(trade.rr, 2)}\n` +
-`🧠 Setup: ${trade.setup}\n` +
 `⭐ Quality: ${safeFixed(trade.qualityScore, 2)}\n` +
 `🧠 DB Edge: ${safeFixed(best.finalScore, 1)}\n` +
 `💰 Risk: ${safeFixed(trade.risk, 4)}`
