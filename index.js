@@ -5795,22 +5795,22 @@ if (shortBias && !shortConfirmation) {
 const longSetup =
     longBias &&
     pullbackLong &&
-    longConfirmation &&
-    (
-        trendLong5 ||
-        bullishTrigger ||
-        bullishRejection
-    )
+    longConfirmation //&&
+   // (
+       // trendLong5 ||
+       // bullishTrigger ||
+       // bullishRejection
+   // )
 
 const shortSetup =
     shortBias &&
     pullbackShort &&
-    shortConfirmation &&
-    (
-        trendShort5 ||
-        bearishTrigger ||
-        bearishRejection
-    )
+    shortConfirmation //&&
+   // (
+       // trendShort5 ||
+       // bearishTrigger ||
+        //bearishRejection
+    //)
 
 if (
     !longSetup &&
