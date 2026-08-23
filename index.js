@@ -4365,7 +4365,7 @@ async function getTopSymbols(){
 
                 const selected =
                     ranked
-                        .slice(0, 120)
+                        .slice(0, 200)
                         .map(x => x.symbol)
 
                 // =====================================================
