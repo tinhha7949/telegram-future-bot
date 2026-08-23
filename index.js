@@ -384,9 +384,9 @@ const LIMIT_1H  = 200 //100
 const RR_THRESHOLD = 1.20 // 1.3 hoặc 1.4 nếu muốn 
 
 const TRADE_CONFIG = {
-    riskPerTrade: 0.02,      
-    maxRiskPerTrade: 0.02,    
-    maxPositionPercent: 3.0,  
+    riskPerTrade: 0.01,      
+    maxRiskPerTrade: 0.01,    
+    maxPositionPercent: 1.5,  
     maxActivePositions: 20      
 }
 let ACCOUNT_BALANCE = 0
@@ -2889,673 +2889,300 @@ const trailingHigh=
     let newTP=oldTP
 
     // =========================================================
-// DYNAMIC SL ENGINE
-//
-// MỤC TIÊU:
-//
-// 1. Lệnh âm / chưa đủ R:
-//    -> Cho thở, không kéo SL sớm.
-//
-// 2. >= 0.70R:
-//    -> Giảm rủi ro nhẹ.
-//
-// 3. >= 1.00R:
-//    -> BE nhẹ.
-//
-// 4. >= 1.20R:
-//    -> Khóa lợi nhuận nhẹ.
-//
-// 5. >= 1.60R:
-//    -> Khóa thêm lợi nhuận.
-//
-// 6. >= 2.20R:
-//    -> Structure trailing.
-//
-// 7. >= 3.00R:
-//    -> Runner trailing.
-//
-// QUAN TRỌNG:
-//
-// Profit floor hoạt động ĐỘC LẬP
-// với structure.
-//
-// Structure chỉ có quyền kéo SL tốt hơn,
-// không được quyền ngăn profit protection.
-//
-// SL tuyệt đối không được:
-//
-// - rộng hơn original SL
-// - lùi ngược
-// - vượt qua current price
-// =========================================================
-
-
-// =========================================================
-// PROFIT PROTECTION
-// =========================================================
-
-let profitFloor = null
-
-
-// =========================================================
-// LONG
-// =========================================================
-
-if(side==="LONG"){
-
-    // =====================================================
-    // 0.70R
+    // PHASE 1
     //
-    // Giảm rủi ro nhẹ.
-    //
-    // Entry - 0.30R
-    // =====================================================
-
-    if(R>=0.70){
-
-        const floor =
-            currentEntry -
-            initialRisk * 0.30
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                floor
-        }
-    }
-
-
-    // =====================================================
-    // 1.00R
-    //
-    // BE nhẹ.
-    //
-    // Entry + 0.05R
-    // =====================================================
-
-    if(R>=1.00){
-
-        const floor =
-            currentEntry +
-            initialRisk * 0.05
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.max(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : -Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
     // 1.20R
     //
-    // Khóa nhẹ.
-    //
-    // Entry + 0.15R
-    // =====================================================
-
-    if(R>=1.20){
-
-        const floor =
-            currentEntry +
-            initialRisk * 0.15
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.max(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : -Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
-    // 1.60R
-    //
-    // Lock 0.40R.
-    // =====================================================
-
-    if(R>=1.60){
-
-        const floor =
-            currentEntry +
-            initialRisk * 0.40
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.max(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : -Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
-    // 2.20R
-    //
-    // Lock 0.60R.
-    // =====================================================
-
-    if(R>=2.20){
-
-        const floor =
-            currentEntry +
-            initialRisk * 0.60
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.max(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : -Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
-    // 3.00R
-    //
-    // Lock 0.90R.
-    // =====================================================
-
-    if(R>=3.00){
-
-        const floor =
-            currentEntry +
-            initialRisk * 0.90
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.max(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : -Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
-    // APPLY PROFIT FLOOR
-    //
-    // Profit protection không cần structure.
-    // =====================================================
+    // CHO THỞ.
+    // Không kéo SL sát entry.
+    // =========================================================
 
     if(
-        Number.isFinite(profitFloor)&&
-        profitFloor>newSL&&
-        profitFloor<current
+        effectivePhase>=1
     ){
 
-        newSL=profitFloor
-    }
-
-
-    // =====================================================
-    // STRUCTURE TRAILING
-    //
-    // >= 1.20R
-    //
-    // Cho giá thở tương đối rộng.
-    // =====================================================
-
-    if(R>=1.20){
-
-        const structureSL =
-            trailingLow -
-            atr15 * 0.45
-
         if(
-            Number.isFinite(structureSL)&&
-            structureSL>newSL&&
-            structureSL<current
+            side==="LONG"&&
+            structureLong
         ){
 
-            newSL=structureSL
+            const structureSL=
+                trailingLow-
+                atr15*.45
+
+            const profitFloor=
+                currentEntry+
+                initialRisk*.10
+
+            const candidate=
+                Math.max(
+                    structureSL,
+                    profitFloor
+                )
+
+            if(
+                candidate>newSL&&
+                candidate<current
+            ){
+                newSL=candidate
+            }
+
+        }else if(
+            side==="SHORT"&&
+            structureShort
+        ){
+
+            const structureSL=
+                trailingHigh+
+                atr15*.45
+
+            const profitFloor=
+                currentEntry-
+                initialRisk*.10
+
+            const candidate=
+                Math.min(
+                    structureSL,
+                    profitFloor
+                )
+
+            if(
+                candidate<newSL&&
+                candidate>current
+            ){
+                newSL=candidate
+            }
         }
     }
 
-
-    // =====================================================
+    // =========================================================
     // PHASE 2
     //
-    // >= 1.60R
+    // 1.60R
     //
-    // Structure sát hơn.
-    // =====================================================
+    // LOCK NHẸ + VẪN CHO THỞ.
+    // =========================================================
 
-    if(R>=1.60){
-
-        const structureSL =
-            trailingLow -
-            atr15 * 0.40
+    if(
+        effectivePhase>=2
+    ){
 
         if(
-            Number.isFinite(structureSL)&&
-            structureSL>newSL&&
-            structureSL<current
+            side==="LONG"&&
+            structureLong
         ){
 
-            newSL=structureSL
+            const structureSL=
+                trailingLow-
+                atr15*.40
+
+            const profitFloor=
+                currentEntry+
+                initialRisk*.35
+
+            const candidate=
+                Math.max(
+                    structureSL,
+                    profitFloor
+                )
+
+            if(
+                candidate>newSL&&
+                candidate<current
+            ){
+                newSL=candidate
+            }
+
+        }else if(
+            side==="SHORT"&&
+            structureShort
+        ){
+
+            const structureSL=
+                trailingHigh+
+                atr15*.40
+
+            const profitFloor=
+                currentEntry-
+                initialRisk*.35
+
+            const candidate=
+                Math.min(
+                    structureSL,
+                    profitFloor
+                )
+
+            if(
+                candidate<newSL&&
+                candidate>current
+            ){
+                newSL=candidate
+            }
         }
     }
 
-
-    // =====================================================
+    // =========================================================
     // PHASE 3
     //
-    // >= 2.20R
+    // 2.20R
     //
-    // Structure trailing mạnh hơn.
-    // =====================================================
+    // STRUCTURE TRAILING.
+    // =========================================================
 
-    if(R>=2.20){
+    if(
+        effectivePhase>=3
+    ){
 
-        const structureSL =
-            trailingLow -
-            atr15 * 0.35
+        if(side==="LONG"){
 
-        if(
-            Number.isFinite(structureSL)&&
-            structureSL>newSL&&
-            structureSL<current
-        ){
+            const structureSL=
+                trailingLow-
+                atr15*.35
 
-            newSL=structureSL
+            const profitFloor=
+                currentEntry+
+                initialRisk*.75
+
+            const candidate=
+                Math.max(
+                    structureSL,
+                    profitFloor
+                )
+
+            if(
+                candidate>newSL&&
+                candidate<current
+            ){
+                newSL=candidate
+            }
+
+        }else{
+
+            const structureSL=
+                trailingHigh+
+                atr15*.35
+
+            const profitFloor=
+                currentEntry-
+                initialRisk*.75
+
+            const candidate=
+                Math.min(
+                    structureSL,
+                    profitFloor
+                )
+
+            if(
+                candidate<newSL&&
+                candidate>current
+            ){
+                newSL=candidate
+            }
         }
     }
 
-
-    // =====================================================
+    // =========================================================
     // PHASE 4
     //
-    // >= 3.00R
+    // 3R+
     //
-    // Runner.
-    // =====================================================
+    // RUNNER.
+    // =========================================================
 
-    if(R>=3.00){
+    if(
+        effectivePhase>=4
+    ){
 
-        const runnerSL =
-            runnerLow -
-            atr15 * 0.30
+        if(side==="LONG"){
 
-        if(
-            Number.isFinite(runnerSL)&&
-            runnerSL>newSL&&
-            runnerSL<current
-        ){
+            const runnerSL=
+                runnerLow-
+                atr15*.30
 
-            newSL=runnerSL
+            const profitFloor=
+                currentEntry+
+                initialRisk*.95
+
+            const candidate=
+                Math.max(
+                    runnerSL,
+                    profitFloor
+                )
+
+            if(
+                candidate>newSL&&
+                candidate<current
+            ){
+                newSL=candidate
+            }
+
+        }else{
+
+            const runnerSL=
+                runnerHigh+
+                atr15*.30
+
+            const profitFloor=
+                currentEntry-
+                initialRisk*.95
+
+            const candidate=
+                Math.min(
+                    runnerSL,
+                    profitFloor
+                )
+
+            if(
+                candidate<newSL&&
+                candidate>current
+            ){
+                newSL=candidate
+            }
         }
     }
 
-
-    // =====================================================
+    // =========================================================
     // BREAKOUT TRAILING
     //
     // Chỉ khi breakout thật sự.
-    // =====================================================
+    // =========================================================
 
-    if(
-        R>=1.80&&
-        breakoutLong
-    ){
-
-        const breakoutSL =
-            previousHigh -
-            atr15 * 0.40
+    if(R>=1.80){
 
         if(
-            Number.isFinite(breakoutSL)&&
-            breakoutSL>newSL&&
-            breakoutSL<current
+            side==="LONG"&&
+            breakoutLong
         ){
 
-            newSL=breakoutSL
+            const breakoutSL=
+                previousHigh-
+                atr15*.40
+
+            if(
+                breakoutSL>newSL&&
+                breakoutSL<current
+            ){
+                newSL=breakoutSL
+            }
+
+        }else if(
+            side==="SHORT"&&
+            breakoutShort
+        ){
+
+            const breakoutSL=
+                previousLow+
+                atr15*.40
+
+            if(
+                breakoutSL<newSL&&
+                breakoutSL>current
+            ){
+                newSL=breakoutSL
+            }
         }
     }
 
-
-}else{
-
-
-    // =====================================================
-    // SHORT
-    // =====================================================
-
-
-    // =====================================================
-    // 0.70R
-    //
-    // Giảm rủi ro nhẹ.
-    //
-    // Entry + 0.30R
-    //
-    // QUAN TRỌNG:
-    // Không được viết:
-    // Entry - (-0.30R)
-    // =====================================================
-
-    if(R>=0.70){
-
-        const floor =
-            currentEntry +
-            initialRisk * 0.30
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                floor
-        }
-    }
-
-
-    // =====================================================
-    // 1.00R
-    //
-    // BE nhẹ.
-    //
-    // Entry - 0.05R
-    // =====================================================
-
-    if(R>=1.00){
-
-        const floor =
-            currentEntry -
-            initialRisk * 0.05
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.min(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
-    // 1.20R
-    //
-    // Khóa nhẹ.
-    //
-    // Entry - 0.15R
-    // =====================================================
-
-    if(R>=1.20){
-
-        const floor =
-            currentEntry -
-            initialRisk * 0.15
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.min(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
-    // 1.60R
-    //
-    // Lock 0.40R.
-    // =====================================================
-
-    if(R>=1.60){
-
-        const floor =
-            currentEntry -
-            initialRisk * 0.40
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.min(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
-    // 2.20R
-    //
-    // Lock 0.60R.
-    // =====================================================
-
-    if(R>=2.20){
-
-        const floor =
-            currentEntry -
-            initialRisk * 0.60
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.min(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
-    // 3.00R
-    //
-    // Lock 0.90R.
-    // =====================================================
-
-    if(R>=3.00){
-
-        const floor =
-            currentEntry -
-            initialRisk * 0.90
-
-        if(
-            Number.isFinite(floor)
-        ){
-
-            profitFloor =
-                Math.min(
-                    Number.isFinite(profitFloor)
-                        ? profitFloor
-                        : Infinity,
-                    floor
-                )
-        }
-    }
-
-
-    // =====================================================
-    // APPLY PROFIT FLOOR
-    // =====================================================
-
-    if(
-        Number.isFinite(profitFloor)&&
-        profitFloor<newSL&&
-        profitFloor>current
-    ){
-
-        newSL=profitFloor
-    }
-
-
-    // =====================================================
-    // STRUCTURE TRAILING
-    //
-    // >= 1.20R
-    // =====================================================
-
-    if(R>=1.20){
-
-        const structureSL =
-            trailingHigh +
-            atr15 * 0.45
-
-        if(
-            Number.isFinite(structureSL)&&
-            structureSL<newSL&&
-            structureSL>current
-        ){
-
-            newSL=structureSL
-        }
-    }
-
-
-    // =====================================================
-    // PHASE 2
-    //
-    // >= 1.60R
-    // =====================================================
-
-    if(R>=1.60){
-
-        const structureSL =
-            trailingHigh +
-            atr15 * 0.40
-
-        if(
-            Number.isFinite(structureSL)&&
-            structureSL<newSL&&
-            structureSL>current
-        ){
-
-            newSL=structureSL
-        }
-    }
-
-
-    // =====================================================
-    // PHASE 3
-    //
-    // >= 2.20R
-    // =====================================================
-
-    if(R>=2.20){
-
-        const structureSL =
-            trailingHigh +
-            atr15 * 0.35
-
-        if(
-            Number.isFinite(structureSL)&&
-            structureSL<newSL&&
-            structureSL>current
-        ){
-
-            newSL=structureSL
-        }
-    }
-
-
-    // =====================================================
-    // PHASE 4
-    //
-    // >= 3.00R
-    //
-    // Runner.
-    // =====================================================
-
-    if(R>=3.00){
-
-        const runnerSL =
-            runnerHigh +
-            atr15 * 0.30
-
-        if(
-            Number.isFinite(runnerSL)&&
-            runnerSL<newSL&&
-            runnerSL>current
-        ){
-
-            newSL=runnerSL
-        }
-    }
-
-
-    // =====================================================
-    // BREAKOUT TRAILING
-    //
-    // Chỉ khi breakout thật sự.
-    // =====================================================
-
-    if(
-        R>=1.80&&
-        breakoutShort
-    ){
-
-        const breakoutSL =
-            previousLow +
-            atr15 * 0.40
-
-        if(
-            Number.isFinite(breakoutSL)&&
-            breakoutSL<newSL&&
-            breakoutSL>current
-        ){
-
-            newSL=breakoutSL
-        }
-    }
-}
     // =========================================================
     // ORIGINAL SL PROTECTION
     // =========================================================
@@ -4738,7 +4365,7 @@ async function getTopSymbols(){
 
                 const selected =
                     ranked
-                        .slice(0, 200)
+                        .slice(0, 120)
                         .map(x => x.symbol)
 
                 // =====================================================
@@ -5349,26 +4976,26 @@ const microLow =
 
 const bullishMicroBreak =
     c0 > o0 &&
-    br1 >= 0.20 &&
-    closeLong1 >= 0.52 &&
+    br1 >= 0.30 &&
+    closeLong1 >= 0.62 &&
     c0 > microHigh
 
 const bearishMicroBreak =
     c0 < o0 &&
-    br1 >= 0.20 &&
-    closeShort1 >= 0.52 &&
+    br1 >= 0.30 &&
+    closeShort1 >= 0.62 &&
     c0 < microLow
 
 const bullishStrongClose =
     c0 > o0 &&
-    br1 >= 0.50 &&
-    closeLong1 >= 0.68 &&
+    br1 >= 0.55 &&
+    closeLong1 >= 0.72 &&
     c0 >= cPrev
 
 const bearishStrongClose =
     c0 < o0 &&
-    br1 >= 0.50 &&
-    closeShort1 >= 0.68 &&
+    br1 >= 0.55 &&
+    closeShort1 >= 0.72 &&
     c0 <= cPrev
 
 const bullishTrigger =
@@ -5817,8 +5444,8 @@ const vol5Ratio =
 
     const pullbackTolerance =
 Math.max(
-    atr5 * 0.85,
-    price * 0.0020
+    atr5 * 0.65,
+    price * 0.0015
 )
 
     // EMA20 pullback
@@ -5842,8 +5469,8 @@ Math.max(
     // Structure retest
     const structureTolerance =
     Math.max(
-        atr5 * 0.75,
-        price * 0.0020
+        atr5 * 0.60,
+        price * 0.0015
     )
 
     const structureRetestLong =
@@ -5959,30 +5586,28 @@ if (
         )
 
     const bullishRejection =
-        (
-            c5Now > o5Now &&
-            body5 >= 0.30 &&
-            closeLong5 >= 0.58
-        )
-        ||
-        (
-            lowerWick5 >=
-            Math.abs(c5Now - o5Now) * 0.8 &&
-            closeLong5 >= 0.62
-        )
+    (
+        c5Now > o5Now &&
+        body5 >= 0.40 &&
+        closeLong5 >= 0.65
+    )
+    ||
+    (
+        lowerWick5 >= Math.abs(c5Now - o5Now) * 1.20 &&
+        closeLong5 >= 0.68
+    )
 
-    const bearishRejection =
-        (
-            c5Now < o5Now &&
-            body5 >= 0.30 &&
-            closeShort5 >= 0.58
-        )
-        ||
-        (
-            upperWick5 >=
-            Math.abs(c5Now - o5Now) * 0.8 &&
-            closeShort5 >= 0.62
-        )
+const bearishRejection =
+    (
+        c5Now < o5Now &&
+        body5 >= 0.40 &&
+        closeShort5 >= 0.65
+    )
+    ||
+    (
+        upperWick5 >= Math.abs(c5Now - o5Now) * 1.20 &&
+        closeShort5 >= 0.68
+    )
         const longPullbackRecovery =
     longBias &&
     pullbackLong &&
@@ -6013,8 +5638,8 @@ const shortPullbackRecovery =
 
 const longConfirmation =
     bullishRejection ||
-    bullishTrigger ||
-    longPullbackRecovery //||
+    bullishTrigger //||
+    //longPullbackRecovery //||
     //(
         //bullishStrongClose &&
         //closeLong1 >= 0.65
@@ -6022,8 +5647,8 @@ const longConfirmation =
 
 const shortConfirmation =
     bearishRejection ||
-    bearishTrigger ||
-    shortPullbackRecovery //||
+    bearishTrigger //||
+    //shortPullbackRecovery //||
    // (
        // bearishStrongClose &&
         //closeShort1 >= 0.65
@@ -6094,9 +5719,12 @@ if (shortBias && !shortConfirmation) {
         ) / price
 
     const maxChase =
-    Math.max(
-        (atr5 / price) * 2.60,
-        0.0100
+    Math.min(
+        Math.max(
+            (atr5 / price) * 2.20,
+            0.0060
+        ),
+        0.0080
     )
 
     if (
@@ -6136,7 +5764,7 @@ if (shortBias && !shortConfirmation) {
 
     if (
         longBias &&
-        rsi5 > 83
+        rsi5 > 78
     ) {
         return reject("RSI_LONG_EXTREME", {
             side: "LONG",
@@ -6146,7 +5774,7 @@ if (shortBias && !shortConfirmation) {
 
     if (
         shortBias &&
-        rsi5 < 17
+        rsi5 < 22
     ) {
         return reject("RSI_SHORT_EXTREME", {
             side: "SHORT",
@@ -6167,23 +5795,25 @@ if (shortBias && !shortConfirmation) {
 
 const longSetup =
     longBias &&
+    structureOKLong &&
     pullbackLong &&
-    longConfirmation &&
-    (
-        trendLong5 ||
-        bullishTrigger ||
-        bullishRejection
-    )
+    longConfirmation //&&
+   // (
+       // trendLong5 ||
+       // bullishTrigger ||
+       // bullishRejection
+   // )
 
 const shortSetup =
     shortBias &&
+    structureOKShort &&
     pullbackShort &&
-    shortConfirmation &&
-    (
-        trendShort5 ||
-        bearishTrigger ||
-        bearishRejection
-    )
+    shortConfirmation //&&
+   // (
+       // trendShort5 ||
+       // bearishTrigger ||
+        //bearishRejection
+    //)
 
 if (
     !longSetup &&
@@ -6400,7 +6030,7 @@ if (
 
             if (
                 room <
-                risk * 1.2
+                risk * 1.35
             ) {
                 return reject("ROOM_LONG", {
                     side: "LONG",
@@ -6499,7 +6129,7 @@ if (
 
             if (
                 room <
-                risk * 1.2
+                risk * 1.35
             ) {
                 return reject("ROOM_SHORT", {
                     side: "SHORT",
@@ -6528,7 +6158,7 @@ if (
 
     if (
         !Number.isFinite(finalRR) ||
-        finalRR < 1.3
+        finalRR < 1.35
     ) {
         return reject("FINAL_RR", {
             side: coreSide,
@@ -8950,7 +8580,6 @@ activeTrades.push(trade)
 `🟢 TP: ${trade.tp}\n` +
 `🔴 SL: ${trade.sl}\n` +
 `⚖️ RR: ${safeFixed(trade.rr, 2)}\n` +
-`🧠 Setup: ${trade.setup}\n` +
 `⭐ Quality: ${safeFixed(trade.qualityScore, 2)}\n` +
 `🧠 DB Edge: ${safeFixed(best.finalScore, 1)}\n` +
 `💰 Risk: ${safeFixed(trade.risk, 4)}`
@@ -10496,19 +10125,9 @@ async function syncActiveTrades(){
 }
 
 let DYNAMIC_TPSL_RUNNING = false
-
-// =========================================================
-// DYNAMIC TPSL BATCH CONFIG
-// =========================================================
-
-const DYNAMIC_BATCH_SIZE = 5
-
-
-// =========================================================
-// DYNAMIC TPSL LOOP
-// =========================================================
-
+//const ENABLE_DYNAMIC_TPSL=false
 async function runDynamicTPSL(){
+    //if(!ENABLE_DYNAMIC_TPSL)return
 
     if(DYNAMIC_TPSL_RUNNING){
         return
@@ -10549,11 +10168,6 @@ async function runDynamicTPSL(){
             return
         }
 
-
-        // ==================================================
-        // POSITION MAP
-        // ==================================================
-
         const positionMap =
             new Map()
 
@@ -10577,15 +10191,9 @@ async function runDynamicTPSL(){
             }
         }
 
-
         // ==================================================
-        // LỌC TRADE HỢP LỆ TRƯỚC
-        //
-        // Không gọi Dynamic ở đây.
-        // Chỉ lấy danh sách cần xử lý.
+        // CHỈ DYNAMIC CHO POSITION THẬT
         // ==================================================
-
-        const tradesToManage = []
 
         for(const trade of [...activeTrades]){
 
@@ -10600,28 +10208,17 @@ async function runDynamicTPSL(){
             const symbol =
                 trade.symbol
 
-
-            // ==============================================
-            // TPSL PHASE
-            // ==============================================
-
             if(
                 TPSL_PHASE[symbol] !== "ACTIVE"
             ){
                 continue
             }
 
-
-            // ==============================================
-            // ĐANG CÓ DYNAMIC KHÁC CHẠY
-            // ==============================================
-
             if(
                 TPSL_PENDING[symbol]
             ){
                 continue
             }
-
 
             // ==============================================
             // BINANCE KHÔNG CÒN POSITION
@@ -10640,81 +10237,24 @@ async function runDynamicTPSL(){
                 continue
             }
 
-
             // ==============================================
-            // THÊM VÀO QUEUE
+            // DYNAMIC
             // ==============================================
 
-            tradesToManage.push(
-                trade
-            )
-        }
+            try{
 
-
-        // ==================================================
-        // KHÔNG CÓ TRADE CẦN DYNAMIC
-        // ==================================================
-
-        if(
-            tradesToManage.length === 0
-        ){
-            return
-        }
-
-
-        // ==================================================
-        // BATCH PROCESSING
-        //
-        // Tối đa 5 lệnh chạy cùng lúc.
-        //
-        // Batch sau CHỈ chạy khi batch trước xong.
-        // ==================================================
-
-        for(
-            let i = 0;
-            i < tradesToManage.length;
-            i += DYNAMIC_BATCH_SIZE
-        ){
-
-            const batch =
-                tradesToManage.slice(
-                    i,
-                    i + DYNAMIC_BATCH_SIZE
+                await manageDynamicTPSL(
+                    trade
                 )
 
-            // ==================================================
-            // CHẠY TỐI ĐA 5 LỆNH SONG SONG
-            // ==================================================
+            }catch(e){
 
-            await Promise.all(
-
-                batch.map(
-                    async(trade)=>{
-
-                        const symbol =
-                            trade.symbol
-
-                        try{
-
-                            await manageDynamicTPSL(
-                                trade
-                            )
-
-                        }catch(e){
-
-                            console.log(
-                                `❌ RUN DYNAMIC ${symbol}:`,
-                                e?.message || e
-                            )
-                        }
-
-                    }
+                console.log(
+                    `❌ RUN DYNAMIC ${symbol}:`,
+                    e?.message || e
                 )
-
-            )
-
+            }
         }
-
 
     }catch(e){
 
