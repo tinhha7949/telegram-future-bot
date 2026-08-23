@@ -5271,38 +5271,6 @@ const coreSide =
             ? "SHORT"
             : "NONE"
 
-            // =========================================================
-// 5M COUNTER-TREND FILTER
-//
-// 5M không bắt buộc phải cùng trend với HTF.
-// Chỉ reject khi 5M đang chống hướng quá rõ.
-// =========================================================
-
-if (
-    longBias &&
-    ema20_5 < ema50_5 &&
-    slope9_5 < -0.0015
-) {
-    return reject("5M_COUNTER_TREND", {
-        side: "LONG",
-        ema20_5: round(ema20_5),
-        ema50_5: round(ema50_5),
-        slope9_5: round(slope9_5, 6)
-    })
-}
-
-if (
-    shortBias &&
-    ema20_5 > ema50_5 &&
-    slope9_5 > 0.0015
-) {
-    return reject("5M_COUNTER_TREND", {
-        side: "SHORT",
-        ema20_5: round(ema20_5),
-        ema50_5: round(ema50_5),
-        slope9_5: round(slope9_5, 6)
-    })
-}
     // =========================================================
     // 4. 15M STRUCTURE
     //
@@ -5424,6 +5392,38 @@ const trendShort5 =
         )
     )
 
+    // =========================================================
+// 5M COUNTER-TREND FILTER
+//
+// 5M không bắt buộc phải cùng trend với HTF.
+// Chỉ reject khi 5M đang chống hướng quá rõ.
+// =========================================================
+
+if (
+    longBias &&
+    ema20_5 < ema50_5 &&
+    slope9_5 < -0.0015
+) {
+    return reject("5M_COUNTER_TREND", {
+        side: "LONG",
+        ema20_5: round(ema20_5),
+        ema50_5: round(ema50_5),
+        slope9_5: round(slope9_5, 6)
+    })
+}
+
+if (
+    shortBias &&
+    ema20_5 > ema50_5 &&
+    slope9_5 > 0.0015
+) {
+    return reject("5M_COUNTER_TREND", {
+        side: "SHORT",
+        ema20_5: round(ema20_5),
+        ema50_5: round(ema50_5),
+        slope9_5: round(slope9_5, 6)
+    })
+}
     // =========================================================
     // 6. 5M VOLUME
     // =========================================================
