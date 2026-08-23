@@ -4976,26 +4976,26 @@ const microLow =
 
 const bullishMicroBreak =
     c0 > o0 &&
-    br1 >= 0.30 &&
-    closeLong1 >= 0.62 &&
+    br1 >= 0.40 &&
+    closeLong1 >= 0.68 &&
     c0 > microHigh
 
 const bearishMicroBreak =
     c0 < o0 &&
-    br1 >= 0.30 &&
-    closeShort1 >= 0.62 &&
+    br1 >= 0.40 &&
+    closeShort1 >= 0.68 &&
     c0 < microLow
 
 const bullishStrongClose =
     c0 > o0 &&
-    br1 >= 0.55 &&
-    closeLong1 >= 0.72 &&
+    br1 >= 0.60 &&
+    closeLong1 >= 0.75 &&
     c0 >= cPrev
 
 const bearishStrongClose =
     c0 < o0 &&
-    br1 >= 0.55 &&
-    closeShort1 >= 0.72 &&
+    br1 >= 0.60 &&
+    closeShort1 >= 0.75 &&
     c0 <= cPrev
 
 const bullishTrigger =
@@ -5109,12 +5109,12 @@ const bear1h =
 // Trend vẫn còn hợp lệ dù giá đang pullback sâu hơn
 const bull1hPullback =
     ema20_1h > ema50_1h &&
-    price1h >= ema50_1h * 0.992 &&
+    price1h >= ema50_1h * 0.995 &&
     slope1h > -0.0018
 
 const bear1hPullback =
     ema20_1h < ema50_1h &&
-    price1h <= ema50_1h * 1.008 &&
+    price1h <= ema50_1h * 1.005 &&
     slope1h < 0.0018
 
 if (
@@ -5181,28 +5181,28 @@ const bear15 =
 const long15Pullback =
     (
         ema20_15 >= ema50_15 &&
-        price15 >= ema50_15 * 0.985 &&
-        slope15 > -0.0015
+        price15 >= ema50_15 * 0.992 &&
+        slope15 > -0.0010
     )
-    ||
-    (
-        ema20_15 < ema50_15 &&
-        price15 >= ema50_15 * 0.985 &&
-        slope15 > 0
-    )
+    //||
+    //(
+        //ema20_15 < ema50_15 &&
+        //price15 >= ema50_15 * 0.985 &&
+        //slope15 > 0
+   // )
 
 const short15Pullback =
     (
         ema20_15 <= ema50_15 &&
-        price15 <= ema50_15 * 1.015 &&
-        slope15 < 0.0015
+        price15 <= ema50_15 * 1.008 &&
+        slope15 < 0.0010
     )
-    ||
-    (
-        ema20_15 > ema50_15 &&
-        price15 <= ema50_15 * 1.015 &&
-        slope15 < 0
-    )
+   // ||
+    //(
+        //ema20_15 > ema50_15 &&
+        //price15 <= ema50_15 * 1.015 &&
+       // slope15 < 0
+   // )
 
 // =========================================================
 // FINAL BIAS
@@ -5270,6 +5270,39 @@ const coreSide =
         : shortBias
             ? "SHORT"
             : "NONE"
+
+            // =========================================================
+// 5M COUNTER-TREND FILTER
+//
+// 5M không bắt buộc phải cùng trend với HTF.
+// Chỉ reject khi 5M đang chống hướng quá rõ.
+// =========================================================
+
+if (
+    longBias &&
+    ema20_5 < ema50_5 &&
+    slope9_5 < -0.0015
+) {
+    return reject("5M_COUNTER_TREND", {
+        side: "LONG",
+        ema20_5: round(ema20_5),
+        ema50_5: round(ema50_5),
+        slope9_5: round(slope9_5, 6)
+    })
+}
+
+if (
+    shortBias &&
+    ema20_5 > ema50_5 &&
+    slope9_5 > 0.0015
+) {
+    return reject("5M_COUNTER_TREND", {
+        side: "SHORT",
+        ema20_5: round(ema20_5),
+        ema50_5: round(ema50_5),
+        slope9_5: round(slope9_5, 6)
+    })
+}
     // =========================================================
     // 4. 15M STRUCTURE
     //
@@ -5406,9 +5439,7 @@ const vol5Ratio =
             : 1
 
     // Không bắt buộc volume spike.
-    if (
-        vol5Ratio < 0.30
-    ) {
+    if (vol5Ratio < 0.45) {
         return reject("VOL5", {
             side: coreSide,
         vol5Ratio: round(vol5Ratio, 3)
@@ -5443,10 +5474,10 @@ const vol5Ratio =
         c5.at(-1)
 
     const pullbackTolerance =
-Math.max(
-    atr5 * 0.65,
-    price * 0.0015
-)
+    Math.max(
+        atr5 * 0.50,
+        price * 0.0012
+    )
 
     // EMA20 pullback
     const pullbackEMA20Long =
@@ -5469,8 +5500,8 @@ Math.max(
     // Structure retest
     const structureTolerance =
     Math.max(
-        atr5 * 0.60,
-        price * 0.0015
+        atr5 * 0.45,
+        price * 0.0012
     )
 
     const structureRetestLong =
@@ -5697,9 +5728,7 @@ if (shortBias && !shortConfirmation) {
             : 1
 
     // Volume chỉ loại khi quá yếu.
-    if (
-        vol1Ratio < 0.18
-    ) {
+    if (vol1Ratio < 0.25) {
         return reject("VOL1", {
             side: coreSide,
         vol1Ratio: round(vol1Ratio, 3)
