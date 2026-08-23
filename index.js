@@ -6158,7 +6158,7 @@ if (
 
     if (
         !Number.isFinite(finalRR) ||
-        finalRR < 1.35
+        finalRR < 1.30
     ) {
         return reject("FINAL_RR", {
             side: coreSide,
