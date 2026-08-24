@@ -2518,6 +2518,26 @@ try{
     ){
         return
     }
+    // =========================================================
+// RUNNER RANGE
+// Chỉ phục vụ Dynamic TP.
+// KHÔNG dùng cho Dynamic SL.
+// =========================================================
+
+const runnerHigh=Math.max(
+    ...h5.slice(-49,-1)
+)
+
+const runnerLow=Math.min(
+    ...l5.slice(-49,-1)
+)
+
+if(
+    !Number.isFinite(runnerHigh)||
+    !Number.isFinite(runnerLow)
+){
+    return
+}
 
     const current=Number(
         pos.markPrice||
@@ -2726,7 +2746,7 @@ if(R >= 0.45){
 
         const profitFloor =
             currentEntry -
-            initialRisk * 0.05
+            initialRisk * 0.02
 
         if(
             profitFloor > newSL &&
@@ -2739,7 +2759,7 @@ if(R >= 0.45){
 
         const profitFloor =
             currentEntry +
-            initialRisk * 0.05
+            initialRisk * 0.02
 
         if(
             profitFloor < newSL &&
@@ -2764,7 +2784,7 @@ if(R >= 0.70){
 
         const profitFloor =
             currentEntry +
-            initialRisk * 0.05
+            initialRisk * 0.02
 
         if(
             profitFloor > newSL &&
@@ -2777,7 +2797,7 @@ if(R >= 0.70){
 
         const profitFloor =
             currentEntry -
-            initialRisk * 0.05
+            initialRisk * 0.02
 
         if(
             profitFloor < newSL &&
@@ -2802,7 +2822,7 @@ if(R >= 1.20){
 
         const profitFloor =
             currentEntry +
-            initialRisk * 0.25
+            initialRisk * 0.30
 
         if(
             profitFloor > newSL &&
@@ -2815,7 +2835,7 @@ if(R >= 1.20){
 
         const profitFloor =
             currentEntry -
-            initialRisk * 0.25
+            initialRisk * 0.30
 
         if(
             profitFloor < newSL &&
@@ -2839,7 +2859,7 @@ if(R >= 1.60){
 
         const profitFloor =
             currentEntry +
-            initialRisk * 0.45
+            initialRisk * 0.50
 
         if(
             profitFloor > newSL &&
@@ -2852,7 +2872,7 @@ if(R >= 1.60){
 
         const profitFloor =
             currentEntry -
-            initialRisk * 0.45
+            initialRisk * 0.50
 
         if(
             profitFloor < newSL &&
@@ -2876,7 +2896,7 @@ if(R >= 2.20){
 
         const profitFloor =
             currentEntry +
-            initialRisk * 0.70
+            initialRisk * 0.75
 
         if(
             profitFloor > newSL &&
@@ -2889,7 +2909,7 @@ if(R >= 2.20){
 
         const profitFloor =
             currentEntry -
-            initialRisk * 0.70
+            initialRisk * 0.75
 
         if(
             profitFloor < newSL &&
@@ -2913,7 +2933,7 @@ if(R >= 3.00){
 
         const profitFloor =
             currentEntry +
-            initialRisk * 0.95
+            initialRisk * 1.00
 
         if(
             profitFloor > newSL &&
@@ -2926,7 +2946,7 @@ if(R >= 3.00){
 
         const profitFloor =
             currentEntry -
-            initialRisk * 0.95
+            initialRisk * 1.00
 
         if(
             profitFloor < newSL &&
