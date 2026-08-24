@@ -2658,7 +2658,44 @@ if(
     if(!Number.isFinite(R)){
         return
     }
+// =========================================================
+// PHASE
+// Dùng cho Dynamic TP.
+// KHÔNG dùng cho Dynamic SL.
+// =========================================================
 
+let phase = 0
+
+if(R >= 3.00){
+
+    phase = 4
+
+}else if(R >= 2.20){
+
+    phase = 3
+
+}else if(R >= 1.60){
+
+    phase = 2
+
+}else if(R >= 0.70){
+
+    phase = 1
+}
+
+const previousPhase =
+    Number(
+        DYNAMIC_PHASE[symbol] || 0
+    )
+
+const effectivePhase =
+    Math.max(
+        previousPhase,
+        phase
+    )
+
+DYNAMIC_PHASE[symbol] =
+    effectivePhase
     // =========================================================
 // DYNAMIC SL - R BASED ONLY
 //
