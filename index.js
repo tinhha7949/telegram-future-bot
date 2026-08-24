@@ -2625,6 +2625,28 @@ try{
     ){
         return
     }
+    const atr5Raw =
+    atr(
+        closed5.slice(-80)
+    )
+
+const atr5 =
+    Number.isFinite(atr5Raw)&&atr5Raw>0
+        ?atr5Raw
+        :atr15
+
+const slVolatility =
+    Math.max(
+        atr5,
+        atr15 * 0.50
+    )
+
+if(
+    !Number.isFinite(slVolatility)||
+    slVolatility<=0
+){
+    return
+}
 
     const profit=
         side==="LONG"
@@ -2952,7 +2974,6 @@ if(effectivePhase>=0 && R>=0.70){
         }
     }
 }
-
     // =========================================================
     // PHASE 2
     //
@@ -3247,24 +3268,6 @@ if(effectivePhase>=0 && R>=0.70){
 // - Volatility càng mạnh -> TP càng xa
 // - TP chỉ được mở rộng, tuyệt đối không thu hẹp
 // =========================================================
-
-// =========================================================
-// ATR 5M
-//
-// ATR15 phản ứng chậm với spike.
-// ATR5 phản ứng nhanh hơn với volatility hiện tại.
-// =========================================================
-
-const atr5Raw =
-    atr(
-        closed5.slice(-80)
-    )
-
-const atr5 =
-    Number.isFinite(atr5Raw)&&
-    atr5Raw>0
-        ?atr5Raw
-        :atr15
 
 // =========================================================
 // VOLATILITY FOR TP
@@ -5014,6 +5017,9 @@ const bearishTrigger =
 
     const atr15Raw =
         atr(data15.slice(-80))
+
+    const atr5Raw =
+        atr(data5.slice(-80))
 
     const atr1Raw =
         atr(data1m.slice(-80))
@@ -8972,7 +8978,7 @@ await trades.updateOne(
         }
 
         const tele2Ok = await sendTelegram2(
-            `📊 ${t.symbol}
+            `📊 ${t.symbol} 
 ${t.side} | ${isWin ? "✅ WIN" : "❌ LOSS"}
 PnL: ${closed.pnl.toFixed(4)}
 💰: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
