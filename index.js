@@ -2912,17 +2912,85 @@ const trailingHigh=
 
     // =========================================================
 // EARLY PROFIT PROTECTION
-//
-// 0.70R
-//
-// Bắt đầu khóa lợi nhuận sớm hơn.
-// Không đụng SL gốc trước 0.70R.
+// Không phụ thuộc structure
 // =========================================================
 
-if(effectivePhase>=0 && R>=0.70){
+if(R>=0.50){
+
+    if(side==="LONG"){
+
+        const profitFloor =
+            currentEntry -
+            initialRisk * 0.10
+
+        if(
+            profitFloor>newSL &&
+            profitFloor<current
+        ){
+            newSL=profitFloor
+        }
+
+    }else{
+
+        const profitFloor =
+            currentEntry +
+            initialRisk * 0.10
+
+        if(
+            profitFloor<newSL &&
+            profitFloor>current
+        ){
+            newSL=profitFloor
+        }
+    }
+}
+
+
+// =========================================================
+// R >= 0.70
+// Khóa nhẹ lợi nhuận
+// =========================================================
+
+if(R>=0.70){
+
+    if(side==="LONG"){
+
+        const profitFloor =
+            currentEntry +
+            initialRisk * 0.05
+
+        if(
+            profitFloor>newSL &&
+            profitFloor<current
+        ){
+            newSL=profitFloor
+        }
+
+    }else{
+
+        const profitFloor =
+            currentEntry -
+            initialRisk * 0.05
+
+        if(
+            profitFloor<newSL &&
+            profitFloor>current
+        ){
+            newSL=profitFloor
+        }
+    }
+}
+
+
+// =========================================================
+// STRUCTURE TRAILING
+// Chỉ là lớp bổ sung
+// =========================================================
+
+if(R>=0.70){
 
     if(
-        side==="LONG"&&
+        side==="LONG" &&
         structureLong
     ){
 
@@ -2930,25 +2998,15 @@ if(effectivePhase>=0 && R>=0.70){
             trailingLow -
             slVolatility * 0.30
 
-        const profitFloor =
-            currentEntry +
-            initialRisk * 0.05
-
-        const candidate =
-            Math.max(
-                structureSL,
-                profitFloor
-            )
-
         if(
-            candidate>newSL&&
-            candidate<current
+            structureSL>newSL &&
+            structureSL<current
         ){
-            newSL=candidate
+            newSL=structureSL
         }
 
     }else if(
-        side==="SHORT"&&
+        side==="SHORT" &&
         structureShort
     ){
 
@@ -2956,21 +3014,11 @@ if(effectivePhase>=0 && R>=0.70){
             trailingHigh +
             slVolatility * 0.30
 
-        const profitFloor =
-            currentEntry -
-            initialRisk * 0.05
-
-        const candidate =
-            Math.min(
-                structureSL,
-                profitFloor
-            )
-
         if(
-            candidate<newSL&&
-            candidate>current
+            structureSL<newSL &&
+            structureSL>current
         ){
-            newSL=candidate
+            newSL=structureSL
         }
     }
 }
