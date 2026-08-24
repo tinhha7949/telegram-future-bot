@@ -2866,7 +2866,7 @@ const trailingHigh=
 
         phase=2
 
-    }else if(R>=1.20){
+    }else if(R>=0.70){
 
         phase=1
     }
@@ -2889,71 +2889,69 @@ const trailingHigh=
     let newTP=oldTP
 
     // =========================================================
-    // PHASE 1
-    //
-    // 1.20R
-    //
-    // CHO THỞ.
-    // Không kéo SL sát entry.
-    // =========================================================
+// EARLY PROFIT PROTECTION
+//
+// 0.70R
+//
+// Bắt đầu khóa lợi nhuận sớm hơn.
+// Không đụng SL gốc trước 0.70R.
+// =========================================================
+
+if(effectivePhase>=0 && R>=0.70){
 
     if(
-        effectivePhase>=1
+        side==="LONG"&&
+        structureLong
     ){
 
+        const structureSL =
+            trailingLow -
+            slVolatility * 0.30
+
+        const profitFloor =
+            currentEntry +
+            initialRisk * 0.05
+
+        const candidate =
+            Math.max(
+                structureSL,
+                profitFloor
+            )
+
         if(
-            side==="LONG"&&
-            structureLong
+            candidate>newSL&&
+            candidate<current
         ){
+            newSL=candidate
+        }
 
-            const structureSL=
-                trailingLow-
-                atr15*.45
+    }else if(
+        side==="SHORT"&&
+        structureShort
+    ){
 
-            const profitFloor=
-                currentEntry+
-                initialRisk*.10
+        const structureSL =
+            trailingHigh +
+            slVolatility * 0.30
 
-            const candidate=
-                Math.max(
-                    structureSL,
-                    profitFloor
-                )
+        const profitFloor =
+            currentEntry -
+            initialRisk * 0.05
 
-            if(
-                candidate>newSL&&
-                candidate<current
-            ){
-                newSL=candidate
-            }
+        const candidate =
+            Math.min(
+                structureSL,
+                profitFloor
+            )
 
-        }else if(
-            side==="SHORT"&&
-            structureShort
+        if(
+            candidate<newSL&&
+            candidate>current
         ){
-
-            const structureSL=
-                trailingHigh+
-                atr15*.45
-
-            const profitFloor=
-                currentEntry-
-                initialRisk*.10
-
-            const candidate=
-                Math.min(
-                    structureSL,
-                    profitFloor
-                )
-
-            if(
-                candidate<newSL&&
-                candidate>current
-            ){
-                newSL=candidate
-            }
+            newSL=candidate
         }
     }
+}
 
     // =========================================================
     // PHASE 2
@@ -2974,7 +2972,7 @@ const trailingHigh=
 
             const structureSL=
                 trailingLow-
-                atr15*.40
+                atr15*.25
 
             const profitFloor=
                 currentEntry+
@@ -3000,7 +2998,7 @@ const trailingHigh=
 
             const structureSL=
                 trailingHigh+
-                atr15*.40
+                atr15*.25
 
             const profitFloor=
                 currentEntry-
@@ -3037,7 +3035,7 @@ const trailingHigh=
 
             const structureSL=
                 trailingLow-
-                atr15*.35
+                atr15*.20
 
             const profitFloor=
                 currentEntry+
@@ -3060,7 +3058,7 @@ const trailingHigh=
 
             const structureSL=
                 trailingHigh+
-                atr15*.35
+                atr15*.20
 
             const profitFloor=
                 currentEntry-
@@ -8977,9 +8975,8 @@ await trades.updateOne(
         }
 
         const tele2Ok = await sendTelegram2(
-            `📊 ${t.symbol} (${t.setup})
-${t.side} | ₿ : ${t.btcRegime}
-${isWin ? "✅ WIN" : "❌ LOSS"}
+            `📊 ${t.symbol}
+${t.side} | ${isWin ? "✅ WIN" : "❌ LOSS"}
 PnL: ${closed.pnl.toFixed(4)}
 💰: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
         )
