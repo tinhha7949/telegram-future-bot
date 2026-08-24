@@ -2660,287 +2660,55 @@ if(
     }
 
     // =========================================================
-// STRUCTURE WINDOWS
+// DYNAMIC SL - R BASED ONLY
+//
+// KHÔNG DÙNG STRUCTURE.
+// KHÔNG DÙNG SWING.
+// KHÔNG DÙNG BREAKOUT.
+//
+// Core đã bắt entry khá chuẩn nên Dynamic SL chỉ làm nhiệm vụ:
+// - bảo vệ lệnh khi đã có lợi nhuận
+// - thu nhỏ risk từ từ
+// - không bóp SL quá sát
+// - tuyệt đối không mở rộng SL
 // =========================================================
 
-const recentHigh=Math.max(
-    ...h5.slice(-13,-1)
-)
-
-const recentLow=Math.min(
-    ...l5.slice(-13,-1)
-)
-
-const previousHigh=Math.max(
-    ...h5.slice(-25,-13)
-)
-
-const previousLow=Math.min(
-    ...l5.slice(-25,-13)
-)
-
-const runnerHigh=Math.max(
-    ...h5.slice(-49,-1)
-)
-
-const runnerLow=Math.min(
-    ...l5.slice(-49,-1)
-)
-
+let newSL = oldSL
+let newTP = oldTP
 
 // =========================================================
-// CONFIRMED 5M SWING
+// R >= 0.45
 //
-// Không dùng wick đơn lẻ làm structure trailing.
-//
-// Swing Low:
-//
-//        candle
-//           ↓
-//      \    ↓    /
-//       \   ↓   /
-//        \_____/
-//
-// Phải có 2 candle xác nhận bên phải.
-//
-// Swing High ngược lại.
-//
-// Chỉ lấy swing trong vùng 5M gần đây.
+// Bắt đầu thu nhỏ risk nhẹ.
+// Trước đây 0.50 -> giờ 0.45
 // =========================================================
 
-function getConfirmedSwingLow(highs,lows,closes){
+if(R >= 0.45){
 
-    const start=Math.max(2,lows.length-30)
-    const end=lows.length-3
-
-    for(let i=end;i>=start;i--){
-
-        const left1=lows[i-1]
-        const left2=lows[i-2]
-        const current=lows[i]
-        const right1=lows[i+1]
-        const right2=lows[i+2]
-
-        if(
-            !Number.isFinite(left1)||
-            !Number.isFinite(left2)||
-            !Number.isFinite(current)||
-            !Number.isFinite(right1)||
-            !Number.isFinite(right2)
-        ){
-            continue
-        }
-
-        if(
-            current<left1&&
-            current<=left2&&
-            current<right1&&
-            current<=right2
-        ){
-            return current
-        }
-    }
-
-    return null
-}
-
-
-function getConfirmedSwingHigh(highs,lows,closes){
-
-    const start=Math.max(2,highs.length-30)
-    const end=highs.length-3
-
-    for(let i=end;i>=start;i--){
-
-        const left1=highs[i-1]
-        const left2=highs[i-2]
-        const current=highs[i]
-        const right1=highs[i+1]
-        const right2=highs[i+2]
-
-        if(
-            !Number.isFinite(left1)||
-            !Number.isFinite(left2)||
-            !Number.isFinite(current)||
-            !Number.isFinite(right1)||
-            !Number.isFinite(right2)
-        ){
-            continue
-        }
-
-        if(
-            current>left1&&
-            current>=left2&&
-            current>right1&&
-            current>=right2
-        ){
-            return current
-        }
-    }
-
-    return null
-}
-
-
-const confirmedSwingLow=
-    getConfirmedSwingLow(
-        h5,
-        l5,
-        c5
-    )
-
-const confirmedSwingHigh=
-    getConfirmedSwingHigh(
-        h5,
-        l5,
-        c5
-    )
-
-
-// =========================================================
-// TRAILING STRUCTURE
-//
-// Nếu chưa có confirmed swing thì fallback
-// về recent structure cũ.
-//
-// Như vậy không làm bot mất khả năng trailing
-// chỉ vì thiếu swing.
-// =========================================================
-
-const trailingLow=
-    Number.isFinite(confirmedSwingLow)
-        ?confirmedSwingLow
-        :recentLow
-
-const trailingHigh=
-    Number.isFinite(confirmedSwingHigh)
-        ?confirmedSwingHigh
-        :recentHigh
-
-    if(
-        !Number.isFinite(recentHigh)||
-        !Number.isFinite(recentLow)||
-        !Number.isFinite(previousHigh)||
-        !Number.isFinite(previousLow)||
-        !Number.isFinite(runnerHigh)||
-        !Number.isFinite(runnerLow)
-    ){
-        return
-    }
-
-    const last5Close=c5.at(-1)
-
-    if(!Number.isFinite(last5Close)){
-        return
-    }
-
-    // =========================================================
-    // STRUCTURE
-    // =========================================================
-
-    const breakoutLong=
-        last5Close>previousHigh
-
-    const breakoutShort=
-        last5Close<previousLow
-
-    const higherLowLong=
-        recentLow>previousLow
-
-    const lowerHighShort=
-        recentHigh<previousHigh
-
-    const reclaimLong=
-        last5Close>recentHigh
-
-    const reclaimShort=
-        last5Close<recentLow
-
-    const structureLong=
-        breakoutLong||
-        (
-            higherLowLong&&
-            reclaimLong
-        )
-
-    const structureShort=
-        breakoutShort||
-        (
-            lowerHighShort&&
-            reclaimShort
-        )
-
-    // =========================================================
-    // PHASE
-    // =========================================================
-
-    let phase=0
-
-    if(R>=3.00){
-
-        phase=4
-
-    }else if(R>=2.20){
-
-        phase=3
-
-    }else if(R>=1.60){
-
-        phase=2
-
-    }else if(R>=0.70){
-
-        phase=1
-    }
-
-    const previousPhase=
-        Number(
-            DYNAMIC_PHASE[symbol]||0
-        )
-
-    const effectivePhase=
-        Math.max(
-            previousPhase,
-            phase
-        )
-
-    DYNAMIC_PHASE[symbol]=
-        effectivePhase
-
-    let newSL=oldSL
-    let newTP=oldTP
-
-    // =========================================================
-// EARLY PROFIT PROTECTION
-// Không phụ thuộc structure
-// =========================================================
-
-if(R>=0.50){
-
-    if(side==="LONG"){
+    if(side === "LONG"){
 
         const profitFloor =
             currentEntry -
-            initialRisk * 0.10
+            initialRisk * 0.05
 
         if(
-            profitFloor>newSL &&
-            profitFloor<current
+            profitFloor > newSL &&
+            profitFloor < current
         ){
-            newSL=profitFloor
+            newSL = profitFloor
         }
 
     }else{
 
         const profitFloor =
             currentEntry +
-            initialRisk * 0.10
+            initialRisk * 0.05
 
         if(
-            profitFloor<newSL &&
-            profitFloor>current
+            profitFloor < newSL &&
+            profitFloor > current
         ){
-            newSL=profitFloor
+            newSL = profitFloor
         }
     }
 }
@@ -2948,22 +2716,24 @@ if(R>=0.50){
 
 // =========================================================
 // R >= 0.70
-// Khóa nhẹ lợi nhuận
+//
+// Khóa nhẹ lợi nhuận.
+// Giữ nguyên mức +0.05R.
 // =========================================================
 
-if(R>=0.70){
+if(R >= 0.70){
 
-    if(side==="LONG"){
+    if(side === "LONG"){
 
         const profitFloor =
             currentEntry +
             initialRisk * 0.05
 
         if(
-            profitFloor>newSL &&
-            profitFloor<current
+            profitFloor > newSL &&
+            profitFloor < current
         ){
-            newSL=profitFloor
+            newSL = profitFloor
         }
 
     }else{
@@ -2973,334 +2743,218 @@ if(R>=0.70){
             initialRisk * 0.05
 
         if(
-            profitFloor<newSL &&
-            profitFloor>current
+            profitFloor < newSL &&
+            profitFloor > current
         ){
-            newSL=profitFloor
+            newSL = profitFloor
         }
     }
 }
 
 
 // =========================================================
-// STRUCTURE TRAILING
-// Chỉ là lớp bổ sung
+// R >= 1.20
+//
+// Khóa thêm một phần lợi nhuận.
+// Không dùng structure.
 // =========================================================
 
-if(R>=0.70){
+if(R >= 1.20){
 
-    if(
-        side==="LONG" &&
-        structureLong
-    ){
+    if(side === "LONG"){
 
-        const structureSL =
-            trailingLow -
-            slVolatility * 0.30
+        const profitFloor =
+            currentEntry +
+            initialRisk * 0.25
 
         if(
-            structureSL>newSL &&
-            structureSL<current
+            profitFloor > newSL &&
+            profitFloor < current
         ){
-            newSL=structureSL
+            newSL = profitFloor
         }
 
-    }else if(
-        side==="SHORT" &&
-        structureShort
-    ){
+    }else{
 
-        const structureSL =
-            trailingHigh +
-            slVolatility * 0.30
+        const profitFloor =
+            currentEntry -
+            initialRisk * 0.25
 
         if(
-            structureSL<newSL &&
-            structureSL>current
+            profitFloor < newSL &&
+            profitFloor > current
         ){
-            newSL=structureSL
+            newSL = profitFloor
         }
     }
 }
-    // =========================================================
-    // PHASE 2
-    //
-    // 1.60R
-    //
-    // LOCK NHẸ + VẪN CHO THỞ.
-    // =========================================================
 
-    if(
-        effectivePhase>=2
-    ){
 
-        if(
-            side==="LONG"&&
-            structureLong
-        ){
+// =========================================================
+// R >= 1.60
+//
+// Bảo vệ mạnh hơn nhưng vẫn để giá thở.
+// =========================================================
 
-            const structureSL=
-                trailingLow-
-                atr15*.25
+if(R >= 1.60){
 
-            const profitFloor=
-                currentEntry+
-                initialRisk*.35
+    if(side === "LONG"){
 
-            const candidate=
-                Math.max(
-                    structureSL,
-                    profitFloor
-                )
-
-            if(
-                candidate>newSL&&
-                candidate<current
-            ){
-                newSL=candidate
-            }
-
-        }else if(
-            side==="SHORT"&&
-            structureShort
-        ){
-
-            const structureSL=
-                trailingHigh+
-                atr15*.25
-
-            const profitFloor=
-                currentEntry-
-                initialRisk*.35
-
-            const candidate=
-                Math.min(
-                    structureSL,
-                    profitFloor
-                )
-
-            if(
-                candidate<newSL&&
-                candidate>current
-            ){
-                newSL=candidate
-            }
-        }
-    }
-
-    // =========================================================
-    // PHASE 3
-    //
-    // 2.20R
-    //
-    // STRUCTURE TRAILING.
-    // =========================================================
-
-    if(
-        effectivePhase>=3
-    ){
-
-        if(side==="LONG"){
-
-            const structureSL=
-                trailingLow-
-                atr15*.20
-
-            const profitFloor=
-                currentEntry+
-                initialRisk*.75
-
-            const candidate=
-                Math.max(
-                    structureSL,
-                    profitFloor
-                )
-
-            if(
-                candidate>newSL&&
-                candidate<current
-            ){
-                newSL=candidate
-            }
-
-        }else{
-
-            const structureSL=
-                trailingHigh+
-                atr15*.20
-
-            const profitFloor=
-                currentEntry-
-                initialRisk*.75
-
-            const candidate=
-                Math.min(
-                    structureSL,
-                    profitFloor
-                )
-
-            if(
-                candidate<newSL&&
-                candidate>current
-            ){
-                newSL=candidate
-            }
-        }
-    }
-
-    // =========================================================
-    // PHASE 4
-    //
-    // 3R+
-    //
-    // RUNNER.
-    // =========================================================
-
-    if(
-        effectivePhase>=4
-    ){
-
-        if(side==="LONG"){
-
-            const runnerSL=
-                runnerLow-
-                atr15*.30
-
-            const profitFloor=
-                currentEntry+
-                initialRisk*.95
-
-            const candidate=
-                Math.max(
-                    runnerSL,
-                    profitFloor
-                )
-
-            if(
-                candidate>newSL&&
-                candidate<current
-            ){
-                newSL=candidate
-            }
-
-        }else{
-
-            const runnerSL=
-                runnerHigh+
-                atr15*.30
-
-            const profitFloor=
-                currentEntry-
-                initialRisk*.95
-
-            const candidate=
-                Math.min(
-                    runnerSL,
-                    profitFloor
-                )
-
-            if(
-                candidate<newSL&&
-                candidate>current
-            ){
-                newSL=candidate
-            }
-        }
-    }
-
-    // =========================================================
-    // BREAKOUT TRAILING
-    //
-    // Chỉ khi breakout thật sự.
-    // =========================================================
-
-    if(R>=1.80){
+        const profitFloor =
+            currentEntry +
+            initialRisk * 0.45
 
         if(
-            side==="LONG"&&
-            breakoutLong
+            profitFloor > newSL &&
+            profitFloor < current
         ){
+            newSL = profitFloor
+        }
 
-            const breakoutSL=
-                previousHigh-
-                atr15*.40
+    }else{
 
-            if(
-                breakoutSL>newSL&&
-                breakoutSL<current
-            ){
-                newSL=breakoutSL
-            }
+        const profitFloor =
+            currentEntry -
+            initialRisk * 0.45
 
-        }else if(
-            side==="SHORT"&&
-            breakoutShort
+        if(
+            profitFloor < newSL &&
+            profitFloor > current
         ){
-
-            const breakoutSL=
-                previousLow+
-                atr15*.40
-
-            if(
-                breakoutSL<newSL&&
-                breakoutSL>current
-            ){
-                newSL=breakoutSL
-            }
+            newSL = profitFloor
         }
     }
+}
 
-    // =========================================================
-    // ORIGINAL SL PROTECTION
-    // =========================================================
 
-    if(side==="LONG"){
+// =========================================================
+// R >= 2.20
+//
+// Khóa phần lớn lợi nhuận.
+// =========================================================
 
-        if(newSL<originalSL){
-            newSL=originalSL
+if(R >= 2.20){
+
+    if(side === "LONG"){
+
+        const profitFloor =
+            currentEntry +
+            initialRisk * 0.70
+
+        if(
+            profitFloor > newSL &&
+            profitFloor < current
+        ){
+            newSL = profitFloor
         }
 
     }else{
 
-        if(newSL>originalSL){
-            newSL=originalSL
+        const profitFloor =
+            currentEntry -
+            initialRisk * 0.70
+
+        if(
+            profitFloor < newSL &&
+            profitFloor > current
+        ){
+            newSL = profitFloor
         }
     }
+}
 
-    // =========================================================
-    // NEVER MOVE SL BACKWARD
-    // =========================================================
 
-    if(side==="LONG"){
+// =========================================================
+// R >= 3.00
+//
+// Runner protection.
+// =========================================================
 
-        if(newSL<oldSL){
-            newSL=oldSL
+if(R >= 3.00){
+
+    if(side === "LONG"){
+
+        const profitFloor =
+            currentEntry +
+            initialRisk * 0.95
+
+        if(
+            profitFloor > newSL &&
+            profitFloor < current
+        ){
+            newSL = profitFloor
         }
 
     }else{
 
-        if(newSL>oldSL){
-            newSL=oldSL
+        const profitFloor =
+            currentEntry -
+            initialRisk * 0.95
+
+        if(
+            profitFloor < newSL &&
+            profitFloor > current
+        ){
+            newSL = profitFloor
         }
     }
+}
 
-    // =========================================================
-    // SL MUST STAY BEHIND PRICE
-    // =========================================================
 
-    if(side==="LONG"){
+// =========================================================
+// ORIGINAL SL PROTECTION
+//
+// Tuyệt đối không bao giờ nới SL.
+// =========================================================
 
-        if(newSL>=current){
-            newSL=oldSL
-        }
+if(side === "LONG"){
 
-    }else{
-
-        if(newSL<=current){
-            newSL=oldSL
-        }
+    if(newSL < originalSL){
+        newSL = originalSL
     }
 
+}else{
+
+    if(newSL > originalSL){
+        newSL = originalSL
+    }
+}
+
+
+// =========================================================
+// NEVER MOVE SL BACKWARD
+// =========================================================
+
+if(side === "LONG"){
+
+    if(newSL < oldSL){
+        newSL = oldSL
+    }
+
+}else{
+
+    if(newSL > oldSL){
+        newSL = oldSL
+    }
+}
+
+
+// =========================================================
+// SL MUST STAY BEHIND PRICE
+// =========================================================
+
+if(side === "LONG"){
+
+    if(newSL >= current){
+        newSL = oldSL
+    }
+
+}else{
+
+    if(newSL <= current){
+        newSL = oldSL
+    }
+}
     // =========================================================
 // DYNAMIC TP - EXTREME RUNNER
 //
