@@ -4768,7 +4768,7 @@ function resetCore24hStats() {
         Date.now()
 }
 
-async function coreLogic(data15, data1h, data5, data1m) {
+async  function coreLogic(data15, data1h, data5, data1m) {
     CORE_TOTAL_CALLS++
     // =========================================================
     // 0. VALIDATION
@@ -7944,17 +7944,20 @@ if(dbMain.total >= 30){
 }
 
 // DB chỉ loại setup có lịch sử rất xấu
-if(
-    dbMain.total >= 30 &&
-    dbMain.winrate < 0.42
-){
-    console.log(
+// ===== DB EDGE — CHỈ LOG, KHÔNG BLOCK =====
+
+if(dbMain.total >= 30){
+
+    const wr = dbMain.winrate
+
+    if(wr < 0.42){
+
+        console.log(
         `🚫 DB BAD EDGE: ${s.symbol} | ` +
         `WR=${(dbMain.winrate * 100).toFixed(1)}% | ` +
         `N=${dbMain.total}`
     )
-
-    continue
+    }
 }
 
 // CORE MỚI KHÔNG CÒN SCORE CŨ
