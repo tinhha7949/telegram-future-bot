@@ -2625,6 +2625,21 @@ try{
     ){
         return
     }
+    // =========================================================
+// ATR 5M FOR SL VOLATILITY
+// =========================================================
+const slVolatility =
+    Math.max(
+        atr5,
+        atr15 * 0.50
+    )
+
+if(
+    !Number.isFinite(slVolatility)||
+    slVolatility<=0
+){
+    return
+}
 
     const profit=
         side==="LONG"
