@@ -2628,6 +2628,23 @@ try{
     // =========================================================
 // ATR 5M FOR SL VOLATILITY
 // =========================================================
+const atr5Raw =
+    atr(
+        closed5.slice(-80)
+    )
+
+const atr5 =
+    Number.isFinite(atr5Raw)&&
+    atr5Raw>0
+        ?atr5Raw
+        :atr15
+        if (
+    !Number.isFinite(atr5) ||
+    atr5 <= 0
+) {
+    return
+}
+
 const slVolatility =
     Math.max(
         atr5,
@@ -3269,17 +3286,6 @@ if(effectivePhase>=0 && R>=0.70){
 // ATR15 phản ứng chậm với spike.
 // ATR5 phản ứng nhanh hơn với volatility hiện tại.
 // =========================================================
-
-const atr5Raw =
-    atr(
-        closed5.slice(-80)
-    )
-
-const atr5 =
-    Number.isFinite(atr5Raw)&&
-    atr5Raw>0
-        ?atr5Raw
-        :atr15
 
 // =========================================================
 // VOLATILITY FOR TP
@@ -5029,9 +5035,6 @@ const bearishTrigger =
 
     const atr15Raw =
         atr(data15.slice(-80))
-
-    const atr5Raw =
-        atr(data5.slice(-80))
 
     const atr1Raw =
         atr(data1m.slice(-80))
