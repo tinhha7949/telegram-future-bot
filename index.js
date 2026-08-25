@@ -3311,6 +3311,7 @@ async function manageDynamicTPSL(trade) {
         `${trade?.symbol || "UNKNOWN"}:`,
         e.message
     )
+    console.log(e.stack)
 
     } finally {
 
