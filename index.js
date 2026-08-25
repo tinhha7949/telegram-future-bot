@@ -3081,7 +3081,7 @@ async function manageDynamicTPSL(trade) {
 
 
         console.log(
-            `🛡️ DYNAMIC SL ${symbol} ` +
+            `🎯 DYNAMIC ${symbol} ` +
             `${side} ` +
             `R=${R.toFixed(2)} ` +
             `SL ${oldSL}->${newSL} ` +
@@ -5958,17 +5958,6 @@ const initialSL =
 
 const initialTP =
     tp
-
-
-console.log(
-    `🎯 INITIAL TPSL ${symbol || ""} ` +
-    `${longSetup ? "LONG" : "SHORT"} ` +
-    `ENTRY=${round(entry)} ` +
-    `SL=${round(initialSL)} ` +
-    `TP=${round(initialTP)} ` +
-    `RISK=${round(initialRisk)} ` +
-    `RR=${round(finalRR, 2)}`
-)
 
     // =========================================================
     // 18. QUALITY
