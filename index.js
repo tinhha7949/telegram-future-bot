@@ -6373,7 +6373,7 @@ async function coreLogic(data15, data1h, data5, data1m) {
     // =========================================================
 
     if (
-        qualityCount < 7
+        qualityCount < 6
     ) {
         return reject("QUALITY", {
             side: coreSide,
