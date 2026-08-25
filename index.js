@@ -2435,1368 +2435,891 @@ async function updateTradeTPSLData(trade){
     }
 }
 
-async function manageDynamicTPSL(trade){
+async function manageDynamicTPSL(trade) {
 
-try{
+    try {
 
-    if(!trade)return
-    if(!trade.symbol||!trade.side)return
+        if (!trade) return
+        if (!trade.symbol) return
+        if (!trade.side) return
 
-    const symbol=trade.symbol
-    const side=String(trade.side).toUpperCase()
+        const symbol = trade.symbol
+        const side = String(trade.side).toUpperCase()
 
-    if(side!=="LONG"&&side!=="SHORT")return
-    if(TPSL_CLOSING[symbol])return
-    if(TPSL_PENDING[symbol])return
-
-    const entryTime=Number(
-        trade.enteredAt||
-        trade.openedAt||
-        trade.createdAt
-    )
-
-    if(
-        !Number.isFinite(entryTime)||
-        entryTime<=0
-    ){
-        return
-    }
-
-    const now=Date.now()
-
-    if(now-entryTime<90000){
-        return
-    }
-
-    TPSL_PENDING[symbol]=true
-
-    const pos=await hasPosition(symbol)
-
-    if(!pos){
-
-        delete DYNAMIC_LAST_UPDATE[symbol]
-        delete DYNAMIC_PHASE[symbol]
-
-        return
-    }
-
-    const[
-        data15,
-        data5
-    ]=await Promise.all([
-        getData(symbol,"15m",160),
-        getData(symbol,"5m",160)
-    ])
-
-    if(
-        !Array.isArray(data15)||
-        !Array.isArray(data5)||
-        data15.length<80||
-        data5.length<80
-    ){
-        return
-    }
-
-    const closed15=data15.slice(0,-1)
-    const closed5=data5.slice(0,-1)
-
-    if(
-        closed15.length<60||
-        closed5.length<60
-    ){
-        return
-    }
-
-    const h5=closed5.map(x=>Number(x[2]))
-    const l5=closed5.map(x=>Number(x[3]))
-    const c5=closed5.map(x=>Number(x[4]))
-
-    if(
-        h5.some(x=>!Number.isFinite(x))||
-        l5.some(x=>!Number.isFinite(x))||
-        c5.some(x=>!Number.isFinite(x))
-    ){
-        return
-    }
-    // =========================================================
-// RUNNER RANGE
-// Chỉ phục vụ Dynamic TP.
-// KHÔNG dùng cho Dynamic SL.
-// =========================================================
-
-const runnerHigh=Math.max(
-    ...h5.slice(-49,-1)
-)
-
-const runnerLow=Math.min(
-    ...l5.slice(-49,-1)
-)
-
-if(
-    !Number.isFinite(runnerHigh)||
-    !Number.isFinite(runnerLow)
-){
-    return
-}
-
-    const current=Number(
-        pos.markPrice||
-        pos.entryPrice||
-        trade.entry
-    )
-
-    const currentEntry=Number(
-        pos.entryPrice||
-        trade.entry
-    )
-
-    if(
-        !Number.isFinite(current)||
-        current<=0||
-        !Number.isFinite(currentEntry)||
-        currentEntry<=0
-    ){
-        return
-    }
-
-    const oldSL=Number(trade.sl)
-    const oldTP=Number(trade.tp)
-
-    if(
-        !Number.isFinite(oldSL)||
-        !Number.isFinite(oldTP)||
-        oldSL<=0||
-        oldTP<=0
-    ){
-        return
-    }
-
-    let initialRisk=Number(trade.initialRisk)
-
-    if(
-        !Number.isFinite(initialRisk)||
-        initialRisk<=0
-    ){
-
-        const fallbackEntry=Number(
-            trade.entry||currentEntry
-        )
-
-        const fallbackSL=Number(trade.sl)
-
-        if(
-            !Number.isFinite(fallbackEntry)||
-            !Number.isFinite(fallbackSL)||
-            fallbackEntry<=0||
-            fallbackSL<=0
-        ){
+        if (
+            side !== "LONG" &&
+            side !== "SHORT"
+        ) {
             return
         }
 
-        initialRisk=Math.abs(
-            fallbackEntry-fallbackSL
-        )
-
-        if(
-            !Number.isFinite(initialRisk)||
-            initialRisk<=0
-        ){
-            return
-        }
-
-        await trades.updateOne(
-            {
-                symbol,
-                result:"PENDING"
-            },
-            {
-                $set:{
-                    initialRisk,
-                    updatedAt:Date.now()
-                }
-            }
-        )
-    }
-
-    const originalSL=
-        side==="LONG"
-            ?currentEntry-initialRisk
-            :currentEntry+initialRisk
-
-    if(
-        !Number.isFinite(originalSL)||
-        originalSL<=0
-    ){
-        return
-    }
-
-    const atrRaw=atr(
-        closed15.slice(-80)
-    )
-
-    const atr15=
-        Number.isFinite(atrRaw)&&atrRaw>0
-            ?atrRaw
-            :current*.003
-
-    if(
-        !Number.isFinite(atr15)||
-        atr15<=0
-    ){
-        return
-    }
-    const atr5Raw =
-    atr(
-        closed5.slice(-80)
-    )
-
-const atr5 =
-    Number.isFinite(atr5Raw)&&atr5Raw>0
-        ?atr5Raw
-        :atr15
-
-const slVolatility =
-    Math.max(
-        atr5,
-        atr15 * 0.50
-    )
-
-if(
-    !Number.isFinite(slVolatility)||
-    slVolatility<=0
-){
-    return
-}
-
-    const profit=
-        side==="LONG"
-            ?current-currentEntry
-            :currentEntry-current
-
-    const R=profit/initialRisk
-
-    if(!Number.isFinite(R)){
-        return
-    }
-// =========================================================
-// PHASE
-// Dùng cho Dynamic TP.
-// KHÔNG dùng cho Dynamic SL.
-// =========================================================
-
-let phase = 0
-
-if(R >= 3.00){
-
-    phase = 4
-
-}else if(R >= 2.20){
-
-    phase = 3
-
-}else if(R >= 1.60){
-
-    phase = 2
-
-}else if(R >= 0.70){
-
-    phase = 1
-}
-
-const previousPhase =
-    Number(
-        DYNAMIC_PHASE[symbol] || 0
-    )
-
-const effectivePhase =
-    Math.max(
-        previousPhase,
-        phase
-    )
-
-DYNAMIC_PHASE[symbol] =
-    effectivePhase
-    // =========================================================
-// DYNAMIC SL - PROFIT PROTECTION TRAILING
-//
-// MỤC TIÊU:
-// - Lệnh chạy đúng hướng -> SL bám giá nhanh hơn
-// - Không chờ R quá cao mới khóa lợi nhuận
-// - Không bóp SL quá sát ở giai đoạn đầu
-// - R càng lớn -> khoảng cách SL càng nhỏ
-// - Tuyệt đối không nới SL
-// =========================================================
-
-let newSL = oldSL
-let newTP = oldTP
-
-// =========================================================
-// SL DISTANCE BY R
-//
-// R thấp  -> cho giá thở
-// R trung -> bắt đầu trail
-// R cao   -> trail sát hơn
-//
-// Khoảng cách tính theo ATR5 + ATR15,
-// nhưng có giới hạn theo initialRisk.
-// =========================================================
-
-let slATRMultiplier = 1.60
-
-if(R >= 0.35){
-    slATRMultiplier = 1.40
-}
-
-if(R >= 0.60){
-    slATRMultiplier = 1.20
-}
-
-if(R >= 0.90){
-    slATRMultiplier = 1.00
-}
-
-if(R >= 1.20){
-    slATRMultiplier = 0.85
-}
-
-if(R >= 1.60){
-    slATRMultiplier = 0.70
-}
-
-if(R >= 2.20){
-    slATRMultiplier = 0.60
-}
-
-if(R >= 3.00){
-    slATRMultiplier = 0.50
-}
-
-if(R >= 4.00){
-    slATRMultiplier = 0.45
-}
-
-
-// =========================================================
-// VOLATILITY DISTANCE
-//
-// ATR5 ưu tiên vì đây là trailing ngắn hạn.
-// ATR15 vẫn giữ vai trò chống bóp SL quá mạnh.
-// =========================================================
-
-const trailingVolatility =
-    Math.max(
-        atr5 * 1.10,
-        atr15 * 0.40
-    )
-
-if(
-    !Number.isFinite(trailingVolatility) ||
-    trailingVolatility <= 0
-){
-    return
-}
-
-
-// =========================================================
-// RAW TRAILING DISTANCE
-// =========================================================
-
-let trailingDistance =
-    trailingVolatility *
-    slATRMultiplier
-
-
-// =========================================================
-// RISK BASED LIMIT
-//
-// Không cho trailing distance quá lớn khi R đã cao.
-// =========================================================
-
-let maxRiskDistance =
-    initialRisk * 1.20
-
-if(R >= 0.60){
-    maxRiskDistance = initialRisk * 1.00
-}
-
-if(R >= 1.00){
-    maxRiskDistance = initialRisk * 0.80
-}
-
-if(R >= 1.50){
-    maxRiskDistance = initialRisk * 0.65
-}
-
-if(R >= 2.00){
-    maxRiskDistance = initialRisk * 0.55
-}
-
-if(R >= 3.00){
-    maxRiskDistance = initialRisk * 0.45
-}
-
-if(R >= 4.00){
-    maxRiskDistance = initialRisk * 0.35
-}
-
-trailingDistance =
-    Math.min(
-        trailingDistance,
-        maxRiskDistance
-    )
-
-
-// =========================================================
-// MINIMUM DISTANCE
-//
-// Không để SL dính sát mark price.
-// Tránh bị quét bởi noise/wick.
-// =========================================================
-
-const minimumSLDistance =
-    Math.max(
-        atr5 * 0.35,
-        currentEntry * 0.00035
-    )
-
-trailingDistance =
-    Math.max(
-        trailingDistance,
-        minimumSLDistance
-    )
-
-
-// =========================================================
-// CALCULATE TRAILING SL
-// =========================================================
-
-let trailingSL
-
-if(side === "LONG"){
-
-    trailingSL =
-        current -
-        trailingDistance
-
-}else{
-
-    trailingSL =
-        current +
-        trailingDistance
-}
-
-
-// =========================================================
-// PROFIT FLOOR
-//
-// Từ khi có lợi nhuận, SL không được quay xuống dưới
-// các mức bảo vệ tương ứng.
-//
-// Đây là lớp thứ 2 bên cạnh trailing price.
-// =========================================================
-
-let profitFloor
-
-if(R >= 0.35){
-
-    if(side === "LONG"){
-
-        profitFloor =
-            currentEntry -
-            initialRisk * 0.10
-
-    }else{
-
-        profitFloor =
-            currentEntry +
-            initialRisk * 0.10
-    }
-}
-
-
-if(R >= 0.60){
-
-    if(side === "LONG"){
-
-        profitFloor =
-            currentEntry
-
-    }else{
-
-        profitFloor =
-            currentEntry
-    }
-}
-
-
-if(R >= 0.90){
-
-    if(side === "LONG"){
-
-        profitFloor =
-            currentEntry +
-            initialRisk * 0.15
-
-    }else{
-
-        profitFloor =
-            currentEntry -
-            initialRisk * 0.15
-    }
-}
-
-
-if(R >= 1.20){
-
-    if(side === "LONG"){
-
-        profitFloor =
-            currentEntry +
-            initialRisk * 0.35
-
-    }else{
-
-        profitFloor =
-            currentEntry -
-            initialRisk * 0.35
-    }
-}
-
-
-if(R >= 1.60){
-
-    if(side === "LONG"){
-
-        profitFloor =
-            currentEntry +
-            initialRisk * 0.60
-
-    }else{
-
-        profitFloor =
-            currentEntry -
-            initialRisk * 0.60
-    }
-}
-
-
-if(R >= 2.20){
-
-    if(side === "LONG"){
-
-        profitFloor =
-            currentEntry +
-            initialRisk * 0.90
-
-    }else{
-
-        profitFloor =
-            currentEntry -
-            initialRisk * 0.90
-    }
-}
-
-
-if(R >= 3.00){
-
-    if(side === "LONG"){
-
-        profitFloor =
-            currentEntry +
-            initialRisk * 1.20
-
-    }else{
-
-        profitFloor =
-            currentEntry -
-            initialRisk * 1.20
-    }
-}
-
-
-// =========================================================
-// SELECT STRONGER SL
-//
-// LONG:
-// SL cao hơn = bảo vệ tốt hơn
-//
-// SHORT:
-// SL thấp hơn = bảo vệ tốt hơn
-// =========================================================
-
-if(
-    Number.isFinite(trailingSL)
-){
-
-    if(side === "LONG"){
-
-        if(trailingSL > newSL){
-            newSL = trailingSL
-        }
-
-    }else{
-
-        if(trailingSL < newSL){
-            newSL = trailingSL
-        }
-    }
-}
-
-
-if(
-    Number.isFinite(profitFloor)
-){
-
-    if(side === "LONG"){
-
-        if(
-            profitFloor > newSL &&
-            profitFloor < current
-        ){
-            newSL = profitFloor
-        }
-
-    }else{
-
-        if(
-            profitFloor < newSL &&
-            profitFloor > current
-        ){
-            newSL = profitFloor
-        }
-    }
-}
-
-
-// =========================================================
-// ORIGINAL SL PROTECTION
-//
-// Tuyệt đối không bao giờ nới SL.
-// =========================================================
-
-if(side === "LONG"){
-
-    if(newSL < originalSL){
-        newSL = originalSL
-    }
-
-}else{
-
-    if(newSL > originalSL){
-        newSL = originalSL
-    }
-}
-
-
-// =========================================================
-// NEVER MOVE SL BACKWARD
-// =========================================================
-
-if(side === "LONG"){
-
-    if(newSL < oldSL){
-        newSL = oldSL
-    }
-
-}else{
-
-    if(newSL > oldSL){
-        newSL = oldSL
-    }
-}
-
-
-// =========================================================
-// SL MUST STAY BEHIND PRICE
-// =========================================================
-
-if(side === "LONG"){
-
-    if(newSL >= current){
-
-        newSL = oldSL
-    }
-
-}else{
-
-    if(newSL <= current){
-
-        newSL = oldSL
-    }
-}
-    // =========================================================
-// DYNAMIC TP - EXTREME RUNNER
-//
-// TP KHÔNG PHẢI CƠ CHẾ CHỐT LỜI CHÍNH.
-//
-// Dynamic SL = chốt lời thực tế
-// 24H        = hard exit
-// Dynamic TP = safety cap cực xa
-//
-// MỤC TIÊU:
-// - Không để wick/spike bình thường hit TP
-// - TP luôn nằm rất xa phía trước giá
-// - Volatility càng mạnh -> TP càng xa
-// - TP chỉ được mở rộng, tuyệt đối không thu hẹp
-// =========================================================
-
-// =========================================================
-// VOLATILITY FOR TP
-//
-// Không dùng ATR15 đơn độc.
-// Khi 5M giật mạnh -> khoảng cách TP tự động tăng.
-// =========================================================
-
-const tpVolatility =
-    Math.max(
-        atr15,
-        atr5*1.50
-    )
-
-if(
-    !Number.isFinite(tpVolatility)||
-    tpVolatility<=0
-){
-    return
-}
-
-// =========================================================
-// SPIKE DETECTION
-//
-// Nếu candle 5M gần nhất có range cực lớn,
-// không cho TP nằm gần giá.
-// =========================================================
-
-const last5High=
-    h5.at(-1)
-
-const last5Low=
-    l5.at(-1)
-
-const last5Range=
-    last5High-last5Low
-
-let spikeMultiplier=1
-
-if(
-    Number.isFinite(last5Range)&&
-    last5Range>tpVolatility*2.0
-){
-    spikeMultiplier=1.50
-}
-
-if(
-    Number.isFinite(last5Range)&&
-    last5Range>tpVolatility*3.0
-){
-    spikeMultiplier=2.00
-}
-
-if(
-    Number.isFinite(last5Range)&&
-    last5Range>tpVolatility*4.0
-){
-    spikeMultiplier=2.50
-}
-
-// =========================================================
-// RUNNER DISTANCE
-//
-// TP cực xa.
-// Không dùng targetR cố định nữa.
-//
-// R càng lớn -> TP càng xa.
-// =========================================================
-
-let runnerATR=5.0
-
-if(R>=1.50){
-    runnerATR=6.0
-}
-
-if(R>=2.50){
-    runnerATR=7.0
-}
-
-if(R>=3.50){
-    runnerATR=8.0
-}
-
-if(R>=5.00){
-    runnerATR=10.0
-}
-
-// =========================================================
-// VOLATILITY ADAPTATION
-// =========================================================
-
-const volatilityDistance=
-    tpVolatility*
-    runnerATR*
-    spikeMultiplier
-
-// =========================================================
-// RISK DISTANCE
-//
-// Không cho initialRisk quá nhỏ làm TP quá gần.
-// =========================================================
-
-const riskDistance=
-    initialRisk*
-    (
-        R>=5
-            ?8.0
-            :R>=3
-                ?6.0
-                :R>=1.5
-                    ?5.0
-                    :4.0
-    )
-
-// =========================================================
-// FINAL MINIMUM DISTANCE
-// =========================================================
-
-const minimumTPDistance=
-    Math.max(
-        volatilityDistance,
-        riskDistance
-    )
-
-// =========================================================
-// TARGET
-// =========================================================
-
-const runnerTP=
-    side==="LONG"
-        ?current+
-            minimumTPDistance
-        :current-
-            minimumTPDistance
-
-// =========================================================
-// EXTEND TP ONLY
-//
-// LONG:
-// TP chỉ được tăng.
-//
-// SHORT:
-// TP chỉ được giảm.
-// =========================================================
-
-if(side==="LONG"){
-
-    if(
-        Number.isFinite(runnerTP)&&
-        runnerTP>newTP&&
-        runnerTP>current
-    ){
-        newTP=runnerTP
-    }
-
-}else{
-
-    if(
-        Number.isFinite(runnerTP)&&
-        runnerTP<newTP&&
-        runnerTP<current
-    ){
-        newTP=runnerTP
-    }
-}
-
-// =========================================================
-// STRUCTURE EXTENSION
-//
-// Structure KHÔNG được kéo TP gần lại.
-// Chỉ dùng để mở rộng thêm.
-// =========================================================
-
-if(effectivePhase>=2){
-
-    if(side==="LONG"){
-
-        const structureTP=
-            runnerHigh+
-            tpVolatility*2.0
-
-        if(
-            Number.isFinite(structureTP)&&
-            structureTP>newTP&&
-            structureTP>current
-        ){
-            newTP=structureTP
-        }
-
-    }else{
-
-        const structureTP=
-            runnerLow-
-            tpVolatility*2.0
-
-        if(
-            Number.isFinite(structureTP)&&
-            structureTP<newTP&&
-            structureTP<current
-        ){
-            newTP=structureTP
-        }
-    }
-}
-
-// =========================================================
-// EXTREME RUNNER
-//
-// Khi R >= 3:
-// TP phải càng ngày càng xa.
-// =========================================================
-
-if(R>=3){
-
-    const extremeDistance=
-        Math.max(
-            tpVolatility*9.0,
-            initialRisk*7.0
-        )
-
-    const extremeTP=
-        side==="LONG"
-            ?current+
-                extremeDistance
-            :current-
-                extremeDistance
-
-    if(side==="LONG"){
-
-        if(
-            Number.isFinite(extremeTP)&&
-            extremeTP>newTP
-        ){
-            newTP=extremeTP
-        }
-
-    }else{
-
-        if(
-            Number.isFinite(extremeTP)&&
-            extremeTP<newTP
-        ){
-            newTP=extremeTP
-        }
-    }
-}
-
-// =========================================================
-// NEVER MOVE TP BACKWARD
-// =========================================================
-
-if(side==="LONG"){
-
-    if(newTP<oldTP){
-        newTP=oldTP
-    }
-
-}else{
-
-    if(newTP>oldTP){
-        newTP=oldTP
-    }
-}
-
-// =========================================================
-// TP MUST STAY AHEAD
-// =========================================================
-
-if(side==="LONG"){
-
-    if(newTP<=current){
-
-        newTP=
-            current+
-            minimumTPDistance
-    }
-
-}else{
-
-    if(newTP>=current){
-
-        newTP=
-            current-
-            minimumTPDistance
-    }
-}
-
-// =========================================================
-// FINAL EXTREME DISTANCE PROTECTION
-//
-// Nếu TP vẫn còn quá gần giá vì bất kỳ lý do nào,
-// ép nó ra xa lần cuối.
-//
-// Đây là lớp chống TP bị ăn bởi wick.
-// =========================================================
-
-const finalSafetyDistance=
-    Math.max(
-        tpVolatility*5.0,
-        initialRisk*4.0
-    )
-
-if(side==="LONG"){
-
-    const safetyTP=
-        current+
-        finalSafetyDistance
-
-    if(newTP<safetyTP){
-
-        newTP=safetyTP
-    }
-
-}else{
-
-    const safetyTP=
-        current-
-        finalSafetyDistance
-
-    if(newTP>safetyTP){
-
-        newTP=safetyTP
-    }
-}
-
-    // =========================================================
-    // FINAL VALIDATION
-    // =========================================================
-
-    if(
-        !Number.isFinite(newSL)||
-        !Number.isFinite(newTP)||
-        newSL<=0||
-        newTP<=0
-    ){
-        return
-    }
-
-    if(side==="LONG"){
-
-        if(newSL<originalSL){
-            newSL=originalSL
-        }
-
-        if(newSL<oldSL){
-            newSL=oldSL
-        }
-
-        if(newSL>=current){
-            newSL=oldSL
-        }
-
-        if(newTP<oldTP){
-            newTP=oldTP
-        }
-
-        if(newTP<=current){
-            newTP=oldTP
-        }
-
-    }else{
-
-        if(newSL>originalSL){
-            newSL=originalSL
-        }
-
-        if(newSL>oldSL){
-            newSL=oldSL
-        }
-
-        if(newSL<=current){
-            newSL=oldSL
-        }
-
-        if(newTP>oldTP){
-            newTP=oldTP
-        }
-
-        if(newTP>=current){
-            newTP=oldTP
-        }
-    }
-
-    // =========================================================
-    // MINIMUM CHANGE
-    // =========================================================
-    const info=await getSymbolInfo(symbol)
-
-const priceFilter=
-    info?.filters?.find(
-        f=>f.filterType==="PRICE_FILTER"
-    )
-
-const tickSize=
-    Number(priceFilter?.tickSize)
-
-if(
-    !Number.isFinite(tickSize)||
-    tickSize<=0
-){
-    return
-}
-
-const precision=
-    Math.max(
-        0,
-        String(tickSize).split(".")[1]?.length||0
-    )
-
-if(side==="LONG"){
-    newSL=Math.ceil(newSL/tickSize)*tickSize
-    newTP=Math.ceil(newTP/tickSize)*tickSize
-}else{
-    newSL=Math.floor(newSL/tickSize)*tickSize
-    newTP=Math.floor(newTP/tickSize)*tickSize
-}
-
-newSL=Number(newSL.toFixed(precision))
-newTP=Number(newTP.toFixed(precision))
-
-if(side==="LONG"&&newSL<oldSL)newSL=oldSL
-if(side==="SHORT"&&newSL>oldSL)newSL=oldSL
-
-newSL=Number(newSL.toFixed(precision))
-newTP=Number(newTP.toFixed(precision))
-
-    const minimumChange=
-        Math.max(
-            currentEntry*.00005,
-            atr15*.03
-        )
-
-    const slChanged=
-        Math.abs(newSL-oldSL)>=minimumChange
-
-    const tpChanged=
-        Math.abs(newTP-oldTP)>=minimumChange
-
-    if(
-        !slChanged&&
-        !tpChanged
-    ){
-        return
-    }
-
-    // =========================================================
-    // UPDATE TRADE
-    // =========================================================
-
-    const updateTrade={
-        ...trade,
-        symbol,
-        side,
-        entry:currentEntry,
-        sl:newSL,
-        tp:newTP,
-        initialRisk,
-        previousSL:oldSL
-    }
-
-    console.log(
-        `🎯 DYNAMIC ${symbol} `+
-        `${side} `+
-        `R=${R.toFixed(2)} `+
-        `PHASE=${effectivePhase} `+
-        `SL ${oldSL}->${newSL} `+
-        `TP ${oldTP}->${newTP}`
-    )
-
-    // =========================================================
-    // BINANCE
-    // =========================================================
-
-    try{
-
-        const result=
-            await setDynamicTPSL(
-                updateTrade
+        if (TPSL_CLOSING[symbol]) return
+        if (TPSL_PENDING[symbol]) return
+
+
+        // =====================================================
+        // ENTRY TIME
+        // =====================================================
+
+        const entryTime =
+            Number(
+                trade.enteredAt ||
+                trade.openedAt ||
+                trade.createdAt
             )
 
-        if(!result?.ok){
+        if (
+            !Number.isFinite(entryTime) ||
+            entryTime <= 0
+        ) {
+            return
+        }
 
-            console.log(
-                `⚠️ DYNAMIC TPSL FAILED ${symbol}`
+
+        // =====================================================
+        // DON'T TOUCH TPSL TOO EARLY
+        // =====================================================
+
+        const now = Date.now()
+
+        if (
+            now - entryTime <
+            90000
+        ) {
+            return
+        }
+
+
+        TPSL_PENDING[symbol] = true
+
+
+        // =====================================================
+        // POSITION CHECK
+        // =====================================================
+
+        const pos =
+            await hasPosition(symbol)
+
+        if (!pos) {
+
+            delete DYNAMIC_LAST_UPDATE[symbol]
+            delete DYNAMIC_PHASE[symbol]
+
+            return
+        }
+
+
+        // =====================================================
+        // CURRENT PRICE
+        // =====================================================
+
+        const current =
+            Number(
+                pos.markPrice ||
+                pos.entryPrice ||
+                trade.entry
             )
 
+        const currentEntry =
+            Number(
+                pos.entryPrice ||
+                trade.entry
+            )
+
+        if (
+            !Number.isFinite(current) ||
+            current <= 0 ||
+            !Number.isFinite(currentEntry) ||
+            currentEntry <= 0
+        ) {
             return
         }
 
-        const finalSL=
-            Number(result.sl)
 
-        const finalTP=
-            Number(result.tp)
+        // =====================================================
+        // CURRENT TPSL
+        // =====================================================
 
-        if(
-            !Number.isFinite(finalSL)||
-            !Number.isFinite(finalTP)||
-            finalSL<=0||
-            finalTP<=0
-        ){
+        const oldSL =
+            Number(trade.sl)
+
+        const oldTP =
+            Number(trade.tp)
+
+        if (
+            !Number.isFinite(oldSL) ||
+            !Number.isFinite(oldTP) ||
+            oldSL <= 0 ||
+            oldTP <= 0
+        ) {
             return
         }
 
-        // =====================================================
-        // RESULT PROTECTION
-        // =====================================================
-
-        if(side==="LONG"){
-
-            if(finalSL<originalSL){
-
-                console.log(
-                    `🚨 REJECT WIDEN SL ${symbol}`
-                )
-
-                return
-            }
-
-            if(finalSL<oldSL){
-
-                console.log(
-                    `🚨 REJECT BACKWARD SL ${symbol}`
-                )
-
-                return
-            }
-
-            if(finalTP<oldTP){
-
-                console.log(
-                    `🚨 REJECT BACKWARD TP ${symbol}`
-                )
-
-                return
-            }
-
-        }else{
-
-            if(finalSL>originalSL){
-
-                console.log(
-                    `🚨 REJECT WIDEN SL ${symbol}`
-                )
-
-                return
-            }
-
-            if(finalSL>oldSL){
-
-                console.log(
-                    `🚨 REJECT BACKWARD SL ${symbol}`
-                )
-
-                return
-            }
-
-            if(finalTP>oldTP){
-
-                console.log(
-                    `🚨 REJECT BACKWARD TP ${symbol}`
-                )
-
-                return
-            }
-        }
 
         // =====================================================
-        // MEMORY
+        // INITIAL RISK
+        //
+        // CỰC KỲ QUAN TRỌNG:
+        //
+        // initialRisk phải là risk lúc ENTRY.
+        // Không lấy current SL để tính lại.
         // =====================================================
 
-        trade.sl=finalSL
-        trade.tp=finalTP
+        let initialRisk =
+            Number(
+                trade.initialRisk
+            )
 
-        DYNAMIC_LAST_UPDATE[symbol]=
-            Date.now()
 
-        DYNAMIC_PHASE[symbol]=
-            Math.max(
+        // =====================================================
+        // FALLBACK CHỈ KHI DB CŨ CHƯA CÓ initialRisk
+        // =====================================================
+
+        if (
+            !Number.isFinite(initialRisk) ||
+            initialRisk <= 0
+        ) {
+
+            const originalEntry =
                 Number(
-                    DYNAMIC_PHASE[symbol]||0
-                ),
-                effectivePhase
-            )
+                    trade.entry ||
+                    currentEntry
+                )
 
-        // =====================================================
-        // DB
-        // =====================================================
+            const originalSL =
+                Number(
+                    trade.sl
+                )
 
-        const dbResult=
+            if (
+                !Number.isFinite(originalEntry) ||
+                !Number.isFinite(originalSL) ||
+                originalEntry <= 0 ||
+                originalSL <= 0
+            ) {
+                return
+            }
+
+
+            initialRisk =
+                Math.abs(
+                    originalEntry -
+                    originalSL
+                )
+
+
+            if (
+                !Number.isFinite(initialRisk) ||
+                initialRisk <= 0
+            ) {
+                return
+            }
+
+
             await trades.updateOne(
                 {
                     symbol,
-                    result:"PENDING"
+                    result: "PENDING"
                 },
                 {
-                    $set:{
-                        sl:finalSL,
-                        tp:finalTP,
+                    $set: {
                         initialRisk,
-                        dynamicPhase:
-                            DYNAMIC_PHASE[symbol],
-                        dynamicUpdatedAt:
-                            Date.now(),
-                        updatedAt:
-                            Date.now()
+                        updatedAt: Date.now()
                     }
                 }
             )
+        }
 
-        if(
-            dbResult.matchedCount===0
-        ){
 
-            console.log(
-                `⚠️ DYNAMIC DB NOT FOUND ${symbol}`
-            )
+        // =====================================================
+        // ORIGINAL SL
+        //
+        // Dựa trên ENTRY + initialRisk.
+        // =====================================================
 
+        const originalSL =
+            side === "LONG"
+                ? currentEntry - initialRisk
+                : currentEntry + initialRisk
+
+
+        if (
+            !Number.isFinite(originalSL) ||
+            originalSL <= 0
+        ) {
             return
         }
 
+
+        // =====================================================
+        // CURRENT PROFIT
+        // =====================================================
+
+        const profit =
+            side === "LONG"
+                ? current - currentEntry
+                : currentEntry - current
+
+
+        // =====================================================
+        // R MULTIPLE
+        // =====================================================
+
+        const R =
+            profit /
+            initialRisk
+
+
+        if (
+            !Number.isFinite(R)
+        ) {
+            return
+        }
+
+
+        // =====================================================
+        // DYNAMIC SL
+        //
+        // Không ATR trailing.
+        // Không structure trailing.
+        // Không chase giá.
+        //
+        // Chỉ khóa lợi nhuận theo R.
+        // =====================================================
+
+        let newSL = oldSL
+
+
+        // =====================================================
+        // R < 0.50
+        //
+        // Giữ nguyên SL
+        // =====================================================
+
+        if (R < 0.50) {
+
+            newSL = oldSL
+        }
+
+
+        // =====================================================
+        // 0.50 <= R < 0.80
+        //
+        // Khóa -0.10R
+        // =====================================================
+
+        else if (R < 0.80) {
+
+            if (side === "LONG") {
+
+                newSL =
+                    currentEntry -
+                    initialRisk * 0.10
+
+            } else {
+
+                newSL =
+                    currentEntry +
+                    initialRisk * 0.10
+            }
+        }
+
+
+        // =====================================================
+        // 0.80 <= R < 1.20
+        //
+        // BREAK EVEN
+        // =====================================================
+
+        else if (R < 1.20) {
+
+            newSL =
+                currentEntry
+        }
+
+
+        // =====================================================
+        // 1.20 <= R < 1.60
+        //
+        // LOCK +0.20R
+        // =====================================================
+
+        else if (R < 1.60) {
+
+            if (side === "LONG") {
+
+                newSL =
+                    currentEntry +
+                    initialRisk * 0.20
+
+            } else {
+
+                newSL =
+                    currentEntry -
+                    initialRisk * 0.20
+            }
+        }
+
+
+        // =====================================================
+        // 1.60 <= R < 2.20
+        //
+        // LOCK +0.50R
+        // =====================================================
+
+        else if (R < 2.20) {
+
+            if (side === "LONG") {
+
+                newSL =
+                    currentEntry +
+                    initialRisk * 0.50
+
+            } else {
+
+                newSL =
+                    currentEntry -
+                    initialRisk * 0.50
+            }
+        }
+
+
+        // =====================================================
+        // R >= 2.20
+        //
+        // LOCK +0.90R
+        // =====================================================
+
+        else {
+
+            if (side === "LONG") {
+
+                newSL =
+                    currentEntry +
+                    initialRisk * 0.90
+
+            } else {
+
+                newSL =
+                    currentEntry -
+                    initialRisk * 0.90
+            }
+        }
+
+
+        // =====================================================
+        // NEVER WIDEN SL
+        // =====================================================
+
+        if (side === "LONG") {
+
+            if (newSL < oldSL) {
+                newSL = oldSL
+            }
+
+        } else {
+
+            if (newSL > oldSL) {
+                newSL = oldSL
+            }
+        }
+
+
+        // =====================================================
+        // NEVER GO WORSE THAN ORIGINAL SL
+        // =====================================================
+
+        if (side === "LONG") {
+
+            if (newSL < originalSL) {
+                newSL = originalSL
+            }
+
+        } else {
+
+            if (newSL > originalSL) {
+                newSL = originalSL
+            }
+        }
+
+
+        // =====================================================
+        // SL MUST STAY BEHIND CURRENT PRICE
+        // =====================================================
+
+        if (side === "LONG") {
+
+            if (newSL >= current) {
+                newSL = oldSL
+            }
+
+        } else {
+
+            if (newSL <= current) {
+                newSL = oldSL
+            }
+        }
+
+
+        // =====================================================
+        // TP NEVER CHANGES
+        // =====================================================
+
+        const newTP =
+            oldTP
+
+
+        // =====================================================
+        // FINAL VALIDATION
+        // =====================================================
+
+        if (
+            !Number.isFinite(newSL) ||
+            !Number.isFinite(newTP) ||
+            newSL <= 0 ||
+            newTP <= 0
+        ) {
+            return
+        }
+
+
+        // =====================================================
+        // TP MUST REMAIN ORIGINAL DIRECTION
+        // =====================================================
+
+        if (side === "LONG") {
+
+            if (newTP <= current) {
+                return
+            }
+
+        } else {
+
+            if (newTP >= current) {
+                return
+            }
+        }
+
+
+        // =====================================================
+        // SYMBOL INFO
+        // =====================================================
+
+        const info =
+            await getSymbolInfo(symbol)
+
+        const priceFilter =
+            info?.filters?.find(
+                f =>
+                    f.filterType ===
+                    "PRICE_FILTER"
+            )
+
+        const tickSize =
+            Number(
+                priceFilter?.tickSize
+            )
+
+        if (
+            !Number.isFinite(tickSize) ||
+            tickSize <= 0
+        ) {
+            return
+        }
+
+
+        // =====================================================
+        // PRECISION
+        // =====================================================
+
+        const precision =
+            Math.max(
+                0,
+                String(tickSize)
+                    .split(".")[1]
+                    ?.length || 0
+            )
+
+
+        // =====================================================
+        // NORMALIZE
+        // =====================================================
+
+        if (side === "LONG") {
+
+            newSL =
+                Math.ceil(
+                    newSL / tickSize
+                ) * tickSize
+
+            newTP =
+                Math.ceil(
+                    newTP / tickSize
+                ) * tickSize
+
+        } else {
+
+            newSL =
+                Math.floor(
+                    newSL / tickSize
+                ) * tickSize
+
+            newTP =
+                Math.floor(
+                    newTP / tickSize
+                ) * tickSize
+        }
+
+
+        newSL =
+            Number(
+                newSL.toFixed(
+                    precision
+                )
+            )
+
+        newTP =
+            Number(
+                newTP.toFixed(
+                    precision
+                )
+            )
+
+
+        // =====================================================
+        // RE-CHECK AFTER ROUNDING
+        // =====================================================
+
+        if (side === "LONG") {
+
+            if (newSL < oldSL) {
+                newSL = oldSL
+            }
+
+            if (newSL < originalSL) {
+                newSL = originalSL
+            }
+
+        } else {
+
+            if (newSL > oldSL) {
+                newSL = oldSL
+            }
+
+            if (newSL > originalSL) {
+                newSL = originalSL
+            }
+        }
+
+
+        newSL =
+            Number(
+                newSL.toFixed(
+                    precision
+                )
+            )
+
+        newTP =
+            Number(
+                newTP.toFixed(
+                    precision
+                )
+            )
+
+
+        // =====================================================
+        // MINIMUM CHANGE
+        // =====================================================
+
+        const minimumChange =
+            Math.max(
+                currentEntry * 0.00005,
+                tickSize * 2
+            )
+
+
+        const slChanged =
+            Math.abs(
+                newSL - oldSL
+            ) >= minimumChange
+
+
+        // TP KHÔNG BAO GIỜ DYNAMIC
+        const tpChanged = false
+
+
+        if (!slChanged) {
+            return
+        }
+
+
+        // =====================================================
+        // UPDATE TRADE
+        // =====================================================
+
+        const updateTrade = {
+
+            ...trade,
+
+            symbol,
+            side,
+
+            entry:
+                currentEntry,
+
+            sl:
+                newSL,
+
+            tp:
+                oldTP,
+
+            initialRisk,
+
+            previousSL:
+                oldSL
+        }
+
+
         console.log(
-            `💾 DYNAMIC TPSL SAVED `+
-            `${symbol} `+
-            `R=${R.toFixed(2)} `+
-            `PHASE=${effectivePhase} `+
-            `SL=${finalSL} `+
-            `TP=${finalTP}`
+            `🛡️ DYNAMIC SL ${symbol} ` +
+            `${side} ` +
+            `R=${R.toFixed(2)} ` +
+            `SL ${oldSL}->${newSL} ` +
+            `TP=${oldTP}`
         )
 
-    }catch(e){
+
+        // =====================================================
+        // BINANCE
+        // =====================================================
+
+        try {
+
+            const result =
+                await setDynamicTPSL(
+                    updateTrade
+                )
+
+
+            if (!result?.ok) {
+
+                console.log(
+                    `⚠️ DYNAMIC SL FAILED ${symbol}`
+                )
+
+                return
+            }
+
+
+            const finalSL =
+                Number(
+                    result.sl
+                )
+
+            const finalTP =
+                Number(
+                    result.tp
+                )
+
+
+            if (
+                !Number.isFinite(finalSL) ||
+                !Number.isFinite(finalTP) ||
+                finalSL <= 0 ||
+                finalTP <= 0
+            ) {
+                return
+            }
+
+
+            // =================================================
+            // RESULT PROTECTION
+            // =================================================
+
+            if (side === "LONG") {
+
+                // Không được nới dưới original SL
+                if (
+                    finalSL <
+                    originalSL
+                ) {
+
+                    console.log(
+                        `🚨 REJECT WIDEN SL ${symbol}`
+                    )
+
+                    return
+                }
+
+
+                // Không được đi lùi
+                if (
+                    finalSL <
+                    oldSL
+                ) {
+
+                    console.log(
+                        `🚨 REJECT BACKWARD SL ${symbol}`
+                    )
+
+                    return
+                }
+
+
+                // TP phải giữ nguyên
+                if (
+                    Math.abs(
+                        finalTP - oldTP
+                    ) > tickSize
+                ) {
+
+                    console.log(
+                        `🚨 REJECT TP CHANGE ${symbol}`
+                    )
+
+                    return
+                }
+
+            } else {
+
+                if (
+                    finalSL >
+                    originalSL
+                ) {
+
+                    console.log(
+                        `🚨 REJECT WIDEN SL ${symbol}`
+                    )
+
+                    return
+                }
+
+
+                if (
+                    finalSL >
+                    oldSL
+                ) {
+
+                    console.log(
+                        `🚨 REJECT BACKWARD SL ${symbol}`
+                    )
+
+                    return
+                }
+
+
+                if (
+                    Math.abs(
+                        finalTP - oldTP
+                    ) > tickSize
+                ) {
+
+                    console.log(
+                        `🚨 REJECT TP CHANGE ${symbol}`
+                    )
+
+                    return
+                }
+            }
+
+
+            // =================================================
+            // MEMORY
+            // =================================================
+
+            trade.sl =
+                finalSL
+
+            trade.tp =
+                oldTP
+
+
+            DYNAMIC_LAST_UPDATE[symbol] =
+                Date.now()
+
+
+            // =================================================
+            // DB
+            // =================================================
+
+            const dbResult =
+                await trades.updateOne(
+                    {
+                        symbol,
+                        result: "PENDING"
+                    },
+                    {
+                        $set: {
+
+                            sl:
+                                finalSL,
+
+                            tp:
+                                oldTP,
+
+                            initialRisk,
+
+                            dynamicUpdatedAt:
+                                Date.now(),
+
+                            updatedAt:
+                                Date.now()
+                        }
+                    }
+                )
+
+
+            if (
+                dbResult.matchedCount === 0
+            ) {
+
+                console.log(
+                    `⚠️ DYNAMIC DB NOT FOUND ${symbol}`
+                )
+
+                return
+            }
+
+
+            console.log(
+                `💾 DYNAMIC SL SAVED ` +
+                `${symbol} ` +
+                `R=${R.toFixed(2)} ` +
+                `SL=${finalSL} ` +
+                `TP=${oldTP}`
+            )
+
+
+        } catch (e) {
+
+            await checkTimeError(e)
+
+            console.log(
+                `❌ DYNAMIC SL ERROR ` +
+                `${symbol}:`,
+                e.message
+            )
+        }
+
+
+    } catch (e) {
 
         await checkTimeError(e)
 
         console.log(
-            `❌ DYNAMIC TPSL ERROR `+
-            `${symbol}:`,
+            `❌ MANAGE DYNAMIC SL ERROR ` +
+            `${trade?.symbol || "UNKNOWN"}:`,
             e.message
         )
+
+    } finally {
+
+        if (trade?.symbol) {
+            delete TPSL_PENDING[
+                trade.symbol
+            ]
+        }
     }
-
-}catch(e){
-
-    await checkTimeError(e)
-
-    console.log(
-        `❌ MANAGE DYNAMIC TPSL ERROR `+
-        `${trade?.symbol||"UNKNOWN"}:`,
-        e.message
-    )
-
-}finally{
-
-    if(trade?.symbol){
-        delete TPSL_PENDING[trade.symbol]
-    }
-}
-
 }
 
 async function cancelAllOrders(symbol){
@@ -5702,126 +5225,254 @@ if (
     })
 }
     // =========================================================
-    // 14. SWING / STRUCTURE FOR SL
-    // =========================================================
-
-    const swingHigh5 =
-        highest(
-            h5.slice(0, -1),
-            20
-        )
-
-    const swingLow5 =
-        lowest(
-            l5.slice(0, -1),
-            20
-        )
-
-    const swingHigh15 =
-        highest(
-            h15.slice(0, -1),
-            16
-        )
-
-    const swingLow15 =
-        lowest(
-            l15.slice(0, -1),
-            16
-        )
-
-    // =========================================================
-    // 15. SUPPORT / RESISTANCE
-    // =========================================================
-
-    const resistanceCandidates = [
-        swingHigh5,
-        swingHigh15,
-        structureHigh15
-    ]
-        .filter(
-            x =>
-                Number.isFinite(x) &&
-                x > price
-        )
-
-    const supportCandidates = [
-        swingLow5,
-        swingLow15,
-        structureLow15
-    ]
-        .filter(
-            x =>
-                Number.isFinite(x) &&
-                x < price
-        )
-
-    const resistance =
-        resistanceCandidates.length
-            ? Math.min(
-                ...resistanceCandidates
-            )
-            : null
-
-    const support =
-        supportCandidates.length
-            ? Math.max(
-                ...supportCandidates
-            )
-            : null
-
-    // =========================================================
-// 16. STOP LOSS — TIGHT LOCAL STRUCTURE
+// 14. SWING / STRUCTURE FOR SL
 // =========================================================
 
-const entry = price
+const swingHigh5 =
+    highest(
+        h5.slice(0, -1),
+        20
+    )
 
-// Local structure gần entry
+const swingLow5 =
+    lowest(
+        l5.slice(0, -1),
+        20
+    )
+
+const swingHigh15 =
+    highest(
+        h15.slice(0, -1),
+        16
+    )
+
+const swingLow15 =
+    lowest(
+        l15.slice(0, -1),
+        16
+    )
+
+// =========================================================
+// 15. SUPPORT / RESISTANCE
+// =========================================================
+
+const resistanceCandidates = [
+    swingHigh5,
+    swingHigh15,
+    structureHigh15
+].filter(
+    x =>
+        Number.isFinite(x) &&
+        x > price
+)
+
+const supportCandidates = [
+    swingLow5,
+    swingLow15,
+    structureLow15
+].filter(
+    x =>
+        Number.isFinite(x) &&
+        x < price
+)
+
+const resistance =
+    resistanceCandidates.length
+        ? Math.min(
+            ...resistanceCandidates
+        )
+        : null
+
+const support =
+    supportCandidates.length
+        ? Math.max(
+            ...supportCandidates
+        )
+        : null
+
+
+// =========================================================
+// 16. INITIAL TPSL
+//
+// TARGET RR = 1.50
+//
+// initialRisk = RISK GỐC
+// Sau khi mở lệnh:
+//     initialRisk KHÔNG được thay đổi.
+//
+// Dynamic SL chỉ được phép:
+//     - giữ nguyên
+//     - kéo SL theo hướng có lợi
+// Không bao giờ được nới risk.
+// =========================================================
+
+const TARGET_RR = 1.50
+
+const entry = Number(price)
+
+if (
+    !Number.isFinite(entry) ||
+    entry <= 0
+) {
+    return reject(
+        "ENTRY_INVALID",
+        {
+            entry: round(entry)
+        }
+    )
+}
+
+
+// =========================================================
+// LOCAL STRUCTURE
+//
+// Chỉ dùng candle ĐÃ ĐÓNG.
+// =========================================================
+
 const localLow5 =
     lowest(
-        l5.slice(-6, -1),
-        5
+        l5.slice(-4, -1),
+        3
     )
 
 const localHigh5 =
     highest(
-        h5.slice(-6, -1),
-        5
+        h5.slice(-4, -1),
+        3
     )
 
-// Rejection candle
+
+// =========================================================
+// REJECTION RANGE
+//
+// 2 candle đã đóng gần nhất.
+// =========================================================
+
 const rejectionLow =
     Math.min(
-        l5Now,
         l5.at(-2),
         l5.at(-3)
     )
 
 const rejectionHigh =
     Math.max(
-        h5Now,
         h5.at(-2),
         h5.at(-3)
     )
 
-// SL buffer vừa đủ tránh wick
+
+// =========================================================
+// VALIDATE STRUCTURE
+// =========================================================
+
+if (
+    !Number.isFinite(localLow5) ||
+    !Number.isFinite(localHigh5) ||
+    !Number.isFinite(rejectionLow) ||
+    !Number.isFinite(rejectionHigh) ||
+    localLow5 <= 0 ||
+    localHigh5 <= 0 ||
+    rejectionLow <= 0 ||
+    rejectionHigh <= 0
+) {
+    return reject(
+        "LOCAL_STRUCTURE_INVALID",
+        {
+            side:
+                longSetup
+                    ? "LONG"
+                    : "SHORT",
+
+            entry:
+                round(entry),
+
+            localLow5:
+                round(localLow5),
+
+            localHigh5:
+                round(localHigh5),
+
+            rejectionLow:
+                round(rejectionLow),
+
+            rejectionHigh:
+                round(rejectionHigh)
+        }
+    )
+}
+
+
+// =========================================================
+// SL BUFFER
+//
+// Chống wick nhưng không làm SL phình quá lớn.
+// =========================================================
+
 const slBuffer =
     Math.max(
-        atr5 * 0.15,
-        price * 0.0005
+        atr5 * 0.10,
+        entry * 0.00035
     )
+
+if (
+    !Number.isFinite(slBuffer) ||
+    slBuffer <= 0
+) {
+    return reject(
+        "SL_BUFFER_INVALID",
+        {
+            side:
+                longSetup
+                    ? "LONG"
+                    : "SHORT",
+
+            slBuffer:
+                round(slBuffer)
+        }
+    )
+}
+
 
 let sl
 let risk
 let tp
 
+
+// =========================================================
+// LONG
+// =========================================================
+
 if (longSetup) {
 
-    // Ưu tiên local pullback structure
+    // -----------------------------------------------------
+    // STRUCTURE STOP
+    // -----------------------------------------------------
+
     const localStop =
         Math.min(
             localLow5,
             rejectionLow
         )
+
+    if (
+        !Number.isFinite(localStop) ||
+        localStop <= 0 ||
+        localStop >= entry
+    ) {
+        return reject(
+            "LONG_STRUCTURE_INVALID",
+            {
+                side: "LONG",
+                entry: round(entry),
+                localStop: round(localStop)
+            }
+        )
+    }
+
+
+    // -----------------------------------------------------
+    // INITIAL SL
+    // -----------------------------------------------------
 
     sl =
         localStop -
@@ -5835,47 +5486,111 @@ if (longSetup) {
         !Number.isFinite(risk) ||
         risk <= 0
     ) {
-        return reject("RISK_INVALID", {
-            side: "LONG",
-            risk: round(risk)
-        })
+        return reject(
+            "RISK_INVALID",
+            {
+                side: "LONG",
+                risk: round(risk)
+            }
+        )
     }
 
-    // SL tối thiểu để tránh quá sát
+
+    // =====================================================
+    // MIN RISK
+    //
+    // Nếu structure quá sát entry:
+    // kéo SL ra tối thiểu.
+    // =====================================================
+
     const minRisk =
-    Math.max(
-        atr5 * 0.35,
-        price * 0.0015
-    )
+        Math.max(
+            atr5 * 0.25,
+            entry * 0.0012
+        )
+
+    if (
+        !Number.isFinite(minRisk) ||
+        minRisk <= 0
+    ) {
+        return reject(
+            "MIN_RISK_INVALID",
+            {
+                side: "LONG",
+                minRisk: round(minRisk)
+            }
+        )
+    }
 
     if (risk < minRisk) {
 
+        risk = minRisk
+
         sl =
             entry -
-            minRisk
-
-        risk =
-            minRisk
+            risk
     }
 
-    // Không cho SL quá rộng
+
+    // =====================================================
+    // MAX RISK
+    // =====================================================
+
     const maxRisk =
-    Math.min(
-        atr5 * 1.40,
-        price * 0.008
-    )
+        Math.min(
+            atr5 * 1.10,
+            entry * 0.006
+        )
+
+    if (
+        !Number.isFinite(maxRisk) ||
+        maxRisk <= 0
+    ) {
+        return reject(
+            "MAX_RISK_INVALID",
+            {
+                side: "LONG",
+                maxRisk: round(maxRisk)
+            }
+        )
+    }
 
     if (risk > maxRisk) {
-        return reject("RISK_TOO_WIDE", {
-            side: "LONG",
-            risk: round(risk),
-            maxRisk: round(maxRisk),
-            riskATR: round(risk / atr5, 3)
-        })
+
+        return reject(
+            "RISK_TOO_WIDE",
+            {
+                side: "LONG",
+
+                risk:
+                    round(risk),
+
+                maxRisk:
+                    round(maxRisk),
+
+                riskATR:
+                    Number.isFinite(atr5) &&
+                    atr5 > 0
+                        ? round(
+                            risk / atr5,
+                            3
+                        )
+                        : null
+            }
+        )
     }
 
-    // Phải có room
-    if (resistance) {
+
+    // =====================================================
+    // ROOM
+    //
+    // Phải đủ room cho TARGET_RR thực tế.
+    // =====================================================
+
+    if (
+        Number.isFinite(resistance) &&
+        resistance > entry
+    ) {
 
         const room =
             resistance -
@@ -5883,28 +5598,75 @@ if (longSetup) {
 
         if (
             room <
-            risk * 1.30
+            risk * TARGET_RR
         ) {
-            return reject("ROOM_LONG", {
-                side: "LONG",
-                room: round(room),
-                required: round(risk * 1.50),
-                risk: round(risk)
-            })
+            return reject(
+                "ROOM_LONG",
+                {
+                    side: "LONG",
+
+                    room:
+                        round(room),
+
+                    required:
+                        round(
+                            risk * TARGET_RR
+                        ),
+
+                    risk:
+                        round(risk),
+
+                    resistance:
+                        round(resistance)
+                }
+            )
         }
     }
 
+
+    // =====================================================
+    // INITIAL TP
+    // =====================================================
+
     tp =
         entry +
-        risk * 1.30
+        risk * TARGET_RR
+
+
+// =========================================================
+// SHORT
+// =========================================================
 
 } else {
+
+    // -----------------------------------------------------
+    // STRUCTURE STOP
+    // -----------------------------------------------------
 
     const localStop =
         Math.max(
             localHigh5,
             rejectionHigh
         )
+
+    if (
+        !Number.isFinite(localStop) ||
+        localStop <= entry
+    ) {
+        return reject(
+            "SHORT_STRUCTURE_INVALID",
+            {
+                side: "SHORT",
+                entry: round(entry),
+                localStop: round(localStop)
+            }
+        )
+    }
+
+
+    // -----------------------------------------------------
+    // INITIAL SL
+    // -----------------------------------------------------
 
     sl =
         localStop +
@@ -5918,44 +5680,106 @@ if (longSetup) {
         !Number.isFinite(risk) ||
         risk <= 0
     ) {
-        return reject("RISK_INVALID", {
-            side: "SHORT",
-            risk: round(risk)
-        })
+        return reject(
+            "RISK_INVALID",
+            {
+                side: "SHORT",
+                risk: round(risk)
+            }
+        )
     }
+
+
+    // =====================================================
+    // MIN RISK
+    // =====================================================
 
     const minRisk =
         Math.max(
-            atr5 * 0.45,
-            price * 0.0020
+            atr5 * 0.30,
+            entry * 0.0015
         )
+
+    if (
+        !Number.isFinite(minRisk) ||
+        minRisk <= 0
+    ) {
+        return reject(
+            "MIN_RISK_INVALID",
+            {
+                side: "SHORT",
+                minRisk: round(minRisk)
+            }
+        )
+    }
 
     if (risk < minRisk) {
 
+        risk = minRisk
+
         sl =
             entry +
-            minRisk
-
-        risk =
-            minRisk
+            risk
     }
+
+
+    // =====================================================
+    // MAX RISK
+    // =====================================================
 
     const maxRisk =
         Math.min(
-            atr5 * 1.60,
-            price * 0.010
+            atr5 * 1.20,
+            entry * 0.007
         )
 
-    if (risk > maxRisk) {
-        return reject("RISK_TOO_WIDE", {
-            side: "SHORT",
-            risk: round(risk),
-            maxRisk: round(maxRisk),
-            riskATR: round(risk / atr5, 3)
-        })
+    if (
+        !Number.isFinite(maxRisk) ||
+        maxRisk <= 0
+    ) {
+        return reject(
+            "MAX_RISK_INVALID",
+            {
+                side: "SHORT",
+                maxRisk: round(maxRisk)
+            }
+        )
     }
 
-    if (support) {
+    if (risk > maxRisk) {
+
+        return reject(
+            "RISK_TOO_WIDE",
+            {
+                side: "SHORT",
+
+                risk:
+                    round(risk),
+
+                maxRisk:
+                    round(maxRisk),
+
+                riskATR:
+                    Number.isFinite(atr5) &&
+                    atr5 > 0
+                        ? round(
+                            risk / atr5,
+                            3
+                        )
+                        : null
+            }
+        )
+    }
+
+
+    // =====================================================
+    // ROOM
+    // =====================================================
+
+    if (
+        Number.isFinite(support) &&
+        support < entry
+    ) {
 
         const room =
             entry -
@@ -5963,44 +5787,187 @@ if (longSetup) {
 
         if (
             room <
-            risk * 1.30
+            risk * TARGET_RR
         ) {
-            return reject("ROOM_SHORT", {
-                side: "SHORT",
-                room: round(room),
-                required: round(risk * 1.50),
-                risk: round(risk)
-            })
+            return reject(
+                "ROOM_SHORT",
+                {
+                    side: "SHORT",
+
+                    room:
+                        round(room),
+
+                    required:
+                        round(
+                            risk * TARGET_RR
+                        ),
+
+                    risk:
+                        round(risk),
+
+                    support:
+                        round(support)
+                }
+            )
         }
     }
 
+
+    // =====================================================
+    // INITIAL TP
+    // =====================================================
+
     tp =
         entry -
-        risk * 1.30
+        risk * TARGET_RR
 }
 
-    // =========================================================
-    // 17. FINAL RR
-    // =========================================================
 
-    const finalRR =
-        longSetup
-            ? (tp - entry) / risk
-            : (entry - tp) / risk
+// =========================================================
+// FINAL GEOMETRY VALIDATION
+// =========================================================
+
+if (
+    !Number.isFinite(sl) ||
+    !Number.isFinite(tp) ||
+    !Number.isFinite(risk) ||
+    sl <= 0 ||
+    tp <= 0 ||
+    risk <= 0
+) {
+    return reject(
+        "TPSL_INVALID",
+        {
+            side:
+                longSetup
+                    ? "LONG"
+                    : "SHORT",
+
+            entry:
+                round(entry),
+
+            sl:
+                round(sl),
+
+            tp:
+                round(tp),
+
+            risk:
+                round(risk)
+        }
+    )
+}
+
+
+// =========================================================
+// CORRECT SIDE VALIDATION
+// =========================================================
+
+if (longSetup) {
 
     if (
-        !Number.isFinite(finalRR) ||
-        finalRR < 1.30
+        sl >= entry ||
+        tp <= entry
     ) {
-        return reject("FINAL_RR", {
-            side: coreSide,
-        finalRR: round(finalRR, 2),
-        requiredRR: 1.30,
-        risk: round(risk),
-        entry: round(entry),
-        tp: round(tp)
-    })
+        return reject(
+            "TPSL_SIDE_INVALID",
+            {
+                side: "LONG",
+                entry: round(entry),
+                sl: round(sl),
+                tp: round(tp)
+            }
+        )
     }
+
+} else {
+
+    if (
+        sl <= entry ||
+        tp >= entry
+    ) {
+        return reject(
+            "TPSL_SIDE_INVALID",
+            {
+                side: "SHORT",
+                entry: round(entry),
+                sl: round(sl),
+                tp: round(tp)
+            }
+        )
+    }
+}
+
+
+// =========================================================
+// FINAL RR
+// =========================================================
+
+const finalRR =
+    longSetup
+        ? (tp - entry) / risk
+        : (entry - tp) / risk
+
+if (
+    !Number.isFinite(finalRR) ||
+    finalRR < TARGET_RR
+) {
+    return reject(
+        "FINAL_RR",
+        {
+            side:
+                longSetup
+                    ? "LONG"
+                    : "SHORT",
+
+            finalRR:
+                round(finalRR, 2),
+
+            requiredRR:
+                TARGET_RR,
+
+            risk:
+                round(risk),
+
+            entry:
+                round(entry),
+
+            sl:
+                round(sl),
+
+            tp:
+                round(tp)
+        }
+    )
+}
+
+
+// =========================================================
+// FINAL TPSL OBJECT
+//
+// initialRisk = RISK GỐC.
+// KHÔNG thay đổi sau khi mở lệnh.
+// =========================================================
+
+const initialRisk =
+    risk
+
+const initialSL =
+    sl
+
+const initialTP =
+    tp
+
+
+console.log(
+    `🎯 INITIAL TPSL ${symbol || ""} ` +
+    `${longSetup ? "LONG" : "SHORT"} ` +
+    `ENTRY=${round(entry)} ` +
+    `SL=${round(initialSL)} ` +
+    `TP=${round(initialTP)} ` +
+    `RISK=${round(initialRisk)} ` +
+    `RR=${round(finalRR, 2)}`
+)
 
     // =========================================================
     // 18. QUALITY
