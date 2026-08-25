@@ -2865,8 +2865,8 @@ async function manageDynamicTPSL(trade) {
         // TP NEVER CHANGES
         // =====================================================
 
-        const newTP =
-            oldTP
+        let newTP =
+    oldTP
 
 
         // =====================================================
