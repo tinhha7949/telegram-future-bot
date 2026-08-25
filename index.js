@@ -4848,28 +4848,27 @@ const microLow =
 
 const bullishMicroBreak =
     c0 > o0 &&
-    br1 >= 0.40 &&
-    closeLong1 >= 0.62 &&
+    br1 >= 0.45 &&
+    closeLong1 >= 0.65 &&
     c0 > microHigh
 
-    const bearishMicroBreak =
+const bearishMicroBreak =
     c0 < o0 &&
-    br1 >= 0.40 &&
-    closeShort1 >= 0.62 &&
+    br1 >= 0.45 &&
+    closeShort1 >= 0.65 &&
     c0 < microLow
 
-    // Strong continuation candle
-    const bullishStrongClose =
-        c0 > o0 &&
-        br1 >= 0.60 &&
-        closeLong1 >= 0.75 &&
-        c0 > cPrev
+const bullishStrongClose =
+    c0 > o0 &&
+    br1 >= 0.65 &&
+    closeLong1 >= 0.78 &&
+    c0 > cPrev
 
-    const bearishStrongClose =
-        c0 < o0 &&
-        br1 >= 0.60 &&
-        closeShort1 >= 0.75 &&
-        c0 < cPrev
+const bearishStrongClose =
+    c0 < o0 &&
+    br1 >= 0.65 &&
+    closeShort1 >= 0.78 &&
+    c0 < cPrev
 
 const bullishTrigger =
     bullishMicroBreak ||
@@ -5154,14 +5153,14 @@ const structureOKLong =
         bullishStructure15 ||
         (
             longBias &&
-            structureLow15 >= oldLow15 * 0.998
+            structureLow15 >= oldLow15 * 0.999
         )
 
     const structureOKShort =
         bearishStructure15 ||
         (
             shortBias &&
-            structureHigh15 <= oldHigh15 * 1.002
+            structureHigh15 <= oldHigh15 * 1.001
         )
     // =========================================================
     // 5. 5M TREND
@@ -5283,8 +5282,8 @@ const vol5Ratio =
 
     const pullbackTolerance =
     Math.max(
-        atr5 * 0.50,
-        price * 0.0012
+        atr5 * 0.40,
+        price * 0.0010
     )
 
     // EMA20 pullback
@@ -5312,8 +5311,8 @@ const vol5Ratio =
     // Structure retest
     const structureTolerance =
     Math.max(
-        atr5 * 0.55,
-        price * 0.0015
+        atr5 * 0.45,
+        price * 0.0012
     )
 
     const structureRetestLong =
@@ -5433,30 +5432,30 @@ if (
         )
 
     const bullishRejection =
-        (
-            c5Now > o5Now &&
-            body5 >= 0.30 &&
-            closeLong5 >= 0.58
-        )
-        ||
-        (
-            lowerWick5 >=
-            Math.abs(c5Now - o5Now) * 0.8 &&
-            closeLong5 >= 0.62
-        )
+    (
+        c5Now > o5Now &&
+        body5 >= 0.35 &&
+        closeLong5 >= 0.62
+    )
+    ||
+    (
+        c5Now >= o5Now &&
+        lowerWick5 >= Math.abs(c5Now - o5Now) * 1.0 &&
+        closeLong5 >= 0.65
+    )
 
-    const bearishRejection =
-        (
-            c5Now < o5Now &&
-            body5 >= 0.30 &&
-            closeShort5 >= 0.58
-        )
-        ||
-        (
-            upperWick5 >=
-            Math.abs(c5Now - o5Now) * 0.8 &&
-            closeShort5 >= 0.62
-        )
+const bearishRejection =
+    (
+        c5Now < o5Now &&
+        body5 >= 0.35 &&
+        closeShort5 >= 0.62
+    )
+    ||
+    (
+        c5Now <= o5Now &&
+        upperWick5 >= Math.abs(c5Now - o5Now) * 1.0 &&
+        closeShort5 >= 0.65
+    )
 // =========================================================
 // 8.5. 5M PULLBACK RECOVERY
 // =========================================================
@@ -5511,14 +5510,12 @@ const shortRecovery =
 const longConfirmation =
     bullishRejection ||
     bullishTrigger ||
-    sweepRecoveryLong ||
-    reclaimEMA20Long
+    sweepRecoveryLong
 
 const shortConfirmation =
     bearishRejection ||
     bearishTrigger ||
-    sweepRecoveryShort ||
-    reclaimEMA20Short
+    sweepRecoveryShort
 
     if (longBias && !longConfirmation) {
     return reject("CONFIRMATION", {
@@ -5659,24 +5656,20 @@ const longSetup =
     longBias &&
     structureOKLong &&
     pullbackLong &&
-    longRecovery &&
     (
-        bullishTrigger ||
-        bullishRejection //||
-        //sweepRecoveryLong ||
-        //reclaimEMA20Long
+        sweepRecoveryLong
+        ? bullishTrigger || bullishRejection
+        : bullishRejection && bullishTrigger
     )
 
 const shortSetup =
     shortBias &&
     structureOKShort &&
     pullbackShort &&
-    shortRecovery &&
     (
-        bearishTrigger ||
-        bearishRejection //||
-        //sweepRecoveryShort ||
-        //reclaimEMA20Short
+        sweepRecoveryShort
+        ? bearishTrigger || bearishRejection
+        : bearishRejection && bearishTrigger
     )
 
 if (
