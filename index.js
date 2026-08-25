@@ -2717,223 +2717,337 @@ const effectivePhase =
 DYNAMIC_PHASE[symbol] =
     effectivePhase
     // =========================================================
-// DYNAMIC SL - R BASED ONLY
+// DYNAMIC SL - PROFIT PROTECTION TRAILING
 //
-// KHÔNG DÙNG STRUCTURE.
-// KHÔNG DÙNG SWING.
-// KHÔNG DÙNG BREAKOUT.
-//
-// Core đã bắt entry khá chuẩn nên Dynamic SL chỉ làm nhiệm vụ:
-// - bảo vệ lệnh khi đã có lợi nhuận
-// - thu nhỏ risk từ từ
-// - không bóp SL quá sát
-// - tuyệt đối không mở rộng SL
+// MỤC TIÊU:
+// - Lệnh chạy đúng hướng -> SL bám giá nhanh hơn
+// - Không chờ R quá cao mới khóa lợi nhuận
+// - Không bóp SL quá sát ở giai đoạn đầu
+// - R càng lớn -> khoảng cách SL càng nhỏ
+// - Tuyệt đối không nới SL
 // =========================================================
 
 let newSL = oldSL
 let newTP = oldTP
 
 // =========================================================
-// R >= 0.45
+// SL DISTANCE BY R
 //
-// Bắt đầu thu nhỏ risk nhẹ.
-// Trước đây 0.50 -> giờ 0.45
+// R thấp  -> cho giá thở
+// R trung -> bắt đầu trail
+// R cao   -> trail sát hơn
+//
+// Khoảng cách tính theo ATR5 + ATR15,
+// nhưng có giới hạn theo initialRisk.
 // =========================================================
 
-if(R >= 0.45){
+let slATRMultiplier = 1.60
 
-    if(side === "LONG"){
+if(R >= 0.35){
+    slATRMultiplier = 1.40
+}
 
-        const profitFloor =
-            currentEntry -
-            initialRisk * 0.02
+if(R >= 0.60){
+    slATRMultiplier = 1.20
+}
 
-        if(
-            profitFloor > newSL &&
-            profitFloor < current
-        ){
-            newSL = profitFloor
-        }
+if(R >= 0.90){
+    slATRMultiplier = 1.00
+}
 
-    }else{
+if(R >= 1.20){
+    slATRMultiplier = 0.85
+}
 
-        const profitFloor =
-            currentEntry +
-            initialRisk * 0.02
+if(R >= 1.60){
+    slATRMultiplier = 0.70
+}
 
-        if(
-            profitFloor < newSL &&
-            profitFloor > current
-        ){
-            newSL = profitFloor
-        }
-    }
+if(R >= 2.20){
+    slATRMultiplier = 0.60
+}
+
+if(R >= 3.00){
+    slATRMultiplier = 0.50
+}
+
+if(R >= 4.00){
+    slATRMultiplier = 0.45
 }
 
 
 // =========================================================
-// R >= 0.70
+// VOLATILITY DISTANCE
 //
-// Khóa nhẹ lợi nhuận.
-// Giữ nguyên mức +0.05R.
+// ATR5 ưu tiên vì đây là trailing ngắn hạn.
+// ATR15 vẫn giữ vai trò chống bóp SL quá mạnh.
 // =========================================================
 
-if(R >= 0.70){
+const trailingVolatility =
+    Math.max(
+        atr5 * 1.10,
+        atr15 * 0.40
+    )
 
-    if(side === "LONG"){
-
-        const profitFloor =
-            currentEntry +
-            initialRisk * 0.02
-
-        if(
-            profitFloor > newSL &&
-            profitFloor < current
-        ){
-            newSL = profitFloor
-        }
-
-    }else{
-
-        const profitFloor =
-            currentEntry -
-            initialRisk * 0.02
-
-        if(
-            profitFloor < newSL &&
-            profitFloor > current
-        ){
-            newSL = profitFloor
-        }
-    }
+if(
+    !Number.isFinite(trailingVolatility) ||
+    trailingVolatility <= 0
+){
+    return
 }
 
 
 // =========================================================
-// R >= 1.20
-//
-// Khóa thêm một phần lợi nhuận.
-// Không dùng structure.
+// RAW TRAILING DISTANCE
 // =========================================================
+
+let trailingDistance =
+    trailingVolatility *
+    slATRMultiplier
+
+
+// =========================================================
+// RISK BASED LIMIT
+//
+// Không cho trailing distance quá lớn khi R đã cao.
+// =========================================================
+
+let maxRiskDistance =
+    initialRisk * 1.20
+
+if(R >= 0.60){
+    maxRiskDistance = initialRisk * 1.00
+}
+
+if(R >= 1.00){
+    maxRiskDistance = initialRisk * 0.80
+}
+
+if(R >= 1.50){
+    maxRiskDistance = initialRisk * 0.65
+}
+
+if(R >= 2.00){
+    maxRiskDistance = initialRisk * 0.55
+}
+
+if(R >= 3.00){
+    maxRiskDistance = initialRisk * 0.45
+}
+
+if(R >= 4.00){
+    maxRiskDistance = initialRisk * 0.35
+}
+
+trailingDistance =
+    Math.min(
+        trailingDistance,
+        maxRiskDistance
+    )
+
+
+// =========================================================
+// MINIMUM DISTANCE
+//
+// Không để SL dính sát mark price.
+// Tránh bị quét bởi noise/wick.
+// =========================================================
+
+const minimumSLDistance =
+    Math.max(
+        atr5 * 0.35,
+        currentEntry * 0.00035
+    )
+
+trailingDistance =
+    Math.max(
+        trailingDistance,
+        minimumSLDistance
+    )
+
+
+// =========================================================
+// CALCULATE TRAILING SL
+// =========================================================
+
+let trailingSL
+
+if(side === "LONG"){
+
+    trailingSL =
+        current -
+        trailingDistance
+
+}else{
+
+    trailingSL =
+        current +
+        trailingDistance
+}
+
+
+// =========================================================
+// PROFIT FLOOR
+//
+// Từ khi có lợi nhuận, SL không được quay xuống dưới
+// các mức bảo vệ tương ứng.
+//
+// Đây là lớp thứ 2 bên cạnh trailing price.
+// =========================================================
+
+let profitFloor
+
+if(R >= 0.35){
+
+    if(side === "LONG"){
+
+        profitFloor =
+            currentEntry -
+            initialRisk * 0.10
+
+    }else{
+
+        profitFloor =
+            currentEntry +
+            initialRisk * 0.10
+    }
+}
+
+
+if(R >= 0.60){
+
+    if(side === "LONG"){
+
+        profitFloor =
+            currentEntry
+
+    }else{
+
+        profitFloor =
+            currentEntry
+    }
+}
+
+
+if(R >= 0.90){
+
+    if(side === "LONG"){
+
+        profitFloor =
+            currentEntry +
+            initialRisk * 0.15
+
+    }else{
+
+        profitFloor =
+            currentEntry -
+            initialRisk * 0.15
+    }
+}
+
 
 if(R >= 1.20){
 
     if(side === "LONG"){
 
-        const profitFloor =
+        profitFloor =
             currentEntry +
-            initialRisk * 0.30
-
-        if(
-            profitFloor > newSL &&
-            profitFloor < current
-        ){
-            newSL = profitFloor
-        }
+            initialRisk * 0.35
 
     }else{
 
-        const profitFloor =
+        profitFloor =
             currentEntry -
-            initialRisk * 0.30
-
-        if(
-            profitFloor < newSL &&
-            profitFloor > current
-        ){
-            newSL = profitFloor
-        }
+            initialRisk * 0.35
     }
 }
 
-
-// =========================================================
-// R >= 1.60
-//
-// Bảo vệ mạnh hơn nhưng vẫn để giá thở.
-// =========================================================
 
 if(R >= 1.60){
 
     if(side === "LONG"){
 
-        const profitFloor =
+        profitFloor =
             currentEntry +
-            initialRisk * 0.50
-
-        if(
-            profitFloor > newSL &&
-            profitFloor < current
-        ){
-            newSL = profitFloor
-        }
+            initialRisk * 0.60
 
     }else{
 
-        const profitFloor =
+        profitFloor =
             currentEntry -
-            initialRisk * 0.50
-
-        if(
-            profitFloor < newSL &&
-            profitFloor > current
-        ){
-            newSL = profitFloor
-        }
+            initialRisk * 0.60
     }
 }
 
-
-// =========================================================
-// R >= 2.20
-//
-// Khóa phần lớn lợi nhuận.
-// =========================================================
 
 if(R >= 2.20){
 
     if(side === "LONG"){
 
-        const profitFloor =
+        profitFloor =
             currentEntry +
-            initialRisk * 0.75
-
-        if(
-            profitFloor > newSL &&
-            profitFloor < current
-        ){
-            newSL = profitFloor
-        }
+            initialRisk * 0.90
 
     }else{
 
-        const profitFloor =
+        profitFloor =
             currentEntry -
-            initialRisk * 0.75
-
-        if(
-            profitFloor < newSL &&
-            profitFloor > current
-        ){
-            newSL = profitFloor
-        }
+            initialRisk * 0.90
     }
 }
 
-
-// =========================================================
-// R >= 3.00
-//
-// Runner protection.
-// =========================================================
 
 if(R >= 3.00){
 
     if(side === "LONG"){
 
-        const profitFloor =
+        profitFloor =
             currentEntry +
-            initialRisk * 1.00
+            initialRisk * 1.20
+
+    }else{
+
+        profitFloor =
+            currentEntry -
+            initialRisk * 1.20
+    }
+}
+
+
+// =========================================================
+// SELECT STRONGER SL
+//
+// LONG:
+// SL cao hơn = bảo vệ tốt hơn
+//
+// SHORT:
+// SL thấp hơn = bảo vệ tốt hơn
+// =========================================================
+
+if(
+    Number.isFinite(trailingSL)
+){
+
+    if(side === "LONG"){
+
+        if(trailingSL > newSL){
+            newSL = trailingSL
+        }
+
+    }else{
+
+        if(trailingSL < newSL){
+            newSL = trailingSL
+        }
+    }
+}
+
+
+if(
+    Number.isFinite(profitFloor)
+){
+
+    if(side === "LONG"){
 
         if(
             profitFloor > newSL &&
@@ -2943,10 +3057,6 @@ if(R >= 3.00){
         }
 
     }else{
-
-        const profitFloor =
-            currentEntry -
-            initialRisk * 1.00
 
         if(
             profitFloor < newSL &&
@@ -3003,12 +3113,14 @@ if(side === "LONG"){
 if(side === "LONG"){
 
     if(newSL >= current){
+
         newSL = oldSL
     }
 
 }else{
 
     if(newSL <= current){
+
         newSL = oldSL
     }
 }
@@ -4749,14 +4861,14 @@ const bullishMicroBreak =
     // Strong continuation candle
     const bullishStrongClose =
         c0 > o0 &&
-        br1 >= 0.55 &&
-        closeLong1 >= 0.72 &&
+        br1 >= 0.60 &&
+        closeLong1 >= 0.75 &&
         c0 > cPrev
 
     const bearishStrongClose =
         c0 < o0 &&
-        br1 >= 0.55 &&
-        closeShort1 >= 0.72 &&
+        br1 >= 0.60 &&
+        closeShort1 >= 0.75 &&
         c0 < cPrev
 
 const bullishTrigger =
@@ -5383,12 +5495,10 @@ const sweepRecoveryShort =
 
 const longRecovery =
     bullishRejection ||
-    reclaimEMA20Long ||
     sweepRecoveryLong
 
 const shortRecovery =
     bearishRejection ||
-    reclaimEMA20Short ||
     sweepRecoveryShort
     // =========================================================
         // =========================================================
@@ -5667,239 +5777,214 @@ if (
             : null
 
     // =========================================================
-    // 16. STOP LOSS
-    //
-    // SL theo structure.
-    // Không bóp SL quá sát.
-    // Không cho SL quá rộng.
-    // =========================================================
+// 16. STOP LOSS — TIGHT LOCAL STRUCTURE
+// =========================================================
 
-    const slBuffer =
-        Math.max(
-            atr1 * 0.50,
-            atr5 * 0.15
+const entry = price
+
+// Local structure gần entry
+const localLow5 =
+    lowest(
+        l5.slice(-6, -1),
+        5
+    )
+
+const localHigh5 =
+    highest(
+        h5.slice(-6, -1),
+        5
+    )
+
+// Rejection candle
+const rejectionLow =
+    Math.min(
+        l5Now,
+        l5.at(-2),
+        l5.at(-3)
+    )
+
+const rejectionHigh =
+    Math.max(
+        h5Now,
+        h5.at(-2),
+        h5.at(-3)
+    )
+
+// SL buffer vừa đủ tránh wick
+const slBuffer =
+    Math.max(
+        atr5 * 0.15,
+        price * 0.0005
+    )
+
+let sl
+let risk
+let tp
+
+if (longSetup) {
+
+    // Ưu tiên local pullback structure
+    const localStop =
+        Math.min(
+            localLow5,
+            rejectionLow
         )
 
-    const entry =
-        price
+    sl =
+        localStop -
+        slBuffer
 
-    let sl
-    let risk
-    let tp
+    risk =
+        entry -
+        sl
 
-    if (longSetup) {
+    if (
+        !Number.isFinite(risk) ||
+        risk <= 0
+    ) {
+        return reject("RISK_INVALID", {
+            side: "LONG",
+            risk: round(risk)
+        })
+    }
 
-        const structureStop =
-            Math.min(
-                swingLow5,
-                swingLow15
-            )
-
-        sl =
-            structureStop -
-            slBuffer
-
-        risk =
-            entry -
-            sl
-
-        if (
-            !Number.isFinite(risk) ||
-            risk <= 0
-        ) {
-            return reject("RISK_INVALID", {
-        side: "LONG",
-        risk: round(risk)
-    })
-        }
-
-        if (
-    risk <
-    atr5 * 0.30
-) {
-    return reject("RISK_TOO_SMALL", {
-        side: "LONG",
-        risk: round(risk),
-        atr5: round(atr5),
-        riskATR: round(risk / atr5, 3)
-    })
-}
-
-        // Không quá nhỏ
-        const maxRiskATRLong =
-    (
-        gap1h >= 0.0015 &&
-        gap15 >= 0.0010
+    // SL tối thiểu để tránh quá sát
+    const minRisk =
+    Math.max(
+        atr5 * 0.35,
+        price * 0.0015
     )
-        ? 5.00
-        : 4.50
 
-const riskATRLong =
-    risk / atr5
-
-if (
-    riskATRLong >
-    maxRiskATRLong
-) {
-    return reject("RISK_TOO_WIDE", {
-        side: "LONG",
-        risk: round(risk),
-        atr5: round(atr5),
-        riskATR: round(riskATRLong, 3),
-        maxRiskATR: maxRiskATRLong
-    })
-}
-
-        // Không quá rộng
-        if (
-            risk >
-            atr5 * 2.50
-        ) {
-            return reject("RISK_TOO_WIDE", {
-        side: "LONG",
-        risk: round(risk),
-        atr5: round(atr5),
-        riskATR: round(risk / atr5, 3)
-    })
-        }
-
-        if (
-            risk / entry >
-            0.018
-        ) {
-            return reject("RISK_PERCENT", {
-        side: "LONG",
-        riskPercent: round(risk / entry, 6),
-        risk: round(risk),
-        entry: round(entry)
-    })
-        }
-
-        // Room phía trước
-        if (resistance) {
-
-            const room =
-                resistance -
-                entry
-
-            if (
-                room <
-                risk * 1.35
-            ) {
-                return reject("ROOM_LONG", {
-                    side: "LONG",
-        room: round(room),
-        required: round(risk * 1.30),
-        risk: round(risk),
-        resistance: round(resistance),
-        entry: round(entry)
-    })
-            }
-        }
-
-        tp =
-            entry +
-            risk * 1.3
-
-    } else {
-
-        const structureStop =
-            Math.max(
-                swingHigh5,
-                swingHigh15
-            )
+    if (risk < minRisk) {
 
         sl =
-            structureStop +
-            slBuffer
+            entry -
+            minRisk
 
         risk =
-            sl -
+            minRisk
+    }
+
+    // Không cho SL quá rộng
+    const maxRisk =
+    Math.min(
+        atr5 * 1.40,
+        price * 0.008
+    )
+
+    if (risk > maxRisk) {
+        return reject("RISK_TOO_WIDE", {
+            side: "LONG",
+            risk: round(risk),
+            maxRisk: round(maxRisk),
+            riskATR: round(risk / atr5, 3)
+        })
+    }
+
+    // Phải có room
+    if (resistance) {
+
+        const room =
+            resistance -
             entry
 
         if (
-            !Number.isFinite(risk) ||
-            risk <= 0
+            room <
+            risk * 1.30
         ) {
-            return reject("RISK_INVALID", {
-        side: "SHORT",
-        risk: round(risk)
-    })
+            return reject("ROOM_LONG", {
+                side: "LONG",
+                room: round(room),
+                required: round(risk * 1.50),
+                risk: round(risk)
+            })
         }
-
-        if (
-            risk <
-            atr5 * 0.30
-        ) {
-            return reject("RISK_TOO_SMALL", {
-        side: "SHORT",
-        risk: round(risk),
-        atr5: round(atr5),
-        riskATR: round(risk / atr5, 3)
-    })
-        }
-
-        const maxRiskATRShort =
-    (
-        gap1h >= 0.0015 &&
-        gap15 >= 0.0010
-    )
-        ? 5.00
-        : 4.50
-
-const riskATRShort =
-    risk / atr5
-
-if (
-    riskATRShort >
-    maxRiskATRShort
-) {
-    return reject("RISK_TOO_WIDE", {
-        side: "SHORT",
-        risk: round(risk),
-        atr5: round(atr5),
-        riskATR: round(riskATRShort, 3),
-        maxRiskATR: maxRiskATRShort
-    })
-}
-
-        if (
-            risk / entry >
-            0.018
-        ) {
-            return reject("RISK_PERCENT", {
-        side: "SHORT",
-        riskPercent: round(risk / entry, 6),
-        risk: round(risk),
-        entry: round(entry)
-    })
-        }
-
-        if (support) {
-
-            const room =
-                entry -
-                support
-
-            if (
-                room <
-                risk * 1.35
-            ) {
-                return reject("ROOM_SHORT", {
-                    side: "SHORT",
-        room: round(room),
-        required: round(risk * 1.30),
-        risk: round(risk),
-        support: round(support),
-        entry: round(entry)
-    })
-            }
-        }
-
-        tp =
-            entry -
-            risk * 1.3
     }
+
+    tp =
+        entry +
+        risk * 1.30
+
+} else {
+
+    const localStop =
+        Math.max(
+            localHigh5,
+            rejectionHigh
+        )
+
+    sl =
+        localStop +
+        slBuffer
+
+    risk =
+        sl -
+        entry
+
+    if (
+        !Number.isFinite(risk) ||
+        risk <= 0
+    ) {
+        return reject("RISK_INVALID", {
+            side: "SHORT",
+            risk: round(risk)
+        })
+    }
+
+    const minRisk =
+        Math.max(
+            atr5 * 0.45,
+            price * 0.0020
+        )
+
+    if (risk < minRisk) {
+
+        sl =
+            entry +
+            minRisk
+
+        risk =
+            minRisk
+    }
+
+    const maxRisk =
+        Math.min(
+            atr5 * 1.60,
+            price * 0.010
+        )
+
+    if (risk > maxRisk) {
+        return reject("RISK_TOO_WIDE", {
+            side: "SHORT",
+            risk: round(risk),
+            maxRisk: round(maxRisk),
+            riskATR: round(risk / atr5, 3)
+        })
+    }
+
+    if (support) {
+
+        const room =
+            entry -
+            support
+
+        if (
+            room <
+            risk * 1.30
+        ) {
+            return reject("ROOM_SHORT", {
+                side: "SHORT",
+                room: round(room),
+                required: round(risk * 1.50),
+                risk: round(risk)
+            })
+        }
+    }
+
+    tp =
+        entry -
+        risk * 1.30
+}
 
     // =========================================================
     // 17. FINAL RR
