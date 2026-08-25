@@ -3307,10 +3307,10 @@ async function manageDynamicTPSL(trade) {
         await checkTimeError(e)
 
         console.log(
-            `❌ MANAGE DYNAMIC SL ERROR ` +
-            `${trade?.symbol || "UNKNOWN"}:`,
-            e.message
-        )
+        `❌ MANAGE DYNAMIC SL ERROR ` +
+        `${trade?.symbol || "UNKNOWN"}:`,
+        e.message
+    )
 
     } finally {
 
