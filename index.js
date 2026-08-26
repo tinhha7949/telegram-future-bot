@@ -5035,12 +5035,12 @@ async function coreLogic(data15, data1h, data5, data1m) {
     (
         price1h > ema50_1h ||
         (
-            price1h >= ema50_1h * 0.997 &&
-            slope1h > -0.0005
+            price1h >= ema50_1h * 0.995 &&
+            slope1h > -0.0012
         )
     ) &&
-    slope1h > -0.0005 &&
-    slope50_1h >= -0.00025
+    slope1h > -0.0012 &&
+    slope50_1h >= -0.0006
 
 const bear1h =
     ema20_1h < ema50_1h &&
@@ -5048,12 +5048,12 @@ const bear1h =
     (
         price1h < ema50_1h ||
         (
-            price1h <= ema50_1h * 1.003 &&
-            slope1h < 0.0005
+            price1h <= ema50_1h * 1.005 &&
+            slope1h < 0.0012
         )
     ) &&
-    slope1h < 0.0005 &&
-    slope50_1h <= 0.00025
+    slope1h < 0.0012 &&
+    slope50_1h <= 0.0006
     if (!bull1h && !bear1h) {
         return reject("1H_DIRECTION", {
             price1h: round(price1h),
@@ -5115,26 +5115,6 @@ const bear1h =
             h1RecentHigh <=
             h1PreviousHigh * 1.003
         )
-    if (
-        bull1h &&
-        !structureTrendLong
-    ) {
-        return reject("1H_STRUCTURE", {
-            side: "LONG",
-            bullishStructure1h,
-            bearishStructure1h
-        })
-    }
-    if (
-        bear1h &&
-        !structureTrendShort
-    ) {
-        return reject("1H_STRUCTURE", {
-            side: "SHORT",
-            bullishStructure1h,
-            bearishStructure1h
-        })
-    }
     // =========================================================
     // 4. 15M TREND
     //
@@ -5593,24 +5573,14 @@ const bear1h =
     // =========================================================
 
     const longSetup =
-        longBias &&
-        long15Pullback &&
-        (
-            bullishStructure15 ||
-            bullishRecovery15 ||
-            sweepLow15
-        ) &&
-        confirmationLong
+    longBias &&
+    long15Pullback &&
+    confirmationLong
 
-    const shortSetup =
-        shortBias &&
-        short15Pullback &&
-        (
-            bearishStructure15 ||
-            bearishRecovery15 ||
-            sweepHigh15
-        ) &&
-        confirmationShort
+const shortSetup =
+    shortBias &&
+    short15Pullback &&
+    confirmationShort
 
     if (
         !longSetup &&
