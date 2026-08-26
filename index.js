@@ -4818,13 +4818,7 @@ function resetCore24hStats() {
 }
 
 async function coreLogic(data15, data1h, data5, data1m) {
-
     CORE_TOTAL_CALLS++
-
-    // =========================================================
-    // 0. VALIDATION
-    // =========================================================
-
     if (
         !Array.isArray(data15) ||
         !Array.isArray(data1h) ||
@@ -4833,13 +4827,11 @@ async function coreLogic(data15, data1h, data5, data1m) {
     ) {
         return reject("VALIDATION")
     }
-
     // Chỉ dùng candle đã đóng
     data15 = data15.slice(0, -1)
     data1h = data1h.slice(0, -1)
     data5  = data5.slice(0, -1)
     data1m = data1m.slice(0, -1)
-
     if (
         data15.length < 140 ||
         data1h.length < 120 ||
@@ -4853,45 +4845,37 @@ async function coreLogic(data15, data1h, data5, data1m) {
             data1m: data1m.length
         })
     }
-
     // =========================================================
     // ARRAY
     // =========================================================
-
     const col = (data, n) =>
         data.map(x => Number(x[n]))
-
     const o15 = col(data15, 1)
     const h15 = col(data15, 2)
     const l15 = col(data15, 3)
     const c15 = col(data15, 4)
     const v15 = col(data15, 5)
-
     const o1h = col(data1h, 1)
     const h1h = col(data1h, 2)
     const l1h = col(data1h, 3)
     const c1h = col(data1h, 4)
     const v1h = col(data1h, 5)
-
     const o5 = col(data5, 1)
     const h5 = col(data5, 2)
     const l5 = col(data5, 3)
     const c5 = col(data5, 4)
     const v5 = col(data5, 5)
-
     const o1 = col(data1m, 1)
     const h1 = col(data1m, 2)
     const l1 = col(data1m, 3)
     const c1 = col(data1m, 4)
     const v1 = col(data1m, 5)
-
     const all = [
         o15, h15, l15, c15, v15,
         o1h, h1h, l1h, c1h, v1h,
         o5, h5, l5, c5, v5,
         o1, h1, l1, c1, v1
     ]
-
     if (
         all.flat().some(
             x => !Number.isFinite(x)
@@ -4899,139 +4883,105 @@ async function coreLogic(data15, data1h, data5, data1m) {
     ) {
         return reject("INVALID_DATA")
     }
-
     const price = c1.at(-1)
-
     if (
         !Number.isFinite(price) ||
         price <= 0
     ) {
         return reject("INVALID_DATA")
     }
-
     // =========================================================
     // HELPERS
     // =========================================================
-
     const avg = arr =>
         arr.length
             ? arr.reduce((sum, x) => sum + x, 0) / arr.length
             : 0
-
     const highest = (arr, n) =>
         arr.length >= n
             ? Math.max(...arr.slice(-n))
             : Math.max(...arr)
-
     const lowest = (arr, n) =>
         arr.length >= n
             ? Math.min(...arr.slice(-n))
             : Math.min(...arr)
-
     const range = (h, l) =>
         Math.max(h - l, 0)
-
     const bodyRatio = (o, h, l, c) => {
-
         const r = range(h, l)
-
         return r > 0
             ? Math.abs(c - o) / r
             : 0
     }
-
     const closeLocationLong = (h, l, c) => {
-
         const r = range(h, l)
-
         return r > 0
             ? (c - l) / r
             : 0
     }
-
     const closeLocationShort = (h, l, c) => {
-
         const r = range(h, l)
-
         return r > 0
             ? (h - c) / r
             : 0
     }
-
     const pct = (a, b) =>
         b !== 0
             ? (a - b) / b
             : 0
-
     const round = (n, d = 8) =>
         Number(
             Number(n).toFixed(d)
         )
-
     // =========================================================
     // CURRENT INDEX
     // =========================================================
-
     const i = c1.length - 1
-
     if (i < 3) {
         return reject("INVALID_DATA", {
             index: i
         })
     }
-
     const o0 = o1[i]
     const h0 = h1[i]
     const l0 = l1[i]
     const c0 = c1[i]
-
     const oPrev = o1[i - 1]
     const hPrev = h1[i - 1]
     const lPrev = l1[i - 1]
     const cPrev = c1[i - 1]
-
     // =========================================================
     // 1. ATR
     //
     // Dùng ATR HTF làm nền cho trade dài hơn.
     // =========================================================
-
     const atr1hRaw =
         atr(data1h.slice(-100))
-
     const atr15Raw =
         atr(data15.slice(-100))
-
     const atr5Raw =
         atr(data5.slice(-100))
-
     const atr1Raw =
         atr(data1m.slice(-80))
-
     const atr1h =
         Number.isFinite(atr1hRaw) && atr1hRaw > 0
             ? atr1hRaw
             : price * 0.004
-
     const atr15 =
         Number.isFinite(atr15Raw) && atr15Raw > 0
             ? atr15Raw
             : price * 0.0025
-
     const atr5 =
         Number.isFinite(atr5Raw) && atr5Raw > 0
             ? atr5Raw
             : price * 0.0012
-
     const atr1 =
         Number.isFinite(atr1Raw) && atr1Raw > 0
             ? atr1Raw
             : price * 0.0005
-
     const atrRatio1h = atr1h / price
     const atrRatio15 = atr15 / price
     const atrRatio5 = atr5 / price
-
     if (
         !Number.isFinite(atrRatio15) ||
         !Number.isFinite(atrRatio5) ||
@@ -5046,65 +4996,65 @@ async function coreLogic(data15, data1h, data5, data1m) {
             atrRatio5: round(atrRatio5, 6)
         })
     }
-
     // =========================================================
     // 2. 1H PRIMARY TREND
     //
     // 1H là hướng chính.
     // Không vào ngược 1H.
     // =========================================================
-
     const ema20_1h =
         ema(c1h.slice(-80), 20)
-
     const ema50_1h =
         ema(c1h.slice(-120), 50)
-
     const ema100_1h =
         ema(c1h.slice(-120), 100)
-
     const ema20_1hPrev =
         ema(c1h.slice(-81, -1), 20)
-
     const ema50_1hPrev =
         ema(c1h.slice(-121, -1), 50)
-
     const price1h =
         c1h.at(-1)
-
     const slope1h =
         pct(
             ema20_1h,
             ema20_1hPrev
         )
-
     const slope50_1h =
         pct(
             ema50_1h,
             ema50_1hPrev
         )
-
     const gap1h =
         Math.abs(
             ema20_1h - ema50_1h
         ) / price1h
 
     const bull1h =
-        ema20_1h > ema50_1h &&
-        ema50_1h >= ema100_1h &&
-        price1h > ema50_1h &&
-        slope1h > 0 &&
-        slope50_1h >= -0.00015
+    ema20_1h > ema50_1h &&
+    ema50_1h >= ema100_1h &&
+    (
+        price1h > ema50_1h ||
+        (
+            price1h >= ema50_1h * 0.997 &&
+            slope1h > -0.0005
+        )
+    ) &&
+    slope1h > -0.0005 &&
+    slope50_1h >= -0.00025
 
-    const bear1h =
-        ema20_1h < ema50_1h &&
-        ema50_1h <= ema100_1h &&
-        price1h < ema50_1h &&
-        slope1h < 0 &&
-        slope50_1h <= 0.00015
-
+const bear1h =
+    ema20_1h < ema50_1h &&
+    ema50_1h <= ema100_1h &&
+    (
+        price1h < ema50_1h ||
+        (
+            price1h <= ema50_1h * 1.003 &&
+            slope1h < 0.0005
+        )
+    ) &&
+    slope1h < 0.0005 &&
+    slope50_1h <= 0.00025
     if (!bull1h && !bear1h) {
-
         return reject("1H_DIRECTION", {
             price1h: round(price1h),
             ema20: round(ema20_1h),
@@ -5115,50 +5065,41 @@ async function coreLogic(data15, data1h, data5, data1m) {
             gap1h: round(gap1h, 6)
         })
     }
-
     const coreSide =
         bull1h
             ? "LONG"
             : "SHORT"
-
     // =========================================================
     // 3. 1H STRUCTURE
     //
     // Longer trade cần cấu trúc lớn.
     // =========================================================
-
     const h1RecentHigh =
         highest(
             h1h.slice(0, -2),
             24
         )
-
     const h1PreviousHigh =
         highest(
             h1h.slice(0, -14),
             12
         )
-
     const h1RecentLow =
         lowest(
             l1h.slice(0, -2),
             24
         )
-
     const h1PreviousLow =
         lowest(
             l1h.slice(0, -14),
             12
         )
-
     const bullishStructure1h =
         h1RecentHigh >= h1PreviousHigh &&
         h1RecentLow >= h1PreviousLow
-
     const bearishStructure1h =
         h1RecentHigh <= h1PreviousHigh &&
         h1RecentLow <= h1PreviousLow
-
     // Không yêu cầu tuyệt đối vì trend có thể đang pullback.
     const structureTrendLong =
         bullishStructure1h ||
@@ -5167,7 +5108,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             h1RecentLow >=
             h1PreviousLow * 0.997
         )
-
     const structureTrendShort =
         bearishStructure1h ||
         (
@@ -5175,7 +5115,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             h1RecentHigh <=
             h1PreviousHigh * 1.003
         )
-
     if (
         bull1h &&
         !structureTrendLong
@@ -5186,7 +5125,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             bearishStructure1h
         })
     }
-
     if (
         bear1h &&
         !structureTrendShort
@@ -5197,92 +5135,73 @@ async function coreLogic(data15, data1h, data5, data1m) {
             bearishStructure1h
         })
     }
-
     // =========================================================
     // 4. 15M TREND
     //
     // 15M phải xác nhận cùng hướng hoặc đang pullback hợp lệ.
     // =========================================================
-
     const ema20_15 =
         ema(c15.slice(-80), 20)
-
     const ema50_15 =
         ema(c15.slice(-120), 50)
-
     const ema100_15 =
         ema(c15.slice(-120), 100)
-
     const ema20_15Prev =
         ema(c15.slice(-81, -1), 20)
-
     const ema50_15Prev =
         ema(c15.slice(-121, -1), 50)
-
     const price15 =
         c15.at(-1)
-
     const slope15 =
         pct(
             ema20_15,
             ema20_15Prev
         )
-
     const slope50_15 =
         pct(
             ema50_15,
             ema50_15Prev
         )
-
     const gap15 =
         Math.abs(
             ema20_15 - ema50_15
         ) / price15
-
     const bull15 =
         ema20_15 > ema50_15 &&
         ema50_15 >= ema100_15 &&
         price15 > ema50_15 &&
         slope15 > 0
-
     const bear15 =
         ema20_15 < ema50_15 &&
         ema50_15 <= ema100_15 &&
         price15 < ema50_15 &&
         slope15 < 0
-
     // =========================================================
     // 5. 15M SWING STRUCTURE
     // =========================================================
-
     const recentHigh15 =
         highest(
             h15.slice(0, -2),
             20
         )
-
     const previousHigh15 =
         highest(
             h15.slice(0, -14),
             12
         )
-
     const recentLow15 =
         lowest(
             l15.slice(0, -2),
             20
         )
-
     const previousLow15 =
         lowest(
             l15.slice(0, -14),
             12
         )
-
     const bullishStructure15 =
         recentHigh15 >= previousHigh15 &&
         recentLow15 >= previousLow15
-
     const bearishStructure15 =
         recentHigh15 <= previousHigh15 &&
         recentLow15 <= previousLow15
@@ -5292,13 +5211,11 @@ async function coreLogic(data15, data1h, data5, data1m) {
     //
     // Đây là phần quan trọng nhất cho trade dài hơn.
     // =========================================================
-
     const pullbackTolerance15 =
         Math.max(
             atr15 * 0.55,
             price * 0.0025
         )
-
     const longPullbackEMA20 =
         bull1h &&
         (
@@ -5307,7 +5224,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
         ) &&
         price15 >=
         ema20_15 - pullbackTolerance15 * 1.20
-
     const longPullbackEMA50 =
         bull1h &&
         (
@@ -5316,7 +5232,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
         ) &&
         price15 >=
         ema50_15 - pullbackTolerance15 * 1.20
-
     const shortPullbackEMA20 =
         bear1h &&
         (
@@ -5325,7 +5240,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
         ) &&
         price15 <=
         ema20_15 + pullbackTolerance15 * 1.20
-
     const shortPullbackEMA50 =
         bear1h &&
         (
@@ -5334,33 +5248,25 @@ async function coreLogic(data15, data1h, data5, data1m) {
         ) &&
         price15 <=
         ema50_15 + pullbackTolerance15 * 1.20
-
     const long15Pullback =
         longPullbackEMA20 ||
         longPullbackEMA50
-
     const short15Pullback =
         shortPullbackEMA20 ||
         shortPullbackEMA50
-
     // =========================================================
     // 7. 15M RECOVERY / RECLAIM
     //
     // Sau pullback phải bắt đầu quay lại trend.
     // =========================================================
-
     const o15Now =
         o15.at(-1)
-
     const h15Now =
         h15.at(-1)
-
     const l15Now =
         l15.at(-1)
-
     const c15Now =
         c15.at(-1)
-
     const body15 =
         bodyRatio(
             o15Now,
@@ -5368,21 +5274,18 @@ async function coreLogic(data15, data1h, data5, data1m) {
             l15Now,
             c15Now
         )
-
     const closeLong15 =
         closeLocationLong(
             h15Now,
             l15Now,
             c15Now
         )
-
     const closeShort15 =
         closeLocationShort(
             h15Now,
             l15Now,
             c15Now
         )
-
     const bullishRecovery15 =
         c15Now > o15Now &&
         closeLong15 >= 0.58 &&
@@ -5390,7 +5293,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             c15Now > ema20_15 ||
             c15Now > c15.at(-2)
         )
-
     const bearishRecovery15 =
         c15Now < o15Now &&
         closeShort15 >= 0.58 &&
@@ -5398,14 +5300,11 @@ async function coreLogic(data15, data1h, data5, data1m) {
             c15Now < ema20_15 ||
             c15Now < c15.at(-2)
         )
-
     // =========================================================
     // 8. 15M SWEEP
-    // =========================================================
-
+    // ========================================================
     const sweepLookback15 =
         8
-
     const priorLow15 =
         lowest(
             l15.slice(
@@ -5414,7 +5313,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             ),
             sweepLookback15
         )
-
     const priorHigh15 =
         highest(
             h15.slice(
@@ -5423,56 +5321,43 @@ async function coreLogic(data15, data1h, data5, data1m) {
             ),
             sweepLookback15
         )
-
     const sweepLow15 =
         l15Now < priorLow15 &&
         c15Now > priorLow15
-
     const sweepHigh15 =
         h15Now > priorHigh15 &&
         c15Now < priorHigh15
-
     // =========================================================
     // 9. 5M TIMING
     //
     // 5M chỉ xác nhận entry.
     // Không dùng 5M để override 1H.
     // =========================================================
-
     const p5 =
         c5.at(-1)
-
     const p5Prev =
         c5.at(-2)
-
     const ema9_5 =
         ema(c5.slice(-50), 9)
-
     const ema20_5 =
         ema(c5.slice(-80), 20)
-
     const ema50_5 =
         ema(c5.slice(-120), 50)
-
     const ema9_5Prev =
         ema(c5.slice(-51, -1), 9)
-
     const slope9_5 =
         pct(
             ema9_5,
             ema9_5Prev
         )
-
     const trendLong5 =
         p5 > ema20_5 &&
         ema9_5 >= ema20_5 &&
         slope9_5 >= -0.0008
-
     const trendShort5 =
         p5 < ema20_5 &&
         ema9_5 <= ema20_5 &&
         slope9_5 <= 0.0008
-
     // Chỉ reject khi 5M chống trend quá mạnh.
     if (
         bull1h &&
@@ -5484,7 +5369,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             slope9_5: round(slope9_5, 6)
         })
     }
-
     if (
         bear1h &&
         ema20_5 > ema50_5 &&
@@ -5495,14 +5379,11 @@ async function coreLogic(data15, data1h, data5, data1m) {
             slope9_5: round(slope9_5, 6)
         })
     }
-
     // =========================================================
     // 10. 5M VOLUME
     // =========================================================
-
     const vol5Avg =
         avg(v5.slice(-21, -1))
-
     const vol5Now =
         v5.at(-1)
 
@@ -5510,7 +5391,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
         vol5Avg > 0
             ? vol5Now / vol5Avg
             : 1
-
     // Trade dài hạn không cần volume spike.
     // Chỉ reject khi volume chết hẳn.
     if (vol5Ratio < 0.35) {
@@ -5520,23 +5400,17 @@ async function coreLogic(data15, data1h, data5, data1m) {
             vol5Ratio: round(vol5Ratio, 3)
         })
     }
-
     // =========================================================
     // 11. 5M REACTION
     // =========================================================
-
     const o5Now =
         o5.at(-1)
-
     const h5Now =
         h5.at(-1)
-
     const l5Now =
         l5.at(-1)
-
     const c5Now =
         c5.at(-1)
-
     const body5 =
         bodyRatio(
             o5Now,
@@ -5544,27 +5418,22 @@ async function coreLogic(data15, data1h, data5, data1m) {
             l5Now,
             c5Now
         )
-
     const closeLong5 =
         closeLocationLong(
             h5Now,
             l5Now,
             c5Now
         )
-
     const closeShort5 =
         closeLocationShort(
             h5Now,
             l5Now,
             c5Now
         )
-
     const lowerWick5 =
         Math.min(o5Now, c5Now) - l5Now
-
     const upperWick5 =
         h5Now - Math.max(o5Now, c5Now)
-
     const bullishRejection =
         (
             c5Now > o5Now &&
@@ -5577,7 +5446,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             Math.abs(c5Now - o5Now) * 0.75 &&
             closeLong5 >= 0.60
         )
-
     const bearishRejection =
         (
             c5Now < o5Now &&
@@ -5590,11 +5458,9 @@ async function coreLogic(data15, data1h, data5, data1m) {
             Math.abs(c5Now - o5Now) * 0.75 &&
             closeShort5 >= 0.60
         )
-
     // =========================================================
     // 12. 5M RECLAIM
     // =========================================================
-
     const reclaimEMA20Long =
         c5Now > ema20_5 &&
         l5Now <=
@@ -5603,7 +5469,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             atr5 * 0.65,
             price * 0.0015
         )
-
     const reclaimEMA20Short =
         c5Now < ema20_5 &&
         h5Now >=
@@ -5612,21 +5477,18 @@ async function coreLogic(data15, data1h, data5, data1m) {
             atr5 * 0.65,
             price * 0.0015
         )
-
     const sweepLow5 =
         l5Now <
         lowest(
             l5.slice(-9, -1),
             8
         )
-
     const sweepHigh5 =
         h5Now >
         highest(
             h5.slice(-9, -1),
             8
         )
-
     const sweepRecoveryLong =
         sweepLow5 &&
         c5Now > o5Now &&
@@ -5636,7 +5498,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
         sweepHigh5 &&
         c5Now < o5Now &&
         closeShort5 >= 0.58
-
     const confirmationLong =
         (
             bullishRejection ||
@@ -5644,7 +5505,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             sweepRecoveryLong ||
             trendLong5
         )
-
     const confirmationShort =
         (
             bearishRejection ||
@@ -5652,14 +5512,12 @@ async function coreLogic(data15, data1h, data5, data1m) {
             sweepRecoveryShort ||
             trendShort5
         )
-
     // =========================================================
     // 13. 1M
     //
     // CHỈ dùng làm execution context.
     // Không được phép tự quyết định setup.
     // =========================================================
-
     const br1 =
         bodyRatio(
             o0,
@@ -5667,21 +5525,18 @@ async function coreLogic(data15, data1h, data5, data1m) {
             l0,
             c0
         )
-
     const closeLong1 =
         closeLocationLong(
             h0,
             l0,
             c0
         )
-
     const closeShort1 =
         closeLocationShort(
             h0,
             l0,
             c0
         )
-
     const bullishTrigger =
         c0 > o0 &&
         closeLong1 >= 0.55
@@ -5722,7 +5577,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             shortBias
         })
     }
-
     if (
         !longBias &&
         !shortBias
@@ -5736,21 +5590,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
             short15Pullback
         })
     }
-
-    // =========================================================
-    // 15. FINAL LONG / SHORT SETUP
-    //
-    // Bắt buộc:
-    //
-    // 1H trend
-    // +
-    // 15M structure
-    // +
-    // 15M pullback
-    // +
-    // 15M recovery hoặc 5M confirmation
-    //
-    // Không cần 1M trigger.
     // =========================================================
 
     const longSetup =
@@ -5782,29 +5621,20 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
             longBias,
             shortBias,
-
             bullishStructure15,
             bearishStructure15,
-
             long15Pullback,
             short15Pullback,
-
             bullishRecovery15,
             bearishRecovery15,
-
             confirmationLong,
             confirmationShort,
-
             trendLong5,
             trendShort5
         })
     }
-
     // =========================================================
     // 16. MOMENTUM / CHASE
-    //
-    // Không đuổi giá.
-    // Nhưng threshold rộng hơn scalp vì trade dài hơn.
     // =========================================================
 
     const move1 =
@@ -5986,9 +5816,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
     // =========================================================
     // 19. STOP LOSS
-    //
-    // Dùng structure 15M / 1H.
-    // Đây là thay đổi rất quan trọng.
     // =========================================================
 
     const slBuffer =
@@ -6671,134 +6498,86 @@ async function coreLogic(data15, data1h, data5, data1m) {
         },
 
         context: {
-
             h1Bull:
                 bull1h,
-
             h1Bear:
                 bear1h,
-
             bull15,
-
             bear15,
-
             bullishStructure1h,
-
             bearishStructure1h,
-
             bullishStructure15,
-
             bearishStructure15,
-
             structureTrendLong,
-
             structureTrendShort,
-
             long15Pullback,
-
             short15Pullback,
-
             longPullbackEMA20,
-
             longPullbackEMA50,
-
             shortPullbackEMA20,
-
             shortPullbackEMA50,
-
             bullishRecovery15,
-
             bearishRecovery15,
-
             sweepLow15,
-
             sweepHigh15,
-
             trendLong5,
-
             trendShort5,
-
             bullishRejection,
-
             bearishRejection,
-
             reclaimEMA20Long,
-
             reclaimEMA20Short,
-
             sweepRecoveryLong,
-
             sweepRecoveryShort,
-
             bullishTrigger,
-
             bearishTrigger,
-
             slope1h:
                 round(slope1h, 6),
-
             slope50_1h:
                 round(slope50_1h, 6),
-
             slope15:
                 round(slope15, 6),
-
             slope50_15:
                 round(slope50_15, 6),
-
             slope9_5:
                 round(slope9_5, 6),
-
             gap1h:
                 round(gap1h, 6),
-
             gap15:
                 round(gap15, 6),
-
             distFromEMA20_15:
                 round(
                     distFromEMA20_15,
                     6
                 ),
-
             maxChase15:
                 round(
                     maxChase15,
                     6
                 ),
-
             move1:
                 round(move1, 6),
-
             move3:
                 round(move3, 6),
-
             move5:
                 round(move5, 6)
         },
-
         risk: {
-
             risk:
                 round(risk),
-
             rr:
                 round(finalRR, 2),
-
             slDistance:
                 round(
                     Math.abs(
                         entry - sl
                     )
                 ),
-
             tpDistance:
                 round(
                     Math.abs(
                         tp - entry
                     )
                 ),
-
             riskATR15:
                 round(
                     risk / atr15,
