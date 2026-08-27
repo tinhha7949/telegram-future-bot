@@ -5371,6 +5371,8 @@ const bear1h =
         vol5Avg > 0
             ? vol5Now / vol5Avg
             : 1
+            const vol1Avg =
+    avg(v1.slice(-21, -1))
     // Trade dài hạn không cần volume spike.
     // Chỉ reject khi volume chết hẳn.
     if (vol5Ratio < 0.35) {
