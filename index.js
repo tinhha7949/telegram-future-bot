@@ -2315,126 +2315,6 @@ async function openPositionWithTPSL(trade, qty){
         delete TPSL_PENDING[symbol]
     }
 }
-async function updateTradeTPSLData(trade){
-
-    try{
-
-        const symbol =
-            String(trade?.symbol || "").trim()
-
-        if(!symbol){
-
-            console.log(
-                `❌ DB SAVE NO SYMBOL`
-            )
-
-            return false
-        }
-
-        const updateData = {
-
-            entry:
-                Number(trade.entry),
-
-            sl:
-                Number(trade.sl),
-
-            tp:
-                Number(trade.tp),
-
-            initialRisk:
-                Number(trade.initialRisk),
-
-            openedAt:
-                Number(trade.openedAt),
-
-            enteredAt:
-                Number(
-                    trade.enteredAt ||
-                    Date.now()
-                ),
-
-            updatedAt:
-                Date.now()
-        }
-
-        // =========================================
-        // VALIDATE DATA
-        // =========================================
-
-        if(
-            !Number.isFinite(updateData.entry) ||
-            updateData.entry <= 0 ||
-
-            !Number.isFinite(updateData.sl) ||
-            updateData.sl <= 0 ||
-
-            !Number.isFinite(updateData.tp) ||
-            updateData.tp <= 0 ||
-
-            !Number.isFinite(updateData.initialRisk) ||
-            updateData.initialRisk <= 0
-        ){
-
-            console.log(
-                `❌ INVALID TRADE DB DATA ${symbol}`,
-                updateData
-            )
-
-            return false
-        }
-
-        // =========================================
-        // UPDATE BY SYMBOL + PENDING
-        // =========================================
-
-        const result =
-            await trades.updateOne(
-
-                {
-                    symbol: symbol,
-                    result: "PENDING"
-                },
-
-                {
-                    $set: updateData
-                }
-            )
-
-        console.log(
-            `💾 DB UPDATE ${symbol} ` +
-            `MATCHED=${result.matchedCount} ` +
-            `MODIFIED=${result.modifiedCount}`
-        )
-
-        if(
-            result.matchedCount === 0
-        ){
-
-            console.log(
-                `❌ TRADE NOT FOUND DB ${symbol}`
-            )
-
-            return false
-        }
-
-        console.log(
-            `💾 TRADE STATE SAVED ${symbol}`
-        )
-
-        return true
-
-    }catch(e){
-
-        console.log(
-            `❌ SAVE TRADE STATE ${trade?.symbol || "UNKNOWN"}:`,
-            e.message
-        )
-
-        return false
-    }
-}
-
 async function manageDynamicTPSL(trade){
 
 try{
@@ -4819,47 +4699,31 @@ function resetCore24hStats() {
 
 async function coreLogic(data15, data1h, data5, data1m) {
     CORE_TOTAL_CALLS++
-    if (
-        !Array.isArray(data15) ||
-        !Array.isArray(data1h) ||
-        !Array.isArray(data5) ||
-        !Array.isArray(data1m)
-    ) {
-        return reject("VALIDATION")
-    }
-    // Chỉ dùng candle đã đóng
+
+    // =========================================================
+    // 0. VALIDATION
+    // =========================================================
+
+    if (!Array.isArray(data15) || !Array.isArray(data1h) || !Array.isArray(data5) || !Array.isArray(data1m)) return reject("VALIDATION")
+
     data15 = data15.slice(0, -1)
     data1h = data1h.slice(0, -1)
-    data5  = data5.slice(0, -1)
+    data5 = data5.slice(0, -1)
     data1m = data1m.slice(0, -1)
-    if (
-        data15.length < 140 ||
-        data1h.length < 120 ||
-        data5.length < 120 ||
-        data1m.length < 100
-    ) {
-        return reject("DATA_LENGTH", {
-            data15: data15.length,
-            data1h: data1h.length,
-            data5: data5.length,
-            data1m: data1m.length
-        })
+
+    if (data15.length < 120 || data1h.length < 100 || data5.length < 100 || data1m.length < 100) {
+        return reject("DATA_LENGTH", { data15: data15.length, data1h: data1h.length, data5: data5.length, data1m: data1m.length })
     }
-    // =========================================================
-    // ARRAY
-    // =========================================================
-    const col = (data, n) =>
-        data.map(x => Number(x[n]))
+
+    const col = (data, n) => data.map(x => Number(x))
     const o15 = col(data15, 1)
     const h15 = col(data15, 2)
     const l15 = col(data15, 3)
     const c15 = col(data15, 4)
-    const v15 = col(data15, 5)
     const o1h = col(data1h, 1)
     const h1h = col(data1h, 2)
     const l1h = col(data1h, 3)
     const c1h = col(data1h, 4)
-    const v1h = col(data1h, 5)
     const o5 = col(data5, 1)
     const h5 = col(data5, 2)
     const l5 = col(data5, 3)
@@ -4870,1214 +4734,587 @@ async function coreLogic(data15, data1h, data5, data1m) {
     const l1 = col(data1m, 3)
     const c1 = col(data1m, 4)
     const v1 = col(data1m, 5)
-    const all = [
-        o15, h15, l15, c15, v15,
-        o1h, h1h, l1h, c1h, v1h,
-        o5, h5, l5, c5, v5,
-        o1, h1, l1, c1, v1
-    ]
-    if (
-        all.flat().some(
-            x => !Number.isFinite(x)
-        )
-    ) {
-        return reject("INVALID_DATA")
-    }
+
+    const all = [o15, h15, l15, c15, o1h, h1h, l1h, c1h, o5, h5, l5, c5, v5, o1, h1, l1, c1, v1]
+
+    if (all.flat().some(x => !Number.isFinite(x))) return reject("INVALID_DATA")
+
     const price = c1.at(-1)
-    if (
-        !Number.isFinite(price) ||
-        price <= 0
-    ) {
-        return reject("INVALID_DATA")
-    }
+    if (!Number.isFinite(price) || price <= 0) return reject("INVALID_DATA")
+
     // =========================================================
     // HELPERS
     // =========================================================
-    const avg = arr =>
-        arr.length
-            ? arr.reduce((sum, x) => sum + x, 0) / arr.length
-            : 0
-    const highest = (arr, n) =>
-        arr.length >= n
-            ? Math.max(...arr.slice(-n))
-            : Math.max(...arr)
-    const lowest = (arr, n) =>
-        arr.length >= n
-            ? Math.min(...arr.slice(-n))
-            : Math.min(...arr)
-    const range = (h, l) =>
-        Math.max(h - l, 0)
+
+    const avg = arr => arr.length ? arr.reduce((sum, x) => sum + x, 0) / arr.length : 0
+    const highest = (arr, n) => arr.length >= n ? Math.max(...arr.slice(-n)) : Math.max(...arr)
+    const lowest = (arr, n) => arr.length >= n ? Math.min(...arr.slice(-n)) : Math.min(...arr)
+    const range = (h, l) => Math.max(h - l, 0)
+
     const bodyRatio = (o, h, l, c) => {
         const r = range(h, l)
-        return r > 0
-            ? Math.abs(c - o) / r
-            : 0
+        return r > 0 ? Math.abs(c - o) / r : 0
     }
+
     const closeLocationLong = (h, l, c) => {
         const r = range(h, l)
-        return r > 0
-            ? (c - l) / r
-            : 0
+        return r > 0 ? (c - l) / r : 0
     }
+
     const closeLocationShort = (h, l, c) => {
         const r = range(h, l)
-        return r > 0
-            ? (h - c) / r
-            : 0
+        return r > 0 ? (h - c) / r : 0
     }
-    const pct = (a, b) =>
-        b !== 0
-            ? (a - b) / b
-            : 0
-    const round = (n, d = 8) =>
-        Number(
-            Number(n).toFixed(d)
-        )
+
+    const pct = (a, b) => b !== 0 ? (a - b) / b : 0
+    const round = (n, d = 8) => Number(Number(n).toFixed(d))
+
     // =========================================================
-    // CURRENT INDEX
+    // 1M CURRENT CANDLE INDEX
     // =========================================================
+
     const i = c1.length - 1
-    if (i < 3) {
-        return reject("INVALID_DATA", {
-            index: i
-        })
-    }
-    const o0 = o1[i]
-    const h0 = h1[i]
-    const l0 = l1[i]
-    const c0 = c1[i]
-    const oPrev = o1[i - 1]
-    const hPrev = h1[i - 1]
-    const lPrev = l1[i - 1]
-    const cPrev = c1[i - 1]
+    if (i < 3) return reject("INVALID_DATA", { index: i })
+
+    const o0 = o1[i], h0 = h1[i], l0 = l1[i], c0 = c1[i]
+    const oPrev = o1[i - 1], hPrev = h1[i - 1], lPrev = l1[i - 1], cPrev = c1[i - 1]
+    const h2 = h1[i - 2], l2 = l1[i - 2]
+
+    // =========================================================
+    // 1M MICRO TRIGGER
+    // =========================================================
+
+    const br1 = bodyRatio(o0, h0, l0, c0)
+    const closeLong1 = closeLocationLong(h0, l0, c0)
+    const closeShort1 = closeLocationShort(h0, l0, c0)
+    const microHigh = Math.max(hPrev, h2)
+    const microLow = Math.min(lPrev, l2)
+
+    const bullishMicroBreak = c0 > o0 && br1 >= 0.40 && closeLong1 >= 0.62 && c0 > microHigh
+    const bearishMicroBreak = c0 < o0 && br1 >= 0.40 && closeShort1 >= 0.62 && c0 < microLow
+
+    const bullishStrongClose = c0 > o0 && br1 >= 0.55 && closeLong1 >= 0.72 && c0 > cPrev
+    const bearishStrongClose = c0 < o0 && br1 >= 0.55 && closeShort1 >= 0.72 && c0 < cPrev
+
+    const bullishTrigger = bullishMicroBreak || bullishStrongClose
+    const bearishTrigger = bearishMicroBreak || bearishStrongClose
+
     // =========================================================
     // 1. ATR
-    //
-    // Dùng ATR HTF làm nền cho trade dài hơn.
     // =========================================================
-    const atr1hRaw =
-        atr(data1h.slice(-100))
-    const atr15Raw =
-        atr(data15.slice(-100))
-    const atr5Raw =
-        atr(data5.slice(-100))
-    const atr1Raw =
-        atr(data1m.slice(-80))
-    const atr1h =
-        Number.isFinite(atr1hRaw) && atr1hRaw > 0
-            ? atr1hRaw
-            : price * 0.004
-    const atr15 =
-        Number.isFinite(atr15Raw) && atr15Raw > 0
-            ? atr15Raw
-            : price * 0.0025
-    const atr5 =
-        Number.isFinite(atr5Raw) && atr5Raw > 0
-            ? atr5Raw
-            : price * 0.0012
-    const atr1 =
-        Number.isFinite(atr1Raw) && atr1Raw > 0
-            ? atr1Raw
-            : price * 0.0005
+
+    const atr1hRaw = atr(data1h.slice(-80))
+    const atr15Raw = atr(data15.slice(-80))
+    const atr5Raw = atr(data5.slice(-80))
+    const atr1Raw = atr(data1m.slice(-80))
+
+    const atr1h = Number.isFinite(atr1hRaw) && atr1hRaw > 0 ? atr1hRaw : price * 0.004
+    const atr15 = Number.isFinite(atr15Raw) && atr15Raw > 0 ? atr15Raw : price * 0.002
+    const atr5 = Number.isFinite(atr5Raw) && atr5Raw > 0 ? atr5Raw : price * 0.001
+    const atr1 = Number.isFinite(atr1Raw) && atr1Raw > 0 ? atr1Raw : price * 0.0005
+
     const atrRatio1h = atr1h / price
     const atrRatio15 = atr15 / price
     const atrRatio5 = atr5 / price
-    if (
-        !Number.isFinite(atrRatio15) ||
-        !Number.isFinite(atrRatio5) ||
-        atrRatio15 <= 0 ||
-        atrRatio5 <= 0 ||
-        atrRatio15 > 0.08 ||
-        atrRatio5 > 0.035
-    ) {
-        return reject("ATR_INVALID", {
-            atrRatio1h: round(atrRatio1h, 6),
-            atrRatio15: round(atrRatio15, 6),
-            atrRatio5: round(atrRatio5, 6)
-        })
+
+    if (!Number.isFinite(atrRatio5) || atrRatio5 <= 0 || atrRatio5 > 0.025) {
+        return reject("ATR5", { atrRatio5: round(atrRatio5, 6) })
     }
-    // =========================================================
-    // 2. 1H PRIMARY TREND
-    //
-    // 1H là hướng chính.
-    // Không vào ngược 1H.
-    // =========================================================
-    const ema20_1h =
-        ema(c1h.slice(-80), 20)
-    const ema50_1h =
-        ema(c1h.slice(-120), 50)
-    const ema100_1h =
-        ema(c1h.slice(-120), 100)
-    const ema20_1hPrev =
-        ema(c1h.slice(-81, -1), 20)
-    const ema50_1hPrev =
-        ema(c1h.slice(-121, -1), 50)
-    const price1h =
-        c1h.at(-1)
-    const slope1h =
-        pct(
-            ema20_1h,
-            ema20_1hPrev
-        )
-    const slope50_1h =
-        pct(
-            ema50_1h,
-            ema50_1hPrev
-        )
-    const gap1h =
-        Math.abs(
-            ema20_1h - ema50_1h
-        ) / price1h
 
-    const bull1h =
-    ema20_1h > ema50_1h &&
-    ema50_1h >= ema100_1h &&
-    (
-        price1h > ema50_1h ||
-        (
-            price1h >= ema50_1h * 0.995 &&
-            slope1h > -0.0012
-        )
-    ) &&
-    slope1h > -0.0012 &&
-    slope50_1h >= -0.0006
+    // =========================================================
+    // 2. 1H DIRECTION
+    // =========================================================
 
-const bear1h =
-    ema20_1h < ema50_1h &&
-    ema50_1h <= ema100_1h &&
-    (
-        price1h < ema50_1h ||
-        (
-            price1h <= ema50_1h * 1.005 &&
-            slope1h < 0.0012
-        )
-    ) &&
-    slope1h < 0.0012 &&
-    slope50_1h <= 0.0006
+    const ema20_1h = ema(c1h.slice(-60), 20)
+    const ema50_1h = ema(c1h.slice(-90), 50)
+    const ema20_1hPrev = ema(c1h.slice(-61, -1), 20)
+    const price1h = c1h.at(-1)
+    const slope1h = pct(ema20_1h, ema20_1hPrev)
+    const gap1h = Math.abs(ema20_1h - ema50_1h) / price1h
+
+    const bull1h=ema20_1h>ema50_1h&&price1h>ema20_1h&&slope1h>0.00015&&gap1h>=0.001
+    const bear1h=ema20_1h<ema50_1h&&price1h<ema20_1h&&slope1h<-0.00015&&gap1h>=0.001
+
     if (!bull1h && !bear1h) {
         return reject("1H_DIRECTION", {
             price1h: round(price1h),
             ema20: round(ema20_1h),
             ema50: round(ema50_1h),
-            ema100: round(ema100_1h),
-            slope1h: round(slope1h, 6),
-            slope50_1h: round(slope50_1h, 6),
-            gap1h: round(gap1h, 6)
+            slope: round(slope1h, 6),
+            gap: round(gap1h, 6)
         })
     }
-    const coreSide =
-        bull1h
-            ? "LONG"
-            : "SHORT"
-    // =========================================================
-    // 3. 1H STRUCTURE
-    //
-    // Longer trade cần cấu trúc lớn.
-    // =========================================================
-    const h1RecentHigh =
-        highest(
-            h1h.slice(0, -2),
-            24
-        )
-    const h1PreviousHigh =
-        highest(
-            h1h.slice(0, -14),
-            12
-        )
-    const h1RecentLow =
-        lowest(
-            l1h.slice(0, -2),
-            24
-        )
-    const h1PreviousLow =
-        lowest(
-            l1h.slice(0, -14),
-            12
-        )
-    const bullishStructure1h =
-        h1RecentHigh >= h1PreviousHigh &&
-        h1RecentLow >= h1PreviousLow
-    const bearishStructure1h =
-        h1RecentHigh <= h1PreviousHigh &&
-        h1RecentLow <= h1PreviousLow
-    // Không yêu cầu tuyệt đối vì trend có thể đang pullback.
-    const structureTrendLong =
-        bullishStructure1h ||
-        (
-            bull1h &&
-            h1RecentLow >=
-            h1PreviousLow * 0.997
-        )
-    const structureTrendShort =
-        bearishStructure1h ||
-        (
-            bear1h &&
-            h1RecentHigh <=
-            h1PreviousHigh * 1.003
-        )
-    // =========================================================
-    // 4. 15M TREND
-    //
-    // 15M phải xác nhận cùng hướng hoặc đang pullback hợp lệ.
-    // =========================================================
-    const ema20_15 =
-        ema(c15.slice(-80), 20)
-    const ema50_15 =
-        ema(c15.slice(-120), 50)
-    const ema100_15 =
-        ema(c15.slice(-120), 100)
-    const ema20_15Prev =
-        ema(c15.slice(-81, -1), 20)
-    const ema50_15Prev =
-        ema(c15.slice(-121, -1), 50)
-    const price15 =
-        c15.at(-1)
-    const slope15 =
-        pct(
-            ema20_15,
-            ema20_15Prev
-        )
-    const slope50_15 =
-        pct(
-            ema50_15,
-            ema50_15Prev
-        )
-    const gap15 =
-        Math.abs(
-            ema20_15 - ema50_15
-        ) / price15
-    const bull15 =
-        ema20_15 > ema50_15 &&
-        ema50_15 >= ema100_15 &&
-        price15 > ema50_15 &&
-        slope15 > 0
-    const bear15 =
-        ema20_15 < ema50_15 &&
-        ema50_15 <= ema100_15 &&
-        price15 < ema50_15 &&
-        slope15 < 0
-    // =========================================================
-    // 5. 15M SWING STRUCTURE
-    // =========================================================
-    const recentHigh15 =
-        highest(
-            h15.slice(0, -2),
-            20
-        )
-    const previousHigh15 =
-        highest(
-            h15.slice(0, -14),
-            12
-        )
-    const recentLow15 =
-        lowest(
-            l15.slice(0, -2),
-            20
-        )
-    const previousLow15 =
-        lowest(
-            l15.slice(0, -14),
-            12
-        )
-    const bullishStructure15 =
-        recentHigh15 >= previousHigh15 &&
-        recentLow15 >= previousLow15
-    const bearishStructure15 =
-        recentHigh15 <= previousHigh15 &&
-        recentLow15 <= previousLow15
 
     // =========================================================
-    // 6. 15M PULLBACK
-    //
-    // Đây là phần quan trọng nhất cho trade dài hơn.
+    // 3. 15M TREND + BIAS
     // =========================================================
-    const pullbackTolerance15 =
-        Math.max(
-            atr15 * 0.55,
-            price * 0.0025
-        )
-    const longPullbackEMA20 =
-        bull1h &&
-        (
-            recentLow15 <=
-            ema20_15 + pullbackTolerance15
-        ) &&
-        price15 >=
-        ema20_15 - pullbackTolerance15 * 1.20
-    const longPullbackEMA50 =
-        bull1h &&
-        (
-            recentLow15 <=
-            ema50_15 + pullbackTolerance15
-        ) &&
-        price15 >=
-        ema50_15 - pullbackTolerance15 * 1.20
-    const shortPullbackEMA20 =
-        bear1h &&
-        (
-            recentHigh15 >=
-            ema20_15 - pullbackTolerance15
-        ) &&
-        price15 <=
-        ema20_15 + pullbackTolerance15 * 1.20
-    const shortPullbackEMA50 =
-        bear1h &&
-        (
-            recentHigh15 >=
-            ema50_15 - pullbackTolerance15
-        ) &&
-        price15 <=
-        ema50_15 + pullbackTolerance15 * 1.20
-    const long15Pullback =
-        longPullbackEMA20 ||
-        longPullbackEMA50
-    const short15Pullback =
-        shortPullbackEMA20 ||
-        shortPullbackEMA50
+
+    const ema20_15 = ema(c15.slice(-70), 20)
+    const ema50_15 = ema(c15.slice(-110), 50)
+    const ema20_15Prev = ema(c15.slice(-71, -1), 20)
+    const price15 = c15.at(-1)
+    const slope15 = pct(ema20_15, ema20_15Prev)
+    const gap15 = Math.abs(ema20_15 - ema50_15) / price15
+
+    const bull15 = ema20_15 > ema50_15 && price15 > ema20_15 && slope15 > 0
+    const bear15 = ema20_15 < ema50_15 && price15 < ema20_15 && slope15 < 0
+
     // =========================================================
-    // 7. 15M RECOVERY / RECLAIM
-    //
-    // Sau pullback phải bắt đầu quay lại trend.
+    // 15M PULLBACK STATES
     // =========================================================
-    const o15Now =
-        o15.at(-1)
-    const h15Now =
-        h15.at(-1)
-    const l15Now =
-        l15.at(-1)
-    const c15Now =
-        c15.at(-1)
-    const body15 =
-        bodyRatio(
-            o15Now,
-            h15Now,
-            l15Now,
-            c15Now
-        )
-    const closeLong15 =
-        closeLocationLong(
-            h15Now,
-            l15Now,
-            c15Now
-        )
-    const closeShort15 =
-        closeLocationShort(
-            h15Now,
-            l15Now,
-            c15Now
-        )
-    const bullishRecovery15 =
-        c15Now > o15Now &&
-        closeLong15 >= 0.58 &&
-        (
-            c15Now > ema20_15 ||
-            c15Now > c15.at(-2)
-        )
-    const bearishRecovery15 =
-        c15Now < o15Now &&
-        closeShort15 >= 0.58 &&
-        (
-            c15Now < ema20_15 ||
-            c15Now < c15.at(-2)
-        )
+
+    const long15Pullback=ema20_15>=ema50_15&&price15>=ema50_15*0.995&&price15<=ema20_15*1.012&&slope15>-0.0008
+    const short15Pullback=ema20_15<=ema50_15&&price15<=ema50_15*1.005&&price15>=ema20_15*0.988&&slope15<0.0008
+
     // =========================================================
-    // 8. 15M SWEEP
-    // ========================================================
-    const sweepLookback15 =
-        8
-    const priorLow15 =
-        lowest(
-            l15.slice(
-                -sweepLookback15 - 1,
-                -1
-            ),
-            sweepLookback15
-        )
-    const priorHigh15 =
-        highest(
-            h15.slice(
-                -sweepLookback15 - 1,
-                -1
-            ),
-            sweepLookback15
-        )
-    const sweepLow15 =
-        l15Now < priorLow15 &&
-        c15Now > priorLow15
-    const sweepHigh15 =
-        h15Now > priorHigh15 &&
-        c15Now < priorHigh15
+    // FINAL BIAS
     // =========================================================
-    // 9. 5M TIMING
-    //
-    // 5M chỉ xác nhận entry.
-    // Không dùng 5M để override 1H.
-    // =========================================================
-    const p5 =
-        c5.at(-1)
-    const p5Prev =
-        c5.at(-2)
-    const ema9_5 =
-        ema(c5.slice(-50), 9)
-    const ema20_5 =
-        ema(c5.slice(-80), 20)
-    const ema50_5 =
-        ema(c5.slice(-120), 50)
-    const ema9_5Prev =
-        ema(c5.slice(-51, -1), 9)
-    const slope9_5 =
-        pct(
-            ema9_5,
-            ema9_5Prev
-        )
-    const trendLong5 =
-        p5 > ema20_5 &&
-        ema9_5 >= ema20_5 &&
-        slope9_5 >= -0.0008
-    const trendShort5 =
-        p5 < ema20_5 &&
-        ema9_5 <= ema20_5 &&
-        slope9_5 <= 0.0008
-    // Chỉ reject khi 5M chống trend quá mạnh.
-    if (
-        bull1h &&
-        ema20_5 < ema50_5 &&
-        slope9_5 < -0.0025
-    ) {
-        return reject("5M_COUNTER_TREND", {
-            side: "LONG",
-            slope9_5: round(slope9_5, 6)
-        })
+
+    const longBias = bull1h && (bull15 || long15Pullback)
+    const shortBias = bear1h && (bear15 || short15Pullback)
+
+    if (longBias && shortBias) {
+        return reject("BIAS_CONFLICT", { longBias, shortBias, slope1h: round(slope1h, 6), slope15: round(slope15, 6) })
     }
-    if (
-        bear1h &&
-        ema20_5 > ema50_5 &&
-        slope9_5 > 0.0025
-    ) {
-        return reject("5M_COUNTER_TREND", {
-            side: "SHORT",
-            slope9_5: round(slope9_5, 6)
-        })
-    }
-    // =========================================================
-    // 10. 5M VOLUME
-    // =========================================================
-    const vol5Avg =
-        avg(v5.slice(-21, -1))
-    const vol5Now =
-        v5.at(-1)
 
-    const vol5Ratio =
-        vol5Avg > 0
-            ? vol5Now / vol5Avg
-            : 1
-            const vol1Avg =
-    avg(v1.slice(-21, -1))
-    // Trade dài hạn không cần volume spike.
-    // Chỉ reject khi volume chết hẳn.
-    if (vol5Ratio < 0.35) {
-
-        return reject("VOL5", {
-            side: coreSide,
-            vol5Ratio: round(vol5Ratio, 3)
-        })
-    }
-    // =========================================================
-    // 11. 5M REACTION
-    // =========================================================
-    const o5Now =
-        o5.at(-1)
-    const h5Now =
-        h5.at(-1)
-    const l5Now =
-        l5.at(-1)
-    const c5Now =
-        c5.at(-1)
-    const body5 =
-        bodyRatio(
-            o5Now,
-            h5Now,
-            l5Now,
-            c5Now
-        )
-    const closeLong5 =
-        closeLocationLong(
-            h5Now,
-            l5Now,
-            c5Now
-        )
-    const closeShort5 =
-        closeLocationShort(
-            h5Now,
-            l5Now,
-            c5Now
-        )
-    const lowerWick5 =
-        Math.min(o5Now, c5Now) - l5Now
-    const upperWick5 =
-        h5Now - Math.max(o5Now, c5Now)
-    const bullishRejection =
-        (
-            c5Now > o5Now &&
-            body5 >= 0.30 &&
-            closeLong5 >= 0.58
-        )
-        ||
-        (
-            lowerWick5 >=
-            Math.abs(c5Now - o5Now) * 0.75 &&
-            closeLong5 >= 0.60
-        )
-    const bearishRejection =
-        (
-            c5Now < o5Now &&
-            body5 >= 0.30 &&
-            closeShort5 >= 0.58
-        )
-        ||
-        (
-            upperWick5 >=
-            Math.abs(c5Now - o5Now) * 0.75 &&
-            closeShort5 >= 0.60
-        )
-    // =========================================================
-    // 12. 5M RECLAIM
-    // =========================================================
-    const reclaimEMA20Long =
-        c5Now > ema20_5 &&
-        l5Now <=
-        ema20_5 +
-        Math.max(
-            atr5 * 0.65,
-            price * 0.0015
-        )
-    const reclaimEMA20Short =
-        c5Now < ema20_5 &&
-        h5Now >=
-        ema20_5 -
-        Math.max(
-            atr5 * 0.65,
-            price * 0.0015
-        )
-    const sweepLow5 =
-        l5Now <
-        lowest(
-            l5.slice(-9, -1),
-            8
-        )
-    const sweepHigh5 =
-        h5Now >
-        highest(
-            h5.slice(-9, -1),
-            8
-        )
-    const sweepRecoveryLong =
-        sweepLow5 &&
-        c5Now > o5Now &&
-        closeLong5 >= 0.58
-
-    const sweepRecoveryShort =
-        sweepHigh5 &&
-        c5Now < o5Now &&
-        closeShort5 >= 0.58
-    const confirmationLong =
-        (
-            bullishRejection ||
-            reclaimEMA20Long ||
-            sweepRecoveryLong ||
-            trendLong5
-        )
-    const confirmationShort =
-        (
-            bearishRejection ||
-            reclaimEMA20Short ||
-            sweepRecoveryShort ||
-            trendShort5
-        )
-    // =========================================================
-    // 13. 1M
-    //
-    // CHỈ dùng làm execution context.
-    // Không được phép tự quyết định setup.
-    // =========================================================
-    const br1 =
-        bodyRatio(
-            o0,
-            h0,
-            l0,
-            c0
-        )
-    const closeLong1 =
-        closeLocationLong(
-            h0,
-            l0,
-            c0
-        )
-    const closeShort1 =
-        closeLocationShort(
-            h0,
-            l0,
-            c0
-        )
-    const bullishTrigger =
-        c0 > o0 &&
-        closeLong1 >= 0.55
-
-    const bearishTrigger =
-        c0 < o0 &&
-        closeShort1 >= 0.55
-
-    // Không yêu cầu trigger 1M.
-    // Chỉ dùng làm bonus/context.
-
-    // =========================================================
-    // 14. FINAL BIAS
-    // =========================================================
-
-    const longBias =
-        bull1h &&
-        structureTrendLong &&
-        (
-            bull15 ||
-            long15Pullback
-        )
-
-    const shortBias =
-        bear1h &&
-        structureTrendShort &&
-        (
-            bear15 ||
-            short15Pullback
-        )
-
-    if (
-        longBias &&
-        shortBias
-    ) {
-        return reject("BIAS_CONFLICT", {
-            longBias,
-            shortBias
-        })
-    }
-    if (
-        !longBias &&
-        !shortBias
-    ) {
+    if (!longBias && !shortBias) {
         return reject("BIAS", {
             bull1h,
             bear1h,
             bull15,
             bear15,
             long15Pullback,
-            short15Pullback
-        })
-    }
-    // =========================================================
-
-    const longSetup =
-    longBias &&
-    long15Pullback &&
-    confirmationLong
-
-const shortSetup =
-    shortBias &&
-    short15Pullback &&
-    confirmationShort
-
-    if (
-        !longSetup &&
-        !shortSetup
-    ) {
-        return reject("FINAL_SETUP", {
-            side: coreSide,
-
+            short15Pullback,
             longBias,
             shortBias,
-            bullishStructure15,
-            bearishStructure15,
-            long15Pullback,
-            short15Pullback,
-            bullishRecovery15,
-            bearishRecovery15,
-            confirmationLong,
-            confirmationShort,
-            trendLong5,
-            trendShort5
-        })
-    }
-    // =========================================================
-    // 16. MOMENTUM / CHASE
-    // =========================================================
-
-    const move1 =
-        pct(c0, cPrev)
-
-    const move3 =
-        pct(
-            c0,
-            c1.at(-4)
-        )
-
-    const move5 =
-        pct(
-            c0,
-            c1.at(-6)
-        )
-
-    if (
-        Math.abs(move5) > 0.045
-    ) {
-        return reject("CHASE_MOMENTUM", {
-            side: coreSide,
-            move5: round(move5, 6)
+            slope1h: round(slope1h, 6),
+            slope15: round(slope15, 6),
+            gap1h: round(gap1h, 6),
+            gap15: round(gap15, 6)
         })
     }
 
-    const distFromEMA20_15 =
-        Math.abs(
-            price - ema20_15
-        ) / price
-
-    const maxChase15 =
-        Math.max(
-            (atr15 / price) * 1.60,
-            0.010
-        )
-
-    if (
-        distFromEMA20_15 >
-        maxChase15
-    ) {
-        return reject("CHASE_15M", {
-            side: coreSide,
-            distFromEMA20_15:
-                round(distFromEMA20_15, 6),
-            maxChase15:
-                round(maxChase15, 6)
-        })
-    }
+    const coreSide = longBias ? "LONG" : shortBias ? "SHORT" : "NONE"
 
     // =========================================================
-    // 17. RSI
-    //
-    // Không dùng RSI làm reversal.
-    // Chỉ tránh entry quá cực đoan.
+    // 4. 15M STRUCTURE
     // =========================================================
 
-    const rsi15 =
-        rsi(c15.slice(-60))
+    const structureHigh15 = highest(h15.slice(0, -2), 24)
+    const structureLow15 = lowest(l15.slice(0, -2), 24)
+    const oldHigh15 = highest(h15.slice(0, -14), 12)
+    const oldLow15 = lowest(l15.slice(0, -14), 12)
 
-    const rsi5 =
-        rsi(c5.slice(-60))
+    const bullishStructure15 = structureHigh15 >= oldHigh15 && structureLow15 >= oldLow15
+    const bearishStructure15 = structureHigh15 <= oldHigh15 && structureLow15 <= oldLow15
 
-    const rsi1 =
-        rsi(c1.slice(-60))
+    const structureOKLong = bullishStructure15 || (longBias && structureLow15 >= oldLow15 * 0.998)
+    const structureOKShort = bearishStructure15 || (shortBias && structureHigh15 <= oldHigh15 * 1.002)
 
-    if (
-        !Number.isFinite(rsi15) ||
-        !Number.isFinite(rsi5)
-    ) {
-        return reject("RSI_INVALID", {
-            side: coreSide,
-            rsi15,
-            rsi5
-        })
-    }
+    // =========================================================
+    // 5. 5M TREND
+    // =========================================================
 
-    if (
-        longBias &&
-        rsi15 > 74
-    ) {
-        return reject("RSI_LONG_EXTREME", {
+    const p5 = c5.at(-1)
+    const ema9_5 = ema(c5.slice(-40), 9)
+    const ema20_5 = ema(c5.slice(-60), 20)
+    const ema50_5 = ema(c5.slice(-100), 50)
+    const ema9_5Prev = ema(c5.slice(-41, -1), 9)
+    const slope9_5 = pct(ema9_5, ema9_5Prev)
+
+    const trendLong5 = p5 > ema20_5 && ema9_5 > ema20_5 && ema20_5 > ema50_5 && slope9_5 > 0
+    const trendShort5 = p5 < ema20_5 && ema9_5 < ema20_5 && ema20_5 < ema50_5 && slope9_5 < 0
+
+    // =========================================================
+    // 5M COUNTER-TREND FILTER
+    // =========================================================
+
+    if (longBias && ema20_5 < ema50_5 && slope9_5 < -0.0012) {
+        return reject("5M_COUNTER_TREND", {
             side: "LONG",
-            rsi15: round(rsi15, 2)
+            ema20_5: round(ema20_5),
+            ema50_5: round(ema50_5),
+            slope9_5: round(slope9_5, 6)
         })
     }
 
-    if (
-        shortBias &&
-        rsi15 < 26
-    ) {
-        return reject("RSI_SHORT_EXTREME", {
+    if (shortBias && ema20_5 > ema50_5 && slope9_5 > 0.0012) {
+        return reject("5M_COUNTER_TREND", {
             side: "SHORT",
-            rsi15: round(rsi15, 2)
+            ema20_5: round(ema20_5),
+            ema50_5: round(ema50_5),
+            slope9_5: round(slope9_5, 6)
         })
     }
 
     // =========================================================
-    // 18. SUPPORT / RESISTANCE
-    //
-    // Lấy HTF structure để tính room.
+    // 6. 5M VOLUME
     // =========================================================
 
-    const swingHigh5 =
-        highest(
-            h5.slice(0, -1),
-            24
-        )
+    const vol5Avg = avg(v5.slice(-21, -1))
+    const vol5Now = v5.at(-1)
+    const vol5Ratio = vol5Avg > 0 ? vol5Now / vol5Avg : 1
 
-    const swingLow5 =
-        lowest(
-            l5.slice(0, -1),
-            24
-        )
-
-    const swingHigh15 =
-        highest(
-            h15.slice(0, -1),
-            24
-        )
-
-    const swingLow15 =
-        lowest(
-            l15.slice(0, -1),
-            24
-        )
-
-    const swingHigh1h =
-        highest(
-            h1h.slice(0, -1),
-            20
-        )
-
-    const swingLow1h =
-        lowest(
-            l1h.slice(0, -1),
-            20
-        )
-
-    const resistanceCandidates = [
-        swingHigh5,
-        swingHigh15,
-        swingHigh1h,
-        recentHigh15,
-        h1RecentHigh
-    ]
-        .filter(
-            x =>
-                Number.isFinite(x) &&
-                x > price
-        )
-
-    const supportCandidates = [
-        swingLow5,
-        swingLow15,
-        swingLow1h,
-        recentLow15,
-        h1RecentLow
-    ]
-        .filter(
-            x =>
-                Number.isFinite(x) &&
-                x < price
-        )
-
-    const resistance =
-        resistanceCandidates.length
-            ? Math.min(
-                ...resistanceCandidates
-            )
-            : null
-
-    const support =
-        supportCandidates.length
-            ? Math.max(
-                ...supportCandidates
-            )
-            : null
+    if (vol5Ratio < 0.45) {
+        return reject("VOL5", { side: coreSide, vol5Ratio: round(vol5Ratio, 3) })
+    }
 
     // =========================================================
-    // 19. STOP LOSS
+    // 7. PULLBACK LOCATION
     // =========================================================
 
-    const slBuffer =
-        Math.max(
-            atr15 * 0.22,
-            atr5 * 0.30,
-            price * 0.001
-        )
+    const recentLow5 = lowest(l5.slice(0, -1), 8)
+    const recentHigh5 = highest(h5.slice(0, -1), 8)
+    const recentClose5 = c5.at(-1)
 
-    const entry =
-        price
+    const pullbackTolerance = Math.max(atr5 * 0.50, price * 0.0012)
+
+    const pullbackEMA20Long = recentLow5 <= ema20_5 + pullbackTolerance
+    const pullbackEMA20Short = recentHigh5 >= ema20_5 - pullbackTolerance
+
+    const pullbackEMA50Long = recentLow5 <= ema50_5 + pullbackTolerance
+    const pullbackEMA50Short = recentHigh5 >= ema50_5 - pullbackTolerance
+
+    const structureTolerance = Math.max(atr5 * 0.55, price * 0.0015)
+
+    const structureRetestLong = recentLow5 <= structureHigh15 + structureTolerance && recentClose5 >= structureHigh15 - structureTolerance
+    const structureRetestShort = recentHigh5 >= structureLow15 - structureTolerance && recentClose5 <= structureLow15 + structureTolerance
+
+    const pullbackLong = pullbackEMA20Long || pullbackEMA50Long || structureRetestLong
+    const pullbackShort = pullbackEMA20Short || pullbackEMA50Short || structureRetestShort
+
+    if (longBias && !pullbackLong) {
+        return reject("PULLBACK", {
+            side: "LONG",
+            pullbackEMA20Long,
+            pullbackEMA50Long,
+            structureRetestLong,
+            atr5: round(atr5),
+            pullbackTolerance: round(pullbackTolerance)
+        })
+    }
+
+    if (shortBias && !pullbackShort) {
+        return reject("PULLBACK", {
+            side: "SHORT",
+            pullbackEMA20Short,
+            pullbackEMA50Short,
+            structureRetestShort,
+            atr5: round(atr5),
+            pullbackTolerance: round(pullbackTolerance)
+        })
+    }
+
+    // =========================================================
+    // 8. 5M REJECTION
+    // =========================================================
+
+    const o5Now = o5.at(-1)
+    const h5Now = h5.at(-1)
+    const l5Now = l5.at(-1)
+    const c5Now = c5.at(-1)
+
+    const body5 = bodyRatio(o5Now, h5Now, l5Now, c5Now)
+    const closeLong5 = closeLocationLong(h5Now, l5Now, c5Now)
+    const closeShort5 = closeLocationShort(h5Now, l5Now, c5Now)
+
+    const lowerWick5 = Math.min(o5Now, c5Now) - l5Now
+    const upperWick5 = h5Now - Math.max(o5Now, c5Now)
+
+    const bullishRejection =
+        (c5Now > o5Now && body5 >= 0.30 && closeLong5 >= 0.58) ||
+        (lowerWick5 >= Math.abs(c5Now - o5Now) * 0.8 && closeLong5 >= 0.62)
+
+    const bearishRejection =
+        (c5Now < o5Now && body5 >= 0.30 && closeShort5 >= 0.58) ||
+        (upperWick5 >= Math.abs(c5Now - o5Now) * 0.8 && closeShort5 >= 0.62)
+
+    // =========================================================
+    // 8.5. 5M PULLBACK RECOVERY
+    // =========================================================
+
+    const reclaimEMA20Long = c5Now > ema20_5 && l5Now <= ema20_5 + pullbackTolerance
+    const reclaimEMA20Short = c5Now < ema20_5 && h5Now >= ema20_5 - pullbackTolerance
+
+    const sweepLow5 = l5Now < lowest(l5.slice(-8, -1), 7)
+    const sweepHigh5 = h5Now > highest(h5.slice(-8, -1), 7)
+
+    const sweepRecoveryLong = sweepLow5 && c5Now > o5Now && closeLong5 >= 0.60
+    const sweepRecoveryShort = sweepHigh5 && c5Now < o5Now && closeShort5 >= 0.60
+
+    const longRecovery = bullishRejection || reclaimEMA20Long || sweepRecoveryLong
+    const shortRecovery = bearishRejection || reclaimEMA20Short || sweepRecoveryShort
+
+    // =========================================================
+    // FLEXIBLE CONFIRMATION
+    // =========================================================
+
+    const longConfirmation=bullishRejection||sweepRecoveryLong||(reclaimEMA20Long&&bullishTrigger)
+    const shortConfirmation=bearishRejection||sweepRecoveryShort||(reclaimEMA20Short&&bearishTrigger)
+
+    if (longBias && !longConfirmation) {
+        return reject("CONFIRMATION", {
+            side: "LONG",
+            pullbackLong,
+            bullishRejection,
+            bullishTrigger,
+            bullishMicroBreak,
+            bullishStrongClose
+        })
+    }
+
+    if (shortBias && !shortConfirmation) {
+        return reject("CONFIRMATION", {
+            side: "SHORT",
+            pullbackShort,
+            bearishRejection,
+            bearishTrigger,
+            bearishMicroBreak,
+            bearishStrongClose
+        })
+    }
+
+    // =========================================================
+    // 10. 1M VOLUME
+    // =========================================================
+
+    const vol1Avg = avg(v1.slice(-21, -1))
+    const vol1Now = v1.at(-1)
+    const vol1Ratio = vol1Avg > 0 ? vol1Now / vol1Avg : 1
+
+    if (vol1Ratio < 0.25) {
+        return reject("VOL1", { side: coreSide, vol1Ratio: round(vol1Ratio, 3) })
+    }
+
+    // =========================================================
+    // 11. CHASE FILTER
+    // =========================================================
+
+    const distFromEMA20 = Math.abs(price - ema20_5) / price
+    const maxChase = Math.max((atr5 / price) * 1.80, 0.006)
+
+    if (distFromEMA20 > maxChase) {
+        return reject("CHASE", {
+            side: coreSide,
+            distFromEMA20: round(distFromEMA20, 6),
+            maxChase: round(maxChase, 6)
+        })
+    }
+
+    // =========================================================
+    // 12. RSI EXTREME FILTER
+    // =========================================================
+
+    const rsi5 = rsi(c5.slice(-50))
+    const rsi1 = rsi(c1.slice(-50))
+
+    if (!Number.isFinite(rsi5) || !Number.isFinite(rsi1)) {
+        return reject("RSI_INVALID", { side: coreSide, rsi5, rsi1 })
+    }
+
+    if (longBias && rsi5 > 76) {
+        return reject("RSI_LONG_EXTREME", { side: "LONG", rsi5: round(rsi5, 2) })
+    }
+
+    if (shortBias && rsi5 < 24) {
+        return reject("RSI_SHORT_EXTREME", { side: "SHORT", rsi5: round(rsi5, 2) })
+    }
+
+    // =========================================================
+    // 13. FINAL SETUP
+    // =========================================================
+
+    const longSetup=longBias&&structureOKLong&&pullbackLong&&longRecovery&&(bullishRejection||sweepRecoveryLong||(reclaimEMA20Long&&bullishTrigger))
+    const shortSetup=shortBias&&structureOKShort&&pullbackShort&&shortRecovery&&(bearishRejection||sweepRecoveryShort||(reclaimEMA20Short&&bearishTrigger))
+
+    if (!longSetup && !shortSetup) {
+        return reject("FINAL_SETUP", {
+            side: coreSide,
+            longBias,
+            shortBias,
+            structureOKLong,
+            structureOKShort,
+            trendLong5,
+            trendShort5,
+            pullbackLong,
+            pullbackShort,
+            longConfirmation,
+            shortConfirmation,
+            bullishTrigger,
+            bearishTrigger
+            //,
+            // longPullbackRecovery,
+            // shortPullbackRecovery
+        })
+    }
+
+    // =========================================================
+    // 14. SWING / STRUCTURE FOR SL
+    // =========================================================
+
+    const swingHigh5 = highest(h5.slice(0, -1), 20)
+    const swingLow5 = lowest(l5.slice(0, -1), 20)
+    const swingHigh15 = highest(h15.slice(0, -1), 16)
+    const swingLow15 = lowest(l15.slice(0, -1), 16)
+
+    // =========================================================
+    // 15. SUPPORT / RESISTANCE
+    // =========================================================
+
+    const resistanceCandidates = [swingHigh5, swingHigh15, structureHigh15].filter(x => Number.isFinite(x) && x > price)
+    const supportCandidates = [swingLow5, swingLow15, structureLow15].filter(x => Number.isFinite(x) && x < price)
+
+    const resistance = resistanceCandidates.length ? Math.min(...resistanceCandidates) : null
+    const support = supportCandidates.length ? Math.max(...supportCandidates) : null
+
+    // =========================================================
+    // 16. STOP LOSS
+    // =========================================================
+
+    const slBuffer = Math.max(atr1 * 0.50, atr5 * 0.15)
+    const entry = price
 
     let sl
     let risk
     let tp
 
-    // =========================================================
-    // LONG SL
-    // =========================================================
-
     if (longSetup) {
+        const structureStop = Math.min(swingLow5, swingLow15)
 
-        const structureStop =
-            Math.min(
-                swingLow15,
-                swingLow1h,
-                recentLow15
-            )
+        sl = structureStop - slBuffer
+        risk = entry - sl
 
-        sl =
-            structureStop -
-            slBuffer
+        if (!Number.isFinite(risk) || risk <= 0) {
+            return reject("RISK_INVALID", { side: "LONG", risk: round(risk) })
+        }
 
-        risk =
-            entry - sl
-
-        if (
-            !Number.isFinite(risk) ||
-            risk <= 0
-        ) {
-            return reject("RISK_INVALID", {
+        if (risk < atr5 * 0.30) {
+            return reject("RISK_TOO_SMALL", {
                 side: "LONG",
-                risk: round(risk)
+                risk: round(risk),
+                atr5: round(atr5),
+                riskATR: round(risk / atr5, 3)
             })
         }
 
-        const riskATR15 =
-            risk / atr15
+        const maxRiskATRLong = gap1h >= 0.0015 && gap15 >= 0.0010 ? 5.00 : 4.50
+        const riskATRLong = risk / atr5
 
-        // Trade dài hơn nhưng không cho SL vô hạn.
-        if (
-            riskATR15 > 3.80
-        ) {
+        if (riskATRLong > maxRiskATRLong) {
             return reject("RISK_TOO_WIDE", {
                 side: "LONG",
                 risk: round(risk),
-                atr15: round(atr15),
-                riskATR15:
-                    round(riskATR15, 3)
+                atr5: round(atr5),
+                riskATR: round(riskATRLong, 3),
+                maxRiskATR: maxRiskATRLong
             })
         }
 
-        if (
-            risk / entry > 0.025
-        ) {
-            return reject("RISK_PERCENT", {
-                side: "LONG",
-                riskPercent:
-                    round(risk / entry, 6)
-            })
-        }
-
-    } else {
-
-        // =====================================================
-        // SHORT SL
-        // =====================================================
-
-        const structureStop =
-            Math.max(
-                swingHigh15,
-                swingHigh1h,
-                recentHigh15
-            )
-
-        sl =
-            structureStop +
-            slBuffer
-
-        risk =
-            sl - entry
-
-        if (
-            !Number.isFinite(risk) ||
-            risk <= 0
-        ) {
-            return reject("RISK_INVALID", {
-                side: "SHORT",
-                risk: round(risk)
-            })
-        }
-
-        const riskATR15 =
-            risk / atr15
-
-        if (
-            riskATR15 > 3.80
-        ) {
+        if (risk > atr5 * 2.50) {
             return reject("RISK_TOO_WIDE", {
-                side: "SHORT",
-                risk: round(risk),
-                atr15: round(atr15),
-                riskATR15:
-                    round(riskATR15, 3)
-            })
-        }
-
-        if (
-            risk / entry > 0.025
-        ) {
-            return reject("RISK_PERCENT", {
-                side: "SHORT",
-                riskPercent:
-                    round(risk / entry, 6)
-            })
-        }
-    }
-
-    // =========================================================
-    // 20. ROOM
-    //
-    // Phía trước phải đủ rộng cho trade dài.
-    // =========================================================
-
-    if (longSetup && resistance) {
-
-        const room =
-            resistance - entry
-
-        if (
-            room < risk * 1.80
-        ) {
-            return reject("ROOM_LONG", {
                 side: "LONG",
-                room: round(room),
-                required:
-                    round(risk * 1.80),
                 risk: round(risk),
-                resistance:
-                    round(resistance)
+                atr5: round(atr5),
+                riskATR: round(risk / atr5, 3)
             })
         }
-    }
 
-    if (shortSetup && support) {
-
-        const room =
-            entry - support
-
-        if (
-            room < risk * 1.80
-        ) {
-            return reject("ROOM_SHORT", {
-                side: "SHORT",
-                room: round(room),
-                required:
-                    round(risk * 1.80),
+        if (risk / entry > 0.018) {
+            return reject("RISK_PERCENT", {
+                side: "LONG",
+                riskPercent: round(risk / entry, 6),
                 risk: round(risk),
-                support:
-                    round(support)
+                entry: round(entry)
             })
         }
-    }
 
-    // =========================================================
-    // 21. TP
-    //
-    // Không còn TP 1.3R.
-    // Base = 2R.
-    // =========================================================
+        if (resistance) {
+            const room = resistance - entry
 
-    const targetRR =
-        (
-            gap1h >= 0.003 &&
-            gap15 >= 0.002 &&
-            (
-                bullishStructure15 ||
-                bearishStructure15
-            )
-        )
-            ? 2.20
-            : 2.00
-
-    if (longSetup) {
-
-        tp =
-            entry +
-            risk * targetRR
-
-        // Nếu resistance gần hơn TP,
-        // chỉ dùng resistance nếu nó vẫn cho RR đủ lớn.
-        if (
-            resistance &&
-            resistance > entry &&
-            resistance < tp
-        ) {
-
-            const room =
-                resistance - entry
-
-            const rrToResistance =
-                room / risk
-
-            if (
-                rrToResistance < 1.80
-            ) {
+            if (room < risk * 1.35) {
                 return reject("ROOM_LONG", {
                     side: "LONG",
-                    resistance:
-                        round(resistance),
-                    rrToResistance:
-                        round(rrToResistance, 2)
+                    room: round(room),
+                    required: round(risk * 1.30),
+                    risk: round(risk),
+                    resistance: round(resistance),
+                    entry: round(entry)
                 })
             }
-
-            // Không ép TP xuống nếu structure còn
-            // không đủ không gian cho target dài.
-            tp =
-                Math.min(
-                    tp,
-                    resistance
-                )
         }
+
+        tp = entry + risk * 1.4
 
     } else {
+        const structureStop = Math.max(swingHigh5, swingHigh15)
 
-        tp =
-            entry -
-            risk * targetRR
+        sl = structureStop + slBuffer
+        risk = sl - entry
 
-        if (
-            support &&
-            support < entry &&
-            support > tp
-        ) {
+        if (!Number.isFinite(risk) || risk <= 0) {
+            return reject("RISK_INVALID", { side: "SHORT", risk: round(risk) })
+        }
 
-            const room =
-                entry - support
+        if (risk < atr5 * 0.30) {
+            return reject("RISK_TOO_SMALL", {
+                side: "SHORT",
+                risk: round(risk),
+                atr5: round(atr5),
+                riskATR: round(risk / atr5, 3)
+            })
+        }
 
-            const rrToSupport =
-                room / risk
+        const maxRiskATRShort = gap1h >= 0.0015 && gap15 >= 0.0010 ? 5.00 : 4.50
+        const riskATRShort = risk / atr5
 
-            if (
-                rrToSupport < 1.80
-            ) {
+        if (riskATRShort > maxRiskATRShort) {
+            return reject("RISK_TOO_WIDE", {
+                side: "SHORT",
+                risk: round(risk),
+                atr5: round(atr5),
+                riskATR: round(riskATRShort, 3),
+                maxRiskATR: maxRiskATRShort
+            })
+        }
+
+        if (risk / entry > 0.018) {
+            return reject("RISK_PERCENT", {
+                side: "SHORT",
+                riskPercent: round(risk / entry, 6),
+                risk: round(risk),
+                entry: round(entry)
+            })
+        }
+
+        if (support) {
+            const room = entry - support
+
+            if (room < risk * 1.35) {
                 return reject("ROOM_SHORT", {
                     side: "SHORT",
-                    support:
-                        round(support),
-                    rrToSupport:
-                        round(rrToSupport, 2)
+                    room: round(room),
+                    required: round(risk * 1.30),
+                    risk: round(risk),
+                    support: round(support),
+                    entry: round(entry)
                 })
             }
-
-            tp =
-                Math.max(
-                    tp,
-                    support
-                )
         }
+
+        tp = entry - risk * 1.4
     }
 
     // =========================================================
-    // 22. FINAL RR
+    // 17. FINAL RR
     // =========================================================
 
-    const finalRR =
-        longSetup
-            ? (tp - entry) / risk
-            : (entry - tp) / risk
+    const finalRR = longSetup ? (tp - entry) / risk : (entry - tp) / risk
 
-    if (
-        !Number.isFinite(finalRR) ||
-        finalRR < 1.80
-    ) {
+    if (!Number.isFinite(finalRR) || finalRR < 1.40) {
         return reject("FINAL_RR", {
             side: coreSide,
-            finalRR:
-                round(finalRR, 2),
-            requiredRR: 1.80,
+            finalRR: round(finalRR, 2),
+            requiredRR: 1.40,
             risk: round(risk),
             entry: round(entry),
             tp: round(tp)
@@ -6085,586 +5322,211 @@ const shortSetup =
     }
 
     // =========================================================
-    // 23. QUALITY
+    // 18. QUALITY
     // =========================================================
 
     const quality = {
-
-        higherTimeframeAligned:
-            longSetup
-                ? bull1h
-                : bear1h,
-
-        h1StructureConfirmed:
-            longSetup
-                ? structureTrendLong
-                : structureTrendShort,
-
-        trend15Confirmed:
-            longSetup
-                ? bull15 || long15Pullback
-                : bear15 || short15Pullback,
-
-        structure15Confirmed:
-            longSetup
-                ? bullishStructure15 ||
-                  bullishRecovery15 ||
-                  sweepLow15
-                : bearishStructure15 ||
-                  bearishRecovery15 ||
-                  sweepHigh15,
-
-        pullbackConfirmed:
-            longSetup
-                ? long15Pullback
-                : short15Pullback,
-
-        recoveryConfirmed:
-            longSetup
-                ? bullishRecovery15 ||
-                  sweepLow15
-                : bearishRecovery15 ||
-                  sweepHigh15,
-
-        trend5Confirmed:
-            longSetup
-                ? trendLong5
-                : trendShort5,
-
-        rejectionConfirmed:
-            longSetup
-                ? bullishRejection
-                : bearishRejection,
-
-        volumeAcceptable:
-            vol5Ratio >= 0.50,
-
-        chaseControlled:
-            distFromEMA20_15 <= maxChase15,
-
-        roomAcceptable:
-            longSetup
-                ? (
-                    !resistance ||
-                    resistance - entry >=
-                    risk * 1.80
-                )
-                : (
-                    !support ||
-                    entry - support >=
-                    risk * 1.80
-                ),
-
-        rrAcceptable:
-            finalRR >= 1.80
+        higherTimeframeAligned: longSetup ? bull1h && bull15 : bear1h && bear15,
+        structureConfirmed: longSetup ? structureOKLong : structureOKShort,
+        trend5Confirmed: longSetup ? trendLong5 : trendShort5,
+        pullbackConfirmed: longSetup ? pullbackLong : pullbackShort,
+        rejectionConfirmed: longSetup ? bullishRejection : bearishRejection,
+        triggerConfirmed: longSetup ? bullishTrigger : bearishTrigger,
+        volumeAcceptable: vol1Ratio >= 0.50,
+        chaseControlled: distFromEMA20 <= maxChase,
+        roomAcceptable: longSetup
+            ? (!resistance || resistance - entry >= risk * 1.50)
+            : (!support || entry - support >= risk * 1.50)
     }
 
-    const qualityCount =
-        Object.values(quality)
-            .filter(Boolean)
-            .length
+    const qualityCount = Object.values(quality).filter(Boolean).length
+
+    // KHÔNG dùng qualityCount để reject setup
+    // if (qualityCount < 8) return null
 
     // =========================================================
-    // 24. QUALITY GATE
-    //
-    // Không ép quá cao để không giết trade.
-    // Nhưng trade dài cần ít nhất 7 điều kiện.
+    // 19. MARKET STATE
     // =========================================================
 
-    if (
-        qualityCount < 6
-    ) {
-        return reject("QUALITY", {
-            side: coreSide,
-            qualityCount,
-            quality
-        })
-    }
+    const strongTrend = gap1h >= 0.0015 && gap15 >= 0.0010
+    const marketState = strongTrend ? "TREND_STRONG" : "TREND_NORMAL"
 
     // =========================================================
-    // 25. MARKET STATE
+    // 20. VOLATILITY
     // =========================================================
 
-    const strongTrend =
-        gap1h >= 0.0025 &&
-        gap15 >= 0.0015
-
-    const marketState =
-        strongTrend
-            ? "TREND_STRONG"
-            : "TREND_NORMAL"
+    const volatility = atrRatio5 >= 0.004 ? "HIGH" : atrRatio5 <= 0.0012 ? "LOW" : "NORMAL"
 
     // =========================================================
-    // 26. VOLATILITY
+    // 21. PULLBACK TYPE
     // =========================================================
 
-    const volatility =
-        atrRatio15 >= 0.008
-            ? "HIGH"
-            : atrRatio15 <= 0.002
-                ? "LOW"
-                : "NORMAL"
-
-    // =========================================================
-    // 27. PULLBACK TYPE
-    // =========================================================
-
-    let pullbackType =
-        "EMA20_15"
+    let pullbackType = "EMA20"
 
     if (longSetup) {
-
-        if (longPullbackEMA50) {
-            pullbackType =
-                "EMA50_15"
-        } else if (sweepLow15) {
-            pullbackType =
-                "STRUCTURE_SWEEP"
-        }
-
+        if (structureRetestLong) pullbackType = "STRUCTURE_RETEST"
+        else if (pullbackEMA50Long) pullbackType = "EMA50"
+        else pullbackType = "EMA20"
     } else {
-
-        if (shortPullbackEMA50) {
-            pullbackType =
-                "EMA50_15"
-        } else if (sweepHigh15) {
-            pullbackType =
-                "STRUCTURE_SWEEP"
-        }
+        if (structureRetestShort) pullbackType = "STRUCTURE_RETEST"
+        else if (pullbackEMA50Short) pullbackType = "EMA50"
+        else pullbackType = "EMA20"
     }
 
     // =========================================================
-    // 28. TRIGGER TYPE
+    // 22. TRIGGER TYPE
     // =========================================================
 
-    let triggerType =
-        "15M_RECOVERY"
+    let triggerType = "STRONG_CLOSE"
 
-    if (
-        longSetup &&
-        sweepLow15
-    ) {
-        triggerType =
-            "15M_SWEEP_RECLAIM"
-    }
-
-    if (
-        shortSetup &&
-        sweepHigh15
-    ) {
-        triggerType =
-            "15M_SWEEP_RECLAIM"
-    }
-
-    if (
-        longSetup &&
-        bullishRejection &&
-        !sweepLow15
-    ) {
-        triggerType =
-            "5M_REJECTION"
-    }
-
-    if (
-        shortSetup &&
-        bearishRejection &&
-        !sweepHigh15
-    ) {
-        triggerType =
-            "5M_REJECTION"
-    }
-
-    if (
-        longSetup &&
-        reclaimEMA20Long
-    ) {
-        triggerType =
-            "5M_RECLAIM"
-    }
-
-    if (
-        shortSetup &&
-        reclaimEMA20Short
-    ) {
-        triggerType =
-            "5M_RECLAIM"
+    if (bullishMicroBreak || bearishMicroBreak) {
+        triggerType = "MICRO_BREAK"
     }
 
     // =========================================================
-    // 29. SETUP
+    // 23. SETUP
     // =========================================================
 
-    const setup =
-        "HTF_TREND_15M_PULLBACK"
+    const setup = "TREND_PULLBACK_CONTINUATION"
 
     // =========================================================
-    // 30. CORE ACCEPT STATS
+    // CORE ACCEPT STATS
     // =========================================================
 
     CORE_REJECT_STATS.ACCEPT++
 
-    if (longSetup) {
+    if (longSetup) CORE_REJECT_STATS.ACCEPT_LONG++
+    else if (shortSetup) CORE_REJECT_STATS.ACCEPT_SHORT++
 
-        CORE_REJECT_STATS.ACCEPT_LONG++
-
-        CORE_SIDE_STATS.LONG++
-
-    } else {
-
-        CORE_REJECT_STATS.ACCEPT_SHORT++
-
-        CORE_SIDE_STATS.SHORT++
-    }
+    if (longSetup) CORE_SIDE_STATS.LONG++
+    else if (shortSetup) CORE_SIDE_STATS.SHORT++
 
     // =========================================================
-    // 31. RETURN
+    // 24. RETURN
     // =========================================================
 
     return {
-
-        side:
-            longSetup
-                ? "LONG"
-                : "SHORT",
-
-        price:
-            round(entry),
-
-        sl:
-            round(sl),
-
-        tp:
-            round(tp),
-
+        side: longSetup ? "LONG" : "SHORT",
+        price: round(entry),
+        sl: round(sl),
+        tp: round(tp),
         setup,
-
         pullbackType,
-
         triggerType,
-
         marketState,
-
         volatility,
-
-        qualityScore:
-            qualityCount,
+        qualityScore: qualityCount,
 
         indicators: {
-
-            ema20_1h:
-                round(ema20_1h),
-
-            ema50_1h:
-                round(ema50_1h),
-
-            ema100_1h:
-                round(ema100_1h),
-
-            ema20_15:
-                round(ema20_15),
-
-            ema50_15:
-                round(ema50_15),
-
-            ema100_15:
-                round(ema100_15),
-
-            ema9_5:
-                round(ema9_5),
-
-            ema20_5:
-                round(ema20_5),
-
-            ema50_5:
-                round(ema50_5),
-
-            atr1h:
-                round(atr1h),
-
-            atr15:
-                round(atr15),
-
-            atr5:
-                round(atr5),
-
-            atr1m:
-                round(atr1),
-
-            rsi15:
-                round(rsi15, 2),
-
-            rsi5:
-                round(rsi5, 2),
-
-            rsi1m:
-                round(rsi1, 2),
-
-            volume1mRatio:
-                round(
-                    vol1Avg > 0
-                        ? v1.at(-1) / vol1Avg
-                        : 1,
-                    3
-                ),
-
-            volume5mRatio:
-                round(vol5Ratio, 3),
-
-            atrRatio1h:
-                round(atrRatio1h, 6),
-
-            atrRatio15:
-                round(atrRatio15, 6),
-
-            atrRatio5:
-                round(atrRatio5, 6)
+            ema20_1h: round(ema20_1h),
+            ema50_1h: round(ema50_1h),
+            ema20_15: round(ema20_15),
+            ema50_15: round(ema50_15),
+            ema9_5: round(ema9_5),
+            ema20_5: round(ema20_5),
+            ema50_5: round(ema50_5),
+            atr1h: round(atr1h),
+            atr15: round(atr15),
+            atr5: round(atr5),
+            atr1m: round(atr1),
+            rsi5: round(rsi5, 2),
+            rsi1m: round(rsi1, 2),
+            volume1mRatio: round(vol1Ratio, 3),
+            volume5mRatio: round(vol5Ratio, 3),
+            atrRatio1h: round(atrRatio1h, 6),
+            atrRatio15: round(atrRatio15, 6),
+            atrRatio5: round(atrRatio5, 6)
         },
 
         structure: {
-
-            h1RecentHigh:
-                round(h1RecentHigh),
-
-            h1RecentLow:
-                round(h1RecentLow),
-
-            recentHigh15:
-                round(recentHigh15),
-
-            recentLow15:
-                round(recentLow15),
-
-            previousHigh15:
-                round(previousHigh15),
-
-            previousLow15:
-                round(previousLow15),
-
-            swingHigh5:
-                round(swingHigh5),
-
-            swingLow5:
-                round(swingLow5),
-
-            swingHigh15:
-                round(swingHigh15),
-
-            swingLow15:
-                round(swingLow15),
-
-            swingHigh1h:
-                round(swingHigh1h),
-
-            swingLow1h:
-                round(swingLow1h),
-
-            resistance:
-                resistance !== null
-                    ? round(resistance)
-                    : null,
-
-            support:
-                support !== null
-                    ? round(support)
-                    : null
+            structureHigh15: round(structureHigh15),
+            structureLow15: round(structureLow15),
+            swingHigh5: round(swingHigh5),
+            swingLow5: round(swingLow5),
+            swingHigh15: round(swingHigh15),
+            swingLow15: round(swingLow15),
+            resistance: resistance !== null ? round(resistance) : null,
+            support: support !== null ? round(support) : null
         },
 
         context: {
-            h1Bull:
-                bull1h,
-            h1Bear:
-                bear1h,
+            h1Bull: bull1h,
+            h1Bear: bear1h,
             bull15,
             bear15,
-            bullishStructure1h,
-            bearishStructure1h,
-            bullishStructure15,
-            bearishStructure15,
-            structureTrendLong,
-            structureTrendShort,
-            long15Pullback,
-            short15Pullback,
-            longPullbackEMA20,
-            longPullbackEMA50,
-            shortPullbackEMA20,
-            shortPullbackEMA50,
-            bullishRecovery15,
-            bearishRecovery15,
-            sweepLow15,
-            sweepHigh15,
             trendLong5,
             trendShort5,
+            bullishStructure15,
+            bearishStructure15,
+            structureOKLong,
+            structureOKShort,
+            pullbackLong,
+            pullbackShort,
+            pullbackEMA20Long,
+            pullbackEMA20Short,
+            pullbackEMA50Long,
+            pullbackEMA50Short,
+            structureRetestLong,
+            structureRetestShort,
             bullishRejection,
             bearishRejection,
-            reclaimEMA20Long,
-            reclaimEMA20Short,
-            sweepRecoveryLong,
-            sweepRecoveryShort,
+            bullishMicroBreak,
+            bearishMicroBreak,
+            bullishStrongClose,
+            bearishStrongClose,
             bullishTrigger,
             bearishTrigger,
-            slope1h:
-                round(slope1h, 6),
-            slope50_1h:
-                round(slope50_1h, 6),
-            slope15:
-                round(slope15, 6),
-            slope50_15:
-                round(slope50_15, 6),
-            slope9_5:
-                round(slope9_5, 6),
-            gap1h:
-                round(gap1h, 6),
-            gap15:
-                round(gap15, 6),
-            distFromEMA20_15:
-                round(
-                    distFromEMA20_15,
-                    6
-                ),
-            maxChase15:
-                round(
-                    maxChase15,
-                    6
-                ),
-            move1:
-                round(move1, 6),
-            move3:
-                round(move3, 6),
-            move5:
-                round(move5, 6)
+            slope1h: round(slope1h, 6),
+            slope15: round(slope15, 6),
+            slope9_5: round(slope9_5, 6),
+            gap1h: round(gap1h, 6),
+            gap15: round(gap15, 6),
+            distFromEMA20: round(distFromEMA20, 6),
+            maxChase: round(maxChase, 6)
         },
+
         risk: {
-            risk:
-                round(risk),
-            rr:
-                round(finalRR, 2),
-            slDistance:
-                round(
-                    Math.abs(
-                        entry - sl
-                    )
-                ),
-            tpDistance:
-                round(
-                    Math.abs(
-                        tp - entry
-                    )
-                ),
-            riskATR15:
-                round(
-                    risk / atr15,
-                    3
-                ),
-
-            riskATR5:
-                round(
-                    risk / atr5,
-                    3
-                ),
-
-            riskPercent:
-                round(
-                    risk / entry,
-                    6
-                )
+            risk: round(risk),
+            rr: round(finalRR, 2),
+            slDistance: round(Math.abs(entry - sl)),
+            tpDistance: round(Math.abs(tp - entry)),
+            riskATR5: round(risk / atr5, 3),
+            riskPercent: round(risk / entry, 6)
         },
 
         quality,
 
         flags: {
-
             longBias,
-
             shortBias,
-
-            bullishStructure1h,
-
-            bearishStructure1h,
-
-            bullishStructure15,
-
-            bearishStructure15,
-
-            long15Pullback,
-
-            short15Pullback,
-
-            bullishRecovery15,
-
-            bearishRecovery15,
-
-            sweepLow15,
-
-            sweepHigh15,
-
+            pullbackLong,
+            pullbackShort,
             bullishRejection,
-
             bearishRejection,
-
-            reclaimEMA20Long,
-
-            reclaimEMA20Short,
-
             bullishTrigger,
-
             bearishTrigger,
-
-            trendLong5,
-
-            trendShort5
+            bullishMicroBreak,
+            bearishMicroBreak,
+            bullishStrongClose,
+            bearishStrongClose
         },
 
         debug: {
-
-            reason:
-                "HTF_TREND_15M_PULLBACK",
-
-            timestamp:
-                Date.now(),
+            reason: "TREND_PULLBACK_CONTINUATION",
+            timestamp: Date.now(),
 
             candle1m: {
-
-                open:
-                    round(o0),
-
-                high:
-                    round(h0),
-
-                low:
-                    round(l0),
-
-                close:
-                    round(c0)
+                open: round(o0),
+                high: round(h0),
+                low: round(l0),
+                close: round(c0)
             },
 
             candle5m: {
-
-                open:
-                    round(o5Now),
-
-                high:
-                    round(h5Now),
-
-                low:
-                    round(l5Now),
-
-                close:
-                    round(c5Now)
-            },
-
-            candle15m: {
-
-                open:
-                    round(o15Now),
-
-                high:
-                    round(h15Now),
-
-                low:
-                    round(l15Now),
-
-                close:
-                    round(c15Now)
+                open: round(o5Now),
+                high: round(h5Now),
+                low: round(l5Now),
+                close: round(c5Now)
             }
         }
     }
