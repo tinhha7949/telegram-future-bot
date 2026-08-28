@@ -4715,7 +4715,7 @@ async function coreLogic(data15, data1h, data5, data1m) {
         return reject("DATA_LENGTH", { data15: data15.length, data1h: data1h.length, data5: data5.length, data1m: data1m.length })
     }
 
-    const col = (data, n) => data.map(x => Number(x))
+    const col = (data, n) => data.map(x => Number(x[n]))
     const o15 = col(data15, 1)
     const h15 = col(data15, 2)
     const l15 = col(data15, 3)
