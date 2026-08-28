@@ -2758,20 +2758,20 @@ const trailingHigh=
 
     if(R>=3.00){
 
-        phase=4
+    phase=4
 
-    }else if(R>=2.20){
+}else if(R>=2.20){
 
-        phase=3
+    phase=3
 
-    }else if(R>=1.60){
+}else if(R>=1.40){
 
-        phase=2
+    phase=2
 
-    }else if(R>=0.70){
+}else if(R>=0.70){
 
-        phase=1
-    }
+    phase=1
+}
 
     const previousPhase=
         Number(
@@ -2792,7 +2792,11 @@ const trailingHigh=
 
     // =========================================================
 // EARLY PROFIT PROTECTION
-// Không phụ thuộc structure
+// R >= 0.50
+//
+// Khi lệnh đạt +0.50R:
+// - Không để SL dưới entry nữa
+// - Khóa nhẹ +0.02R
 // =========================================================
 
 if(R>=0.50){
@@ -2800,8 +2804,8 @@ if(R>=0.50){
     if(side==="LONG"){
 
         const profitFloor =
-            currentEntry -
-            initialRisk * 0.10
+            currentEntry +
+            initialRisk * 0.02
 
         if(
             profitFloor>newSL &&
@@ -2813,8 +2817,8 @@ if(R>=0.50){
     }else{
 
         const profitFloor =
-            currentEntry +
-            initialRisk * 0.10
+            currentEntry -
+            initialRisk * 0.02
 
         if(
             profitFloor<newSL &&
@@ -2824,11 +2828,11 @@ if(R>=0.50){
         }
     }
 }
-
-
 // =========================================================
+// PHASE 1
 // R >= 0.70
-// Khóa nhẹ lợi nhuận
+//
+// Khóa +0.15R
 // =========================================================
 
 if(R>=0.70){
@@ -2837,7 +2841,7 @@ if(R>=0.70){
 
         const profitFloor =
             currentEntry +
-            initialRisk * 0.05
+            initialRisk * 0.15
 
         if(
             profitFloor>newSL &&
@@ -2850,7 +2854,7 @@ if(R>=0.70){
 
         const profitFloor =
             currentEntry -
-            initialRisk * 0.05
+            initialRisk * 0.15
 
         if(
             profitFloor<newSL &&
@@ -2860,8 +2864,6 @@ if(R>=0.70){
         }
     }
 }
-
-
 // =========================================================
 // STRUCTURE TRAILING
 // Chỉ là lớp bổ sung
@@ -2903,191 +2905,372 @@ if(R>=0.70){
     }
 }
     // =========================================================
-    // PHASE 2
-    //
-    // 1.60R
-    //
-    // LOCK NHẸ + VẪN CHO THỞ.
-    // =========================================================
+// PHASE 2 — FAST PROFIT PROTECTION
+//
+// R >= 1.40
+//
+// Mục tiêu:
+// - Phản ứng sớm hơn cho trade ngắn hạn.
+// - Không cần structure mới khóa profit.
+// - Khóa tối thiểu +0.45R.
+// - Nếu structure tốt -> kéo SL sát hơn.
+// - Không bao giờ nới SL.
+// =========================================================
 
-    if(
-        effectivePhase>=2
-    ){
+if(effectivePhase>=2){
+
+    // =====================================================
+    // 1. BASE PROFIT LOCK
+    //
+    // R >= 1.40
+    // -> khóa tối thiểu +0.45R
+    //
+    // Đây là phần quan trọng nhất.
+    // Không phụ thuộc structure.
+    // =====================================================
+
+    if(side==="LONG"){
+
+        const profitFloor=
+            currentEntry+
+            initialRisk*0.45
 
         if(
-            side==="LONG"&&
-            structureLong
+            Number.isFinite(profitFloor)&&
+            profitFloor>newSL&&
+            profitFloor<current
         ){
+            newSL=profitFloor
+        }
 
-            const structureSL=
-                trailingLow-
-                atr15*.25
+    }else{
 
-            const profitFloor=
-                currentEntry+
-                initialRisk*.35
+        const profitFloor=
+            currentEntry-
+            initialRisk*0.45
 
-            const candidate=
-                Math.max(
-                    structureSL,
-                    profitFloor
-                )
-
-            if(
-                candidate>newSL&&
-                candidate<current
-            ){
-                newSL=candidate
-            }
-
-        }else if(
-            side==="SHORT"&&
-            structureShort
+        if(
+            Number.isFinite(profitFloor)&&
+            profitFloor<newSL&&
+            profitFloor>current
         ){
-
-            const structureSL=
-                trailingHigh+
-                atr15*.25
-
-            const profitFloor=
-                currentEntry-
-                initialRisk*.35
-
-            const candidate=
-                Math.min(
-                    structureSL,
-                    profitFloor
-                )
-
-            if(
-                candidate<newSL&&
-                candidate>current
-            ){
-                newSL=candidate
-            }
+            newSL=profitFloor
         }
     }
 
-    // =========================================================
-    // PHASE 3
+
+    // =====================================================
+    // 2. STRUCTURE TRAILING
     //
-    // 2.20R
+    // Nếu structure xác nhận tốt:
+    // -> kéo SL sát hơn nữa.
     //
-    // STRUCTURE TRAILING.
+    // Structure không được phép kéo SL lùi.
+    // =====================================================
+
+    if(side==="LONG" && structureLong){
+
+        const structureSL=
+            trailingLow-
+            atr15*0.20
+
+        const candidate=
+            Math.max(
+                structureSL,
+                newSL
+            )
+
+        if(
+            Number.isFinite(candidate)&&
+            candidate>newSL&&
+            candidate<current
+        ){
+            newSL=candidate
+        }
+
+    }else if(
+        side==="SHORT" &&
+        structureShort
+    ){
+
+        const structureSL=
+            trailingHigh+
+            atr15*0.20
+
+        const candidate=
+            Math.min(
+                structureSL,
+                newSL
+            )
+
+        if(
+            Number.isFinite(candidate)&&
+            candidate<newSL&&
+            candidate>current
+        ){
+            newSL=candidate
+        }
+    }
+}
     // =========================================================
+// PHASE 3 — STRONG PROFIT PROTECTION
+//
+// R >= 2.20
+//
+// Mục tiêu:
+// - Không để trade đã chạy 2R+ trả lại quá nhiều.
+// - Profit lock tăng theo R.
+// - Structure chỉ được phép kéo SL sát hơn.
+// - Không bao giờ nới SL.
+// =========================================================
+
+if(effectivePhase>=3){
+
+    let lockR=1.00
+
+    if(R>=3.00){
+        lockR=1.50
+    }
+
+    if(R>=3.50){
+        lockR=1.80
+    }
+
+    if(R>=4.00){
+        lockR=2.20
+    }
+
+    if(R>=5.00){
+        lockR=3.00
+    }
+
+    if(R>=6.00){
+        lockR=3.80
+    }
+
+    if(R>=7.00){
+        lockR=4.50
+    }
+
+    // =====================================================
+    // R-BASED PROFIT LOCK
+    // =====================================================
+
+    if(side==="LONG"){
+
+        const profitLock=
+            currentEntry+
+            initialRisk*lockR
+
+        if(
+            Number.isFinite(profitLock)&&
+            profitLock>newSL&&
+            profitLock<current
+        ){
+            newSL=profitLock
+        }
+
+    }else{
+
+        const profitLock=
+            currentEntry-
+            initialRisk*lockR
+
+        if(
+            Number.isFinite(profitLock)&&
+            profitLock<newSL&&
+            profitLock>current
+        ){
+            newSL=profitLock
+        }
+    }
+
+    // =====================================================
+    // STRUCTURE TRAILING
+    //
+    // Structure tốt hơn profit lock thì dùng structure.
+    // Không được kéo SL lùi.
+    // =====================================================
+
+    if(side==="LONG"){
+
+        const structureSL=
+            trailingLow-
+            atr15*0.20
+
+        if(
+            Number.isFinite(structureSL)&&
+            structureSL>newSL&&
+            structureSL<current
+        ){
+            newSL=structureSL
+        }
+
+    }else{
+
+        const structureSL=
+            trailingHigh+
+            atr15*0.20
+
+        if(
+            Number.isFinite(structureSL)&&
+            structureSL<newSL&&
+            structureSL>current
+        ){
+            newSL=structureSL
+        }
+    }
+}
+    // =========================================================
+// PHASE 4 — RUNNER PROFIT PROTECTION
+//
+// R >= 3.00
+//
+// Mục tiêu:
+// - Đã ăn rất lớn thì không trả lại quá nhiều.
+// - Vẫn cho runner có khoảng thở.
+// - Lock tăng theo R.
+// - Structure chỉ kéo SL sát hơn.
+// - MAX DISTANCE không được làm SL lùi.
+// =========================================================
+
+if(effectivePhase>=4){
+
+    let lockR=1.50
+
+    if(R>=3.50){
+        lockR=1.80
+    }
+
+    if(R>=4.00){
+        lockR=2.20
+    }
+
+    if(R>=5.00){
+        lockR=3.00
+    }
+
+    if(R>=6.00){
+        lockR=3.80
+    }
+
+    if(R>=7.00){
+        lockR=4.50
+    }
+
+    if(R>=8.00){
+        lockR=5.20
+    }
+
+    // =====================================================
+    // PROFIT LOCK
+    // =====================================================
+
+    if(side==="LONG"){
+
+        const profitLock=
+            currentEntry+
+            initialRisk*lockR
+
+        if(
+            Number.isFinite(profitLock)&&
+            profitLock>newSL&&
+            profitLock<current
+        ){
+            newSL=profitLock
+        }
+
+    }else{
+
+        const profitLock=
+            currentEntry-
+            initialRisk*lockR
+
+        if(
+            Number.isFinite(profitLock)&&
+            profitLock<newSL&&
+            profitLock>current
+        ){
+            newSL=profitLock
+        }
+    }
+
+    // =====================================================
+    // RUNNER STRUCTURE
+    // =====================================================
+
+    if(side==="LONG"){
+
+        const structureSL=
+            runnerLow-
+            atr15*0.18
+
+        if(
+            Number.isFinite(structureSL)&&
+            structureSL>newSL&&
+            structureSL<current
+        ){
+            newSL=structureSL
+        }
+
+    }else{
+
+        const structureSL=
+            runnerHigh+
+            atr15*0.18
+
+        if(
+            Number.isFinite(structureSL)&&
+            structureSL<newSL&&
+            structureSL>current
+        ){
+            newSL=structureSL
+        }
+    }
+
+    // =====================================================
+    // MAX GIVEBACK PROTECTION
+    //
+    // Không cho SL cách current quá xa.
+    // Nhưng KHÔNG dùng cơ chế này để nới SL.
+    // =====================================================
+
+    const maxSLDistance=
+        atr15*1.20
 
     if(
-        effectivePhase>=3
+        Number.isFinite(maxSLDistance)&&
+        maxSLDistance>0
     ){
 
         if(side==="LONG"){
 
-            const structureSL=
-                trailingLow-
-                atr15*.20
-
-            const profitFloor=
-                currentEntry+
-                initialRisk*.75
-
-            const candidate=
-                Math.max(
-                    structureSL,
-                    profitFloor
-                )
+            const maxAllowedSL=
+                current-maxSLDistance
 
             if(
-                candidate>newSL&&
-                candidate<current
+                Number.isFinite(maxAllowedSL)&&
+                maxAllowedSL>newSL&&
+                maxAllowedSL<current
             ){
-                newSL=candidate
+                newSL=maxAllowedSL
             }
 
         }else{
 
-            const structureSL=
-                trailingHigh+
-                atr15*.20
-
-            const profitFloor=
-                currentEntry-
-                initialRisk*.75
-
-            const candidate=
-                Math.min(
-                    structureSL,
-                    profitFloor
-                )
+            const minAllowedSL=
+                current+maxSLDistance
 
             if(
-                candidate<newSL&&
-                candidate>current
+                Number.isFinite(minAllowedSL)&&
+                minAllowedSL<newSL&&
+                minAllowedSL>current
             ){
-                newSL=candidate
+                newSL=minAllowedSL
             }
         }
     }
-
-    // =========================================================
-    // PHASE 4
-    //
-    // 3R+
-    //
-    // RUNNER.
-    // =========================================================
-
-    if(
-        effectivePhase>=4
-    ){
-
-        if(side==="LONG"){
-
-            const runnerSL=
-                runnerLow-
-                atr15*.30
-
-            const profitFloor=
-                currentEntry+
-                initialRisk*.95
-
-            const candidate=
-                Math.max(
-                    runnerSL,
-                    profitFloor
-                )
-
-            if(
-                candidate>newSL&&
-                candidate<current
-            ){
-                newSL=candidate
-            }
-
-        }else{
-
-            const runnerSL=
-                runnerHigh+
-                atr15*.30
-
-            const profitFloor=
-                currentEntry-
-                initialRisk*.95
-
-            const candidate=
-                Math.min(
-                    runnerSL,
-                    profitFloor
-                )
-
-            if(
-                candidate<newSL&&
-                candidate>current
-            ){
-                newSL=candidate
-            }
-        }
-    }
-
+}
     // =========================================================
     // BREAKOUT TRAILING
     //
