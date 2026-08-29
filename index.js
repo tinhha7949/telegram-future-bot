@@ -3017,44 +3017,43 @@ if(effectivePhase>=2){
 //
 // R >= 2.20
 //
-// Mục tiêu:
-// - Không để trade đã chạy 2R+ trả lại quá nhiều.
-// - Profit lock tăng theo R.
-// - Structure chỉ được phép kéo SL sát hơn.
-// - Không bao giờ nới SL.
+// Siết hơn:
+// 2.20R -> lock +1.20R
+// 3.00R -> lock +1.70R
+// 3.50R -> lock +2.00R
+// 4.00R -> lock +2.50R
+// 5.00R -> lock +3.20R
+// 6.00R -> lock +4.00R
+// 7.00R -> lock +4.80R
 // =========================================================
 
 if(effectivePhase>=3){
 
-    let lockR=1.00
+    let lockR=1.20
 
     if(R>=3.00){
-        lockR=1.50
+        lockR=1.70
     }
 
     if(R>=3.50){
-        lockR=1.80
+        lockR=2.00
     }
 
     if(R>=4.00){
-        lockR=2.20
+        lockR=2.50
     }
 
     if(R>=5.00){
-        lockR=3.00
+        lockR=3.20
     }
 
     if(R>=6.00){
-        lockR=3.80
+        lockR=4.00
     }
 
     if(R>=7.00){
-        lockR=4.50
+        lockR=4.80
     }
-
-    // =====================================================
-    // R-BASED PROFIT LOCK
-    // =====================================================
 
     if(side==="LONG"){
 
@@ -3085,18 +3084,13 @@ if(effectivePhase>=3){
         }
     }
 
-    // =====================================================
     // STRUCTURE TRAILING
-    //
-    // Structure tốt hơn profit lock thì dùng structure.
-    // Không được kéo SL lùi.
-    // =====================================================
 
     if(side==="LONG"){
 
         const structureSL=
             trailingLow-
-            atr15*0.20
+            atr15*0.18
 
         if(
             Number.isFinite(structureSL)&&
@@ -3110,7 +3104,7 @@ if(effectivePhase>=3){
 
         const structureSL=
             trailingHigh+
-            atr15*0.20
+            atr15*0.18
 
         if(
             Number.isFinite(structureSL)&&
@@ -3126,45 +3120,44 @@ if(effectivePhase>=3){
 //
 // R >= 3.00
 //
-// Mục tiêu:
-// - Đã ăn rất lớn thì không trả lại quá nhiều.
-// - Vẫn cho runner có khoảng thở.
-// - Lock tăng theo R.
-// - Structure chỉ kéo SL sát hơn.
-// - MAX DISTANCE không được làm SL lùi.
+// Runner vẫn được thở nhưng giảm giveback.
+//
+// 3.00R -> lock +1.70R
+// 3.50R -> lock +2.00R
+// 4.00R -> lock +2.50R
+// 5.00R -> lock +3.30R
+// 6.00R -> lock +4.10R
+// 7.00R -> lock +4.90R
+// 8.00R -> lock +5.70R
 // =========================================================
 
 if(effectivePhase>=4){
 
-    let lockR=1.50
+    let lockR=1.70
 
     if(R>=3.50){
-        lockR=1.80
+        lockR=2.00
     }
 
     if(R>=4.00){
-        lockR=2.20
+        lockR=2.50
     }
 
     if(R>=5.00){
-        lockR=3.00
+        lockR=3.30
     }
 
     if(R>=6.00){
-        lockR=3.80
+        lockR=4.10
     }
 
     if(R>=7.00){
-        lockR=4.50
+        lockR=4.90
     }
 
     if(R>=8.00){
-        lockR=5.20
+        lockR=5.70
     }
-
-    // =====================================================
-    // PROFIT LOCK
-    // =====================================================
 
     if(side==="LONG"){
 
@@ -3195,15 +3188,13 @@ if(effectivePhase>=4){
         }
     }
 
-    // =====================================================
     // RUNNER STRUCTURE
-    // =====================================================
 
     if(side==="LONG"){
 
         const structureSL=
             runnerLow-
-            atr15*0.18
+            atr15*0.15
 
         if(
             Number.isFinite(structureSL)&&
@@ -3217,7 +3208,7 @@ if(effectivePhase>=4){
 
         const structureSL=
             runnerHigh+
-            atr15*0.18
+            atr15*0.15
 
         if(
             Number.isFinite(structureSL)&&
@@ -3228,15 +3219,10 @@ if(effectivePhase>=4){
         }
     }
 
-    // =====================================================
-    // MAX GIVEBACK PROTECTION
-    //
-    // Không cho SL cách current quá xa.
-    // Nhưng KHÔNG dùng cơ chế này để nới SL.
-    // =====================================================
+    // MAX GIVEBACK
 
     const maxSLDistance=
-        atr15*1.20
+        atr15*1.00
 
     if(
         Number.isFinite(maxSLDistance)&&
