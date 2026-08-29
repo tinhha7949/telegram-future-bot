@@ -4880,8 +4880,9 @@ function resetCore24hStats() {
         Date.now()
 }
 
+
 async function coreLogic(data15, data1h, data5, data1m) {
-    CORE_TOTAL_CALLS++
+CORE_TOTAL_CALLS++
 
     // =========================================================
     // 0. VALIDATION
@@ -4899,24 +4900,10 @@ async function coreLogic(data15, data1h, data5, data1m) {
     }
 
     const col = (data, n) => data.map(x => Number(x[n]))
-    const o15 = col(data15, 1)
-    const h15 = col(data15, 2)
-    const l15 = col(data15, 3)
-    const c15 = col(data15, 4)
-    const o1h = col(data1h, 1)
-    const h1h = col(data1h, 2)
-    const l1h = col(data1h, 3)
-    const c1h = col(data1h, 4)
-    const o5 = col(data5, 1)
-    const h5 = col(data5, 2)
-    const l5 = col(data5, 3)
-    const c5 = col(data5, 4)
-    const v5 = col(data5, 5)
-    const o1 = col(data1m, 1)
-    const h1 = col(data1m, 2)
-    const l1 = col(data1m, 3)
-    const c1 = col(data1m, 4)
-    const v1 = col(data1m, 5)
+    const o15 = col(data15, 1), h15 = col(data15, 2), l15 = col(data15, 3), c15 = col(data15, 4)
+    const o1h = col(data1h, 1), h1h = col(data1h, 2), l1h = col(data1h, 3), c1h = col(data1h, 4)
+    const o5 = col(data5, 1), h5 = col(data5, 2), l5 = col(data5, 3), c5 = col(data5, 4), v5 = col(data5, 5)
+    const o1 = col(data1m, 1), h1 = col(data1m, 2), l1 = col(data1m, 3), c1 = col(data1m, 4), v1 = col(data1m, 5)
 
     const all = [o15, h15, l15, c15, o1h, h1h, l1h, c1h, o5, h5, l5, c5, v5, o1, h1, l1, c1, v1]
 
@@ -4933,22 +4920,18 @@ async function coreLogic(data15, data1h, data5, data1m) {
     const highest = (arr, n) => arr.length >= n ? Math.max(...arr.slice(-n)) : Math.max(...arr)
     const lowest = (arr, n) => arr.length >= n ? Math.min(...arr.slice(-n)) : Math.min(...arr)
     const range = (h, l) => Math.max(h - l, 0)
-
     const bodyRatio = (o, h, l, c) => {
         const r = range(h, l)
         return r > 0 ? Math.abs(c - o) / r : 0
     }
-
     const closeLocationLong = (h, l, c) => {
         const r = range(h, l)
         return r > 0 ? (c - l) / r : 0
     }
-
     const closeLocationShort = (h, l, c) => {
         const r = range(h, l)
         return r > 0 ? (h - c) / r : 0
     }
-
     const pct = (a, b) => b !== 0 ? (a - b) / b : 0
     const round = (n, d = 8) => Number(Number(n).toFixed(d))
 
@@ -4975,7 +4958,6 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
     const bullishMicroBreak = c0 > o0 && br1 >= 0.40 && closeLong1 >= 0.62 && c0 > microHigh
     const bearishMicroBreak = c0 < o0 && br1 >= 0.40 && closeShort1 >= 0.62 && c0 < microLow
-
     const bullishStrongClose = c0 > o0 && br1 >= 0.55 && closeLong1 >= 0.72 && c0 > cPrev
     const bearishStrongClose = c0 < o0 && br1 >= 0.55 && closeShort1 >= 0.72 && c0 < cPrev
 
@@ -5015,8 +4997,8 @@ async function coreLogic(data15, data1h, data5, data1m) {
     const slope1h = pct(ema20_1h, ema20_1hPrev)
     const gap1h = Math.abs(ema20_1h - ema50_1h) / price1h
 
-    const bull1h=ema20_1h>ema50_1h&&price1h>ema20_1h&&slope1h>0.00015&&gap1h>=0.001
-    const bear1h=ema20_1h<ema50_1h&&price1h<ema20_1h&&slope1h<-0.00015&&gap1h>=0.001
+    const bull1h = ema20_1h > ema50_1h && price1h > ema20_1h && slope1h >= 0.00025 && gap1h >= 0.0015
+    const bear1h = ema20_1h < ema50_1h && price1h < ema20_1h && slope1h <= -0.00025 && gap1h >= 0.0015
 
     if (!bull1h && !bear1h) {
         return reject("1H_DIRECTION", {
@@ -5046,8 +5028,8 @@ async function coreLogic(data15, data1h, data5, data1m) {
     // 15M PULLBACK STATES
     // =========================================================
 
-    const long15Pullback=ema20_15>=ema50_15&&price15>=ema50_15*0.995&&price15<=ema20_15*1.012&&slope15>-0.0008
-    const short15Pullback=ema20_15<=ema50_15&&price15<=ema50_15*1.005&&price15>=ema20_15*0.988&&slope15<0.0008
+    const long15Pullback = ema20_15 >= ema50_15 && price15 >= ema50_15 * 0.998 && price15 <= ema20_15 * 1.006 && slope15 > -0.00035
+    const short15Pullback = ema20_15 <= ema50_15 && price15 <= ema50_15 * 1.002 && price15 >= ema20_15 * 0.994 && slope15 < 0.00035
 
     // =========================================================
     // FINAL BIAS
@@ -5062,18 +5044,8 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
     if (!longBias && !shortBias) {
         return reject("BIAS", {
-            bull1h,
-            bear1h,
-            bull15,
-            bear15,
-            long15Pullback,
-            short15Pullback,
-            longBias,
-            shortBias,
-            slope1h: round(slope1h, 6),
-            slope15: round(slope15, 6),
-            gap1h: round(gap1h, 6),
-            gap15: round(gap15, 6)
+            bull1h, bear1h, bull15, bear15, long15Pullback, short15Pullback, longBias, shortBias,
+            slope1h: round(slope1h, 6), slope15: round(slope15, 6), gap1h: round(gap1h, 6), gap15: round(gap15, 6)
         })
     }
 
@@ -5107,27 +5079,18 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
     const trendLong5 = p5 > ema20_5 && ema9_5 > ema20_5 && ema20_5 > ema50_5 && slope9_5 > 0
     const trendShort5 = p5 < ema20_5 && ema9_5 < ema20_5 && ema20_5 < ema50_5 && slope9_5 < 0
-
+    const recoveryLong5 = p5 > ema20_5 && ema20_5 >= ema50_5 && slope9_5 > -0.00035
+    const recoveryShort5 = p5 < ema20_5 && ema20_5 <= ema50_5 && slope9_5 < 0.00035
     // =========================================================
     // 5M COUNTER-TREND FILTER
     // =========================================================
 
     if (longBias && ema20_5 < ema50_5 && slope9_5 < -0.0012) {
-        return reject("5M_COUNTER_TREND", {
-            side: "LONG",
-            ema20_5: round(ema20_5),
-            ema50_5: round(ema50_5),
-            slope9_5: round(slope9_5, 6)
-        })
+        return reject("5M_COUNTER_TREND", { side: "LONG", ema20_5: round(ema20_5), ema50_5: round(ema50_5), slope9_5: round(slope9_5, 6) })
     }
 
     if (shortBias && ema20_5 > ema50_5 && slope9_5 > 0.0012) {
-        return reject("5M_COUNTER_TREND", {
-            side: "SHORT",
-            ema20_5: round(ema20_5),
-            ema50_5: round(ema50_5),
-            slope9_5: round(slope9_5, 6)
-        })
+        return reject("5M_COUNTER_TREND", { side: "SHORT", ema20_5: round(ema20_5), ema50_5: round(ema50_5), slope9_5: round(slope9_5, 6) })
     }
 
     // =========================================================
@@ -5138,58 +5101,46 @@ async function coreLogic(data15, data1h, data5, data1m) {
     const vol5Now = v5.at(-1)
     const vol5Ratio = vol5Avg > 0 ? vol5Now / vol5Avg : 1
 
-    if (vol5Ratio < 0.45) {
-        return reject("VOL5", { side: coreSide, vol5Ratio: round(vol5Ratio, 3) })
-    }
+    if (vol5Ratio < 0.65) return reject("VOL5", { side: coreSide, vol5Ratio: round(vol5Ratio, 3) })
 
     // =========================================================
     // 7. PULLBACK LOCATION
     // =========================================================
 
-    const recentLow5 = lowest(l5.slice(0, -1), 8)
-    const recentHigh5 = highest(h5.slice(0, -1), 8)
+    const recentLow5 = lowest(l5.slice(0, -1), 4)
+    const recentHigh5 = highest(h5.slice(0, -1), 4)
     const recentClose5 = c5.at(-1)
 
     const pullbackTolerance = Math.max(atr5 * 0.50, price * 0.0012)
-
     const pullbackEMA20Long = recentLow5 <= ema20_5 + pullbackTolerance
     const pullbackEMA20Short = recentHigh5 >= ema20_5 - pullbackTolerance
-
     const pullbackEMA50Long = recentLow5 <= ema50_5 + pullbackTolerance
     const pullbackEMA50Short = recentHigh5 >= ema50_5 - pullbackTolerance
 
     const structureTolerance = Math.max(atr5 * 0.55, price * 0.0015)
 
-    const structureRetestLong = recentLow5 <= structureHigh15 + structureTolerance && recentClose5 >= structureHigh15 - structureTolerance
-    const structureRetestShort = recentHigh5 >= structureLow15 - structureTolerance && recentClose5 <= structureLow15 + structureTolerance
+    const structureRetestLong = price > structureHigh15 && recentLow5 <= structureHigh15 + structureTolerance && recentClose5 >= structureHigh15
+    const structureRetestShort = price < structureLow15 && recentHigh5 >= structureLow15 - structureTolerance && recentClose5 <= structureLow15
 
     const pullbackLong = pullbackEMA20Long || pullbackEMA50Long || structureRetestLong
     const pullbackShort = pullbackEMA20Short || pullbackEMA50Short || structureRetestShort
 
     if (longBias && !pullbackLong) {
         return reject("PULLBACK", {
-            side: "LONG",
-            pullbackEMA20Long,
-            pullbackEMA50Long,
-            structureRetestLong,
-            atr5: round(atr5),
-            pullbackTolerance: round(pullbackTolerance)
+            side: "LONG", pullbackEMA20Long, pullbackEMA50Long, structureRetestLong,
+            atr5: round(atr5), pullbackTolerance: round(pullbackTolerance)
         })
     }
 
     if (shortBias && !pullbackShort) {
         return reject("PULLBACK", {
-            side: "SHORT",
-            pullbackEMA20Short,
-            pullbackEMA50Short,
-            structureRetestShort,
-            atr5: round(atr5),
-            pullbackTolerance: round(pullbackTolerance)
+            side: "SHORT", pullbackEMA20Short, pullbackEMA50Short, structureRetestShort,
+            atr5: round(atr5), pullbackTolerance: round(pullbackTolerance)
         })
     }
 
     // =========================================================
-    // 8. 5M REJECTION
+    // 8. 5M REJECTION — STRICT
     // =========================================================
 
     const o5Now = o5.at(-1)
@@ -5203,14 +5154,16 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
     const lowerWick5 = Math.min(o5Now, c5Now) - l5Now
     const upperWick5 = h5Now - Math.max(o5Now, c5Now)
+    const bodyAbs5 = Math.abs(c5Now - o5Now)
 
-    const bullishRejection =
-        (c5Now > o5Now && body5 >= 0.30 && closeLong5 >= 0.58) ||
-        (lowerWick5 >= Math.abs(c5Now - o5Now) * 0.8 && closeLong5 >= 0.62)
+    const bullishBodyRejection = c5Now > o5Now && body5 >= 0.45 && closeLong5 >= 0.68
+    const bearishBodyRejection = c5Now < o5Now && body5 >= 0.45 && closeShort5 >= 0.68
 
-    const bearishRejection =
-        (c5Now < o5Now && body5 >= 0.30 && closeShort5 >= 0.58) ||
-        (upperWick5 >= Math.abs(c5Now - o5Now) * 0.8 && closeShort5 >= 0.62)
+    const bullishWickRejection = lowerWick5 >= Math.max(bodyAbs5 * 1.20, atr5 * 0.15) && closeLong5 >= 0.68
+    const bearishWickRejection = upperWick5 >= Math.max(bodyAbs5 * 1.20, atr5 * 0.15) && closeShort5 >= 0.68
+
+    const bullishRejection = bullishBodyRejection || bullishWickRejection
+    const bearishRejection = bearishBodyRejection || bearishWickRejection
 
     // =========================================================
     // 8.5. 5M PULLBACK RECOVERY
@@ -5222,38 +5175,43 @@ async function coreLogic(data15, data1h, data5, data1m) {
     const sweepLow5 = l5Now < lowest(l5.slice(-8, -1), 7)
     const sweepHigh5 = h5Now > highest(h5.slice(-8, -1), 7)
 
-    const sweepRecoveryLong = sweepLow5 && c5Now > o5Now && closeLong5 >= 0.60
-    const sweepRecoveryShort = sweepHigh5 && c5Now < o5Now && closeShort5 >= 0.60
-
-    const longRecovery = bullishRejection || reclaimEMA20Long || sweepRecoveryLong
-    const shortRecovery = bearishRejection || reclaimEMA20Short || sweepRecoveryShort
+    const sweepRecoveryLong = sweepLow5 && c5Now > o5Now && body5 >= 0.40 && closeLong5 >= 0.68
+    const sweepRecoveryShort = sweepHigh5 && c5Now < o5Now && body5 >= 0.40 && closeShort5 >= 0.68
 
     // =========================================================
     // FLEXIBLE CONFIRMATION
     // =========================================================
 
-    const longConfirmation=bullishRejection||sweepRecoveryLong||(reclaimEMA20Long&&bullishTrigger)
-    const shortConfirmation=bearishRejection||sweepRecoveryShort||(reclaimEMA20Short&&bearishTrigger)
+    const longConfirmation = bullishRejection || sweepRecoveryLong || (reclaimEMA20Long && bullishTrigger && trendLong5)
+    const shortConfirmation = bearishRejection || sweepRecoveryShort || (reclaimEMA20Short && bearishTrigger && trendShort5)
 
     if (longBias && !longConfirmation) {
         return reject("CONFIRMATION", {
-            side: "LONG",
-            pullbackLong,
-            bullishRejection,
-            bullishTrigger,
-            bullishMicroBreak,
-            bullishStrongClose
+            side: "LONG", pullbackLong, bullishRejection, bullishTrigger, bullishMicroBreak, bullishStrongClose
         })
     }
 
     if (shortBias && !shortConfirmation) {
         return reject("CONFIRMATION", {
-            side: "SHORT",
-            pullbackShort,
-            bearishRejection,
-            bearishTrigger,
-            bearishMicroBreak,
-            bearishStrongClose
+            side: "SHORT", pullbackShort, bearishRejection, bearishTrigger, bearishMicroBreak, bearishStrongClose
+        })
+    }
+
+    // =========================================================
+    // 5M TREND CONFIRMATION
+    // =========================================================
+
+    if (longBias && !trendLong5 && !recoveryLong5 && !sweepRecoveryLong) {
+        return reject("5M_TREND_NOT_CONFIRMED", {
+            side: "LONG", trendLong5, sweepRecoveryLong,
+            ema9_5: round(ema9_5), ema20_5: round(ema20_5), ema50_5: round(ema50_5), slope9_5: round(slope9_5, 6)
+        })
+    }
+
+    if (shortBias && !trendShort5 && !recoveryShort5 && !sweepRecoveryShort) {
+        return reject("5M_TREND_NOT_CONFIRMED", {
+            side: "SHORT", trendShort5, sweepRecoveryShort,
+            ema9_5: round(ema9_5), ema20_5: round(ema20_5), ema50_5: round(ema50_5), slope9_5: round(slope9_5, 6)
         })
     }
 
@@ -5265,22 +5223,18 @@ async function coreLogic(data15, data1h, data5, data1m) {
     const vol1Now = v1.at(-1)
     const vol1Ratio = vol1Avg > 0 ? vol1Now / vol1Avg : 1
 
-    if (vol1Ratio < 0.25) {
-        return reject("VOL1", { side: coreSide, vol1Ratio: round(vol1Ratio, 3) })
-    }
+    if (vol1Ratio < 0.50) return reject("VOL1", { side: coreSide, vol1Ratio: round(vol1Ratio, 3) })
 
     // =========================================================
     // 11. CHASE FILTER
     // =========================================================
 
     const distFromEMA20 = Math.abs(price - ema20_5) / price
-    const maxChase = Math.max((atr5 / price) * 1.80, 0.006)
+    const maxChase = Math.max((atr5 / price) * 1.45, 0.0045)
 
     if (distFromEMA20 > maxChase) {
         return reject("CHASE", {
-            side: coreSide,
-            distFromEMA20: round(distFromEMA20, 6),
-            maxChase: round(maxChase, 6)
+            side: coreSide, distFromEMA20: round(distFromEMA20, 6), maxChase: round(maxChase, 6)
         })
     }
 
@@ -5291,43 +5245,36 @@ async function coreLogic(data15, data1h, data5, data1m) {
     const rsi5 = rsi(c5.slice(-50))
     const rsi1 = rsi(c1.slice(-50))
 
-    if (!Number.isFinite(rsi5) || !Number.isFinite(rsi1)) {
-        return reject("RSI_INVALID", { side: coreSide, rsi5, rsi1 })
-    }
+    if (!Number.isFinite(rsi5) || !Number.isFinite(rsi1)) return reject("RSI_INVALID", { side: coreSide, rsi5, rsi1 })
 
-    if (longBias && rsi5 > 76) {
-        return reject("RSI_LONG_EXTREME", { side: "LONG", rsi5: round(rsi5, 2) })
-    }
-
-    if (shortBias && rsi5 < 24) {
-        return reject("RSI_SHORT_EXTREME", { side: "SHORT", rsi5: round(rsi5, 2) })
-    }
+    if (longBias && rsi5 > 72) return reject("RSI_LONG_EXTREME", { side: "LONG", rsi5: round(rsi5, 2) })
+    if (shortBias && rsi5 < 28) return reject("RSI_SHORT_EXTREME", { side: "SHORT", rsi5: round(rsi5, 2) })
 
     // =========================================================
-    // 13. FINAL SETUP
+    // 13. FINAL SETUP — STRICT
     // =========================================================
 
-    const longSetup=longBias&&structureOKLong&&pullbackLong&&longRecovery&&(bullishRejection||sweepRecoveryLong||(reclaimEMA20Long&&bullishTrigger))
-    const shortSetup=shortBias&&structureOKShort&&pullbackShort&&shortRecovery&&(bearishRejection||sweepRecoveryShort||(reclaimEMA20Short&&bearishTrigger))
+    const longSetup =
+        longBias &&
+        structureOKLong &&
+        pullbackLong &&
+        (trendLong5 || recoveryLong5 || sweepRecoveryLong) &&
+        longConfirmation &&
+        (bullishRejection || sweepRecoveryLong || (reclaimEMA20Long && bullishTrigger && trendLong5))
+
+    const shortSetup =
+        shortBias &&
+        structureOKShort &&
+        pullbackShort &&
+        (trendShort5 || recoveryShort5 || sweepRecoveryShort) &&
+        shortConfirmation &&
+        (bearishRejection || sweepRecoveryShort || (reclaimEMA20Short && bearishTrigger && trendShort5))
 
     if (!longSetup && !shortSetup) {
         return reject("FINAL_SETUP", {
-            side: coreSide,
-            longBias,
-            shortBias,
-            structureOKLong,
-            structureOKShort,
-            trendLong5,
-            trendShort5,
-            pullbackLong,
-            pullbackShort,
-            longConfirmation,
-            shortConfirmation,
-            bullishTrigger,
-            bearishTrigger
-            //,
-            // longPullbackRecovery,
-            // shortPullbackRecovery
+            side: coreSide, longBias, shortBias, structureOKLong, structureOKShort,
+            trendLong5, trendShort5, pullbackLong, pullbackShort,
+            longConfirmation, shortConfirmation, bullishTrigger, bearishTrigger
         })
     }
 
@@ -5367,17 +5314,10 @@ async function coreLogic(data15, data1h, data5, data1m) {
         sl = structureStop - slBuffer
         risk = entry - sl
 
-        if (!Number.isFinite(risk) || risk <= 0) {
-            return reject("RISK_INVALID", { side: "LONG", risk: round(risk) })
-        }
+        if (!Number.isFinite(risk) || risk <= 0) return reject("RISK_INVALID", { side: "LONG", risk: round(risk) })
 
         if (risk < atr5 * 0.30) {
-            return reject("RISK_TOO_SMALL", {
-                side: "LONG",
-                risk: round(risk),
-                atr5: round(atr5),
-                riskATR: round(risk / atr5, 3)
-            })
+            return reject("RISK_TOO_SMALL", { side: "LONG", risk: round(risk), atr5: round(atr5), riskATR: round(risk / atr5, 3) })
         }
 
         const maxRiskATRLong = gap1h >= 0.0015 && gap15 >= 0.0010 ? 5.00 : 4.50
@@ -5385,66 +5325,45 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
         if (riskATRLong > maxRiskATRLong) {
             return reject("RISK_TOO_WIDE", {
-                side: "LONG",
-                risk: round(risk),
-                atr5: round(atr5),
-                riskATR: round(riskATRLong, 3),
-                maxRiskATR: maxRiskATRLong
+                side: "LONG", risk: round(risk), atr5: round(atr5),
+                riskATR: round(riskATRLong, 3), maxRiskATR: maxRiskATRLong
             })
         }
 
         if (risk > atr5 * 2.50) {
             return reject("RISK_TOO_WIDE", {
-                side: "LONG",
-                risk: round(risk),
-                atr5: round(atr5),
-                riskATR: round(risk / atr5, 3)
+                side: "LONG", risk: round(risk), atr5: round(atr5), riskATR: round(risk / atr5, 3)
             })
         }
 
         if (risk / entry > 0.018) {
             return reject("RISK_PERCENT", {
-                side: "LONG",
-                riskPercent: round(risk / entry, 6),
-                risk: round(risk),
-                entry: round(entry)
+                side: "LONG", riskPercent: round(risk / entry, 6), risk: round(risk), entry: round(entry)
             })
         }
 
         if (resistance) {
             const room = resistance - entry
 
-            if (room < risk * 1.35) {
+            if (room < risk * 1.50) {
                 return reject("ROOM_LONG", {
-                    side: "LONG",
-                    room: round(room),
-                    required: round(risk * 1.30),
-                    risk: round(risk),
-                    resistance: round(resistance),
-                    entry: round(entry)
+                    side: "LONG", room: round(room), required: round(risk * 1.50),
+                    risk: round(risk), resistance: round(resistance), entry: round(entry)
                 })
             }
         }
 
-        tp = entry + risk * 1.4
-
+        tp = entry + risk * 1.5
     } else {
         const structureStop = Math.max(swingHigh5, swingHigh15)
 
         sl = structureStop + slBuffer
         risk = sl - entry
 
-        if (!Number.isFinite(risk) || risk <= 0) {
-            return reject("RISK_INVALID", { side: "SHORT", risk: round(risk) })
-        }
+        if (!Number.isFinite(risk) || risk <= 0) return reject("RISK_INVALID", { side: "SHORT", risk: round(risk) })
 
         if (risk < atr5 * 0.30) {
-            return reject("RISK_TOO_SMALL", {
-                side: "SHORT",
-                risk: round(risk),
-                atr5: round(atr5),
-                riskATR: round(risk / atr5, 3)
-            })
+            return reject("RISK_TOO_SMALL", { side: "SHORT", risk: round(risk), atr5: round(atr5), riskATR: round(risk / atr5, 3) })
         }
 
         const maxRiskATRShort = gap1h >= 0.0015 && gap15 >= 0.0010 ? 5.00 : 4.50
@@ -5452,39 +5371,35 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
         if (riskATRShort > maxRiskATRShort) {
             return reject("RISK_TOO_WIDE", {
-                side: "SHORT",
-                risk: round(risk),
-                atr5: round(atr5),
-                riskATR: round(riskATRShort, 3),
-                maxRiskATR: maxRiskATRShort
+                side: "SHORT", risk: round(risk), atr5: round(atr5),
+                riskATR: round(riskATRShort, 3), maxRiskATR: maxRiskATRShort
+            })
+        }
+
+        if (risk > atr5 * 2.50) {
+            return reject("RISK_TOO_WIDE", {
+                side: "SHORT", risk: round(risk), atr5: round(atr5), riskATR: round(risk / atr5, 3)
             })
         }
 
         if (risk / entry > 0.018) {
             return reject("RISK_PERCENT", {
-                side: "SHORT",
-                riskPercent: round(risk / entry, 6),
-                risk: round(risk),
-                entry: round(entry)
+                side: "SHORT", riskPercent: round(risk / entry, 6), risk: round(risk), entry: round(entry)
             })
         }
 
         if (support) {
             const room = entry - support
 
-            if (room < risk * 1.35) {
+            if (room < risk * 1.50) {
                 return reject("ROOM_SHORT", {
-                    side: "SHORT",
-                    room: round(room),
-                    required: round(risk * 1.30),
-                    risk: round(risk),
-                    support: round(support),
-                    entry: round(entry)
+                    side: "SHORT", room: round(room), required: round(risk * 1.50),
+                    risk: round(risk), support: round(support), entry: round(entry)
                 })
             }
         }
 
-        tp = entry - risk * 1.4
+        tp = entry - risk * 1.5
     }
 
     // =========================================================
@@ -5493,14 +5408,10 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
     const finalRR = longSetup ? (tp - entry) / risk : (entry - tp) / risk
 
-    if (!Number.isFinite(finalRR) || finalRR < 1.40) {
+    if (!Number.isFinite(finalRR) || finalRR < 1.50) {
         return reject("FINAL_RR", {
-            side: coreSide,
-            finalRR: round(finalRR, 2),
-            requiredRR: 1.40,
-            risk: round(risk),
-            entry: round(entry),
-            tp: round(tp)
+            side: coreSide, finalRR: round(finalRR, 2), requiredRR: 1.50,
+            risk: round(risk), entry: round(entry), tp: round(tp)
         })
     }
 
@@ -5515,37 +5426,28 @@ async function coreLogic(data15, data1h, data5, data1m) {
         pullbackConfirmed: longSetup ? pullbackLong : pullbackShort,
         rejectionConfirmed: longSetup ? bullishRejection : bearishRejection,
         triggerConfirmed: longSetup ? bullishTrigger : bearishTrigger,
-        volumeAcceptable: vol1Ratio >= 0.50,
+        volumeAcceptable: vol5Ratio >= 0.65 && vol1Ratio >= 0.50,
         chaseControlled: distFromEMA20 <= maxChase,
-        roomAcceptable: longSetup
-            ? (!resistance || resistance - entry >= risk * 1.50)
-            : (!support || entry - support >= risk * 1.50)
+        roomAcceptable: longSetup ? (!resistance || resistance - entry >= risk * 1.50) : (!support || entry - support >= risk * 1.50)
     }
 
     const qualityCount = Object.values(quality).filter(Boolean).length
 
     // KHÔNG dùng qualityCount để reject setup
     // if (qualityCount < 8) return null
-
     // =========================================================
     // 19. MARKET STATE
     // =========================================================
-
     const strongTrend = gap1h >= 0.0015 && gap15 >= 0.0010
     const marketState = strongTrend ? "TREND_STRONG" : "TREND_NORMAL"
-
     // =========================================================
     // 20. VOLATILITY
     // =========================================================
-
     const volatility = atrRatio5 >= 0.004 ? "HIGH" : atrRatio5 <= 0.0012 ? "LOW" : "NORMAL"
-
     // =========================================================
     // 21. PULLBACK TYPE
     // =========================================================
-
     let pullbackType = "EMA20"
-
     if (longSetup) {
         if (structureRetestLong) pullbackType = "STRUCTURE_RETEST"
         else if (pullbackEMA50Long) pullbackType = "EMA50"
@@ -5555,27 +5457,18 @@ async function coreLogic(data15, data1h, data5, data1m) {
         else if (pullbackEMA50Short) pullbackType = "EMA50"
         else pullbackType = "EMA20"
     }
-
     // =========================================================
     // 22. TRIGGER TYPE
     // =========================================================
-
     let triggerType = "STRONG_CLOSE"
-
-    if (bullishMicroBreak || bearishMicroBreak) {
-        triggerType = "MICRO_BREAK"
-    }
-
+    if (bullishMicroBreak || bearishMicroBreak) triggerType = "MICRO_BREAK"
     // =========================================================
     // 23. SETUP
     // =========================================================
-
-    const setup = "TREND_PULLBACK_CONTINUATION"
-
+    const setup = "TREND_PULLBACK"
     // =========================================================
     // CORE ACCEPT STATS
     // =========================================================
-
     CORE_REJECT_STATS.ACCEPT++
 
     if (longSetup) CORE_REJECT_STATS.ACCEPT_LONG++
@@ -5695,7 +5588,7 @@ async function coreLogic(data15, data1h, data5, data1m) {
         },
 
         debug: {
-            reason: "TREND_PULLBACK_CONTINUATION",
+            reason: "TREND_PULLBACK",
             timestamp: Date.now(),
 
             candle1m: {
@@ -5714,6 +5607,7 @@ async function coreLogic(data15, data1h, data5, data1m) {
         }
     }
 }
+
 // =========================================================
 // CORE REPORT — MỖI 6 GIỜ
 // =========================================================
