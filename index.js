@@ -4983,9 +4983,20 @@ CORE_TOTAL_CALLS++
     const slope1h = pct(ema20_1h, ema20_1hPrev)
     const gap1h = Math.abs(ema20_1h - ema50_1h) / price1h
 
-    const bull1h = ema20_1h > ema50_1h && price1h > ema20_1h && slope1h >= 0.00025 && gap1h >= 0.0015
-    const bear1h = ema20_1h < ema50_1h && price1h < ema20_1h && slope1h <= -0.00025 && gap1h >= 0.0015
+    //const bull1h = ema20_1h > ema50_1h && price1h > ema20_1h && slope1h >= 0.00025 && gap1h >= 0.0015
+    //const bear1h = ema20_1h < ema50_1h && price1h < ema20_1h && slope1h <= -0.00025 && gap1h >= 0.0015
+const bull1h =
+    ema20_1h > ema50_1h &&
+    slope1h >= 0.00025 &&
+    gap1h >= 0.0015 &&
+    price1h >= ema50_1h * 0.998
 
+const bear1h =
+    ema20_1h < ema50_1h &&
+    slope1h <= -0.00025 &&
+    gap1h >= 0.0015 &&
+    price1h <= ema50_1h * 1.002
+    
     if (!bull1h && !bear1h) {
         return reject("1H_DIRECTION", {
             price1h: round(price1h),
