@@ -5104,8 +5104,8 @@ const bear1h =
     // 7. PULLBACK LOCATION
     // =========================================================
 
-    const recentLow5 = lowest(l5.slice(0, -1), 4)
-    const recentHigh5 = highest(h5.slice(0, -1), 4)
+    const recentLow5 = lowest(l5.slice(0, -1), 8)
+    const recentHigh5 = highest(h5.slice(0, -1), 8)
     const recentClose5 = c5.at(-1)
 
     const pullbackTolerance = Math.max(atr5 * 0.50, price * 0.0012)
@@ -5297,7 +5297,7 @@ const bear1h =
     // =========================================================
     // 16. STOP LOSS
     // =========================================================
-
+    const TARGET_R = 1.80
     const slBuffer = Math.max(atr1 * 0.50, atr5 * 0.15)
     const entry = price
 
@@ -5306,7 +5306,7 @@ const bear1h =
     let tp
 
     if (longSetup) {
-        const structureStop = Math.min(swingLow5, swingLow15)
+        const structureStop = Math.max(swingLow5, swingLow15)
 
         sl = structureStop - slBuffer
         risk = entry - sl
@@ -5317,21 +5317,17 @@ const bear1h =
             return reject("RISK_TOO_SMALL", { side: "LONG", risk: round(risk), atr5: round(atr5), riskATR: round(risk / atr5, 3) })
         }
 
-        const maxRiskATRLong = gap1h >= 0.0015 && gap15 >= 0.0010 ? 5.00 : 4.50
         const riskATRLong = risk / atr5
 
-        if (riskATRLong > maxRiskATRLong) {
-            return reject("RISK_TOO_WIDE", {
-                side: "LONG", risk: round(risk), atr5: round(atr5),
-                riskATR: round(riskATRLong, 3), maxRiskATR: maxRiskATRLong
-            })
-        }
-
-        if (risk > atr5 * 2.50) {
-            return reject("RISK_TOO_WIDE", {
-                side: "LONG", risk: round(risk), atr5: round(atr5), riskATR: round(risk / atr5, 3)
-            })
-        }
+if (riskATRLong > 2.50) {
+    return reject("RISK_TOO_WIDE", {
+        side: "LONG",
+        risk: round(risk),
+        atr5: round(atr5),
+        riskATR: round(riskATRLong, 3),
+        maxRiskATR: 2.50
+    })
+}
 
         if (risk / entry > 0.018) {
             return reject("RISK_PERCENT", {
@@ -5342,7 +5338,7 @@ const bear1h =
         if (resistance) {
             const room = resistance - entry
 
-            if (room < risk * 1.50) {
+            if (room < risk * TARGET_R) {
                 return reject("ROOM_LONG", {
                     side: "LONG", room: round(room), required: round(risk * 1.50),
                     risk: round(risk), resistance: round(resistance), entry: round(entry)
@@ -5350,9 +5346,9 @@ const bear1h =
             }
         }
 
-        tp = entry + risk * 1.5
+        tp = entry + risk * TARGET_R
     } else {
-        const structureStop = Math.max(swingHigh5, swingHigh15)
+        const structureStop = Math.min(swingHigh5, swingHigh15)
 
         sl = structureStop + slBuffer
         risk = sl - entry
@@ -5363,21 +5359,17 @@ const bear1h =
             return reject("RISK_TOO_SMALL", { side: "SHORT", risk: round(risk), atr5: round(atr5), riskATR: round(risk / atr5, 3) })
         }
 
-        const maxRiskATRShort = gap1h >= 0.0015 && gap15 >= 0.0010 ? 5.00 : 4.50
         const riskATRShort = risk / atr5
 
-        if (riskATRShort > maxRiskATRShort) {
-            return reject("RISK_TOO_WIDE", {
-                side: "SHORT", risk: round(risk), atr5: round(atr5),
-                riskATR: round(riskATRShort, 3), maxRiskATR: maxRiskATRShort
-            })
-        }
-
-        if (risk > atr5 * 2.50) {
-            return reject("RISK_TOO_WIDE", {
-                side: "SHORT", risk: round(risk), atr5: round(atr5), riskATR: round(risk / atr5, 3)
-            })
-        }
+if (riskATRShort > 2.50) {
+    return reject("RISK_TOO_WIDE", {
+        side: "SHORT",
+        risk: round(risk),
+        atr5: round(atr5),
+        riskATR: round(riskATRShort, 3),
+        maxRiskATR: 2.50
+    })
+}
 
         if (risk / entry > 0.018) {
             return reject("RISK_PERCENT", {
@@ -5388,7 +5380,7 @@ const bear1h =
         if (support) {
             const room = entry - support
 
-            if (room < risk * 1.50) {
+            if (room < risk * TARGET_R) {
                 return reject("ROOM_SHORT", {
                     side: "SHORT", room: round(room), required: round(risk * 1.50),
                     risk: round(risk), support: round(support), entry: round(entry)
@@ -5396,7 +5388,7 @@ const bear1h =
             }
         }
 
-        tp = entry - risk * 1.5
+        tp = entry - risk * TARGET_R
     }
 
     // =========================================================
@@ -5405,9 +5397,9 @@ const bear1h =
 
     const finalRR = longSetup ? (tp - entry) / risk : (entry - tp) / risk
 
-    if (!Number.isFinite(finalRR) || finalRR < 1.50) {
+    if (!Number.isFinite(finalRR) || finalRR < TARGET_R) {
         return reject("FINAL_RR", {
-            side: coreSide, finalRR: round(finalRR, 2), requiredRR: 1.50,
+            side: coreSide, finalRR: round(finalRR, 2), requiredRR: TARGET_R,
             risk: round(risk), entry: round(entry), tp: round(tp)
         })
     }
