@@ -5076,8 +5076,7 @@ const bear1h =
 
     const trendLong5 = p5 > ema20_5 && ema9_5 > ema20_5 && ema20_5 > ema50_5 && slope9_5 > 0
     const trendShort5 = p5 < ema20_5 && ema9_5 < ema20_5 && ema20_5 < ema50_5 && slope9_5 < 0
-    const recoveryLong5 = p5 > ema20_5 && ema20_5 >= ema50_5 && slope9_5 > -0.00035
-    const recoveryShort5 = p5 < ema20_5 && ema20_5 <= ema50_5 && slope9_5 < 0.00035
+
     // =========================================================
     // 5M COUNTER-TREND FILTER
     // =========================================================
@@ -5113,6 +5112,17 @@ const bear1h =
     const pullbackEMA20Short = recentHigh5 >= ema20_5 - pullbackTolerance
     const pullbackEMA50Long = recentLow5 <= ema50_5 + pullbackTolerance
     const pullbackEMA50Short = recentHigh5 >= ema50_5 - pullbackTolerance
+    const recoveryLong5 =
+    p5 > ema20_5 &&
+    ema20_5 >= ema50_5 &&
+    slope9_5 > -0.00035 &&
+    l5.at(-1) <= ema20_5 + pullbackTolerance
+
+const recoveryShort5 =
+    p5 < ema20_5 &&
+    ema20_5 <= ema50_5 &&
+    slope9_5 < 0.00035 &&
+    h5.at(-1) >= ema20_5 - pullbackTolerance
 
     const structureTolerance = Math.max(atr5 * 0.55, price * 0.0015)
 
@@ -5179,8 +5189,49 @@ const bear1h =
     // FLEXIBLE CONFIRMATION
     // =========================================================
 
-    const longConfirmation = bullishRejection || sweepRecoveryLong || (reclaimEMA20Long && bullishTrigger && trendLong5)
-    const shortConfirmation = bearishRejection || sweepRecoveryShort || (reclaimEMA20Short && bearishTrigger && trendShort5)
+    const bullishEMA20Reaction =
+    pullbackEMA20Long &&
+    bullishRejection
+
+const bullishEMA50Reaction =
+    pullbackEMA50Long &&
+    bullishRejection
+
+const bullishStructureReaction =
+    structureRetestLong &&
+    bullishRejection
+
+const bearishEMA20Reaction =
+    pullbackEMA20Short &&
+    bearishRejection
+
+const bearishEMA50Reaction =
+    pullbackEMA50Short &&
+    bearishRejection
+
+const bearishStructureReaction =
+    structureRetestShort &&
+    bearishRejection
+
+const validBullishReaction =
+    bullishEMA20Reaction ||
+    bullishEMA50Reaction ||
+    bullishStructureReaction ||
+    sweepRecoveryLong
+
+const validBearishReaction =
+    bearishEMA20Reaction ||
+    bearishEMA50Reaction ||
+    bearishStructureReaction ||
+    sweepRecoveryShort
+
+const longConfirmation =
+    validBullishReaction ||
+    (reclaimEMA20Long && bullishTrigger && trendLong5)
+
+const shortConfirmation =
+    validBearishReaction ||
+    (reclaimEMA20Short && bearishTrigger && trendShort5)
 
     if (longBias && !longConfirmation) {
         return reject("CONFIRMATION", {
@@ -5252,20 +5303,26 @@ const bear1h =
     // =========================================================
 
     const longSetup =
-        longBias &&
-        structureOKLong &&
-        pullbackLong &&
-        (trendLong5 || recoveryLong5 || sweepRecoveryLong) &&
-        longConfirmation &&
-        (bullishRejection || sweepRecoveryLong || (reclaimEMA20Long && bullishTrigger && trendLong5))
+    longBias &&
+    structureOKLong &&
+    pullbackLong &&
+    (
+        (trendLong5 && longConfirmation) ||
+        recoveryLong5 ||
+        sweepRecoveryLong ||
+        (reclaimEMA20Long && bullishTrigger && trendLong5)
+    )
 
-    const shortSetup =
-        shortBias &&
-        structureOKShort &&
-        pullbackShort &&
-        (trendShort5 || recoveryShort5 || sweepRecoveryShort) &&
-        shortConfirmation &&
-        (bearishRejection || sweepRecoveryShort || (reclaimEMA20Short && bearishTrigger && trendShort5))
+const shortSetup =
+    shortBias &&
+    structureOKShort &&
+    pullbackShort &&
+    (
+        (trendShort5 && shortConfirmation) ||
+        recoveryShort5 ||
+        sweepRecoveryShort ||
+        (reclaimEMA20Short && bearishTrigger && trendShort5)
+    )
 
     if (!longSetup && !shortSetup) {
         return reject("FINAL_SETUP", {
@@ -5340,7 +5397,7 @@ if (riskATRLong > 2.50) {
 
             if (room < risk * TARGET_R) {
                 return reject("ROOM_LONG", {
-                    side: "LONG", room: round(room), required: round(risk * 1.50),
+                    side: "LONG", room: round(room), required: round(risk * TARGET_R),
                     risk: round(risk), resistance: round(resistance), entry: round(entry)
                 })
             }
@@ -5382,7 +5439,7 @@ if (riskATRShort > 2.50) {
 
             if (room < risk * TARGET_R) {
                 return reject("ROOM_SHORT", {
-                    side: "SHORT", room: round(room), required: round(risk * 1.50),
+                    side: "SHORT", room: round(room), required: round(risk * TARGET_R),
                     risk: round(risk), support: round(support), entry: round(entry)
                 })
             }
