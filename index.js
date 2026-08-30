@@ -5354,7 +5354,7 @@ const shortSetup =
     // =========================================================
     // 16. STOP LOSS
     // =========================================================
-    const TARGET_R = 1.80
+    const TARGET_R = 1.30
     const slBuffer = Math.max(atr1 * 0.50, atr5 * 0.15)
     const entry = price
 
