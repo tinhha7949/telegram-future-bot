@@ -6912,7 +6912,7 @@ async function syncActiveTrades(){
 }
 
 let DYNAMIC_TPSL_RUNNING = false
-const ENABLE_DYNAMIC_TPSL=false
+const ENABLE_DYNAMIC_TPSL= true
 async function runDynamicTPSL(){
     if(!ENABLE_DYNAMIC_TPSL)return
 
