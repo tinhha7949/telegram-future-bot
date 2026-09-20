@@ -2318,11 +2318,17 @@ async function openPositionWithTPSL(trade, qty){
 // Dynamic manager compatible with Core V3.
 // Core V3 owns the initial structure SL and TP. This function NEVER widens SL
 // and NEVER pushes TP farther. It only protects profit after the market pays.
+// Dynamic manager compatible with Core V3.
+// Core V3 owns the initial structure SL and TP. This function NEVER widens SL.
+// TP stays unchanged unless a qualified continuation has a farther structure.
 async function manageDynamicTPSL(trade) {
     try {
         if (!trade?.symbol || !trade?.side) return
         const symbol = trade.symbol
         const side = String(trade.side).toUpperCase()
+        const avg = values => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0
+        const nearestAbove = (values, value) => values.filter(x => Number.isFinite(x) && x > value).sort((a, b) => a - b)[0]
+        const nearestBelow = (values, value) => values.filter(x => Number.isFinite(x) && x < value).sort((a, b) => b - a)[0]
         if (side !== 'LONG' && side !== 'SHORT') return
         if (TPSL_CLOSING[symbol] || TPSL_PENDING[symbol]) return
 
@@ -2414,8 +2420,8 @@ async function manageDynamicTPSL(trade) {
             : current > oldTP && current - oldTP <= Math.max(atr5 * .45, initialRisk * .25)
         const momentumLong = e9 > e20 && c5.at(-1) > c5.at(-2) && c5.at(-2) >= c5.at(-3) && vol5Ratio >= .80
         const momentumShort = e9 < e20 && c5.at(-1) < c5.at(-2) && c5.at(-2) <= c5.at(-3) && vol5Ratio >= .80
-        const allHighs = h5.slice(-48, -1).concat(data15.slice(0, -1).map(x => Number(x[2])))
-        const allLows = l5.slice(-48, -1).concat(data15.slice(0, -1).map(x => Number(x[3])))
+        const allHighs = h5.slice(-48, -1).concat(closed15.slice(-48, -1).map(x => Number(x[2])))
+        const allLows = l5.slice(-48, -1).concat(closed15.slice(-48, -1).map(x => Number(x[3])))
         const nextObstacle = side === 'LONG' ? nearestAbove(allHighs, oldTP) : nearestBelow(allLows, oldTP)
         const extendedTP = side === 'LONG' ? Number(nextObstacle) - buffer * .20 : Number(nextObstacle) + buffer * .20
         const enoughExtension = side === 'LONG'
@@ -2450,7 +2456,7 @@ async function manageDynamicTPSL(trade) {
         const minimumChange = Math.max(entry * .00005, atr15 * .03)
         if (Math.abs(newSL - oldSL) < minimumChange && Math.abs(newTP - oldTP) < minimumChange) return
 
-        const updateTrade = { ...trade, symbol, side, entry, sl: newSL, tp: oldTP, initialRisk, previousSL: oldSL }
+        const updateTrade = { ...trade, symbol, side, entry, sl: newSL, tp: newTP, initialRisk, previousSL: oldSL }
         const result = await setDynamicTPSL(updateTrade)
         if (!result?.ok) {
             console.log(`⚠️ DYNAMIC TPSL FAILED ${symbol}`)
@@ -2476,7 +2482,6 @@ async function manageDynamicTPSL(trade) {
         if (trade?.symbol) delete TPSL_PENDING[trade.symbol]
     }
 }
-
 
 async function cancelAllOrders(symbol){
 
