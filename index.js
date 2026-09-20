@@ -3328,6 +3328,9 @@ function resetCore24hStats() {
 // Core V3: four decision layers only.
 // Requires existing ema(values, period), atr(klines), reject(reason, debug), CORE_TOTAL_CALLS.
 // Kline format: [openTime, open, high, low, close, volume].
+// Core V3: four decision layers only.
+// Requires existing ema(values, period), atr(klines), reject(reason, debug), CORE_TOTAL_CALLS.
+// Kline format: [openTime, open, high, low, close, volume].
 async function coreLogic(data15, data1h, data5, data1m) {
     CORE_TOTAL_CALLS++
     if (![data15, data1h, data5, data1m].every(Array.isArray)) return reject('VALIDATION')
@@ -3417,10 +3420,13 @@ async function coreLogic(data15, data1h, data5, data1m) {
         side, price:r(price), sl:r(sl), tp:r(tp), setup: side+'_'+setupKind, pullbackType: setupKind==='SWEEP_RECLAIM'?'SWEEP':'EMA20_RECLAIM',
         triggerType: side==='LONG'?'1M_BULLISH_BREAK_AFTER_RECLAIM':'1M_BEARISH_BREAK_AFTER_RECLAIM', marketState: side==='LONG'?'UPTREND':'DOWNTREND',
         volatility: atr5/price<.003?'LOW':atr5/price>.010?'HIGH':'NORMAL', qualityScore,
+        // Scanner/buildTradeFromCoreSignal consumes these fields. Keep them explicit.
+        risk: { risk:r(risk), initialRisk:r(risk), rr:r(targetR), targetR:r(targetR) },
         indicators: { atr15:r(atr15), atr5:r(atr5), atr1:r(atr1), ema20_1h:r(e20H), ema50_1h:r(e50H), ema20_15:r(e20_15), ema50_15:r(e50_15), ema20_5:r(e20), ema50_5:r(e50) },
         debug: { setupIndex, setupAge5m:c5.length-1-setupIndex, setupKind, htfSlope:r(hSlope,6), biasSlope:r(mSlope,6), vol5Ratio:r(vol5Ratio,3), distanceFromEma20:r(distance,6), maxChase:r(maxChase,6), invalidation:r(invalidation), risk:r(risk), riskATR5:r(risk/atr5,3), nearestObstacle:r(obstacle), availableR:r(available,3), targetR, triggerLong, triggerShort }
     }
 }
+
 
 
 // =========================================================
@@ -4037,8 +4043,8 @@ function buildTradeFromCoreSignal(best, btcRegime, riskBudget){
     const sl = Number(best?.sl)
     const tp = Number(best?.tp)
 
-    const initialRisk = Number(best?.risk?.risk)
-    const rr = Number(best?.risk?.rr)
+    const initialRisk = Number(best?.risk?.risk ?? Math.abs(entry - sl))
+const rr = Number(best?.risk?.rr ?? (Math.abs(tp - entry) / Math.abs(entry - sl)))
     const budget = Number(riskBudget)
 
     // =========================================================
