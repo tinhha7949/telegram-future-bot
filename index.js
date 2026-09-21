@@ -6105,7 +6105,14 @@ risk = Math.min(
     risk,
     balance * TRADE_CONFIG.maxRiskPerTrade
 )
-
+console.log(
+    `🧮 RISK CALC ${best.symbol} | ` +
+    `balance=${ACCOUNT_BALANCE} | ` +
+    `riskPercent=${TRADE_CONFIG.riskPerTrade} | ` +
+    `maxRisk=${TRADE_CONFIG.maxRiskPerTrade} | ` +
+    `multiplier=${multiplier} | ` +
+    `risk=${risk}`
+)
 if(risk <= 0){
     console.log(
         `🚫 FILTER RISK: ${best.symbol} | ` +
@@ -6695,19 +6702,28 @@ async function checkTrades(){
     }
     console.log(`🚨 FORCE VERIFY ${t.symbol}`)
 
-let positions = []
+let positions
 
 try{
     positions = await getPositionsCached()
 }catch(e){
-    console.log("⚠ POSITION VERIFY FAIL")
+    console.error(
+        `⚠ POSITION CACHE FAIL ${best.symbol}:`,
+        e?.message || e
+    )
+    continue
 }
 
+if(!Array.isArray(positions)){
+    console.error(
+        `⚠ POSITION CACHE INVALID ${best.symbol}`
+    )
+    continue
+}
 
-let realPos = positions.find(p =>
-    p.symbol === t.symbol &&
+let realActive = positions.filter(p =>
     Math.abs(parseFloat(p.positionAmt || "0")) > 0
-)
+).length
 
 // không còn position
 if(!realPos){
