@@ -3593,80 +3593,82 @@ if (long1H && !short1H) {
         })
     }
 
-    // =========================================================
-    // 5. 15M BIAS
-    //
-    // Không bắt 15M phải trend mạnh.
-    // Cho phép pullback ngược chiều miễn chưa phá cấu trúc.
-    // =========================================================
+       // =========================================================
+   // 5. 15M BIAS
+   // =========================================================
 
-    const e20_15 =
-        ema(c15.slice(-70),20)
+   const e20_15 =
+       ema(c15.slice(-70),20)
 
-    const e50_15 =
-        ema(c15.slice(-110),50)
+   const e50_15 =
+       ema(c15.slice(-110),50)
 
-    const e20_15Prev =
-        ema(c15.slice(-71,-1),20)
+   const e20_15Prev =
+       ema(c15.slice(-71,-1),20)
 
-    const mSlope =
-        change(e20_15,e20_15Prev)
+   const mSlope =
+       change(e20_15,e20_15Prev)
 
-    const pullback15 =
-        Math.max(
-            atr15 * .45,
-            price * .0018
-        )
+   const mGap =
+       Math.abs(e20_15-e50_15) / price
 
-    let biasOK = false
+   const pullback15 =
+       Math.max(
+           atr15 * .45,
+           price * .0018
+       )
 
-    if (side === 'LONG') {
+   let biasOK = false
 
-        const trend =
-            e20_15 >= e50_15 &&
-            mSlope > -.0010
+   if (side === 'LONG') {
 
-        const pullback =
-            price >= e50_15 - pullback15 &&
-            price >= e20_15 * .994
+       const trend =
+           e20_15 > e50_15 &&
+           mGap >= .00015 &&
+           mSlope > -.00003
 
-        const reclaim =
-            price > e20_15 &&
-            c15.at(-1) >= o15.at(-1)
+       const pullback =
+           price >= e50_15 - pullback15 &&
+           price >= e20_15 * .994
 
-        biasOK =
-            trend &&
-            (pullback || reclaim)
+       const reclaim =
+           price > e20_15 &&
+           c15.at(-1) >= o15.at(-1)
 
-    } else {
+       biasOK =
+           trend &&
+           (pullback || reclaim)
 
-        const trend =
-            e20_15 <= e50_15 &&
-            mSlope < .0010
+   } else {
 
-        const pullback =
-            price <= e50_15 + pullback15 &&
-            price <= e20_15 * 1.006
+       const trend =
+           e20_15 < e50_15 &&
+           mGap >= .00015 &&
+           mSlope < .00003
 
-        const reclaim =
-            price < e20_15 &&
-            c15.at(-1) <= o15.at(-1)
+       const pullback =
+           price <= e50_15 + pullback15 &&
+           price <= e20_15 * 1.006
 
-        biasOK =
-            trend &&
-            (pullback || reclaim)
-    }
+       const reclaim =
+           price < e20_15 &&
+           c15.at(-1) <= o15.at(-1)
 
-    if (!biasOK) {
-        return reject('15M_BIAS',{
-            side,
-            ema20:r(e20_15),
-            ema50:r(e50_15),
-            slope:r(mSlope,6),
-            price:r(price)
-        })
-    }
+       biasOK =
+           trend &&
+           (pullback || reclaim)
+   }
 
+   if (!biasOK) {
+       return reject('15M_BIAS',{
+           side,
+           ema20:r(e20_15),
+           ema50:r(e50_15),
+           slope:r(mSlope,6),
+           gap:r(mGap,6),
+           price:r(price)
+       })
+   }
     // =========================================================
     // 6. 5M SETUP
     //
@@ -3684,10 +3686,10 @@ if (long1H && !short1H) {
         ema(c5.slice(-80),50)
 
     const zone =
-        Math.max(
-            atr5 * .65,
-            price * .0013
-        )
+    Math.max(
+        atr5 * .45,
+        price * .0010
+    )
 
     const start5 =
         Math.max(8,c5.length-8)
@@ -3769,18 +3771,18 @@ if (long1H && !short1H) {
             top >= .50
 
         const reclaim20Long =
-            l5[k] <= ema20At + zone &&
-            c5[k] > ema20At &&
-            c5[k] >= o5[k] &&
-            b >= .22 &&
-            top >= .50
+    l5[k] <= ema20At + zone &&
+    c5[k] > ema20At &&
+    c5[k] >= o5[k] &&
+    b >= .28 &&
+    top >= .58
 
-        const reclaim50Long =
-            l5[k] <= ema50At + zone &&
-            c5[k] > ema50At &&
-            c5[k] >= o5[k] &&
-            b >= .20 &&
-            top >= .48
+const reclaim50Long =
+    l5[k] <= ema50At + zone &&
+    c5[k] > ema50At &&
+    c5[k] >= o5[k] &&
+    b >= .26 &&
+    top >= .56
 
         // -----------------------------------------------------
         // SHORT
@@ -3794,18 +3796,18 @@ if (long1H && !short1H) {
             bottom >= .50
 
         const reclaim20Short =
-            h5[k] >= ema20At - zone &&
-            c5[k] < ema20At &&
-            c5[k] <= o5[k] &&
-            b >= .22 &&
-            bottom >= .50
+    h5[k] >= ema20At - zone &&
+    c5[k] < ema20At &&
+    c5[k] <= o5[k] &&
+    b >= .28 &&
+    bottom >= .58
 
-        const reclaim50Short =
-            h5[k] >= ema50At - zone &&
-            c5[k] < ema50At &&
-            c5[k] <= o5[k] &&
-            b >= .20 &&
-            bottom >= .48
+const reclaim50Short =
+    h5[k] >= ema50At - zone &&
+    c5[k] < ema50At &&
+    c5[k] <= o5[k] &&
+    b >= .26 &&
+    bottom >= .56
 
         if (side === 'LONG') {
 
@@ -3872,7 +3874,7 @@ if (long1H && !short1H) {
         c5.length - 1 - setupIndex
 
     // Setup cũ quá thì không dùng.
-    if (setupAge > 7) {
+    if (setupAge > 4) {
         return reject('SETUP_INVALIDATED',{
             side,
             setupKind,
@@ -4076,16 +4078,6 @@ if (long1H && !short1H) {
                 break
             }
 
-            if (
-                setupKind !== 'SWEEP_RECLAIM' &&
-                followBull &&
-                c1[j] > e20
-            ) {
-                triggerIndex = j
-                triggerTypeLocal = '1M_BULLISH_FOLLOW_THROUGH'
-                break
-            }
-
         } else {
 
             if (bear) {
@@ -4100,15 +4092,6 @@ if (long1H && !short1H) {
                 break
             }
 
-            if (
-                setupKind !== 'SWEEP_RECLAIM' &&
-                followBear &&
-                c1[j] < e20
-            ) {
-                triggerIndex = j
-                triggerTypeLocal = '1M_BEARISH_FOLLOW_THROUGH'
-                break
-            }
         }
     }
 
@@ -4391,6 +4374,14 @@ targetR =
         volAvg > 0
             ? v5.at(-1)/volAvg
             : 1
+            
+               if (vol5Ratio < .60) {
+       return reject('VOLUME',{
+           side,
+           setupKind,
+           vol5Ratio:r(vol5Ratio,3)
+       })
+   }
 
     // =========================================================
     // 16. QUALITY SCORE
