@@ -2379,7 +2379,14 @@ async function manageDynamicTPSL(trade) {
         let newTP = oldTP
         let phase = 1
         // +0.8R: remove the possibility of a full loss, but leave room for a 5M retest.
-        const floorR = R >= 1.80 ? .90 : R >= 1.20 ? .30 : .05
+        const floorR =
+    R >= 5.00 ? 3.50 :
+    R >= 4.00 ? 2.80 :
+    R >= 3.00 ? 2.00 :
+    R >= 2.50 ? 1.50 :
+    R >= 1.80 ? .90 :
+    R >= 1.20 ? .30 :
+    .05
         if (R >= 1.20) phase = 2
         if (R >= 1.80) phase = 3
         const floor = side === 'LONG' ? entry + initialRisk * floorR : entry - initialRisk * floorR
