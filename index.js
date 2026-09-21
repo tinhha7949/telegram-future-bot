@@ -3556,22 +3556,32 @@ async function coreLogic(data15, data1h, data5, data1m) {
     // Khi EMA20/50 rất sát nhau thì vẫn cho phép hướng
     // nếu giá đã xác nhận vị trí rõ ràng.
     const softLong =
-        e20H >= e50H &&
-        price >= e20H * .9990 &&
-        hSlope > -.00010
+    e20H > e50H &&
+    hGap >= .00025 &&
+    price >= e20H * .9990 &&
+    hSlope > -.00010
 
-    const softShort =
-        e20H <= e50H &&
-        price <= e20H * 1.0010 &&
-        hSlope < .00010
+const softShort =
+    e20H < e50H &&
+    hGap >= .00025 &&
+    price <= e20H * 1.0010 &&
+    hSlope < .00010
 
     let side = 'NONE'
 
-    if (strongLong || softLong) {
-        side = 'LONG'
-    } else if (strongShort || softShort) {
-        side = 'SHORT'
-    }
+const long1H =
+    strongLong ||
+    softLong
+
+const short1H =
+    strongShort ||
+    softShort
+
+if (long1H && !short1H) {
+    side = 'LONG'
+} else if (short1H && !long1H) {
+    side = 'SHORT'
+}
 
     if (side === 'NONE') {
         return reject('1H_DIRECTION',{
@@ -4327,7 +4337,7 @@ async function coreLogic(data15, data1h, data5, data1m) {
 
     // Không cần 1.30 cứng như bản cũ.
     // 1.20 là ngưỡng tối thiểu.
-    if (available < 1.35) {
+    if (available < 1.60) {
 
         return reject('TP_BLOCKED',{
             side,
@@ -4350,7 +4360,7 @@ if (available >= 2.40) {
 } else if (available >= 1.60) {
     targetR = 1.55
 } else {
-    targetR = 1.35
+    targetR = 1.50
 }
 
 targetR =
@@ -4362,7 +4372,7 @@ targetR =
 targetR =
     Math.max(
         targetR,
-        1.35
+        1.50
     )
 
     const tp =
