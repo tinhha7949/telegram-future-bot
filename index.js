@@ -1292,6 +1292,13 @@ if(side !== "LONG" && side !== "SHORT"){
     positionAmt > 0
         ? "LONG"
         : "SHORT"
+        if(side !== positionSide){
+    console.log(
+        `⛔ DYNAMIC SIDE MISMATCH ${symbol} ` +
+        `TRADE=${side} POSITION=${positionSide}`
+    )
+    return false
+}
 
         const entry =
             Number(pos.entryPrice)
@@ -1449,58 +1456,40 @@ if(Number.isFinite(previousSL)&&previousSL>0){
             return false
         }
 
-        if(positionSide === "LONG"){
+        const safeDistance = tickSize
 
-            /*
-             * LONG:
-             *
-             * SL < current
-             * TP > current
-             * SL < entry
-             * TP > entry
-             */
+if(positionSide === "LONG"){
 
-            if(
-    sl >= currentPrice ||
-    tp <= currentPrice
-){
+    if(
+        sl >= currentPrice - safeDistance ||
+        tp <= currentPrice + safeDistance
+    ){
+        console.log(
+            `⛔ DYNAMIC TPSL SKIP LONG ${symbol} ` +
+            `ENTRY=${entry} ` +
+            `CURRENT=${currentPrice} ` +
+            `SL=${sl} TP=${tp}`
+        )
 
-                console.log(
-                    `❌ INVALID LONG DYNAMIC TPSL ${symbol} ` +
-                    `ENTRY=${entry} ` +
-                    `CURRENT=${currentPrice} ` +
-                    `SL=${sl} TP=${tp}`
-                )
+        return false
+    }
 
-                return false
-            }
+}else{
 
-        }else{
+    if(
+        sl <= currentPrice + safeDistance ||
+        tp >= currentPrice - safeDistance
+    ){
+        console.log(
+            `⛔ DYNAMIC TPSL SKIP SHORT ${symbol} ` +
+            `ENTRY=${entry} ` +
+            `CURRENT=${currentPrice} ` +
+            `SL=${sl} TP=${tp}`
+        )
 
-            /*
-             * SHORT:
-             *
-             * SL > current
-             * TP < current
-             * SL > entry
-             * TP < entry
-             */
-
-            if(
-    sl <= currentPrice ||
-    tp >= currentPrice
-){
-
-                console.log(
-                    `❌ INVALID SHORT DYNAMIC TPSL ${symbol} ` +
-                    `ENTRY=${entry} ` +
-                    `CURRENT=${currentPrice} ` +
-                    `SL=${sl} TP=${tp}`
-                )
-
-                return false
-            }
-        }
+        return false
+    }
+}
 
         // =================================================
         // 7. VERIFY POSITION STILL EXISTS BEFORE CHANGE
@@ -2415,21 +2404,149 @@ async function manageDynamicTPSL(trade) {
         const recentVolumes = closed5.map(x => Number(x[5])).slice(-21, -1)
         const vol5 = avg(recentVolumes)
         const vol5Ratio = vol5 > 0 ? Number(closed5.at(-1)[5]) / vol5 : 1
-        const nearOriginalTP = side === 'LONG'
-            ? current < oldTP && oldTP - current <= Math.max(atr5 * .45, initialRisk * .25)
-            : current > oldTP && current - oldTP <= Math.max(atr5 * .45, initialRisk * .25)
-        const momentumLong = e9 > e20 && c5.at(-1) > c5.at(-2) && c5.at(-2) >= c5.at(-3) && vol5Ratio >= .80
-        const momentumShort = e9 < e20 && c5.at(-1) < c5.at(-2) && c5.at(-2) <= c5.at(-3) && vol5Ratio >= .80
-        const allHighs = h5.slice(-48, -1).concat(closed15.slice(-48, -1).map(x => Number(x[2])))
-        const allLows = l5.slice(-48, -1).concat(closed15.slice(-48, -1).map(x => Number(x[3])))
-        const nextObstacle = side === 'LONG' ? nearestAbove(allHighs, oldTP) : nearestBelow(allLows, oldTP)
-        const extendedTP = side === 'LONG' ? Number(nextObstacle) - buffer * .20 : Number(nextObstacle) + buffer * .20
-        const enoughExtension = side === 'LONG'
-            ? extendedTP >= oldTP + Math.max(atr5 * .60, initialRisk * .35)
-            : extendedTP <= oldTP - Math.max(atr5 * .60, initialRisk * .35)
-        if (R >= .90 && nearOriginalTP && enoughExtension && ((side === 'LONG' && momentumLong) || (side === 'SHORT' && momentumShort))) {
-            newTP = extendedTP
-        }
+        const momentumLong =
+    e9 > e20 &&
+    c5.at(-1) > c5.at(-2) &&
+    c5.at(-2) >= c5.at(-3) &&
+    vol5Ratio >= .80
+
+const momentumShort =
+    e9 < e20 &&
+    c5.at(-1) < c5.at(-2) &&
+    c5.at(-2) <= c5.at(-3) &&
+    vol5Ratio >= .80
+
+const allHighs =
+    h5.slice(-48, -1).concat(
+        closed15.slice(-48, -1).map(x => Number(x[2]))
+    )
+
+const allLows =
+    l5.slice(-48, -1).concat(
+        closed15.slice(-48, -1).map(x => Number(x[3]))
+    )
+
+/*
+ * Nếu giá đã vượt TP cũ:
+ * tuyệt đối không dùng oldTP làm TP mới.
+ */
+const tpAlreadyPassed =
+    side === 'LONG'
+        ? current >= oldTP
+        : current <= oldTP
+
+const nearOriginalTP =
+    side === 'LONG'
+        ? current < oldTP &&
+          oldTP - current <= Math.max(atr5 * .45, initialRisk * .25)
+        : current > oldTP &&
+          current - oldTP <= Math.max(atr5 * .45, initialRisk * .25)
+
+/*
+ * Chưa vượt TP → tìm obstacle phía trên oldTP.
+ * Đã vượt TP → tìm obstacle phía trên CURRENT.
+ */
+const obstacleReference =
+    tpAlreadyPassed
+        ? current
+        : oldTP
+
+const nextObstacle =
+    side === 'LONG'
+        ? nearestAbove(allHighs, obstacleReference)
+        : nearestBelow(allLows, obstacleReference)
+
+let extendedTP = Number.NaN
+
+/*
+ * Có obstacle → đặt TP trước obstacle.
+ */
+if(Number.isFinite(nextObstacle)){
+
+    extendedTP =
+        side === 'LONG'
+            ? nextObstacle - buffer * .20
+            : nextObstacle + buffer * .20
+}
+
+/*
+ * Không có obstacle → KHÔNG bỏ TP.
+ *
+ * Tạo TP mới dựa trên ATR + initialRisk,
+ * và luôn đặt nó phía trước CURRENT.
+ */
+if(!Number.isFinite(extendedTP)){
+
+    const fallbackDistance =
+        Math.max(
+            atr5 * 1.20,
+            atr15 * .60,
+            initialRisk * .60,
+            current * .001
+        )
+
+    extendedTP =
+        side === 'LONG'
+            ? current + fallbackDistance
+            : current - fallbackDistance
+}
+
+/*
+ * TP mới phải cách giá hiện tại đủ xa.
+ */
+const minimumExtension =
+    Math.max(
+        atr5 * .60,
+        initialRisk * .35,
+        current * .0005
+    )
+
+const enoughExtension =
+    Number.isFinite(extendedTP) &&
+    (
+        tpAlreadyPassed
+            ? (
+                side === 'LONG'
+                    ? extendedTP > current + minimumExtension
+                    : extendedTP < current - minimumExtension
+            )
+            : (
+                side === 'LONG'
+                    ? extendedTP >= oldTP + minimumExtension
+                    : extendedTP <= oldTP - minimumExtension
+            )
+    )
+
+const continuation =
+    (side === 'LONG' && momentumLong) ||
+    (side === 'SHORT' && momentumShort)
+
+/*
+ * TP extension:
+ *
+ * - TP chưa bị vượt → cần gần TP + momentum.
+ * - TP đã bị vượt → cho phép tìm TP mới phía trước,
+ *   nhưng momentum vẫn phải còn tốt.
+ */
+if(
+    R >= .90 &&
+    continuation &&
+    enoughExtension &&
+    (
+        tpAlreadyPassed ||
+        nearOriginalTP
+    )
+){
+    newTP = extendedTP
+
+    console.log(
+        `🔄 DYNAMIC TP EXTEND ${symbol} ` +
+        `${side} OLD=${oldTP} ` +
+        `CURRENT=${current} ` +
+        `NEW=${newTP} ` +
+        `PASSED=${tpAlreadyPassed}`
+    )
+}
 
         // Absolute invariants: no widened stop, no stop on the wrong side of price;
         // TP may only move farther when the continuation gate above passed.
@@ -2455,7 +2572,16 @@ async function manageDynamicTPSL(trade) {
         if (side === 'SHORT' && newTP > oldTP) newTP = oldTP
         const minimumChange = Math.max(entry * .00005, atr15 * .03)
         if (Math.abs(newSL - oldSL) < minimumChange && Math.abs(newTP - oldTP) < minimumChange) return
-
+        if(
+    (side === 'LONG' && newTP <= current) ||
+    (side === 'SHORT' && newTP >= current)
+){
+    console.log(
+        `⛔ DYNAMIC TP INVALID BEFORE SET ${symbol} ` +
+        `SIDE=${side} CURRENT=${current} TP=${newTP}`
+    )
+    return
+}
         const updateTrade = { ...trade, symbol, side, entry, sl: newSL, tp: newTP, initialRisk, previousSL: oldSL }
         const result = await setDynamicTPSL(updateTrade)
         if (!result?.ok) {
