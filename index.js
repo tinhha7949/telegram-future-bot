@@ -3324,109 +3324,1262 @@ function resetCore24hStats() {
         Date.now()
 }
 
-
-// Core V3: four decision layers only.
-// Requires existing ema(values, period), atr(klines), reject(reason, debug), CORE_TOTAL_CALLS.
-// Kline format: [openTime, open, high, low, close, volume].
-// Core V3: four decision layers only.
-// Requires existing ema(values, period), atr(klines), reject(reason, debug), CORE_TOTAL_CALLS.
-// Kline format: [openTime, open, high, low, close, volume].
 async function coreLogic(data15, data1h, data5, data1m) {
     CORE_TOTAL_CALLS++
-    if (![data15, data1h, data5, data1m].every(Array.isArray)) return reject('VALIDATION')
-    data15 = data15.slice(0, -1); data1h = data1h.slice(0, -1); data5 = data5.slice(0, -1); data1m = data1m.slice(0, -1)
-    if (data15.length < 120 || data1h.length < 100 || data5.length < 80 || data1m.length < 80) return reject('DATA_LENGTH')
+
+    const reject = (reason, detail = {}) => {
+        try {
+            if (typeof CORE_REJECTS === 'object' && CORE_REJECTS) {
+                CORE_REJECTS[reason] = (CORE_REJECTS[reason] || 0) + 1
+            }
+            if (typeof CORE_LAST_REJECT === 'object' && CORE_LAST_REJECT) {
+                CORE_LAST_REJECT[reason] = detail
+            }
+        } catch {}
+        return null
+    }
+
+    // =========================================================
+    // 0. VALIDATION
+    // =========================================================
+
+    if (![data15, data1h, data5, data1m].every(Array.isArray)) {
+        return reject('VALIDATION')
+    }
+
+    data15 = data15.slice(0, -1)
+    data1h = data1h.slice(0, -1)
+    data5  = data5.slice(0, -1)
+    data1m = data1m.slice(0, -1)
+
+    if (
+        data15.length < 120 ||
+        data1h.length < 100 ||
+        data5.length < 80 ||
+        data1m.length < 80
+    ) {
+        return reject('DATA_LENGTH')
+    }
+
+    // =========================================================
+    // 1. COLUMNS
+    // =========================================================
 
     const col = (d, n) => d.map(x => Number(x[n]))
-    const [o15,h15,l15,c15] = [col(data15,1),col(data15,2),col(data15,3),col(data15,4)]
-    const [hH,lH,cH] = [col(data1h,2),col(data1h,3),col(data1h,4)]
-    const [o5,h5,l5,c5,v5] = [col(data5,1),col(data5,2),col(data5,3),col(data5,4),col(data5,5)]
-    const [o1,h1,l1,c1,v1] = [col(data1m,1),col(data1m,2),col(data1m,3),col(data1m,4),col(data1m,5)]
-    if ([o15,h15,l15,c15,hH,lH,cH,o5,h5,l5,c5,v5,o1,h1,l1,c1,v1].flat().some(x => !Number.isFinite(x))) return reject('INVALID_DATA')
-    const price = c1.at(-1); if (!(price > 0)) return reject('INVALID_DATA')
 
-    const avg = a => a.length ? a.reduce((s,x) => s + x, 0) / a.length : 0
-    const hi = (a,n) => Math.max(...a.slice(-n)), lo = (a,n) => Math.min(...a.slice(-n))
-    const r = (x,d=8) => Number(Number(x).toFixed(d)), change = (a,b) => b ? (a-b)/b : 0
-    const body = (o,h,l,c) => h > l ? Math.abs(c-o)/(h-l) : 0
-    const atTop = (h,l,c) => h > l ? (c-l)/(h-l) : 0
-    const atBottom = (h,l,c) => h > l ? (h-c)/(h-l) : 0
-    const nearestAbove = (highs, from) => highs.filter(x => x > from).sort((a,b) => a-b)[0]
-    const nearestBelow = (lows, from) => lows.filter(x => x < from).sort((a,b) => b-a)[0]
+    const [o15, h15, l15, c15] =
+        [col(data15,1), col(data15,2), col(data15,3), col(data15,4)]
 
-    const atr5 = Math.max(Number(atr(data5.slice(-60))) || 0, price*.001)
-    const atr1 = Math.max(Number(atr(data1m.slice(-60))) || 0, price*.0005)
-    const atr15 = Math.max(Number(atr(data15.slice(-60))) || 0, price*.002)
-    if (!(atr5/price > 0 && atr5/price < .025)) return reject('ATR5', { atrRatio5:r(atr5/price,6) })
+    const [hH, lH, cH] =
+        [col(data1h,2), col(data1h,3), col(data1h,4)]
 
-    // 1) Direction: one higher-timeframe filter, not a pile of score rules.
-    const e20H = ema(cH.slice(-60),20), e50H = ema(cH.slice(-90),50), e20HPrev = ema(cH.slice(-61,-1),20)
-    const hSlope = change(e20H,e20HPrev), hGap = Math.abs(e20H-e50H)/cH.at(-1)
-    const longHTF = e20H > e50H && hSlope > .00012 && hGap > .0008
-    const shortHTF = e20H < e50H && hSlope < -.00012 && hGap > .0008
-    const side = longHTF ? 'LONG' : shortHTF ? 'SHORT' : 'NONE'
-    if (side === 'NONE') return reject('1H_DIRECTION', { ema20:r(e20H), ema50:r(e50H), slope:r(hSlope,6), gap:r(hGap,6) })
+    const [o5, h5, l5, c5, v5] =
+        [col(data5,1), col(data5,2), col(data5,3), col(data5,4), col(data5,5)]
 
-    // 2) 15M may be trending or making a shallow pullback, but may not oppose 1H.
-    const e20_15 = ema(c15.slice(-70),20), e50_15 = ema(c15.slice(-110),50), e20_15Prev = ema(c15.slice(-71,-1),20)
-    const mSlope = change(e20_15,e20_15Prev)
-    const biasLong = e20_15 >= e50_15 && mSlope > -.00045 && c15.at(-1) >= e50_15*.996
-    const biasShort = e20_15 <= e50_15 && mSlope < .00045 && c15.at(-1) <= e50_15*1.004
-    if ((side === 'LONG' && !biasLong) || (side === 'SHORT' && !biasShort)) return reject('15M_BIAS', { side, ema20:r(e20_15), ema50:r(e50_15), slope:r(mSlope,6) })
+    const [o1, h1, l1, c1, v1] =
+        [col(data1m,1), col(data1m,2), col(data1m,3), col(data1m,4), col(data1m,5)]
 
-    // 3) 5M pullback then reclaim. Reclaim remains valid for 3 completed 5M candles.
-    const e20 = ema(c5.slice(-60),20), e50 = ema(c5.slice(-80),50)
-    const zone = Math.max(atr5*.55, price*.0011), start5 = Math.max(0,c5.length-4)
-    let setupIndex = -1, setupKind = null, invalidation = null
-    for (let k=c5.length-1; k>=start5; k--) {
-        const prevL = lo(l5.slice(Math.max(0,k-8),k), Math.min(8,k))
-        const prevH = hi(h5.slice(Math.max(0,k-8),k), Math.min(8,k))
-        const b = body(o5[k],h5[k],l5[k],c5[k])
-        const sweptLong = l5[k] < prevL && c5[k] > prevL && c5[k] > o5[k] && atTop(h5[k],l5[k],c5[k]) >= .55
-        const sweptShort = h5[k] > prevH && c5[k] < prevH && c5[k] < o5[k] && atBottom(h5[k],l5[k],c5[k]) >= .55
-        const reclaimLong = l5[k] <= e20+zone && c5[k] > e20 && c5[k] > o5[k] && b >= .30 && atTop(h5[k],l5[k],c5[k]) >= .55
-        const reclaimShort = h5[k] >= e20-zone && c5[k] < e20 && c5[k] < o5[k] && b >= .30 && atBottom(h5[k],l5[k],c5[k]) >= .55
-        if (side === 'LONG' && (sweptLong || reclaimLong)) { setupIndex=k; setupKind=sweptLong?'SWEEP_RECLAIM':'PULLBACK_RECLAIM'; invalidation=Math.min(l5[k],prevL); break }
-        if (side === 'SHORT' && (sweptShort || reclaimShort)) { setupIndex=k; setupKind=sweptShort?'SWEEP_RECLAIM':'PULLBACK_RECLAIM'; invalidation=Math.max(h5[k],prevH); break }
+    if (
+        [
+            o15,h15,l15,c15,
+            hH,lH,cH,
+            o5,h5,l5,c5,v5,
+            o1,h1,l1,c1,v1
+        ].flat().some(x => !Number.isFinite(x))
+    ) {
+        return reject('INVALID_DATA')
     }
-    if (setupIndex < 0) return reject('5M_RECLAIM', { side, ema20:r(e20), ema50:r(e50), zone:r(zone) })
-    // A setup expires if price has already invalidated it or become an extended chase.
-    const invalidated = side === 'LONG' ? lo(l5.slice(setupIndex+1), 3) < invalidation : hi(h5.slice(setupIndex+1), 3) > invalidation
-    const distance = Math.abs(price-e20)/price, maxChase = Math.max(1.45*atr5/price,.0045)
-    if (invalidated || distance > maxChase) return reject(invalidated?'SETUP_INVALIDATED':'CHASE', { side, setupKind, distance:r(distance,6), maxChase:r(maxChase,6) })
 
-    // 4) 1M confirmation after the 5M reclaim. It cannot create a setup by itself.
-    const i=c1.length-1, microHigh=hi(h1.slice(-4,-1),3), microLow=lo(l1.slice(-4,-1),3)
-    const triggerLong = c1[i]>o1[i] && c1[i]>microHigh && body(o1[i],h1[i],l1[i],c1[i])>=.32 && atTop(h1[i],l1[i],c1[i])>=.58
-    const triggerShort = c1[i]<o1[i] && c1[i]<microLow && body(o1[i],h1[i],l1[i],c1[i])>=.32 && atBottom(h1[i],l1[i],c1[i])>=.58
-    const triggerOK = side==='LONG' ? triggerLong : triggerShort
-    if (!triggerOK) return reject('1M_CONFIRMATION', { side, setupKind, triggerLong, triggerShort })
+    const price = c1.at(-1)
 
-    // SL: beyond the exact 5M invalidation. TP: nearest visible opposing swing, never the furthest one.
-    const buffer = Math.max(atr1*.55, atr5*.16, price*.00030)
-    const sl = side==='LONG' ? invalidation-buffer : invalidation+buffer
-    const risk = side==='LONG' ? price-sl : sl-price
-    if (!(risk >= atr5*.25 && risk <= atr5*2.8)) return reject('RISK', { side, risk:r(risk), riskATR5:r(risk/atr5,3) })
-    const highs = h5.slice(-48,-1).concat(h15.slice(-20,-1)), lows = l5.slice(-48,-1).concat(l15.slice(-20,-1))
-    const obstacle = side==='LONG' ? nearestAbove(highs,price) : nearestBelow(lows,price)
-    if (!Number.isFinite(obstacle)) return reject('NO_STRUCTURE_TARGET', { side })
-    const available = side==='LONG' ? (obstacle-buffer*.2-price)/risk : (price-(obstacle+buffer*.2))/risk
-    if (available < 1.30) return reject('TP_BLOCKED', { side, nearestObstacle:r(obstacle), availableR:r(available,3) })
-    const targetR = available >= 2.2 ? 2.0 : available >= 1.7 ? 1.6 : 1.3
-    const tp = side==='LONG' ? price+risk*targetR : price-risk*targetR
-    const vol5Ratio = avg(v5.slice(-21,-1)) ? v5.at(-1)/avg(v5.slice(-21,-1)) : 1
-    const qualityScore = Math.round(Math.min(100, 60 + (setupKind==='SWEEP_RECLAIM'?12:4) + Math.min(12,available*7) + (vol5Ratio>=.8?5:0)))
-    return {
-        side, price:r(price), sl:r(sl), tp:r(tp), setup: side+'_'+setupKind, pullbackType: setupKind==='SWEEP_RECLAIM'?'SWEEP':'EMA20_RECLAIM',
-        triggerType: side==='LONG'?'1M_BULLISH_BREAK_AFTER_RECLAIM':'1M_BEARISH_BREAK_AFTER_RECLAIM', marketState: side==='LONG'?'UPTREND':'DOWNTREND',
-        volatility: atr5/price<.003?'LOW':atr5/price>.010?'HIGH':'NORMAL', qualityScore,
-        // Scanner/buildTradeFromCoreSignal consumes these fields. Keep them explicit.
-        risk: { risk:r(risk), initialRisk:r(risk), rr:r(targetR), targetR:r(targetR) },
-        indicators: { atr15:r(atr15), atr5:r(atr5), atr1:r(atr1), ema20_1h:r(e20H), ema50_1h:r(e50H), ema20_15:r(e20_15), ema50_15:r(e50_15), ema20_5:r(e20), ema50_5:r(e50) },
-        debug: { setupIndex, setupAge5m:c5.length-1-setupIndex, setupKind, htfSlope:r(hSlope,6), biasSlope:r(mSlope,6), vol5Ratio:r(vol5Ratio,3), distanceFromEma20:r(distance,6), maxChase:r(maxChase,6), invalidation:r(invalidation), risk:r(risk), riskATR5:r(risk/atr5,3), nearestObstacle:r(obstacle), availableR:r(available,3), targetR, triggerLong, triggerShort }
+    if (!(price > 0)) {
+        return reject('INVALID_DATA')
     }
+
+    // =========================================================
+    // 2. HELPERS
+    // =========================================================
+
+    const avg = a =>
+        a.length
+            ? a.reduce((s,x) => s + x, 0) / a.length
+            : 0
+
+    const hi = (a,n) =>
+        a.length
+            ? Math.max(...a.slice(-n))
+            : -Infinity
+
+    const lo = (a,n) =>
+        a.length
+            ? Math.min(...a.slice(-n))
+            : Infinity
+
+    const r = (x,d=8) =>
+        Number(Number(x).toFixed(d))
+
+    const change = (a,b) =>
+        b ? (a-b)/b : 0
+
+    const body = (o,h,l,c) =>
+        h > l ? Math.abs(c-o)/(h-l) : 0
+
+    const atTop = (h,l,c) =>
+        h > l ? (c-l)/(h-l) : .5
+
+    const atBottom = (h,l,c) =>
+        h > l ? (h-c)/(h-l) : .5
+
+    const clamp = (x,min,max) =>
+        Math.max(min,Math.min(max,x))
+
+    const pivotLevels = (highs,lows,left=2,right=2) => {
+        const pivotHighs = []
+        const pivotLows = []
+
+        for (
+            let i=left;
+            i<highs.length-right;
+            i++
+        ) {
+            const beforeH = highs.slice(i-left,i)
+            const afterH  = highs.slice(i+1,i+1+right)
+
+            const beforeL = lows.slice(i-left,i)
+            const afterL  = lows.slice(i+1,i+1+right)
+
+            if (
+                highs[i] > Math.max(...beforeH) &&
+                highs[i] >= Math.max(...afterH)
+            ) {
+                pivotHighs.push(highs[i])
+            }
+
+            if (
+                lows[i] < Math.min(...beforeL) &&
+                lows[i] <= Math.min(...afterL)
+            ) {
+                pivotLows.push(lows[i])
+            }
+        }
+
+        return {pivotHighs,pivotLows}
+    }
+
+    const nearestAbove = (levels,from) => {
+        const x = levels
+            .filter(v => Number.isFinite(v) && v > from)
+            .sort((a,b) => a-b)
+
+        return x[0]
+    }
+
+    const nearestBelow = (levels,from) => {
+        const x = levels
+            .filter(v => Number.isFinite(v) && v < from)
+            .sort((a,b) => b-a)
+
+        return x[0]
+    }
+
+    // =========================================================
+    // 3. VOLATILITY
+    // =========================================================
+
+    const atr5  = Math.max(
+        Number(atr(data5.slice(-60))) || 0,
+        price * .001
+    )
+
+    const atr1  = Math.max(
+        Number(atr(data1m.slice(-60))) || 0,
+        price * .0005
+    )
+
+    const atr15 = Math.max(
+        Number(atr(data15.slice(-60))) || 0,
+        price * .002
+    )
+
+    const atr5Ratio = atr5 / price
+
+    if (
+        !(atr5Ratio > 0) ||
+        atr5Ratio > .025
+    ) {
+        return reject('ATR5',{
+            atrRatio5:r(atr5Ratio,6)
+        })
+    }
+
+    // =========================================================
+    // 4. 1H DIRECTION
+    //
+    // IMPORTANT:
+    // Không còn bắt slope/gap quá cứng.
+    // 1H chỉ xác định hướng chính.
+    // =========================================================
+
+    const e20H =
+        ema(cH.slice(-60),20)
+
+    const e50H =
+        ema(cH.slice(-90),50)
+
+    const e20HPrev =
+        ema(cH.slice(-61,-1),20)
+
+    const hSlope =
+        change(e20H,e20HPrev)
+
+    const hGap =
+        Math.abs(e20H-e50H) / price
+
+    const hPricePosition =
+        change(price,e20H)
+
+    // Trend mạnh
+    const strongLong =
+        e20H > e50H &&
+        (
+            hSlope > .00003 ||
+            price > e20H
+        )
+
+    const strongShort =
+        e20H < e50H &&
+        (
+            hSlope < -.00003 ||
+            price < e20H
+        )
+
+    // Khi EMA20/50 rất sát nhau thì vẫn cho phép hướng
+    // nếu giá đã xác nhận vị trí rõ ràng.
+    const softLong =
+        e20H >= e50H &&
+        price >= e20H * .9990 &&
+        hSlope > -.00010
+
+    const softShort =
+        e20H <= e50H &&
+        price <= e20H * 1.0010 &&
+        hSlope < .00010
+
+    let side = 'NONE'
+
+    if (strongLong || softLong) {
+        side = 'LONG'
+    } else if (strongShort || softShort) {
+        side = 'SHORT'
+    }
+
+    if (side === 'NONE') {
+        return reject('1H_DIRECTION',{
+            ema20:r(e20H),
+            ema50:r(e50H),
+            slope:r(hSlope,6),
+            gap:r(hGap,6),
+            price:r(price)
+        })
+    }
+
+    // =========================================================
+    // 5. 15M BIAS
+    //
+    // Không bắt 15M phải trend mạnh.
+    // Cho phép pullback ngược chiều miễn chưa phá cấu trúc.
+    // =========================================================
+
+    const e20_15 =
+        ema(c15.slice(-70),20)
+
+    const e50_15 =
+        ema(c15.slice(-110),50)
+
+    const e20_15Prev =
+        ema(c15.slice(-71,-1),20)
+
+    const mSlope =
+        change(e20_15,e20_15Prev)
+
+    const pullback15 =
+        Math.max(
+            atr15 * .45,
+            price * .0018
+        )
+
+    let biasOK = false
+
+    if (side === 'LONG') {
+
+        const trend =
+            e20_15 >= e50_15 &&
+            mSlope > -.0010
+
+        const pullback =
+            price >= e50_15 - pullback15 &&
+            price >= e20_15 * .994
+
+        const reclaim =
+            price > e20_15 &&
+            c15.at(-1) >= o15.at(-1)
+
+        biasOK =
+            trend &&
+            (pullback || reclaim)
+
+    } else {
+
+        const trend =
+            e20_15 <= e50_15 &&
+            mSlope < .0010
+
+        const pullback =
+            price <= e50_15 + pullback15 &&
+            price <= e20_15 * 1.006
+
+        const reclaim =
+            price < e20_15 &&
+            c15.at(-1) <= o15.at(-1)
+
+        biasOK =
+            trend &&
+            (pullback || reclaim)
+    }
+
+    if (!biasOK) {
+        return reject('15M_BIAS',{
+            side,
+            ema20:r(e20_15),
+            ema50:r(e50_15),
+            slope:r(mSlope,6),
+            price:r(price)
+        })
+    }
+
+    // =========================================================
+    // 6. 5M SETUP
+    //
+    // Tìm trong 8 nến gần nhất thay vì chỉ 4.
+    // Cho phép:
+    //  - SWEEP_RECLAIM
+    //  - EMA20_RECLAIM
+    //  - EMA50_RECLAIM
+    // =========================================================
+
+    const e20 =
+        ema(c5.slice(-60),20)
+
+    const e50 =
+        ema(c5.slice(-80),50)
+
+    const zone =
+        Math.max(
+            atr5 * .65,
+            price * .0013
+        )
+
+    const start5 =
+        Math.max(8,c5.length-8)
+
+    let setupIndex = -1
+    let setupKind = null
+    let invalidation = null
+
+    for (
+        let k=c5.length-1;
+        k>=start5;
+        k--
+    ) {
+
+        const ema20At =
+            ema(
+                c5.slice(
+                    Math.max(0,k-59),
+                    k+1
+                ),
+                20
+            )
+
+        const ema50At =
+            ema(
+                c5.slice(
+                    Math.max(0,k-79),
+                    k+1
+                ),
+                50
+            )
+
+        const prevStart =
+            Math.max(0,k-10)
+
+        const prevL =
+            lo(
+                l5.slice(prevStart,k),
+                Math.min(10,k-prevStart)
+            )
+
+        const prevH =
+            hi(
+                h5.slice(prevStart,k),
+                Math.min(10,k-prevStart)
+            )
+
+        const b =
+            body(
+                o5[k],
+                h5[k],
+                l5[k],
+                c5[k]
+            )
+
+        const top =
+            atTop(
+                h5[k],
+                l5[k],
+                c5[k]
+            )
+
+        const bottom =
+            atBottom(
+                h5[k],
+                l5[k],
+                c5[k]
+            )
+
+        // -----------------------------------------------------
+        // LONG
+        // -----------------------------------------------------
+
+        const sweptLong =
+            Number.isFinite(prevL) &&
+            l5[k] <= prevL &&
+            c5[k] > prevL &&
+            c5[k] >= o5[k] &&
+            top >= .50
+
+        const reclaim20Long =
+            l5[k] <= ema20At + zone &&
+            c5[k] > ema20At &&
+            c5[k] >= o5[k] &&
+            b >= .22 &&
+            top >= .50
+
+        const reclaim50Long =
+            l5[k] <= ema50At + zone &&
+            c5[k] > ema50At &&
+            c5[k] >= o5[k] &&
+            b >= .20 &&
+            top >= .48
+
+        // -----------------------------------------------------
+        // SHORT
+        // -----------------------------------------------------
+
+        const sweptShort =
+            Number.isFinite(prevH) &&
+            h5[k] >= prevH &&
+            c5[k] < prevH &&
+            c5[k] <= o5[k] &&
+            bottom >= .50
+
+        const reclaim20Short =
+            h5[k] >= ema20At - zone &&
+            c5[k] < ema20At &&
+            c5[k] <= o5[k] &&
+            b >= .22 &&
+            bottom >= .50
+
+        const reclaim50Short =
+            h5[k] >= ema50At - zone &&
+            c5[k] < ema50At &&
+            c5[k] <= o5[k] &&
+            b >= .20 &&
+            bottom >= .48
+
+        if (side === 'LONG') {
+
+            if (sweptLong) {
+                setupIndex = k
+                setupKind = 'SWEEP_RECLAIM'
+                invalidation = Math.min(l5[k],prevL)
+                break
+            }
+
+            if (reclaim20Long) {
+                setupIndex = k
+                setupKind = 'PULLBACK_RECLAIM'
+                invalidation = Math.min(l5[k],prevL)
+                break
+            }
+
+            if (reclaim50Long) {
+                setupIndex = k
+                setupKind = 'EMA50_RECLAIM'
+                invalidation = Math.min(l5[k],prevL)
+                break
+            }
+
+        } else {
+
+            if (sweptShort) {
+                setupIndex = k
+                setupKind = 'SWEEP_RECLAIM'
+                invalidation = Math.max(h5[k],prevH)
+                break
+            }
+
+            if (reclaim20Short) {
+                setupIndex = k
+                setupKind = 'PULLBACK_RECLAIM'
+                invalidation = Math.max(h5[k],prevH)
+                break
+            }
+
+            if (reclaim50Short) {
+                setupIndex = k
+                setupKind = 'EMA50_RECLAIM'
+                invalidation = Math.max(h5[k],prevH)
+                break
+            }
+        }
+    }
+
+    if (setupIndex < 0) {
+        return reject('5M_RECLAIM',{
+            side,
+            ema20:r(e20),
+            ema50:r(e50),
+            zone:r(zone)
+        })
+    }
+
+    // =========================================================
+    // 7. SETUP AGE / INVALIDATION / CHASE
+    // =========================================================
+
+    const setupAge =
+        c5.length - 1 - setupIndex
+
+    // Setup cũ quá thì không dùng.
+    if (setupAge > 7) {
+        return reject('SETUP_INVALIDATED',{
+            side,
+            setupKind,
+            setupAge5m:setupAge,
+            invalidation:r(invalidation)
+        })
+    }
+
+    const futureLows =
+        l5.slice(setupIndex+1)
+
+    const futureHighs =
+        h5.slice(setupIndex+1)
+
+    let invalidated = false
+
+    if (side === 'LONG') {
+
+        const postLow =
+            futureLows.length
+                ? Math.min(...futureLows)
+                : Infinity
+
+        // Chỉ invalid khi thực sự phá vùng invalidation.
+        invalidated =
+            postLow < invalidation - atr5*.10
+
+    } else {
+
+        const postHigh =
+            futureHighs.length
+                ? Math.max(...futureHighs)
+                : -Infinity
+
+        invalidated =
+            postHigh > invalidation + atr5*.10
+    }
+
+    if (invalidated) {
+        return reject('SETUP_INVALIDATED',{
+            side,
+            setupKind,
+            setupAge5m:setupAge,
+            invalidation:r(invalidation)
+        })
+    }
+
+    // Chase được nới nhưng vẫn có giới hạn.
+    const distance =
+        Math.abs(price-e20) / price
+
+    const maxChase =
+        Math.max(
+            2.10 * atr5 / price,
+            .0065
+        )
+
+    if (distance > maxChase) {
+        return reject('CHASE',{
+            side,
+            setupKind,
+            distance:r(distance,6),
+            maxChase:r(maxChase,6)
+        })
+    }
+
+    // =========================================================
+    // 8. 1M CONFIRMATION
+    //
+    // Không chỉ bắt break cứng.
+    //
+    // Trigger hợp lệ nếu:
+    // A. break micro structure
+    // B. strong close
+    // C. reclaim + candle follow-through
+    //
+    // Cho cửa sổ 6 nến.
+    // =========================================================
+
+    const setupCloseTime =
+        Number(data5[setupIndex]?.[6]) ||
+        Number(data5[setupIndex+1]?.[0]) ||
+        (
+            Number(data5[setupIndex]?.[0]) +
+            5*60*1000
+        )
+
+    let triggerIndex = -1
+    let triggerTypeLocal = null
+
+    const confirmStart =
+        Math.max(
+            3,
+            c1.length-6
+        )
+
+    for (
+        let j=c1.length-1;
+        j>=confirmStart;
+        j--
+    ) {
+
+        const candleTime =
+            Number(data1m[j]?.[0])
+
+        if (
+            Number.isFinite(setupCloseTime) &&
+            Number.isFinite(candleTime) &&
+            candleTime < setupCloseTime
+        ) {
+            continue
+        }
+
+        const microHigh =
+            hi(
+                h1.slice(
+                    Math.max(0,j-4),
+                    j
+                ),
+                4
+            )
+
+        const microLow =
+            lo(
+                l1.slice(
+                    Math.max(0,j-4),
+                    j
+                ),
+                4
+            )
+
+        const b =
+            body(
+                o1[j],
+                h1[j],
+                l1[j],
+                c1[j]
+            )
+
+        const top =
+            atTop(
+                h1[j],
+                l1[j],
+                c1[j]
+            )
+
+        const bottom =
+            atBottom(
+                h1[j],
+                l1[j],
+                c1[j]
+            )
+
+        const bull =
+            c1[j] > o1[j] &&
+            c1[j] > microHigh &&
+            b >= .22 &&
+            top >= .52
+
+        const bear =
+            c1[j] < o1[j] &&
+            c1[j] < microLow &&
+            b >= .22 &&
+            bottom >= .52
+
+        const strongBull =
+            c1[j] > o1[j] &&
+            b >= .52 &&
+            top >= .68 &&
+            c1[j] >= e20
+
+        const strongBear =
+            c1[j] < o1[j] &&
+            b >= .52 &&
+            bottom >= .68 &&
+            c1[j] <= e20
+
+        const followBull =
+            c1[j] > o1[j] &&
+            c1[j] > c1[Math.max(0,j-1)] &&
+            top >= .58 &&
+            b >= .18
+
+        const followBear =
+            c1[j] < o1[j] &&
+            c1[j] < c1[Math.max(0,j-1)] &&
+            bottom >= .58 &&
+            b >= .18
+
+        if (side === 'LONG') {
+
+            if (bull) {
+                triggerIndex = j
+                triggerTypeLocal = '1M_BULLISH_BREAK_AFTER_RECLAIM'
+                break
+            }
+
+            if (strongBull) {
+                triggerIndex = j
+                triggerTypeLocal = '1M_STRONG_CLOSE_AFTER_RECLAIM'
+                break
+            }
+
+            if (
+                setupKind !== 'SWEEP_RECLAIM' &&
+                followBull &&
+                c1[j] > e20
+            ) {
+                triggerIndex = j
+                triggerTypeLocal = '1M_BULLISH_FOLLOW_THROUGH'
+                break
+            }
+
+        } else {
+
+            if (bear) {
+                triggerIndex = j
+                triggerTypeLocal = '1M_BEARISH_BREAK_AFTER_RECLAIM'
+                break
+            }
+
+            if (strongBear) {
+                triggerIndex = j
+                triggerTypeLocal = '1M_STRONG_CLOSE_AFTER_RECLAIM'
+                break
+            }
+
+            if (
+                setupKind !== 'SWEEP_RECLAIM' &&
+                followBear &&
+                c1[j] < e20
+            ) {
+                triggerIndex = j
+                triggerTypeLocal = '1M_BEARISH_FOLLOW_THROUGH'
+                break
+            }
+        }
+    }
+
+    const triggerLong =
+        triggerIndex >= 0 &&
+        side === 'LONG'
+
+    const triggerShort =
+        triggerIndex >= 0 &&
+        side === 'SHORT'
+
+    if (triggerIndex < 0) {
+        return reject('1M_CONFIRMATION',{
+            side,
+            setupKind,
+            triggerLong:false,
+            triggerShort:false,
+            confirmationWindow:6
+        })
+    }
+
+    // =========================================================
+    // 9. ENTRY QUALITY / MICRO STRUCTURE
+    // =========================================================
+
+    const recentMicroLow =
+        lo(
+            l1.slice(
+                Math.max(0,triggerIndex-4),
+                triggerIndex+1
+            ),
+            5
+        )
+
+    const recentMicroHigh =
+        hi(
+            h1.slice(
+                Math.max(0,triggerIndex-4),
+                triggerIndex+1
+            ),
+            5
+        )
+
+    // =========================================================
+    // 10. STOP LOSS
+    //
+    // SL dựa trên 5M invalidation + buffer.
+    // Không đặt SL quá sát.
+    // =========================================================
+
+    const buffer =
+        Math.max(
+            atr1 * .70,
+            atr5 * .18,
+            price * .00035
+        )
+
+    let sl
+
+    if (side === 'LONG') {
+
+        const structuralLow =
+            Math.min(
+                invalidation,
+                recentMicroLow
+            )
+
+        sl =
+            structuralLow - buffer
+
+    } else {
+
+        const structuralHigh =
+            Math.max(
+                invalidation,
+                recentMicroHigh
+            )
+
+        sl =
+            structuralHigh + buffer
+    }
+
+    let risk =
+        side === 'LONG'
+            ? price-sl
+            : sl-price
+
+    if (!(risk > 0)) {
+        return reject('RISK',{
+            side,
+            risk:r(risk)
+        })
+    }
+
+    // =========================================================
+    // 11. RISK NORMALIZATION
+    //
+    // Cho phép setup có SL rộng hơn một chút,
+    // nhưng tuyệt đối không lấy risk quá lớn.
+    // =========================================================
+
+    const minRisk =
+        Math.max(
+            atr5*.22,
+            price*.0007
+        )
+
+    const maxRisk =
+        Math.max(
+            atr5*3.20,
+            price*.0085
+        )
+
+    if (
+        risk < minRisk ||
+        risk > maxRisk
+    ) {
+        return reject('RISK',{
+            side,
+            risk:r(risk),
+            minRisk:r(minRisk),
+            maxRisk:r(maxRisk),
+            riskATR5:r(risk/atr5,3)
+        })
+    }
+
+    // =========================================================
+    // 12. STRUCTURE TARGET
+    //
+    // Tìm pivot gần nhất.
+    // Nếu pivot quá gần thì không vào.
+    // Nếu pivot đủ xa thì TP theo structure.
+    // =========================================================
+
+    const levels5 =
+        pivotLevels(
+            h5.slice(-60,-1),
+            l5.slice(-60,-1),
+            2,
+            2
+        )
+
+    const levels15 =
+        pivotLevels(
+            h15.slice(-30,-1),
+            l15.slice(-30,-1),
+            2,
+            2
+        )
+
+    const allHighs =
+        levels5.pivotHighs.concat(
+            levels15.pivotHighs
+        )
+
+    const allLows =
+        levels5.pivotLows.concat(
+            levels15.pivotLows
+        )
+
+    let obstacle =
+        side === 'LONG'
+            ? nearestAbove(allHighs,price)
+            : nearestBelow(allLows,price)
+
+    // Nếu pivot gần nhất quá sát, thử pivot tiếp theo.
+    if (Number.isFinite(obstacle)) {
+
+        const obstacleDistance =
+            Math.abs(obstacle-price)
+
+        if (obstacleDistance < risk*1.10) {
+
+            const farther =
+                side === 'LONG'
+                    ? allHighs
+                        .filter(x => x > price + risk*1.10)
+                        .sort((a,b) => a-b)[0]
+
+                    : allLows
+                        .filter(x => x < price - risk*1.10)
+                        .sort((a,b) => b-a)[0]
+
+            if (Number.isFinite(farther)) {
+                obstacle = farther
+            }
+        }
+    }
+
+    if (!Number.isFinite(obstacle)) {
+
+        // Fallback structural target.
+        // Không dùng wick tùy ý; dùng recent range.
+        const rangeHigh =
+            hi(h5.slice(-36,-1),35)
+
+        const rangeLow =
+            lo(l5.slice(-36,-1),35)
+
+        obstacle =
+            side === 'LONG'
+                ? rangeHigh
+                : rangeLow
+    }
+
+    if (!Number.isFinite(obstacle)) {
+        return reject('NO_STRUCTURE_TARGET',{
+            side
+        })
+    }
+
+    // =========================================================
+    // 13. AVAILABLE RR
+    // =========================================================
+
+    const targetBuffer =
+        Math.max(
+            atr1*.10,
+            price*.00010
+        )
+
+    const available =
+        side === 'LONG'
+            ? (obstacle-targetBuffer-price)/risk
+            : (price-obstacle-targetBuffer)/risk
+
+    // Không cần 1.30 cứng như bản cũ.
+    // 1.20 là ngưỡng tối thiểu.
+    if (available < 1.35) {
+
+        return reject('TP_BLOCKED',{
+            side,
+            nearestObstacle:r(obstacle),
+            availableR:r(available,3),
+            risk:r(risk)
+        })
+    }
+
+    // =========================================================
+    // 14. TARGET R
+    // =========================================================
+
+    let targetR
+
+if (available >= 2.40) {
+    targetR = 2.00
+} else if (available >= 2.00) {
+    targetR = 1.80
+} else if (available >= 1.60) {
+    targetR = 1.55
+} else {
+    targetR = 1.35
 }
 
+targetR =
+    Math.min(
+        targetR,
+        available*.90
+    )
+
+targetR =
+    Math.max(
+        targetR,
+        1.35
+    )
+
+    const tp =
+        side === 'LONG'
+            ? price + risk*targetR
+            : price - risk*targetR
+
+    // =========================================================
+    // 15. VOLUME QUALITY
+    // =========================================================
+
+    const volAvg =
+        avg(v5.slice(-21,-1))
+
+    const vol5Ratio =
+        volAvg > 0
+            ? v5.at(-1)/volAvg
+            : 1
+
+    // =========================================================
+    // 16. QUALITY SCORE
+    //
+    // Score chỉ mô tả chất lượng.
+    // Không dùng score để chặn ACCEPT.
+    // =========================================================
+
+    let qualityScore = 60
+
+    if (setupKind === 'SWEEP_RECLAIM') {
+        qualityScore += 12
+    } else if (setupKind === 'PULLBACK_RECLAIM') {
+        qualityScore += 7
+    } else {
+        qualityScore += 5
+    }
+
+    if (hGap >= .0010) {
+        qualityScore += 6
+    } else if (hGap >= .0004) {
+        qualityScore += 3
+    }
+
+    if (
+        side === 'LONG'
+            ? mSlope >= 0
+            : mSlope <= 0
+    ) {
+        qualityScore += 5
+    }
+
+    if (vol5Ratio >= .80) {
+        qualityScore += 5
+    }
+
+    if (vol5Ratio >= 1.15) {
+        qualityScore += 3
+    }
+
+    if (available >= 1.80) {
+        qualityScore += 5
+    } else if (available >= 1.50) {
+        qualityScore += 3
+    }
+
+    if (distance <= .0035) {
+        qualityScore += 4
+    }
+
+    qualityScore =
+        Math.round(
+            clamp(
+                qualityScore,
+                55,
+                100
+            )
+        )
+
+    // =========================================================
+    // 17. MARKET STATE / VOLATILITY
+    // =========================================================
+
+    const marketState =
+        side === 'LONG'
+            ? 'UPTREND'
+            : 'DOWNTREND'
+
+    const volatility =
+        atr5Ratio < .003
+            ? 'LOW'
+            : atr5Ratio > .010
+                ? 'HIGH'
+                : 'NORMAL'
+
+    // =========================================================
+    // 18. FINAL RETURN
+    //
+    // GIỮ NGUYÊN CONTRACT CHO SCANNER + DYNAMIC.
+    // =========================================================
+
+    return {
+        side,
+        price:r(price),
+        sl:r(sl),
+        tp:r(tp),
+
+        setup:
+            side + '_' + setupKind,
+
+        pullbackType:
+            setupKind === 'SWEEP_RECLAIM'
+                ? 'SWEEP'
+                : setupKind === 'EMA50_RECLAIM'
+                    ? 'EMA50_RECLAIM'
+                    : 'EMA20_RECLAIM',
+
+        triggerType:
+            triggerTypeLocal ||
+            (
+                side === 'LONG'
+                    ? '1M_BULLISH_BREAK_AFTER_RECLAIM'
+                    : '1M_BEARISH_BREAK_AFTER_RECLAIM'
+            ),
+
+        marketState,
+
+        volatility,
+
+        qualityScore,
+
+        // Scanner / DB / dynamic compatibility
+        risk: {
+            risk:r(risk),
+            initialRisk:r(risk),
+            rr:r(targetR),
+            targetR:r(targetR)
+        },
+
+        indicators: {
+            atr15:r(atr15),
+            atr5:r(atr5),
+            atr1:r(atr1),
+
+            ema20_1h:r(e20H),
+            ema50_1h:r(e50H),
+
+            ema20_15:r(e20_15),
+            ema50_15:r(e50_15),
+
+            ema20_5:r(e20),
+            ema50_5:r(e50)
+        },
+
+        debug: {
+            setupIndex,
+
+            setupAge5m:
+                setupAge,
+
+            setupKind,
+
+            htfSlope:
+                r(hSlope,6),
+
+            htfGap:
+                r(hGap,6),
+
+            biasSlope:
+                r(mSlope,6),
+
+            vol5Ratio:
+                r(vol5Ratio,3),
+
+            distanceFromEma20:
+                r(distance,6),
+
+            maxChase:
+                r(maxChase,6),
+
+            invalidation:
+                r(invalidation),
+
+            risk:
+                r(risk),
+
+            riskATR5:
+                r(risk/atr5,3),
+
+            nearestObstacle:
+                r(obstacle),
+
+            availableR:
+                r(available,3),
+
+            targetR,
+
+            triggerLong,
+            triggerShort,
+
+            triggerIndex,
+
+            confirmationAge1m:
+                c1.length - 1 - triggerIndex,
+
+            htfDirection:
+                side,
+
+            price:
+                r(price),
+
+            sl:
+                r(sl),
+
+            tp:
+                r(tp)
+        }
+    }
+}
 
 
 // =========================================================
@@ -3830,7 +4983,7 @@ async function scan(symbol){
             `🟢 SIGNAL: ${symbol} | ` +
             `SIDE=${r.side} | ` +
             `SETUP=${r.setup || "N/A"} | ` +
-            `SCORE=${r.score ?? "N/A"}`
+            `QUALITY=${r.qualityScore ?? "N/A"}`
         )
 
         return {
@@ -4885,6 +6038,12 @@ let dbAI =
         best.side,
         best.volatility
     )
+    if(!dbAI){
+    console.log(
+        `⛔ DB AI unavailable - skip ${best.symbol}`
+    )
+    continue
+}
 
 // ===== RR =====
 
@@ -5065,21 +6224,20 @@ if(!trade){
 }
 
     let lotFilter =
-        info.filters.find(
-            f => f.filterType === "LOT_SIZE"
-        )
-
-    //let minNotionalFilter =
-    //    info.filters.find(
-    //        f => f.filterType === "MIN_NOTIONAL"
-    //    )
+    info.filters.find(
+        f => f.filterType === "MARKET_LOT_SIZE"
+    ) ||
+    info.filters.find(
+        f => f.filterType === "LOT_SIZE"
+    )
 
     let minNotionalFilter =
-        info.filters.find(
-            f =>
-                f.filterType === "MIN_NOTIONAL" ||
-                f.filterType === "NOTIONAL"
-        )
+    info.filters.find(
+        f => f.filterType === "NOTIONAL"
+    ) ||
+    info.filters.find(
+        f => f.filterType === "MIN_NOTIONAL"
+    )
 
     let stepSize =
         parseFloat(
@@ -5092,9 +6250,11 @@ if(!trade){
         )
 
     let minNotional =
-        parseFloat(
-            minNotionalFilter?.notional || 5
-        )
+    Number(
+        minNotionalFilter?.minNotional ??
+        minNotionalFilter?.notional ??
+        5
+    )
 
     // ===== STEP 3: ROUND STEP =====
     qty =
@@ -5223,11 +6383,28 @@ if(!trade){
 
     try{
 
-        let execution =
-    await openPositionWithTPSL(
-        trade,
-        qty
+        let execution
+
+try{
+
+    execution =
+        await openPositionWithTPSL(
+            trade,
+            qty
+        )
+
+}catch(e){
+
+    console.error(
+        `❌ ENTRY EXCEPTION ${trade.symbol}:`,
+        e?.message || e
     )
+
+    execution = {
+        ok:false,
+        error:e?.message || String(e)
+    }
+}
 
 if(!execution?.ok){
 
@@ -5238,7 +6415,59 @@ if(!execution?.ok){
         "UNKNOWN"
     )
 
-    continue
+    // =====================================================
+    // CRITICAL RECOVERY:
+    // openPositionWithTPSL() có thể đã mở position
+    // nhưng fail ở TPSL / VERIFY sau đó.
+    // PHẢI kiểm tra Binance trước khi bỏ signal.
+    // =====================================================
+
+    let realPosition = null
+
+    try{
+
+        const positions =
+            await getPositionsCached(true)
+
+        realPosition =
+            positions?.find(
+                p =>
+                    p.symbol === trade.symbol &&
+                    Math.abs(
+                        Number(p.positionAmt || 0)
+                    ) > 0
+            )
+
+    }catch(e){
+
+        console.error(
+            `⚠️ POSITION RECOVERY ERROR ${trade.symbol}:`,
+            e?.message || e
+        )
+    }
+
+    if(realPosition){
+
+        console.error(
+            `🚨 POSITION ALREADY OPEN ${trade.symbol} — RECOVERY`
+        )
+
+        console.error(
+            `SIDE=${trade.side}`,
+            `QTY=${realPosition.positionAmt}`,
+            `ENTRY=${realPosition.entryPrice}`
+        )
+
+        // KHÔNG continue ở đây nếu position thật đang tồn tại.
+        // Phải chuyển sang recovery TPSL / DB.
+    }else{
+
+        console.log(
+            `ℹ️ ${trade.symbol} confirmed no real position`
+        )
+
+        continue
+    }
 }
 
 trade.waitingEntry = false
