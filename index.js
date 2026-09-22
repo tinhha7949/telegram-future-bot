@@ -5353,9 +5353,6 @@ async function getBtcRegime() {
     return regime
 }
 
-// Input: `best` is the core signal plus symbol:
-// const best = { ...signal, symbol }
-// Returns a DB-ready trade, or null when the signal is invalid.
 function buildTradeFromCoreSignal(best, btcRegime, riskBudget){
 
     // =========================================================
@@ -5366,8 +5363,25 @@ function buildTradeFromCoreSignal(best, btcRegime, riskBudget){
     const sl = Number(best?.sl)
     const tp = Number(best?.tp)
 
-    const initialRisk = Number(best?.risk?.risk ?? Math.abs(entry - sl))
-const rr = Number(best?.risk?.rr ?? (Math.abs(tp - entry) / Math.abs(entry - sl)))
+    const initialRisk = Number(
+        best?.risk?.initialRisk ??
+        best?.risk?.risk ??
+        Math.abs(entry - sl)
+    )
+
+    const rr = Number(
+        best?.risk?.rr ??
+        (
+            Math.abs(tp - entry) /
+            Math.abs(entry - sl)
+        )
+    )
+
+    const targetR = Number(
+        best?.risk?.targetR ??
+        rr
+    )
+
     const budget = Number(riskBudget)
 
     // =========================================================
@@ -5381,8 +5395,9 @@ const rr = Number(best?.risk?.rr ?? (Math.abs(tp - entry) / Math.abs(entry - sl)
         !Number.isFinite(sl) || sl <= 0 ||
         !Number.isFinite(tp) || tp <= 0 ||
         !Number.isFinite(initialRisk) || initialRisk <= 0 ||
-        !Number.isFinite(budget) || budget <= 0 ||
-        !Number.isFinite(rr) || rr <= 0
+        !Number.isFinite(rr) || rr <= 0 ||
+        !Number.isFinite(targetR) || targetR <= 0 ||
+        !Number.isFinite(budget) || budget <= 0
     ){
 
         console.log(
@@ -5413,26 +5428,22 @@ const rr = Number(best?.risk?.rr ?? (Math.abs(tp - entry) / Math.abs(entry - sl)
     }
 
     // =========================================================
-    // CORE OBJECTS
+    // INDICATORS
+    // EXACTLY FROM CORE RETURN
     // =========================================================
 
     const indicators = best.indicators || {}
-    const structure = best.structure || {}
-    const context = best.context || {}
-    const riskDetail = best.risk || {}
-    const flags = best.flags || {}
-    const debug = best.debug || {}
 
     const now = Date.now()
 
     // =========================================================
-    // FINAL TRADE OBJECT
+    // FINAL TRADE
     // =========================================================
 
     return {
 
         // =====================================================
-        // BASIC
+        // CORE SIGNAL
         // =====================================================
 
         symbol:
@@ -5468,17 +5479,17 @@ const rr = Number(best?.risk?.rr ?? (Math.abs(tp - entry) / Math.abs(entry - sl)
         volatility:
             best.volatility,
 
-        btcRegime:
-            btcRegime,
-
         qualityScore:
             Number(best.qualityScore ?? 0),
 
         // =====================================================
-        // RISK
+        // SCANNER DATA
         // =====================================================
 
-        // Monetary risk budget used for position sizing
+        btcRegime:
+            btcRegime,
+
+        // Monetary risk budget
         risk:
             budget,
 
@@ -5489,68 +5500,37 @@ const rr = Number(best?.risk?.rr ?? (Math.abs(tp - entry) / Math.abs(entry - sl)
         rr:
             rr,
 
+        // =====================================================
+        // RISK DETAIL
+        // =====================================================
+
         riskDetail: {
 
-    risk:
-        Number(
-            riskDetail.risk ??
-            initialRisk
-        ),
+            risk:
+                Number(best.risk?.risk ?? initialRisk),
 
-    rr:
-        Number(
-            riskDetail.rr ??
-            rr
-        ),
+            rr:
+                rr,
 
-    targetR:
-        Number(
-            riskDetail.targetR ??
-            (
-                Number.isFinite(Number(best?.risk?.targetR))
-                    ? Number(best.risk.targetR)
-                    : rr
-            )
-        ),
-
-    slDistance:
-        Number(
-            riskDetail.slDistance ??
-            Math.abs(entry - sl)
-        ),
+            targetR:
+                targetR,
 
             slDistance:
-                Number(
-                    riskDetail.slDistance ??
-                    Math.abs(entry - sl)
-                ),
+                Math.abs(entry - sl),
 
             tpDistance:
-                Number(
-                    riskDetail.tpDistance ??
-                    Math.abs(tp - entry)
-                ),
+                Math.abs(tp - entry),
 
             riskATR5:
-                Number(
-                    riskDetail.riskATR5 ??
-                    (
-                        Number.isFinite(Number(indicators.atr5)) &&
-                        Number(indicators.atr5) > 0
-                            ? initialRisk / Number(indicators.atr5)
-                            : 0
-                    )
-                ),
+                Number.isFinite(Number(indicators.atr5)) &&
+                Number(indicators.atr5) > 0
+                    ? initialRisk / Number(indicators.atr5)
+                    : 0,
 
             riskPercent:
-                Number(
-                    riskDetail.riskPercent ??
-                    (
-                        entry > 0
-                            ? initialRisk / entry
-                            : 0
-                    )
-                ),
+                entry > 0
+                    ? initialRisk / entry
+                    : 0,
 
             riskBudget:
                 budget
@@ -5558,10 +5538,16 @@ const rr = Number(best?.risk?.rr ?? (Math.abs(tp - entry) / Math.abs(entry - sl)
 
         // =====================================================
         // INDICATORS
-        // EXACTLY MATCH CORE RETURN
+        // EXACTLY FROM CORE RETURN
         // =====================================================
 
         indicators: {
+
+            atr15:
+                indicators.atr15 ?? null,
+
+            atr5:
+                indicators.atr5 ?? null,
 
             ema20_1h:
                 indicators.ema20_1h ?? null,
@@ -5575,246 +5561,11 @@ const rr = Number(best?.risk?.rr ?? (Math.abs(tp - entry) / Math.abs(entry - sl)
             ema50_15:
                 indicators.ema50_15 ?? null,
 
-            ema9_5:
-                indicators.ema9_5 ?? null,
-
             ema20_5:
                 indicators.ema20_5 ?? null,
 
             ema50_5:
-                indicators.ema50_5 ?? null,
-
-            atr1h:
-                indicators.atr1h ?? null,
-
-            atr15:
-                indicators.atr15 ?? null,
-
-            atr5:
-                indicators.atr5 ?? null,
-
-            atr1m:
-                indicators.atr1m ?? null,
-
-            rsi5:
-                indicators.rsi5 ?? null,
-
-            rsi1m:
-                indicators.rsi1m ?? null,
-
-            volume1mRatio:
-                indicators.volume1mRatio ?? null,
-
-            volume5mRatio:
-                indicators.volume5mRatio ?? null,
-
-            atrRatio1h:
-                indicators.atrRatio1h ?? null,
-
-            atrRatio15:
-                indicators.atrRatio15 ?? null,
-
-            atrRatio5:
-                indicators.atrRatio5 ?? null
-        },
-
-        // =====================================================
-        // STRUCTURE
-        // EXACTLY MATCH CORE RETURN
-        // =====================================================
-
-        structure: {
-
-            structureHigh15:
-                structure.structureHigh15 ?? null,
-
-            structureLow15:
-                structure.structureLow15 ?? null,
-
-            swingHigh5:
-                structure.swingHigh5 ?? null,
-
-            swingLow5:
-                structure.swingLow5 ?? null,
-
-            swingHigh15:
-                structure.swingHigh15 ?? null,
-
-            swingLow15:
-                structure.swingLow15 ?? null,
-
-            resistance:
-                structure.resistance ?? null,
-
-            support:
-                structure.support ?? null
-        },
-
-        // =====================================================
-        // CONTEXT
-        // EXACTLY MATCH CORE RETURN
-        // =====================================================
-
-        context: {
-
-            h1Bull:
-                context.h1Bull ?? false,
-
-            h1Bear:
-                context.h1Bear ?? false,
-
-            bull15:
-                context.bull15 ?? false,
-
-            bear15:
-                context.bear15 ?? false,
-
-            trendLong5:
-                context.trendLong5 ?? false,
-
-            trendShort5:
-                context.trendShort5 ?? false,
-
-            bullishStructure15:
-                context.bullishStructure15 ?? false,
-
-            bearishStructure15:
-                context.bearishStructure15 ?? false,
-
-            structureOKLong:
-                context.structureOKLong ?? false,
-
-            structureOKShort:
-                context.structureOKShort ?? false,
-
-            pullbackLong:
-                context.pullbackLong ?? false,
-
-            pullbackShort:
-                context.pullbackShort ?? false,
-
-            pullbackEMA20Long:
-                context.pullbackEMA20Long ?? false,
-
-            pullbackEMA20Short:
-                context.pullbackEMA20Short ?? false,
-
-            pullbackEMA50Long:
-                context.pullbackEMA50Long ?? false,
-
-            pullbackEMA50Short:
-                context.pullbackEMA50Short ?? false,
-
-            structureRetestLong:
-                context.structureRetestLong ?? false,
-
-            structureRetestShort:
-                context.structureRetestShort ?? false,
-
-            bullishRejection:
-                context.bullishRejection ?? false,
-
-            bearishRejection:
-                context.bearishRejection ?? false,
-
-            bullishMicroBreak:
-                context.bullishMicroBreak ?? false,
-
-            bearishMicroBreak:
-                context.bearishMicroBreak ?? false,
-
-            bullishStrongClose:
-                context.bullishStrongClose ?? false,
-
-            bearishStrongClose:
-                context.bearishStrongClose ?? false,
-
-            bullishTrigger:
-                context.bullishTrigger ?? false,
-
-            bearishTrigger:
-                context.bearishTrigger ?? false,
-
-            slope1h:
-                context.slope1h ?? null,
-
-            slope15:
-                context.slope15 ?? null,
-
-            slope9_5:
-                context.slope9_5 ?? null,
-
-            gap1h:
-                context.gap1h ?? null,
-
-            gap15:
-                context.gap15 ?? null,
-
-            distFromEMA20:
-                context.distFromEMA20 ?? null,
-
-            maxChase:
-                context.maxChase ?? null
-        },
-
-        // =====================================================
-        // QUALITY
-        // =====================================================
-
-        quality:
-            best.quality ?? null,
-
-        // =====================================================
-        // FLAGS
-        // EXACTLY MATCH CORE RETURN
-        // =====================================================
-
-        flags: {
-
-            longBias:
-                flags.longBias ?? false,
-
-            shortBias:
-                flags.shortBias ?? false,
-
-            pullbackLong:
-                flags.pullbackLong ?? false,
-
-            pullbackShort:
-                flags.pullbackShort ?? false,
-
-            bullishRejection:
-                flags.bullishRejection ?? false,
-
-            bearishRejection:
-                flags.bearishRejection ?? false,
-
-            bullishTrigger:
-                flags.bullishTrigger ?? false,
-
-            bearishTrigger:
-                flags.bearishTrigger ?? false,
-
-            bullishMicroBreak:
-                flags.bullishMicroBreak ?? false,
-
-            bearishMicroBreak:
-                flags.bearishMicroBreak ?? false,
-
-            bullishStrongClose:
-                flags.bullishStrongClose ?? false,
-
-            bearishStrongClose:
-                flags.bearishStrongClose ?? false
-        },
-
-        // =====================================================
-        // DEBUG
-        // =====================================================
-
-        debug: {
-
-            ...debug
+                indicators.ema50_5 ?? null
         },
 
         // =====================================================
@@ -5859,7 +5610,6 @@ const rr = Number(best?.risk?.rr ?? (Math.abs(tp - entry) / Math.abs(entry - sl)
             "PENDING"
     }
 }
-
 // ================= SCANNER ================
 async function scanner(){
     
