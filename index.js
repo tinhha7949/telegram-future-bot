@@ -2332,8 +2332,8 @@ async function manageDynamicTPSL(trade) {
             return
         }
 
-        const [data5, data15] = await Promise.all([getData(symbol, '5m', 100), getData(symbol, '15m', 100), getData(symbol, '1h', 100)])
-        if (!Array.isArray(data5) || !Array.isArray(data15) || data5.length < 70 || data15.length < 70 || data1h.length < 70) return
+        const [data5, data15, data1h] = await Promise.all([getData(symbol, '5m', 100), getData(symbol, '15m', 100), getData(symbol, '1h', 100)])
+        if (!Array.isArray(data5) || !Array.isArray(data15) || !Array.isArray(data1h) || data5.length < 70 || data15.length < 70 || data1h.length < 70) return
         const closed5 = data5.slice(0, -1), closed15 = data15.slice(0, -1), closed1h = data1h.slice(0, -1)
         if (closed5.length < 60 || closed15.length < 60 || closed1h.length < 60) return
 
@@ -2656,8 +2656,10 @@ const continuation =
  * - TP đã bị vượt → cho phép tìm TP mới phía trước,
  *   nhưng momentum vẫn phải còn tốt.
  */
+const originalTPR = Math.abs(oldTP - entry) / initialRisk
+const dynamicTriggerR = Math.max(1.50, originalTPR - 0.25)
 if(
-    R >= 2.20 &&
+    R >= dynamicTriggerR &&
     continuation &&
     enoughExtension &&
     (
@@ -3783,16 +3785,16 @@ const price4H =
     c4.at(-1)
 
 const bull4H =
-    price4H > e200_4H &&
-    e20_4H > e50_4H &&
-    e50_4H > e200_4H &&
-    slope4H > 0
+   price4H > e200_4H &&
+   e20_4H > e50_4H &&
+   e50_4H > e200_4H &&
+   slope4H > -0.00020
 
 const bear4H =
-    price4H < e200_4H &&
-    e20_4H < e50_4H &&
-    e50_4H < e200_4H &&
-    slope4H < 0
+   price4H < e200_4H &&
+   e20_4H < e50_4H &&
+   e50_4H < e200_4H &&
+   slope4H < 0.00020
 
 if (!bull4H && !bear4H) {
     return reject('4H_TREND',{
@@ -3835,16 +3837,16 @@ const e200H =
 
     // Trend mạnh
     const long1H =
-    bull4H &&
-    e20H > e50H &&
-    price > e200H &&
-    hSlope >= 0
+   bull4H &&
+   e20H > e50H &&
+   price > e200H &&
+   hSlope > -0.00030
 
 const short1H =
-    bear4H &&
-    e20H < e50H &&
-    price < e200H &&
-    hSlope <= 0
+   bear4H &&
+   e20H < e50H &&
+   price < e200H &&
+   hSlope < 0.00030
 
 let side = 'NONE'
 
@@ -3893,9 +3895,9 @@ if (long1H && !short1H) {
    if (side === 'LONG') {
 
        const trend =
-           e20_15 > e50_15 &&
-           mGap >= .00015 &&
-           mSlope > -.00003
+   e20_15 > e50_15 &&
+   mGap >= .00015 &&
+   mSlope > -.00025
 
        const pullback =
            price >= e50_15 - pullback15 &&
@@ -3909,9 +3911,9 @@ if (long1H && !short1H) {
    } else {
 
        const trend =
-           e20_15 < e50_15 &&
-           mGap >= .00015 &&
-           mSlope < .00003
+   e20_15 < e50_15 &&
+   mGap >= .00015 &&
+   mSlope < .00025
 
        const pullback =
            price <= e50_15 + pullback15 &&
@@ -4138,7 +4140,7 @@ const reclaim50Short =
         c5.length - 1 - setupIndex
 
     // Setup cũ quá thì không dùng.
-    if (setupAge > 5) {
+    if (setupAge > 6) {
         return reject('SETUP_INVALIDATED',{
             side,
             setupKind,
@@ -4289,28 +4291,28 @@ if (trigger5Index < 0) {
         setupKind
     })
 }
-const setupPrice =
-    c5[trigger5Index]
+//const setupPrice =
+    //c5[trigger5Index]
 
-const moveFromSetup =
-    side === 'LONG'
-        ? (price - setupPrice) / price
-        : (setupPrice - price) / price
+//const moveFromSetup =
+   // side === 'LONG'
+      //  ? (price - setupPrice) / price
+       // : (setupPrice - price) / price
 
-        const maxMoveFromSetup =
-    Math.max(
-        atr5 * 1.50 / price,
-        .0045
-    )
+       // const maxMoveFromSetup =
+    //Math.max(
+        //atr5 * 1.50 / price,
+        //.0045
+   // )
 
-if (moveFromSetup > maxMoveFromSetup) {
-    return reject('CHASE',{
-        side,
-        setupKind,
-        moveFromSetup:r(moveFromSetup,6),
-        maxMoveFromSetup:r(maxMoveFromSetup,6)
-    })
-}
+//if (moveFromSetup > maxMoveFromSetup) {
+    //return reject('CHASE',{
+       // side,
+       // setupKind,
+       // moveFromSetup:r(moveFromSetup,6),
+        //maxMoveFromSetup:r(maxMoveFromSetup,6)
+    //})
+//}
 
     // =========================================================
 // 10. LONG-TERM STOP LOSS
@@ -4515,7 +4517,7 @@ const allLows =
 
     // Không cần 1.30 cứng như bản cũ.
     // 1.20 là ngưỡng tối thiểu.
-    if (available < 2.20) {
+    if (available < 2.00) {
     return reject('TP_BLOCKED',{
         side,
         nearestObstacle:r(obstacle),
@@ -4529,15 +4531,10 @@ const allLows =
     // =========================================================
 let targetR
 
-if (available >= 3.50) {
-    targetR = 3.00
-} else if (available >= 3.00) {
-    targetR = 2.70
-} else if (available >= 2.50) {
-    targetR = 2.30
-} else {
-    targetR = 2.10
-}
+if (available>=3.50) targetR=3.00
+else if (available>=3.00) targetR=2.70
+else if (available>=2.50) targetR=2.30
+else targetR=2.10
 
 targetR =
     Math.min(
@@ -6884,7 +6881,7 @@ try{
     positions = await getPositionsCached()
 }catch(e){
     console.error(
-        `⚠ POSITION CACHE FAIL ${best.symbol}:`,
+        `⚠ POSITION CACHE FAIL ${t.symbol}:`,
         e?.message || e
     )
     continue
@@ -6892,15 +6889,15 @@ try{
 
 if(!Array.isArray(positions)){
     console.error(
-        `⚠ POSITION CACHE INVALID ${best.symbol}`
+        `⚠ POSITION CACHE INVALID ${t.symbol}`
     )
     continue
 }
 
-let realActive = positions.filter(p =>
+const realPos = positions.find(p =>
+    p.symbol === t.symbol &&
     Math.abs(parseFloat(p.positionAmt || "0")) > 0
-).length
-
+)
 // không còn position
 if(!realPos){
 
@@ -6938,159 +6935,7 @@ if(!t.entry) continue
 if(!t.enteredAt){
     t.enteredAt = Date.now()
 }
-// =====================================================
-// 24H AUTO CLOSE
-// =====================================================
-
-let isTimeout = t.enteredAt && Date.now() - t.enteredAt > 86400000
-
-if(isTimeout){
-
-    console.log(`⏳ TIMEOUT CLOSE ${t.symbol}`)
-
-    // =================================================
-    // 1. CHECK POSITION THẬT
-    // =================================================
-
-    let positions = []
-
-    try{
-        POS_CACHE = null
-        POS_CACHE_TIME = 0
-        positions = await getPositionsCached()
-    }catch(e){
-        console.log(`⚠ TIMEOUT POSITION FAIL ${t.symbol}:`, e.message)
-        continue
-    }
-
-    const realPos = positions.find(p =>
-        p.symbol === t.symbol &&
-        Math.abs(parseFloat(p.positionAmt || "0")) > 0
-    )
-
-    // =================================================
-    // 2. NẾU CÒN POSITION -> ĐÓNG
-    // =================================================
-
-    if(realPos){
-
-        const realQty = Math.abs(parseFloat(realPos.positionAmt || "0"))
-
-        if(!Number.isFinite(realQty) || realQty <= 0){
-            console.log(`❌ TIMEOUT INVALID QTY ${t.symbol}`)
-            continue
-        }
-
-        const closed = await closePosition(t.symbol, t.side, realQty)
-
-        if(!closed){
-            console.log(`❌ AUTO CLOSE FAIL ${t.symbol}`)
-            continue
-        }
-
-        console.log(`✅ AUTO CLOSED ${t.symbol} AFTER 24H`)
-    }
-
-    // =================================================
-    // 3. CHỜ BINANCE GHI NHẬN CLOSE
-    // =================================================
-
-    await new Promise(r => setTimeout(r,1500))
-
-    // =================================================
-    // 4. LẤY CLOSED TRADE RESULT
-    // =================================================
-
-    const closed = await getClosedTradeResult(t)
-
-    if(!closed){
-        console.log(`⏳ TIMEOUT RESULT NOT READY ${t.symbol}`)
-        continue
-    }
-
-    // =================================================
-    // 5. TÍNH WIN / LOSS THEO PNL THỰC TẾ
-    // =================================================
-
-    const pnl = Number(closed.pnl)
-
-    if(!Number.isFinite(pnl)){
-        console.log(`❌ TIMEOUT INVALID PNL ${t.symbol}`)
-        continue
-    }
-
-    const isWin = pnl > 0
-    const finalResult = isWin ? "WIN" : "LOSS"
-
-    console.log(
-        `📊 24H RESULT ${t.symbol} ` +
-        `${finalResult} PNL=${pnl.toFixed(4)}`
-    )
-
-    // =================================================
-    // 6. UPDATE DB
-    // =================================================
-
-    const dbResult = await trades.updateOne(
-        {
-            symbol: t.symbol,
-            result: "PENDING"
-        },
-        {
-            $set:{
-                result: finalResult,
-                pnl: pnl,
-                exitOrderId: closed.exitOrderId,
-                closedAt: closed.closedAt,
-                timeoutClosed: true,
-                timeoutHours: 24,
-                updatedAt: Date.now()
-            }
-        }
-    )
-
-    if(dbResult.matchedCount === 0){
-        console.log(`⚠️ TIMEOUT DB NOT FOUND ${t.symbol}`)
-        continue
-    }
-
-    // =================================================
-    // 7. UPDATE BALANCE
-    // =================================================
-
-    const latestBalance = await updateBalance()
-
-    if(Number.isFinite(latestBalance) && latestBalance > 0){
-        ACCOUNT_BALANCE = latestBalance
-    }
-
-    // =================================================
-    // 8. TELEGRAM
-    // =================================================
-
-    await sendTelegram2(
-`⏳ AUTO CLOSE 24H
-${t.symbol}
-${t.side} | ₿ : ${t.btcRegime}
-${isWin ? "✅ WIN" : "❌ LOSS"}
-PnL: ${pnl.toFixed(4)} USDT
-💰 Balance: ${ACCOUNT_BALANCE.toFixed(2)} USDT`
-    )
-
-    // =================================================
-    // 9. CLEAN
-    // =================================================
-
-    delete DATA_FAILS[t.symbol]
-    delete CLOSED_RESULT_FAILS[t.symbol]
-    delete TPSL_PHASE[t.symbol]
-
-    activeTrades.splice(i,1)
-
-    continue
-}
 // ===== VERIFY POSITION =====
-
 let stillOpen = null
 let verifyOK = false
 
