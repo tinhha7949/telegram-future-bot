@@ -3838,16 +3838,14 @@ const e200H =
 
     // Trend mạnh
     const long1H =
-   bull4H &&
-   e20H > e50H &&
-   price > e200H &&
-   hSlope > -0.00030
+    e20H > e50H &&
+    price > e200H &&
+    hSlope > -0.00030
 
 const short1H =
-   bear4H &&
-   e20H < e50H &&
-   price < e200H &&
-   hSlope < 0.00030
+    e20H < e50H &&
+    price < e200H &&
+    hSlope < 0.00030
 
 let side = 'NONE'
 
@@ -3901,8 +3899,8 @@ if (long1H && !short1H) {
    mSlope > -.00025
 
        const pullback =
-           price >= e50_15 - pullback15 &&
-           price >= e20_15 * .994
+    price >= e50_15 - pullback15 &&
+    price <= e20_15 + pullback15
 
 
        biasOK =
@@ -3917,8 +3915,8 @@ if (long1H && !short1H) {
    mSlope < .00025
 
        const pullback =
-           price <= e50_15 + pullback15 &&
-           price <= e20_15 * 1.006
+    price <= e50_15 + pullback15 &&
+    price >= e20_15 - pullback15
 
 
        biasOK =
@@ -4213,10 +4211,10 @@ const reclaim50Short =
 // =========================================================
 
 const confirm5Start =
-    Math.max(
-        setupIndex,
-        c5.length - 3
-    )
+   Math.max(
+       setupIndex + 1,
+       c5.length - 3
+   )
 
 let trigger5Index = -1
 let triggerTypeLocal = null
