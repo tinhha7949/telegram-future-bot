@@ -3584,16 +3584,17 @@ async function coreLogic(data4h, data15, data1h, data5 ) {
     CORE_TOTAL_CALLS++
 
     const reject = (reason, detail = {}) => {
-        try {
-            if (typeof CORE_REJECTS === 'object' && CORE_REJECTS) {
-                CORE_REJECTS[reason] = (CORE_REJECTS[reason] || 0) + 1
-            }
-            if (typeof CORE_LAST_REJECT === 'object' && CORE_LAST_REJECT) {
-                CORE_LAST_REJECT[reason] = detail
-            }
-        } catch {}
-        return null
+
+    CORE_REJECT_STATS[reason] =
+        (CORE_REJECT_STATS[reason] || 0) + 1
+
+    CORE_REJECT_DETAILS[reason] = {
+        ...detail,
+        timestamp: Date.now()
     }
+
+    return null
+}
 
     // =========================================================
     // 0. VALIDATION
@@ -4653,6 +4654,15 @@ if (targetR < 2.00) {
     //
     // GIỮ NGUYÊN CONTRACT CHO SCANNER + DYNAMIC.
     // =========================================================
+    CORE_REJECT_STATS.ACCEPT++
+
+CORE_SIDE_STATS[side]++
+
+CORE_REJECT_STATS[
+    side === 'LONG'
+        ? 'ACCEPT_LONG'
+        : 'ACCEPT_SHORT'
+]++
 
     return {
         side,
