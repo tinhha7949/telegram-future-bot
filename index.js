@@ -4005,18 +4005,18 @@ async function coreLogic(data4h, data15, data1h, data5) {
         c4.at(-1)
 
     const bull4H =
-        price4H > e200_4H &&
-        e20_4H > e50_4H &&
-        e50_4H > e200_4H &&
-        slope20_4H > -0.00070 &&
-        slope50_4H > -0.00045
+    price4H > e200_4H &&
+    e20_4H > e50_4H &&
+    e50_4H > e200_4H &&
+    slope20_4H > -0.00045 &&
+    slope50_4H > -0.00030
 
-    const bear4H =
-        price4H < e200_4H &&
-        e20_4H < e50_4H &&
-        e50_4H < e200_4H &&
-        slope20_4H < 0.00070 &&
-        slope50_4H < 0.00045
+const bear4H =
+    price4H < e200_4H &&
+    e20_4H < e50_4H &&
+    e50_4H < e200_4H &&
+    slope20_4H < 0.00045 &&
+    slope50_4H < 0.00030
 
     if (!bull4H && !bear4H) {
         return reject('4H_TREND', {
@@ -4101,12 +4101,14 @@ async function coreLogic(data4h, data15, data1h, data5) {
         Math.abs(e20H - e50H) / price
 
     const bull1H =
-        e20H > e50H &&
-        hSlope > -0.00100
+    e20H > e50H &&
+    hSlope > -0.00050 &&
+    hGap >= 0.00045
 
-    const bear1H =
-        e20H < e50H &&
-        hSlope < 0.00100
+const bear1H =
+    e20H < e50H &&
+    hSlope < 0.00050 &&
+    hGap >= 0.00045
 
     if (
         side === 'LONG' &&
@@ -4208,6 +4210,22 @@ async function coreLogic(data4h, data15, data1h, data5) {
         shortPullbackZone &&
         shortStructureSafe
 
+        const context15Long =
+    trend15Long &&
+    longStructureSafe &&
+    (
+        longPullbackZone ||
+        mGap >= 0.00035
+    )
+
+const context15Short =
+    trend15Short &&
+    shortStructureSafe &&
+    (
+        shortPullbackZone ||
+        mGap >= 0.00035
+    )
+
     // =========================================================
     // 8. 5M ENTRY TIMING
     //
@@ -4280,14 +4298,14 @@ async function coreLogic(data4h, data15, data1h, data5) {
             )
 
         const bullishCandle =
-            c5[k] > o5[k] &&
-            b >= 0.25 &&
-            closePos >= 0.55
+    c5[k] > o5[k] &&
+    b >= 0.35 &&
+    closePos >= 0.65
 
-        const bearishCandle =
-            c5[k] < o5[k] &&
-            b >= 0.25 &&
-            closePos <= 0.45
+const bearishCandle =
+    c5[k] < o5[k] &&
+    b >= 0.35 &&
+    closePos <= 0.35
 
         const sweepLong =
             Number.isFinite(prevLow) &&
@@ -4312,18 +4330,20 @@ async function coreLogic(data4h, data15, data1h, data5) {
             bearishCandle
 
         const recoveryLong =
-            bullishCandle &&
-            c5[k] > c5[Math.max(0, k - 1)] &&
-            c5[k] > e50 - triggerZone
+    bullishCandle &&
+    context15Long &&
+    c5[k] > c5[Math.max(0, k - 1)] &&
+    c5[k] > e50 - triggerZone
 
-        const recoveryShort =
-            bearishCandle &&
-            c5[k] < c5[Math.max(0, k - 1)] &&
-            c5[k] < e50 + triggerZone
+const recoveryShort =
+    bearishCandle &&
+    context15Short &&
+    c5[k] < c5[Math.max(0, k - 1)] &&
+    c5[k] < e50 + triggerZone
 
         if (side === 'LONG') {
 
-            if (sweepLong) {
+            if (sweepLong && context15Long) {
                 trigger5Index = k
                 triggerTypeLocal =
                     '5M_SWEEP_BULLISH'
@@ -4334,16 +4354,16 @@ async function coreLogic(data4h, data15, data1h, data5) {
                 break
             }
 
-            if (reclaimLong) {
-                trigger5Index = k
-                triggerTypeLocal =
-                    '5M_EMA20_RECLAIM'
-                setupKind =
-                    'LONG_TERM_PULLBACK'
-                invalidation =
-                    Math.min(l5[k], prevLow)
-                break
-            }
+            if (reclaimLong && context15Long) {
+    trigger5Index = k
+    triggerTypeLocal =
+        '5M_EMA20_RECLAIM'
+    setupKind =
+        'LONG_TERM_PULLBACK'
+    invalidation =
+        Math.min(l5[k], prevLow)
+    break
+}
 
             if (recoveryLong) {
                 trigger5Index = k
@@ -4358,7 +4378,7 @@ async function coreLogic(data4h, data15, data1h, data5) {
 
         } else {
 
-            if (sweepShort) {
+            if (sweepShort && context15Short) {
                 trigger5Index = k
                 triggerTypeLocal =
                     '5M_SWEEP_BEARISH'
@@ -4369,16 +4389,16 @@ async function coreLogic(data4h, data15, data1h, data5) {
                 break
             }
 
-            if (reclaimShort) {
-                trigger5Index = k
-                triggerTypeLocal =
-                    '5M_EMA20_RECLAIM'
-                setupKind =
-                    'SHORT_TERM_PULLBACK'
-                invalidation =
-                    Math.max(h5[k], prevHigh)
-                break
-            }
+            if (reclaimShort && context15Short) {
+    trigger5Index = k
+    triggerTypeLocal =
+        '5M_EMA20_RECLAIM'
+    setupKind =
+        'SHORT_TERM_PULLBACK'
+    invalidation =
+        Math.max(h5[k], prevHigh)
+    break
+}
 
             if (recoveryShort) {
                 trigger5Index = k
@@ -4419,7 +4439,7 @@ async function coreLogic(data4h, data15, data1h, data5) {
                 pullback15Long ||
                 (
                     trend15Long &&
-                    price <= e20_15 + pullbackZone * 1.35
+                    price <= e20_15 + pullbackZone * 1.15
                 )
             ) &&
             currentBull5
@@ -4443,7 +4463,7 @@ async function coreLogic(data4h, data15, data1h, data5) {
                 pullback15Short ||
                 (
                     trend15Short &&
-                    price >= e20_15 - pullbackZone * 1.35
+                    price >= e20_15 - pullbackZone * 1.15
                 )
             ) &&
             currentBear5
@@ -5417,39 +5437,17 @@ async function scan(symbol){
         // 1. LOAD MARKET DATA
         // ==================================================
 
-        const [
-            data4h,
-            data15,
-            data1h,
-            data5
-        ] = await Promise.all([
-
-            getData(
-    symbol,
-    "4h",
-    240
-),
-
-            getData(
-                symbol,
-                "15m",
-                LIMIT_15M
-            ),
-
-            getData(
-                symbol,
-                "1h",
-                LIMIT_1H
-            ),
-
-            getData(
-                symbol,
-                "5m",
-                160
-            ),
-
-        ])
-
+       const [
+    data4h,
+    data15,
+    data1h,
+    data5
+] = await Promise.all([
+    getData(symbol,"4h",240),
+    getData(symbol,"15m",121),
+    getData(symbol,"1h",221),
+    getData(symbol,"5m",160),
+])
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
