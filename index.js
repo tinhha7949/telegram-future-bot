@@ -4008,15 +4008,15 @@ async function coreLogic(data4h, data15, data1h, data5) {
     price4H > e200_4H &&
     e20_4H > e50_4H &&
     e50_4H > e200_4H &&
-    slope20_4H > -0.00045 &&
-    slope50_4H > -0.00030
+    slope20_4H > 0.00008 &&
+    slope50_4H > 0.00003
 
 const bear4H =
     price4H < e200_4H &&
     e20_4H < e50_4H &&
     e50_4H < e200_4H &&
-    slope20_4H < 0.00045 &&
-    slope50_4H < 0.00030
+    slope20_4H < -0.00008 &&
+    slope50_4H < -0.00003
 
     if (!bull4H && !bear4H) {
         return reject('4H_TREND', {
@@ -4071,6 +4071,10 @@ const bear4H =
             price4H: r(price4H)
         })
     }
+    const strong4HStructure =
+    side === 'LONG'
+        ? higherStructure4H
+        : lowerStructure4H
 
     // =========================================================
     // 6. 1H CONFIRMATION
@@ -4102,13 +4106,18 @@ const bear4H =
 
     const bull1H =
     e20H > e50H &&
-    hSlope > -0.00050 &&
-    hGap >= 0.00045
+    hSlope > 0.00005 &&
+    hGap >= 0.00035
 
 const bear1H =
     e20H < e50H &&
-    hSlope < 0.00050 &&
-    hGap >= 0.00045
+    hSlope < -0.00005 &&
+    hGap >= 0.00035
+
+    const strong1H =
+    side === 'LONG'
+        ? bull1H && hSlope >= 0.00012
+        : bear1H && hSlope <= -0.00012
 
     if (
         side === 'LONG' &&
@@ -4173,12 +4182,17 @@ const bear1H =
         )
 
     const trend15Long =
-        e20_15 >= e50_15 &&
-        mSlope > -0.00120
+    e20_15 >= e50_15 &&
+    mSlope > 0.00005
 
-    const trend15Short =
-        e20_15 <= e50_15 &&
-        mSlope < 0.00120
+const trend15Short =
+    e20_15 <= e50_15 &&
+    mSlope < -0.00005
+
+    const strong15 =
+    side === 'LONG'
+        ? trend15Long && mSlope >= 0.00010
+        : trend15Short && mSlope <= -0.00010
 
     const longPullbackZone =
         price >= e50_15 - pullbackZone &&
@@ -4225,42 +4239,281 @@ const context15Short =
         shortPullbackZone ||
         mGap >= 0.00035
     )
-
     // =========================================================
-    // 8. 5M ENTRY TIMING
-    //
-    // 5M không cần setup hoàn hảo.
-    //
-    // Ưu tiên:
-    // 1. sweep + reclaim
-    // 2. EMA20 reclaim
-    // 3. directional recovery candle
-    //
-    // Chỉ tìm trong 6 candle gần nhất.
-    // =========================================================
+// 8. 5M ENTRY TIMING
+//
+// Ưu tiên thực sự:
+// 1. SWEEP
+// 2. TREND RECOVERY
+// 3. EMA20 RECLAIM
+//
+// Quan trọng:
+// Không để một reclaim yếu ở candle mới nhất
+// đè lên sweep/recovery tốt hơn ở candle trước.
+// =========================================================
 
-    const e20 =
-        ema(c5.slice(-80), 20)
+const e20 =
+    ema(c5.slice(-80), 20)
 
-    const e50 =
-        ema(c5.slice(-100), 50)
+const e50 =
+    ema(c5.slice(-100), 50)
 
-    const triggerZone =
-        Math.max(
-            atr5 * 0.70,
-            price * 0.0015
+const triggerZone =
+    Math.max(
+        atr5 * 0.70,
+        price * 0.0015
+    )
+const ema20At = k =>
+    ema(c5.slice(0, k + 1), 20)
+
+const ema50At = k =>
+    ema(c5.slice(0, k + 1), 50)
+let trigger5Index = -1
+let triggerTypeLocal = null
+let setupKind = null
+let invalidation = null
+
+const start5 =
+    Math.max(
+        20,
+        c5.length - 6
+    )
+
+// ---------------------------------------------------------
+// PASS 1 — SWEEP
+// ---------------------------------------------------------
+
+for (
+    let k = c5.length - 1;
+    k >= start5;
+    k--
+) {
+    const prevStart =
+        Math.max(0, k - 8)
+
+    const prevLow =
+        lo(
+            l5.slice(prevStart, k),
+            k - prevStart
         )
 
-    let trigger5Index = -1
-    let triggerTypeLocal = null
-    let setupKind = null
-    let invalidation = null
-
-    const start5 =
-        Math.max(
-            20,
-            c5.length - 6
+    const prevHigh =
+        hi(
+            h5.slice(prevStart, k),
+            k - prevStart
         )
+
+    const b =
+        candleBody(
+            o5[k],
+            h5[k],
+            l5[k],
+            c5[k]
+        )
+
+    const closePos =
+        closeLocation(
+            h5[k],
+            l5[k],
+            c5[k]
+        )
+
+    const bullishCandle =
+        c5[k] > o5[k] &&
+        b >= 0.35 &&
+        closePos >= 0.65
+
+    const bearishCandle =
+        c5[k] < o5[k] &&
+        b >= 0.35 &&
+        closePos <= 0.35
+
+    const sweepLong =
+        Number.isFinite(prevLow) &&
+        l5[k] <= prevLow &&
+        c5[k] > prevLow &&
+        bullishCandle
+
+    const sweepShort =
+        Number.isFinite(prevHigh) &&
+        h5[k] >= prevHigh &&
+        c5[k] < prevHigh &&
+        bearishCandle
+
+    if (
+        side === 'LONG' &&
+        sweepLong &&
+        context15Long
+    ) {
+        trigger5Index = k
+        triggerTypeLocal =
+            '5M_SWEEP_BULLISH'
+        setupKind =
+            'LONG_TERM_SWEEP'
+        invalidation =
+            Math.min(
+                l5[k],
+                prevLow
+            )
+        break
+    }
+
+    if (
+        side === 'SHORT' &&
+        sweepShort &&
+        context15Short
+    ) {
+        trigger5Index = k
+        triggerTypeLocal =
+            '5M_SWEEP_BEARISH'
+        setupKind =
+            'SHORT_TERM_SWEEP'
+        invalidation =
+            Math.max(
+                h5[k],
+                prevHigh
+            )
+        break
+    }
+}
+
+// ---------------------------------------------------------
+// PASS 2 — TREND RECOVERY
+// ---------------------------------------------------------
+
+if (trigger5Index < 0) {
+
+    for (
+        let k = c5.length - 1;
+        k >= start5;
+        k--
+    ) {
+
+        const prevStart = Math.max(0, k - 8)
+
+        const prevLow = lo(
+            l5.slice(prevStart, k),
+            k - prevStart
+        )
+
+        const prevHigh = hi(
+            h5.slice(prevStart, k),
+            k - prevStart
+        )
+
+        const b = candleBody(
+            o5[k],
+            h5[k],
+            l5[k],
+            c5[k]
+        )
+
+        const closePos = closeLocation(
+            h5[k],
+            l5[k],
+            c5[k]
+        )
+
+        const e20k = ema20At(k)
+        const e50k = ema50At(k)
+
+        const triggerZoneK = Math.max(
+            atr5 * 0.60,
+            c5[k] * 0.0012
+        )
+
+        const bullishCandle =
+            c5[k] > o5[k] &&
+            b >= 0.50 &&
+            closePos >= 0.70
+
+        const bearishCandle =
+            c5[k] < o5[k] &&
+            b >= 0.50 &&
+            closePos <= 0.30
+
+        const touchedEMA20Long =
+            l5[k] <= e20k + triggerZoneK
+
+        const touchedEMA20Short =
+            h5[k] >= e20k - triggerZoneK
+
+        const reclaimedEMA20Long =
+            c5[k] > e20k + triggerZoneK * 0.10
+
+        const reclaimedEMA20Short =
+            c5[k] < e20k - triggerZoneK * 0.10
+
+        const recoveryLong =
+            side === 'LONG' &&
+            trend15Long &&
+            pullback15Long &&
+            bullishCandle &&
+            c5[k] > c5[Math.max(0, k - 1)] &&
+            touchedEMA20Long &&
+            reclaimedEMA20Long &&
+            c5[k] > e50k
+
+        const recoveryShort =
+            side === 'SHORT' &&
+            trend15Short &&
+            pullback15Short &&
+            bearishCandle &&
+            c5[k] < c5[Math.max(0, k - 1)] &&
+            touchedEMA20Short &&
+            reclaimedEMA20Short &&
+            c5[k] < e50k
+
+        if (recoveryLong) {
+
+            trigger5Index = k
+
+            triggerTypeLocal =
+                '5M_TREND_RECOVERY'
+
+            setupKind =
+                'LONG_TERM_TREND'
+
+            invalidation =
+                Math.min(
+                    l5[k],
+                    prevLow
+                )
+
+            break
+        }
+
+        if (recoveryShort) {
+
+            trigger5Index = k
+
+            triggerTypeLocal =
+                '5M_TREND_RECOVERY'
+
+            setupKind =
+                'SHORT_TERM_TREND'
+
+            invalidation =
+                Math.max(
+                    h5[k],
+                    prevHigh
+                )
+
+            break
+        }
+    }
+}
+// ---------------------------------------------------------
+// PASS 3 — EMA20 RECLAIM
+//
+// Reclaim thật:
+// LONG phải xuyên/chạm EMA20 từ phía dưới
+// rồi đóng rõ ràng phía trên EMA20.
+//
+// SHORT đối xứng.
+// ---------------------------------------------------------
+
+if (trigger5Index < 0) {
 
     for (
         let k = c5.length - 1;
@@ -4298,203 +4551,90 @@ const context15Short =
             )
 
         const bullishCandle =
-    c5[k] > o5[k] &&
-    b >= 0.35 &&
-    closePos >= 0.65
+            c5[k] > o5[k] &&
+            b >= 0.45 &&
+            closePos >= 0.70
 
-const bearishCandle =
-    c5[k] < o5[k] &&
-    b >= 0.35 &&
-    closePos <= 0.35
+        const bearishCandle =
+            c5[k] < o5[k] &&
+            b >= 0.45 &&
+            closePos <= 0.30
 
-        const sweepLong =
-            Number.isFinite(prevLow) &&
-            l5[k] <= prevLow &&
-            c5[k] > prevLow &&
-            bullishCandle
+            const e20k = ema20At(k)
 
-        const sweepShort =
-            Number.isFinite(prevHigh) &&
-            h5[k] >= prevHigh &&
-            c5[k] < prevHigh &&
-            bearishCandle
+const triggerZoneK =
+    Math.max(
+        atr5 * 0.70,
+        c5[k] * 0.0015
+    )
 
         const reclaimLong =
-            l5[k] <= e20 + triggerZone &&
-            c5[k] > e20 &&
-            bullishCandle
-
-        const reclaimShort =
-            h5[k] >= e20 - triggerZone &&
-            c5[k] < e20 &&
-            bearishCandle
-
-        const recoveryLong =
+    l5[k] <= e20k &&
+    c5[k] > e20k + triggerZoneK * 0.15 &&
     bullishCandle &&
-    context15Long &&
-    c5[k] > c5[Math.max(0, k - 1)] &&
-    c5[k] > e50 - triggerZone
+    context15Long
 
-const recoveryShort =
+const reclaimShort =
+    h5[k] >= e20k &&
+    c5[k] < e20k - triggerZoneK * 0.15 &&
     bearishCandle &&
-    context15Short &&
-    c5[k] < c5[Math.max(0, k - 1)] &&
-    c5[k] < e50 + triggerZone
-
-        if (side === 'LONG') {
-
-            if (sweepLong && context15Long) {
-                trigger5Index = k
-                triggerTypeLocal =
-                    '5M_SWEEP_BULLISH'
-                setupKind =
-                    'LONG_TERM_SWEEP'
-                invalidation =
-                    Math.min(l5[k], prevLow)
-                break
-            }
-
-            if (reclaimLong && context15Long) {
-    trigger5Index = k
-    triggerTypeLocal =
-        '5M_EMA20_RECLAIM'
-    setupKind =
-        'LONG_TERM_PULLBACK'
-    invalidation =
-        Math.min(l5[k], prevLow)
-    break
-}
-
-            if (recoveryLong) {
-                trigger5Index = k
-                triggerTypeLocal =
-                    '5M_TREND_RECOVERY'
-                setupKind =
-                    'LONG_TERM_TREND'
-                invalidation =
-                    Math.min(l5[k], prevLow)
-                break
-            }
-
-        } else {
-
-            if (sweepShort && context15Short) {
-                trigger5Index = k
-                triggerTypeLocal =
-                    '5M_SWEEP_BEARISH'
-                setupKind =
-                    'SHORT_TERM_SWEEP'
-                invalidation =
-                    Math.max(h5[k], prevHigh)
-                break
-            }
-
-            if (reclaimShort && context15Short) {
-    trigger5Index = k
-    triggerTypeLocal =
-        '5M_EMA20_RECLAIM'
-    setupKind =
-        'SHORT_TERM_PULLBACK'
-    invalidation =
-        Math.max(h5[k], prevHigh)
-    break
-}
-
-            if (recoveryShort) {
-                trigger5Index = k
-                triggerTypeLocal =
-                    '5M_TREND_RECOVERY'
-                setupKind =
-                    'SHORT_TERM_TREND'
-                invalidation =
-                    Math.max(h5[k], prevHigh)
-                break
-            }
-        }
-    }
-
-    // =========================================================
-    // 9. FALLBACK ENTRY
-    //
-    // Nếu 5M không có mẫu hình đặc biệt,
-    // nhưng 4H + 1H + 15M cùng hướng và giá đang
-    // ở vùng hợp lý, cho phép entry theo trend.
-    //
-    // Đây là phần quan trọng để tránh 18h không lệnh.
-    // =========================================================
-
-    if (trigger5Index < 0) {
-
-        const currentBull5 =
-            c5.at(-1) > o5.at(-1) &&
-            c5.at(-1) >= c5.at(-2)
-
-        const currentBear5 =
-            c5.at(-1) < o5.at(-1) &&
-            c5.at(-1) <= c5.at(-2)
+    context15Short
 
         if (
             side === 'LONG' &&
-            (
-                pullback15Long ||
-                (
-                    trend15Long &&
-                    price <= e20_15 + pullbackZone * 1.15
-                )
-            ) &&
-            currentBull5
+            reclaimLong
         ) {
-            trigger5Index = c5.length - 1
+            trigger5Index = k
             triggerTypeLocal =
-                '5M_TREND_ENTRY'
+                '5M_EMA20_RECLAIM'
             setupKind =
-                'LONG_TERM_TREND'
-
+                'LONG_TERM_PULLBACK'
             invalidation =
                 Math.min(
-                    l5.at(-1),
-                    lo(l5.slice(-8, -1), 7)
+                    l5[k],
+                    prevLow
                 )
+            break
         }
 
         if (
             side === 'SHORT' &&
-            (
-                pullback15Short ||
-                (
-                    trend15Short &&
-                    price >= e20_15 - pullbackZone * 1.15
-                )
-            ) &&
-            currentBear5
+            reclaimShort
         ) {
-            trigger5Index = c5.length - 1
+            trigger5Index = k
             triggerTypeLocal =
-                '5M_TREND_ENTRY'
+                '5M_EMA20_RECLAIM'
             setupKind =
-                'SHORT_TERM_TREND'
-
+                'SHORT_TERM_PULLBACK'
             invalidation =
                 Math.max(
-                    h5.at(-1),
-                    hi(h5.slice(-8, -1), 7)
+                    h5[k],
+                    prevHigh
                 )
+            break
         }
     }
+}
+    // =========================================================
+// 9. FALLBACK ENTRY
+//
+// Không còn fallback vào lệnh chỉ vì 5M xanh/đỏ.
+// Entry phải có trigger thực sự.
+// =========================================================
 
-    if (trigger5Index < 0) {
-        return reject('5M_TRIGGER', {
-            side,
-            ema20: r(e20),
-            ema50: r(e50),
-            zone: r(triggerZone),
-            pullback15Long,
-            pullback15Short,
-            trend15Long,
-            trend15Short
-        })
-    }
+if (trigger5Index < 0) {
 
+    return reject('5M_TRIGGER', {
+        side,
+        ema20: r(e20),
+        ema50: r(e50),
+        zone: r(triggerZone),
+        pullback15Long,
+        pullback15Short,
+        trend15Long,
+        trend15Short
+    })
+}
     // =========================================================
     // 10. TRIGGER AGE
     // =========================================================
@@ -4558,7 +4698,134 @@ const recoveryShort =
             })
         }
     }
+    // =========================================================
+// TRIGGER CONTINUATION
+// Trigger phải còn được xác nhận tại nến hiện tại
+// =========================================================
+const currentOpen5 = o5.at(-1)
+const currentClose5 = c5.at(-1)
+const prevClose5 = c5.at(-2)
 
+const currentClosePos5 = closeLocation(
+    h5.at(-1),
+    l5.at(-1),
+    currentClose5
+)
+
+const continuationLong =
+    currentClose5 > currentOpen5 &&
+    currentClose5 >= prevClose5 &&
+    currentClosePos5 >= 0.50 &&
+    currentClose5 > e50 - triggerZone
+
+const continuationShort =
+    currentClose5 < currentOpen5 &&
+    currentClose5 <= prevClose5 &&
+    currentClosePos5 <= 0.50 &&
+    currentClose5 < e50 + triggerZone
+
+if (side === 'LONG') {
+
+    if (!continuationLong) {
+        return reject('TRIGGER_NO_CONTINUATION', {
+            side,
+            triggerType: triggerTypeLocal,
+            triggerAge,
+            price,
+            currentClose5,
+            prevClose5,
+            e50
+        })
+    }
+
+} else {
+
+    if (!continuationShort) {
+        return reject('TRIGGER_NO_CONTINUATION', {
+            side,
+            triggerType: triggerTypeLocal,
+            triggerAge,
+            price,
+            currentClose5,
+            prevClose5,
+            e50
+        })
+    }
+}
+
+const strongContinuation =
+    side === 'LONG'
+        ? continuationLong &&
+          currentClose5 > e50
+        : continuationShort &&
+          currentClose5 < e50
+
+          const entryLocationLong =
+    side === 'LONG' &&
+    price <= e20 + atr5 * 0.90 &&
+    price >= e50 - atr5 * 0.90
+
+const entryLocationShort =
+    side === 'SHORT' &&
+    price >= e20 - atr5 * 0.90 &&
+    price <= e50 + atr5 * 0.90
+
+const goodEntryLocation =
+    side === 'LONG'
+        ? entryLocationLong
+        : entryLocationShort
+
+        if (!goodEntryLocation) {
+    return reject('ENTRY_LOCATION', {
+        side,
+        price,
+        ema20: r(e20),
+        ema50: r(e50),
+        atr5: r(atr5),
+        entryLocationLong,
+        entryLocationShort
+    })
+}
+          
+          let confirmationScore = 0
+
+if (strong4HStructure) {
+    confirmationScore += 2
+}
+
+if (strong1H) {
+    confirmationScore += 2
+}
+
+if (strong15) {
+    confirmationScore += 2
+}
+
+if (strongContinuation) {
+    confirmationScore += 2
+}
+
+if (
+    side === 'LONG'
+        ? pullback15Long
+        : pullback15Short
+) {
+    confirmationScore += 1
+}
+
+if (confirmationScore < 6) {
+    return reject('CONFIRMATION_WEAK', {
+        side,
+        setupKind,
+        confirmationScore,
+        strong4HStructure,
+        strong1H,
+        strong15,
+        strongContinuation,
+        pullback15Long,
+        pullback15Short
+    })
+}
     // =========================================================
     // 12. CHASE PROTECTION
     //
@@ -4569,10 +4836,10 @@ const recoveryShort =
         Math.abs(price - e20) / price
 
     const maxChase =
-        Math.max(
-            atr5 * 3.50 / price,
-            0.012
-        )
+    Math.max(
+        atr5 * 2.50 / price,
+        0.007
+    )
 
     if (distanceFromEMA20 > maxChase) {
         return reject('CHASE', {
