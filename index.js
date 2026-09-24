@@ -4004,19 +4004,20 @@ async function coreLogic(data4h, data15, data1h, data5) {
     const price4H =
         c4.at(-1)
 
-    const bull4H =
+    // 1. 4H — chỉ siết nhẹ
+const bull4H =
     price4H > e200_4H &&
     e20_4H > e50_4H &&
     e50_4H > e200_4H &&
-    slope20_4H > 0.00008 &&
-    slope50_4H > 0.00003
+    slope20_4H > 0.00004 &&
+    slope50_4H >= 0
 
 const bear4H =
     price4H < e200_4H &&
     e20_4H < e50_4H &&
     e50_4H < e200_4H &&
-    slope20_4H < -0.00008 &&
-    slope50_4H < -0.00003
+    slope20_4H < -0.00004 &&
+    slope50_4H <= 0
 
     if (!bull4H && !bear4H) {
         return reject('4H_TREND', {
@@ -4076,6 +4077,16 @@ const bear4H =
         ? higherStructure4H
         : lowerStructure4H
 
+        const valid4HStructure =
+    side === 'LONG'
+        ? bull4H
+        : bear4H
+
+const structureAligned4H =
+    side === 'LONG'
+        ? higherStructure4H || (recent4HLow >= previous4HLow)
+        : lowerStructure4H || (recent4HHigh <= previous4HHigh)
+
     // =========================================================
     // 6. 1H CONFIRMATION
     //
@@ -4104,20 +4115,34 @@ const bear4H =
     const hGap =
         Math.abs(e20H - e50H) / price
 
-    const bull1H =
+    // 2. 1H — không bắt buộc EMA200, chỉ tăng nhẹ slope/gap
+const bull1H =
     e20H > e50H &&
-    hSlope > 0.00005 &&
-    hGap >= 0.00035
+    hSlope >= 0.00005 &&
+    hGap >= 0.00030
 
 const bear1H =
     e20H < e50H &&
-    hSlope < -0.00005 &&
-    hGap >= 0.00035
+    hSlope <= -0.00005 &&
+    hGap >= 0.00030
 
-    const strong1H =
+const strong1H =
     side === 'LONG'
-        ? bull1H && hSlope >= 0.00012
-        : bear1H && hSlope <= -0.00012
+        ? bull1H && hSlope >= 0.00008
+        : bear1H && hSlope <= -0.00008
+
+const strong1HTrend =
+    side === 'LONG'
+        ? bull1H
+        : bear1H
+
+if (!strong1HTrend) {
+    return reject('1H_TREND_WEAK', {
+        side,
+        hSlope: r(hSlope, 6),
+        hGap: r(hGap, 6)
+    })
+}
 
     if (
         side === 'LONG' &&
@@ -4175,81 +4200,124 @@ const bear1H =
     const mGap =
         Math.abs(e20_15 - e50_15) / price
 
-    const pullbackZone =
-        Math.max(
-            atr15 * 0.85,
-            price * 0.0035
-        )
+    const pullbackZone = Math.max(
+    atr15 * 1.20,
+    price * 0.0045
+)
 
-    const trend15Long =
-    e20_15 >= e50_15 &&
-    mSlope > 0.00005
+const trend15Long =
+    e20_15 > e50_15 &&
+    mSlope >= 0.00004
 
 const trend15Short =
-    e20_15 <= e50_15 &&
-    mSlope < -0.00005
+    e20_15 < e50_15 &&
+    mSlope <= -0.00004
 
-    const strong15 =
-    side === 'LONG'
-        ? trend15Long && mSlope >= 0.00010
-        : trend15Short && mSlope <= -0.00010
+const structureLow15 =
+    lo(l15.slice(-24, -1), 23)
 
-    const longPullbackZone =
-        price >= e50_15 - pullbackZone &&
-        price <= e20_15 + pullbackZone
+const structureHigh15 =
+    hi(h15.slice(-24, -1), 23)
 
-    const shortPullbackZone =
-        price <= e50_15 + pullbackZone &&
-        price >= e20_15 - pullbackZone
+const longPullbackZone =
+    price >= e50_15 - pullbackZone &&
+    price <= e20_15 + pullbackZone
 
-    const structureLow15 =
-        lo(l15.slice(-24, -1), 23)
+const shortPullbackZone =
+    price <= e50_15 + pullbackZone &&
+    price >= e20_15 - pullbackZone
 
-    const structureHigh15 =
-        hi(h15.slice(-24, -1), 23)
+const longStructureSafe =
+    price > structureLow15 + atr15 * 0.15
 
-    const longStructureSafe =
-        price > structureLow15 - atr15 * 0.75
+const shortStructureSafe =
+    price < structureHigh15 - atr15 * 0.15
 
-    const shortStructureSafe =
-        price < structureHigh15 + atr15 * 0.75
+const recent15Low =
+    lo(l15.slice(-7, -1), 6)
 
-    const pullback15Long =
-        trend15Long &&
-        longPullbackZone &&
-        longStructureSafe
+const recent15High =
+    hi(h15.slice(-7, -1), 6)
 
-    const pullback15Short =
-        trend15Short &&
-        shortPullbackZone &&
-        shortStructureSafe
+const last15Open = o15.at(-1)
+const last15High = h15.at(-1)
+const last15Low = l15.at(-1)
+const last15Close = c15.at(-1)
 
-        const context15Long =
+const prev15High = hi(h15.slice(-6, -1), 5)
+const prev15Low = lo(l15.slice(-6, -1), 5)
+
+const body15 = candleBody(
+    last15Open,
+    last15High,
+    last15Low,
+    last15Close
+)
+
+const closePos15 = closeLocation(
+    last15High,
+    last15Low,
+    last15Close
+)
+
+const pullbackTouchLong15 =
+    last15Low <= e20_15 + atr15 * 0.45 &&
+    last15Low >= e50_15 - atr15 * 1.10
+
+const pullbackTouchShort15 =
+    last15High >= e20_15 - atr15 * 0.45 &&
+    last15High <= e50_15 + atr15 * 1.10
+
+const recovery15Long =
+    pullbackTouchLong15 &&
+    last15Close > e20_15 &&
+    last15Close > last15Open &&
+    last15Close > c15.at(-2) &&
+    body15 >= 0.35 &&
+    closePos15 >= 0.58
+
+const recovery15Short =
+    pullbackTouchShort15 &&
+    last15Close < e20_15 &&
+    last15Close < last15Open &&
+    last15Close < c15.at(-2) &&
+    body15 >= 0.35 &&
+    closePos15 <= 0.42
+
+const pullback15Long =
     trend15Long &&
     longStructureSafe &&
-    (
-        longPullbackZone ||
-        mGap >= 0.00035
-    )
+    recovery15Long
 
-const context15Short =
+const pullback15Short =
     trend15Short &&
     shortStructureSafe &&
-    (
-        shortPullbackZone ||
-        mGap >= 0.00035
-    )
-    // =========================================================
+    recovery15Short
+
+const context15Long =
+    pullback15Long
+
+const context15Short =
+    pullback15Short
+
+const strong15 =
+    side === 'LONG'
+        ? context15Long && mSlope >= 0.00006
+        : context15Short && mSlope <= -0.00006
+   // =========================================================
 // 8. 5M ENTRY TIMING
 //
-// Ưu tiên thực sự:
-// 1. SWEEP
-// 2. TREND RECOVERY
-// 3. EMA20 RECLAIM
+// Mô hình:
+// A. STRICT SWEEP
+// B. TREND CONTINUATION
 //
-// Quan trọng:
-// Không để một reclaim yếu ở candle mới nhất
-// đè lên sweep/recovery tốt hơn ở candle trước.
+// 4H/1H quyết định hướng.
+// 15M xác định pullback.
+// 5M chỉ timing.
+//
+// SWEEP được siết mạnh.
+// Nếu không có sweep sạch thì cho phép
+// TREND CONTINUATION sau pullback.
 // =========================================================
 
 const e20 =
@@ -4263,11 +4331,7 @@ const triggerZone =
         atr5 * 0.70,
         price * 0.0015
     )
-const ema20At = k =>
-    ema(c5.slice(0, k + 1), 20)
 
-const ema50At = k =>
-    ema(c5.slice(0, k + 1), 50)
 let trigger5Index = -1
 let triggerTypeLocal = null
 let setupKind = null
@@ -4276,12 +4340,20 @@ let invalidation = null
 const start5 =
     Math.max(
         20,
-        c5.length - 6
+        c5.length - 3
     )
 
-// ---------------------------------------------------------
-// PASS 1 — SWEEP
-// ---------------------------------------------------------
+// =========================================================
+// PASS 1 — STRICT SWEEP
+//
+// Sweep phải:
+// - xảy ra rất gần hiện tại
+// - phá structure trước đó
+// - có độ sâu đủ lớn
+// - đóng ngược trở lại vùng phá
+// - candle có body/close mạnh
+// - 15M đang đúng context
+// =========================================================
 
 for (
     let k = c5.length - 1;
@@ -4320,31 +4392,72 @@ for (
 
     const bullishCandle =
         c5[k] > o5[k] &&
-        b >= 0.35 &&
-        closePos >= 0.65
+        b >= 0.50 &&
+        closePos >= 0.68
 
     const bearishCandle =
         c5[k] < o5[k] &&
-        b >= 0.35 &&
-        closePos <= 0.35
+        b >= 0.50 &&
+        closePos <= 0.32
+
+    const sweepDepthLong =
+    Number.isFinite(prevLow) &&
+    Math.max(
+        0,
+        prevLow - l5[k]
+    ) >= atr5 * 0.35
+
+const sweepDepthShort =
+    Number.isFinite(prevHigh) &&
+    Math.max(
+        0,
+        h5[k] - prevHigh
+    ) >= atr5 * 0.35
 
     const sweepLong =
         Number.isFinite(prevLow) &&
-        l5[k] <= prevLow &&
+        l5[k] < prevLow &&
         c5[k] > prevLow &&
+        sweepDepthLong &&
         bullishCandle
 
     const sweepShort =
         Number.isFinite(prevHigh) &&
-        h5[k] >= prevHigh &&
+        h5[k] > prevHigh &&
         c5[k] < prevHigh &&
+        sweepDepthShort &&
         bearishCandle
 
+    // Không nhận sweep nếu candle đã chạy quá xa EMA20.
+    const sweepDistance =
+        Math.abs(c5[k] - e20) / c5[k]
+
+    const sweepNotChased =
+    sweepDistance <=
+    Math.max(
+        atr5 * 1.20 / c5[k],
+        0.0030
+    )
+
+const sweepRange =
+    h5[k] - l5[k]
+
+const sweepRangeATR =
+    atr5 > 0
+        ? sweepRange / atr5
+        : 0
+
+const sweepNotImpulse =
+    sweepRangeATR <= 1.70
+
     if (
-        side === 'LONG' &&
-        sweepLong &&
-        context15Long
-    ) {
+    side === 'LONG' &&
+    sweepLong &&
+    sweepNotChased &&
+    sweepNotImpulse &&
+    context15Long &&
+    k < c5.length - 1
+) {
         trigger5Index = k
         triggerTypeLocal =
             '5M_SWEEP_BULLISH'
@@ -4359,10 +4472,13 @@ for (
     }
 
     if (
-        side === 'SHORT' &&
-        sweepShort &&
-        context15Short
-    ) {
+    side === 'SHORT' &&
+    sweepShort &&
+    sweepNotChased &&
+    sweepNotImpulse &&
+    context15Short &&
+    k < c5.length - 1
+) {
         trigger5Index = k
         triggerTypeLocal =
             '5M_SWEEP_BEARISH'
@@ -4377,253 +4493,175 @@ for (
     }
 }
 
-// ---------------------------------------------------------
-// PASS 2 — TREND RECOVERY
-// ---------------------------------------------------------
+// =========================================================
+// PASS 2 — PULLBACK BREAKOUT
+//
+// Không vào chỉ vì candle xanh/đỏ.
+// Phải:
+// 1. 15M pullback
+// 2. 5M pull lại EMA20
+// 3. phá structure 5M
+// 4. candle mạnh
+// 5. volume xác nhận
+// 6. không phải impulse quá lớn
+// =========================================================
 
-if (trigger5Index < 0) {
+for (
+    let k = c5.length - 1;
+    k >= Math.max(20, c5.length - 2);
+    k--
+) {
+    const prevStart =
+        Math.max(0, k - 5)
 
-    for (
-        let k = c5.length - 1;
-        k >= start5;
-        k--
-    ) {
-
-        const prevStart = Math.max(0, k - 8)
-
-        const prevLow = lo(
+    const prevLow =
+        lo(
             l5.slice(prevStart, k),
             k - prevStart
         )
 
-        const prevHigh = hi(
+    const prevHigh =
+        hi(
             h5.slice(prevStart, k),
             k - prevStart
         )
 
-        const b = candleBody(
+    const b =
+        candleBody(
             o5[k],
             h5[k],
             l5[k],
             c5[k]
         )
 
-        const closePos = closeLocation(
+    const closePos =
+        closeLocation(
             h5[k],
             l5[k],
             c5[k]
         )
 
-        const e20k = ema20At(k)
-        const e50k = ema50At(k)
+    const range5 =
+        h5[k] - l5[k]
 
-        const triggerZoneK = Math.max(
-            atr5 * 0.60,
-            c5[k] * 0.0012
+    const rangeATR =
+        atr5 > 0
+            ? range5 / atr5
+            : 0
+
+    const volBase =
+        avg(
+            v5.slice(
+                Math.max(0, k - 20),
+                k
+            )
         )
 
-        const bullishCandle =
-            c5[k] > o5[k] &&
-            b >= 0.50 &&
-            closePos >= 0.70
+    const volRatio =
+        volBase > 0
+            ? v5[k] / volBase
+            : 1
 
-        const bearishCandle =
-            c5[k] < o5[k] &&
-            b >= 0.50 &&
-            closePos <= 0.30
+    const bullishCandle =
+    c5[k] > o5[k] &&
+    b >= 0.48 &&
+    closePos >= 0.64
 
-        const touchedEMA20Long =
-            l5[k] <= e20k + triggerZoneK
+const bearishCandle =
+    c5[k] < o5[k] &&
+    b >= 0.48 &&
+    closePos <= 0.36
 
-        const touchedEMA20Short =
-            h5[k] >= e20k - triggerZoneK
+    const longBreak =
+        Number.isFinite(prevHigh) &&
+        c5[k] > prevHigh
 
-        const reclaimedEMA20Long =
-            c5[k] > e20k + triggerZoneK * 0.10
+    const shortBreak =
+        Number.isFinite(prevLow) &&
+        c5[k] < prevLow
 
-        const reclaimedEMA20Short =
-            c5[k] < e20k - triggerZoneK * 0.10
+    const retestLong =
+    l5[k - 1] <= e20 + atr5 * 0.40 &&
+    c5[k - 1] >= e20 - atr5 * 0.20
 
-        const recoveryLong =
-            side === 'LONG' &&
-            trend15Long &&
-            pullback15Long &&
-            bullishCandle &&
-            c5[k] > c5[Math.max(0, k - 1)] &&
-            touchedEMA20Long &&
-            reclaimedEMA20Long &&
-            c5[k] > e50k
+const retestShort =
+    h5[k - 1] >= e20 - atr5 * 0.40 &&
+    c5[k - 1] <= e20 + atr5 * 0.20
 
-        const recoveryShort =
-            side === 'SHORT' &&
-            trend15Short &&
-            pullback15Short &&
-            bearishCandle &&
-            c5[k] < c5[Math.max(0, k - 1)] &&
-            touchedEMA20Short &&
-            reclaimedEMA20Short &&
-            c5[k] < e50k
+const longRecovery =
+    retestLong &&
+    c5[k] > e20 &&
+    c5[k] > c5[k - 1]
 
-        if (recoveryLong) {
+const shortRecovery =
+    retestShort &&
+    c5[k] < e20 &&
+    c5[k] < c5[k - 1]
 
-            trigger5Index = k
+    const notImpulse =
+        rangeATR <= 1.80
 
-            triggerTypeLocal =
-                '5M_TREND_RECOVERY'
+    const volumeConfirmed =
+        volRatio >= 1.05
 
-            setupKind =
-                'LONG_TERM_TREND'
+    const nearEMA =
+        Math.abs(c5[k] - e20) / c5[k] <=
+        Math.max(
+            atr5 * 1.20 / c5[k],
+            0.0030
+        )
 
-            invalidation =
-                Math.min(
-                    l5[k],
-                    prevLow
-                )
-
-            break
-        }
-
-        if (recoveryShort) {
-
-            trigger5Index = k
-
-            triggerTypeLocal =
-                '5M_TREND_RECOVERY'
-
-            setupKind =
-                'SHORT_TERM_TREND'
-
-            invalidation =
-                Math.max(
-                    h5[k],
-                    prevHigh
-                )
-
-            break
-        }
-    }
-}
-// ---------------------------------------------------------
-// PASS 3 — EMA20 RECLAIM
-//
-// Reclaim thật:
-// LONG phải xuyên/chạm EMA20 từ phía dưới
-// rồi đóng rõ ràng phía trên EMA20.
-//
-// SHORT đối xứng.
-// ---------------------------------------------------------
-
-if (trigger5Index < 0) {
-
-    for (
-        let k = c5.length - 1;
-        k >= start5;
-        k--
+    if (
+        side === 'LONG' &&
+        context15Long &&
+        longBreak &&
+        longRecovery &&
+        bullishCandle &&
+        notImpulse &&
+        volumeConfirmed &&
+        nearEMA
     ) {
-        const prevStart =
-            Math.max(0, k - 8)
-
-        const prevLow =
-            lo(
-                l5.slice(prevStart, k),
-                k - prevStart
-            )
-
-        const prevHigh =
-            hi(
-                h5.slice(prevStart, k),
-                k - prevStart
-            )
-
-        const b =
-            candleBody(
-                o5[k],
-                h5[k],
+        trigger5Index = k
+        triggerTypeLocal =
+            '5M_PULLBACK_BREAKOUT_BULLISH'
+        setupKind =
+            'LONG_TERM_TREND'
+        invalidation =
+            Math.min(
                 l5[k],
-                c5[k]
+                prevLow
             )
+        break
+    }
 
-        const closePos =
-            closeLocation(
+    if (
+        side === 'SHORT' &&
+        context15Short &&
+        shortBreak &&
+        shortRecovery &&
+        bearishCandle &&
+        notImpulse &&
+        volumeConfirmed &&
+        nearEMA
+    ) {
+        trigger5Index = k
+        triggerTypeLocal =
+            '5M_PULLBACK_BREAKOUT_BEARISH'
+        setupKind =
+            'SHORT_TERM_TREND'
+        invalidation =
+            Math.max(
                 h5[k],
-                l5[k],
-                c5[k]
+                prevHigh
             )
-
-        const bullishCandle =
-            c5[k] > o5[k] &&
-            b >= 0.45 &&
-            closePos >= 0.70
-
-        const bearishCandle =
-            c5[k] < o5[k] &&
-            b >= 0.45 &&
-            closePos <= 0.30
-
-            const e20k = ema20At(k)
-
-const triggerZoneK =
-    Math.max(
-        atr5 * 0.70,
-        c5[k] * 0.0015
-    )
-
-        const reclaimLong =
-    l5[k] <= e20k &&
-    c5[k] > e20k + triggerZoneK * 0.15 &&
-    bullishCandle &&
-    context15Long
-
-const reclaimShort =
-    h5[k] >= e20k &&
-    c5[k] < e20k - triggerZoneK * 0.15 &&
-    bearishCandle &&
-    context15Short
-
-        if (
-            side === 'LONG' &&
-            reclaimLong
-        ) {
-            trigger5Index = k
-            triggerTypeLocal =
-                '5M_EMA20_RECLAIM'
-            setupKind =
-                'LONG_TERM_PULLBACK'
-            invalidation =
-                Math.min(
-                    l5[k],
-                    prevLow
-                )
-            break
-        }
-
-        if (
-            side === 'SHORT' &&
-            reclaimShort
-        ) {
-            trigger5Index = k
-            triggerTypeLocal =
-                '5M_EMA20_RECLAIM'
-            setupKind =
-                'SHORT_TERM_PULLBACK'
-            invalidation =
-                Math.max(
-                    h5[k],
-                    prevHigh
-                )
-            break
-        }
+        break
     }
 }
-    // =========================================================
+// ---------------------------------------------------------
 // 9. FALLBACK ENTRY
-//
-// Không còn fallback vào lệnh chỉ vì 5M xanh/đỏ.
-// Entry phải có trigger thực sự.
-// =========================================================
+// ---------------------------------------------------------
 
 if (trigger5Index < 0) {
-
     return reject('5M_TRIGGER', {
         side,
         ema20: r(e20),
@@ -4635,165 +4673,258 @@ if (trigger5Index < 0) {
         trend15Short
     })
 }
-    // =========================================================
-    // 10. TRIGGER AGE
-    // =========================================================
 
-    const triggerAge =
-        c5.length - 1 - trigger5Index
+// ---------------------------------------------------------
+// TRIGGER AGE
+//
+// Chỉ chấp nhận sweep hiện tại hoặc candle ngay trước.
+// ---------------------------------------------------------
 
-    if (triggerAge > 2) {
-        return reject('TRIGGER_OLD', {
-            side,
-            setupKind,
-            triggerAge5m: triggerAge
-        })
-    }
+const triggerAge =
+    c5.length - 1 - trigger5Index
 
-    // =========================================================
-    // 11. POST-TRIGGER INVALIDATION
-    // =========================================================
+if (triggerAge > 1) {
+    return reject('TRIGGER_OLD', {
+        side,
+        setupKind,
+        triggerAge5m: triggerAge
+    })
+}
 
-    const futureLows =
-        l5.slice(trigger5Index + 1)
+// ---------------------------------------------------------
+// POST-TRIGGER INVALIDATION
+// ---------------------------------------------------------
 
-    const futureHighs =
-        h5.slice(trigger5Index + 1)
+const futureLows =
+    l5.slice(trigger5Index + 1)
 
-    if (side === 'LONG') {
-
-        const postLow =
-            futureLows.length
-                ? Math.min(...futureLows)
-                : Infinity
-
-        if (
-            postLow <
-            invalidation - atr5 * 0.20
-        ) {
-            return reject('TRIGGER_INVALIDATED', {
-                side,
-                setupKind,
-                invalidation: r(invalidation),
-                postLow: r(postLow)
-            })
-        }
-
-    } else {
-
-        const postHigh =
-            futureHighs.length
-                ? Math.max(...futureHighs)
-                : -Infinity
-
-        if (
-            postHigh >
-            invalidation + atr5 * 0.20
-        ) {
-            return reject('TRIGGER_INVALIDATED', {
-                side,
-                setupKind,
-                invalidation: r(invalidation),
-                postHigh: r(postHigh)
-            })
-        }
-    }
-    // =========================================================
-// TRIGGER CONTINUATION
-// Trigger phải còn được xác nhận tại nến hiện tại
-// =========================================================
-const currentOpen5 = o5.at(-1)
-const currentClose5 = c5.at(-1)
-const prevClose5 = c5.at(-2)
-
-const currentClosePos5 = closeLocation(
-    h5.at(-1),
-    l5.at(-1),
-    currentClose5
-)
-
-const continuationLong =
-    currentClose5 > currentOpen5 &&
-    currentClose5 >= prevClose5 &&
-    currentClosePos5 >= 0.50 &&
-    currentClose5 > e50 - triggerZone
-
-const continuationShort =
-    currentClose5 < currentOpen5 &&
-    currentClose5 <= prevClose5 &&
-    currentClosePos5 <= 0.50 &&
-    currentClose5 < e50 + triggerZone
+const futureHighs =
+    h5.slice(trigger5Index + 1)
 
 if (side === 'LONG') {
+    const postLow =
+        futureLows.length
+            ? Math.min(...futureLows)
+            : Infinity
 
-    if (!continuationLong) {
-        return reject('TRIGGER_NO_CONTINUATION', {
-            side,
-            triggerType: triggerTypeLocal,
-            triggerAge,
-            price,
-            currentClose5,
-            prevClose5,
-            e50
-        })
+    if (
+        postLow <
+        invalidation - atr5 * 0.15
+    ) {
+        return reject(
+            'TRIGGER_INVALIDATED',
+            {
+                side,
+                setupKind,
+                invalidation:
+                    r(invalidation),
+                postLow:
+                    r(postLow)
+            }
+        )
     }
-
 } else {
+    const postHigh =
+        futureHighs.length
+            ? Math.max(...futureHighs)
+            : -Infinity
 
+    if (
+        postHigh >
+        invalidation + atr5 * 0.15
+    ) {
+        return reject(
+            'TRIGGER_INVALIDATED',
+            {
+                side,
+                setupKind,
+                invalidation:
+                    r(invalidation),
+                postHigh:
+                    r(postHigh)
+            }
+        )
+    }
+}
+
+// ---------------------------------------------------------
+// RECLAIM / CONFIRMATION
+//
+// Nếu sweep xảy ra ở candle trước:
+// candle hiện tại phải xác nhận tiếp diễn.
+//
+// Không chỉ cần xanh/đỏ.
+// Phải vượt CLOSE của candle sweep.
+// ---------------------------------------------------------
+
+const currentOpen5 =
+    o5.at(-1)
+
+const currentHigh5 =
+    h5.at(-1)
+
+const currentLow5 =
+    l5.at(-1)
+
+const currentClose5 =
+    c5.at(-1)
+
+const triggerOpen5 =
+    o5[trigger5Index]
+
+const triggerHigh5 =
+    h5[trigger5Index]
+
+const triggerLow5 =
+    l5[trigger5Index]
+
+const triggerClose5 =
+    c5[trigger5Index]
+
+const currentClosePos5 =
+    closeLocation(
+        currentHigh5,
+        currentLow5,
+        currentClose5
+    )
+
+const reclaimLong =
+    currentClose5 >
+    triggerClose5 &&
+    currentClose5 >
+    triggerOpen5 &&
+    currentClosePos5 >= 0.55
+
+const reclaimShort =
+    currentClose5 <
+    triggerClose5 &&
+    currentClose5 <
+    triggerOpen5 &&
+    currentClosePos5 <= 0.45
+
+const sameCandleLong =
+    triggerAge === 0 &&
+    currentClose5 > triggerOpen5 &&
+    currentClosePos5 >= 0.60
+
+const sameCandleShort =
+    triggerAge === 0 &&
+    currentClose5 < triggerOpen5 &&
+    currentClosePos5 <= 0.40
+
+const trendContinuationLong =
+    setupKind === 'LONG_TERM_TREND' &&
+    currentClose5 > e20 &&
+    currentClose5 > triggerClose5 &&
+    currentClosePos5 >= 0.58
+
+const trendContinuationShort =
+    setupKind === 'SHORT_TERM_TREND' &&
+    currentClose5 < e20 &&
+    currentClose5 < triggerClose5 &&
+    currentClosePos5 <= 0.42
+
+const continuationLong =
+    setupKind === 'LONG_TERM_TREND'
+        ? trendContinuationLong
+        : triggerAge === 0
+            ? sameCandleLong
+            : reclaimLong
+
+const continuationShort =
+    setupKind === 'SHORT_TERM_TREND'
+        ? trendContinuationShort
+        : triggerAge === 0
+            ? sameCandleShort
+            : reclaimShort
+
+if (side === 'LONG') {
+    if (!continuationLong) {
+        return reject(
+            'TRIGGER_NO_CONTINUATION',
+            {
+                side,
+                triggerType:
+                    triggerTypeLocal,
+                triggerAge,
+                triggerClose5,
+                currentClose5,
+                currentClosePos5,
+                e20,
+                e50
+            }
+        )
+    }
+} else {
     if (!continuationShort) {
-        return reject('TRIGGER_NO_CONTINUATION', {
-            side,
-            triggerType: triggerTypeLocal,
-            triggerAge,
-            price,
-            currentClose5,
-            prevClose5,
-            e50
-        })
+        return reject(
+            'TRIGGER_NO_CONTINUATION',
+            {
+                side,
+                triggerType:
+                    triggerTypeLocal,
+                triggerAge,
+                triggerClose5,
+                currentClose5,
+                currentClosePos5,
+                e20,
+                e50
+            }
+        )
     }
 }
 
 const strongContinuation =
     side === 'LONG'
         ? continuationLong &&
-          currentClose5 > e50
+          currentClose5 > e20
         : continuationShort &&
-          currentClose5 < e50
+          currentClose5 < e20
 
-          const entryLocationLong =
+// ---------------------------------------------------------
+// ENTRY LOCATION
+// ---------------------------------------------------------
+
+const entryLocationLong =
     side === 'LONG' &&
     price <= e20 + atr5 * 0.90 &&
-    price >= e50 - atr5 * 0.90
+    price >= e50 - atr5 * 0.80
 
 const entryLocationShort =
     side === 'SHORT' &&
     price >= e20 - atr5 * 0.90 &&
-    price <= e50 + atr5 * 0.90
+    price <= e50 + atr5 * 0.80
 
 const goodEntryLocation =
     side === 'LONG'
         ? entryLocationLong
         : entryLocationShort
 
-        if (!goodEntryLocation) {
-    return reject('ENTRY_LOCATION', {
-        side,
-        price,
-        ema20: r(e20),
-        ema50: r(e50),
-        atr5: r(atr5),
-        entryLocationLong,
-        entryLocationShort
-    })
+if (!goodEntryLocation) {
+    return reject(
+        'ENTRY_LOCATION',
+        {
+            side,
+            price,
+            ema20: r(e20),
+            ema50: r(e50),
+            atr5: r(atr5),
+            entryLocationLong,
+            entryLocationShort
+        }
+    )
 }
-          
-          let confirmationScore = 0
+
+// ---------------------------------------------------------
+// CONFIRMATION SCORE
+// ---------------------------------------------------------
+let confirmationScore = 0
 
 if (strong4HStructure) {
     confirmationScore += 2
 }
 
-if (strong1H) {
+if (strong1HTrend) {
     confirmationScore += 2
 }
 
@@ -4807,24 +4938,34 @@ if (strongContinuation) {
 
 if (
     side === 'LONG'
-        ? pullback15Long
-        : pullback15Short
+        ? context15Long
+        : context15Short
 ) {
-    confirmationScore += 1
+    confirmationScore += 2
 }
 
-if (confirmationScore < 6) {
-    return reject('CONFIRMATION_WEAK', {
-        side,
-        setupKind,
-        confirmationScore,
-        strong4HStructure,
-        strong1H,
-        strong15,
-        strongContinuation,
-        pullback15Long,
-        pullback15Short
-    })
+const requiredConfirmation =
+    setupKind === 'LONG_TERM_SWEEP' ||
+    setupKind === 'SHORT_TERM_SWEEP'
+        ? 8
+        : 7
+
+if (confirmationScore < requiredConfirmation) {
+    return reject(
+        'CONFIRMATION_WEAK',
+        {
+            side,
+            setupKind,
+            confirmationScore,
+            requiredConfirmation,
+            strong4HStructure,
+            strong1H,
+            strong15,
+            strongContinuation,
+            pullback15Long,
+            pullback15Short
+        }
+    )
 }
     // =========================================================
     // 12. CHASE PROTECTION
@@ -4837,8 +4978,8 @@ if (confirmationScore < 6) {
 
     const maxChase =
     Math.max(
-        atr5 * 2.50 / price,
-        0.007
+        atr5 * 1.80 / price,
+        0.0045
     )
 
     if (distanceFromEMA20 > maxChase) {
@@ -4851,259 +4992,452 @@ if (confirmationScore < 6) {
     }
 
     // =========================================================
-    // 13. LONG-TERM STRUCTURAL SL
-    // =========================================================
+// 13. LONG-TERM STRUCTURAL SL
+//
+// 4H/1H = cấu trúc chính
+// 15M   = cấu trúc setup
+// 5M    = chỉ dùng xác nhận entry
+//
+// Không dùng sweep 5M làm SL chính.
+// =========================================================
 
-    const structure1HLow =
-        lo(
-            lH.slice(-36, -1),
-            35
+const structure1HLow =
+    lo(lH.slice(-36, -1), 35)
+
+const structure1HHigh =
+    hi(hH.slice(-36, -1), 35)
+
+const setupLow15 =
+    lo(l15.slice(-13, -1), 12)
+
+const setupHigh15 =
+    hi(h15.slice(-13, -1), 12)
+
+const structure4HLow =
+    lo(l4.slice(-30, -1), 29)
+
+const structure4HHigh =
+    hi(h4.slice(-30, -1), 29)
+
+// Buffer theo timeframe lớn.
+// SL phải nằm ngoài cấu trúc, không sát structure.
+const slBuffer15 =
+    Math.max(
+        atr15 * 0.20,
+        price * 0.0008
+    )
+
+const slBuffer1H =
+    Math.max(
+        atr1H * 0.18,
+        atr15 * 0.10,
+        price * 0.0012
+    )
+
+let structuralLow
+let structuralHigh
+
+if (side === 'LONG') {
+
+    // Ưu tiên đáy 1H.
+    // 15M chỉ hỗ trợ nếu nó sâu hơn.
+    const baseLow =
+        Math.min(
+            structure1HLow,
+            setupLow15
         )
 
-    const structure1HHigh =
-        hi(
-            hH.slice(-36, -1),
-            35
-        )
+    structuralLow =
+        baseLow - slBuffer1H
 
-    const structure4HLow =
-        lo(
-            l4.slice(-30, -1),
-            29
-        )
-
-    const structure4HHigh =
-        hi(
-            h4.slice(-30, -1),
-            29
-        )
-
-    const slBuffer =
-        Math.max(
-            atr1H * 0.18,
-            atr4H * 0.06,
-            atr5 * 0.40,
-            price * 0.0008
-        )
-
-    let sl
-
-    if (side === 'LONG') {
-
-        const structuralLow =
+    // Nếu sweep tạo đáy sâu hơn structure hiện tại,
+    // cho phép SL nằm dưới sweep để tránh bị quét lại.
+    if (Number.isFinite(invalidation)) {
+        structuralLow =
             Math.min(
-                invalidation,
-                structure1HLow
+                structuralLow,
+                invalidation - slBuffer15
             )
+    }
 
-        sl =
-            structuralLow - slBuffer
+    // Không để SL sâu vô hạn.
+    // 4H chỉ làm giới hạn rủi ro.
+    const maxStructuralRiskLow =
+        structure4HLow - atr4H * 1.20
 
-        // Không để SL vượt quá 4H structure vô lý.
-        if (
-            Number.isFinite(structure4HLow) &&
-            sl < structure4HLow - atr4H * 1.20
-        ) {
-            sl =
-                structure4HLow -
-                atr4H * 1.20
-        }
+    structuralLow =
+        Math.max(
+            structuralLow,
+            maxStructuralRiskLow
+        )
 
-    } else {
+    sl = structuralLow
 
-        const structuralHigh =
+} else {
+
+    // SHORT đối xứng.
+    const baseHigh =
+        Math.max(
+            structure1HHigh,
+            setupHigh15
+        )
+
+    structuralHigh =
+        baseHigh + slBuffer1H
+
+    if (Number.isFinite(invalidation)) {
+        structuralHigh =
             Math.max(
-                invalidation,
-                structure1HHigh
+                structuralHigh,
+                invalidation + slBuffer15
             )
-
-        sl =
-            structuralHigh + slBuffer
-
-        if (
-            Number.isFinite(structure4HHigh) &&
-            sl > structure4HHigh + atr4H * 1.20
-        ) {
-            sl =
-                structure4HHigh +
-                atr4H * 1.20
-        }
     }
 
-    let risk =
-        side === 'LONG'
-            ? price - sl
-            : sl - price
+    const maxStructuralRiskHigh =
+        structure4HHigh + atr4H * 1.20
 
-    if (!(risk > 0)) {
-        return reject('RISK', {
-            side,
-            risk: r(risk)
-        })
-    }
+    structuralHigh =
+        Math.min(
+            structuralHigh,
+            maxStructuralRiskHigh
+        )
 
-    // =========================================================
-    // 14. RISK RANGE
-    // =========================================================
+    sl = structuralHigh
+}
 
-    const minRisk =
+if (
+    !Number.isFinite(sl) ||
+    sl <= 0
+) {
+    return reject('SL_INVALID', {
+        side,
+        price,
+        sl
+    })
+}
+
+const risk =
+    Math.abs(price - sl)
+
+if (
+    !Number.isFinite(risk) ||
+    risk <= 0
+) {
+    return reject('RISK_INVALID', {
+        side,
+        price,
+        sl,
+        risk
+    })
+}
+
+// =========================================================
+// 14. LONG-TERM RISK RANGE
+// =========================================================
+
+const minRisk =
+    Math.max(
+        atr15 * 0.45,
+        atr1H * 0.25,
+        price * 0.0020
+    )
+
+const maxRisk =
+    Math.min(
         Math.max(
-            atr5 * 0.60,
-            atr15 * 0.30,
-            price * 0.0012
-        )
+            atr1H * 2.80,
+            atr4H * 0.90,
+            price * 0.045
+        ),
+        price * 0.055
+    )
 
-    const maxRisk =
-        Math.max(
-            atr1H * 2.20,
-            atr4H * 1.00,
-            price * 0.035
-        )
+if (
+    risk < minRisk ||
+    risk > maxRisk
+) {
+    return reject('RISK', {
+        side,
+        risk: r(risk),
+        minRisk: r(minRisk),
+        maxRisk: r(maxRisk),
+        riskATR1H: r(risk / atr1H, 3),
+        riskATR4H: r(risk / atr4H, 3)
+    })
+}
 
-    if (
-        risk < minRisk ||
-        risk > maxRisk
-    ) {
-        return reject('RISK', {
-            side,
-            risk: r(risk),
-            minRisk: r(minRisk),
-            maxRisk: r(maxRisk),
-            riskATR1H: r(risk / atr1H, 3),
-            riskATR4H: r(risk / atr4H, 3)
-        })
+// =========================================================
+// 15. LONG-TERM INITIAL TP
+//
+// TP ưu tiên structure 4H.
+// 15M/1H chỉ dùng làm obstacle tham khảo.
+//
+// Mục tiêu:
+// - không chốt quá sớm ở 2R
+// - tối thiểu khoảng 3R
+// - ưu tiên 4H structure
+// - TP ban đầu chỉ là target đầu tiên;
+//   dynamic TPSL có thể quản lý phần còn lại.
+// =========================================================
+
+const levels15 =
+    pivotLevels(
+        h15.slice(-80, -1),
+        l15.slice(-80, -1),
+        3,
+        3
+    )
+
+const levels1H =
+    pivotLevels(
+        hH.slice(-120, -1),
+        lH.slice(-120, -1),
+        3,
+        3
+    )
+
+const levels4H =
+    pivotLevels(
+        h4.slice(-80, -1),
+        l4.slice(-80, -1),
+        3,
+        3
+    )
+
+const allHighs =
+    levels15.pivotHighs
+        .concat(levels1H.pivotHighs)
+        .concat(levels4H.pivotHighs)
+
+const allLows =
+    levels15.pivotLows
+        .concat(levels1H.pivotLows)
+        .concat(levels4H.pivotLows)
+
+// ---------------------------------------------------------
+// Tìm target theo cấu trúc lớn trước.
+// ---------------------------------------------------------
+
+let obstacle
+
+if (side === 'LONG') {
+
+    // Ưu tiên pivot 4H nằm phía trên giá.
+    const high4H =
+        levels4H.pivotHighs
+            .filter(
+                x =>
+                    Number.isFinite(x) &&
+                    x > price
+            )
+            .sort((a, b) => a - b)
+
+    obstacle = high4H[0]
+
+    // Nếu chưa có pivot 4H phù hợp,
+    // mới dùng 1H rồi 15M.
+    if (!Number.isFinite(obstacle)) {
+        obstacle =
+            nearestAbove(
+                allHighs,
+                price
+            )
     }
 
-    // =========================================================
-    // 15. INITIAL TARGET
-    //
-    // TP chỉ là compatibility cho execution.
-    //
-    // KHÔNG reject signal vì không có obstacle >= 3R.
-    // Dynamic TPSL mới là cơ chế gồng chính.
-    // =========================================================
+} else {
 
-    const levels15 =
-        pivotLevels(
-            h15.slice(-80, -1),
-            l15.slice(-80, -1),
-            3,
-            3
-        )
+    // Ưu tiên pivot 4H phía dưới giá.
+    const low4H =
+        levels4H.pivotLows
+            .filter(
+                x =>
+                    Number.isFinite(x) &&
+                    x < price
+            )
+            .sort((a, b) => b - a)
 
-    const levels1H =
-        pivotLevels(
-            hH.slice(-120, -1),
-            lH.slice(-120, -1),
-            3,
-            3
-        )
-
-    const levels4H =
-        pivotLevels(
-            h4.slice(-80, -1),
-            l4.slice(-80, -1),
-            3,
-            3
-        )
-
-    const allHighs =
-        levels15.pivotHighs
-            .concat(levels1H.pivotHighs)
-            .concat(levels4H.pivotHighs)
-
-    const allLows =
-        levels15.pivotLows
-            .concat(levels1H.pivotLows)
-            .concat(levels4H.pivotLows)
-
-    let obstacle =
-        side === 'LONG'
-            ? nearestAbove(allHighs, price)
-            : nearestBelow(allLows, price)
-
-    const minimumTargetDistance =
-        risk * 2.50
-
-    if (
-        Number.isFinite(obstacle) &&
-        (
-            side === 'LONG'
-                ? obstacle - price < minimumTargetDistance
-                : price - obstacle < minimumTargetDistance
-        )
-    ) {
-        const farther =
-            side === 'LONG'
-                ? allHighs
-                    .filter(
-                        x =>
-                            x >
-                            price +
-                            minimumTargetDistance
-                    )
-                    .sort((a, b) => a - b)[0]
-                : allLows
-                    .filter(
-                        x =>
-                            x <
-                            price -
-                            minimumTargetDistance
-                    )
-                    .sort((a, b) => b - a)[0]
-
-        if (Number.isFinite(farther)) {
-            obstacle = farther
-        }
-    }
+    obstacle = low4H[0]
 
     if (!Number.isFinite(obstacle)) {
         obstacle =
-            side === 'LONG'
-                ? price + Math.max(
-                    risk * 5.00,
-                    atr4H * 2.00
-                )
-                : price - Math.max(
-                    risk * 5.00,
-                    atr4H * 2.00
-                )
+            nearestBelow(
+                allLows,
+                price
+            )
     }
+}
 
-    let availableR =
+// ---------------------------------------------------------
+// Khoảng target tối thiểu.
+//
+// Long-term không dùng 2.20R nữa.
+// ---------------------------------------------------------
+
+const minimumTargetR = 3.00
+
+const minimumTargetDistance =
+    risk * minimumTargetR
+
+// ---------------------------------------------------------
+// Nếu obstacle 4H quá gần,
+// tìm structure lớn tiếp theo đủ khoảng.
+// ---------------------------------------------------------
+
+if (
+    Number.isFinite(obstacle)
+) {
+
+    const obstacleDistance =
         side === 'LONG'
-            ? (obstacle - price) / risk
-            : (price - obstacle) / risk
+            ? obstacle - price
+            : price - obstacle
 
-    // Nếu obstacle quá gần thì vẫn tạo TP xa.
-    // Không reject signal.
     if (
-        !Number.isFinite(availableR) ||
-        availableR < 2.50
+        obstacleDistance <
+        minimumTargetDistance
     ) {
-        availableR = 3.50
 
-        obstacle =
-            side === 'LONG'
-                ? price + risk * availableR
-                : price - risk * availableR
+        if (side === 'LONG') {
+
+            const farther4H =
+                levels4H.pivotHighs
+                    .filter(
+                        x =>
+                            Number.isFinite(x) &&
+                            x >=
+                                price +
+                                minimumTargetDistance
+                    )
+                    .sort((a, b) => a - b)
+
+            if (Number.isFinite(farther4H[0])) {
+                obstacle = farther4H[0]
+            } else {
+
+                const fartherAll =
+                    allHighs
+                        .filter(
+                            x =>
+                                Number.isFinite(x) &&
+                                x >=
+                                    price +
+                                    minimumTargetDistance
+                        )
+                        .sort((a, b) => a - b)
+
+                if (Number.isFinite(fartherAll[0])) {
+                    obstacle = fartherAll[0]
+                }
+            }
+
+        } else {
+
+            const farther4H =
+                levels4H.pivotLows
+                    .filter(
+                        x =>
+                            Number.isFinite(x) &&
+                            x <=
+                                price -
+                                minimumTargetDistance
+                    )
+                    .sort((a, b) => b - a)
+
+            if (Number.isFinite(farther4H[0])) {
+                obstacle = farther4H[0]
+            } else {
+
+                const fartherAll =
+                    allLows
+                        .filter(
+                            x =>
+                                Number.isFinite(x) &&
+                                x <=
+                                    price -
+                                    minimumTargetDistance
+                        )
+                        .sort((a, b) => b - a)
+
+                if (Number.isFinite(fartherAll[0])) {
+                    obstacle = fartherAll[0]
+                }
+            }
+        }
     }
+}
 
-    const targetR =
-        clamp(
-            Math.max(
-                3.50,
-                availableR * 0.90
-            ),
-            3.50,
-            8.00
-        )
+// ---------------------------------------------------------
+// Nếu không có structure đủ xa,
+// dùng ATR4H làm fallback.
+// ---------------------------------------------------------
 
-    const tp =
+if (
+    !Number.isFinite(obstacle) ||
+    (
         side === 'LONG'
-            ? price + risk * targetR
-            : price - risk * targetR
+            ? obstacle <= price
+            : obstacle >= price
+    )
+) {
 
+    obstacle =
+        side === 'LONG'
+            ? price +
+                Math.max(
+                    risk * 4.50,
+                    atr4H * 2.50
+                )
+            : price -
+                Math.max(
+                    risk * 4.50,
+                    atr4H * 2.50
+                )
+}
+
+// ---------------------------------------------------------
+// Available R
+// ---------------------------------------------------------
+
+let availableR =
+    side === 'LONG'
+        ? (obstacle - price) / risk
+        : (price - obstacle) / risk
+
+if (
+    !Number.isFinite(availableR) ||
+    availableR <= 0
+) {
+    return reject('TARGET_SPACE', {
+        side,
+        price: r(price),
+        risk: r(risk),
+        obstacle: r(obstacle),
+        availableR: r(availableR, 3)
+    })
+}
+
+// ---------------------------------------------------------
+// Target R dài hạn.
+//
+// 3R = floor.
+// 4R–5R = vùng bình thường.
+// Tối đa 7R nếu structure 4H cho phép.
+// ---------------------------------------------------------
+
+const targetR =
+    clamp(
+        Math.max(
+            3.00,
+            availableR * 0.90
+        ),
+        3.00,
+        7.00
+    )
+
+const tp =
+    side === 'LONG'
+        ? price + risk * targetR
+        : price - risk * targetR
     // =========================================================
     // 16. VOLUME
     //
@@ -5118,7 +5452,6 @@ if (confirmationScore < 6) {
         volAvg > 0
             ? v5.at(-1) / volAvg
             : 1
-
     // =========================================================
     // 17. QUALITY SCORE
     //
@@ -5242,15 +5575,16 @@ if (confirmationScore < 6) {
         setup:
             side + '_' + setupKind,
 
-        pullbackType:
-            setupKind === 'LONG_TERM_SWEEP' ||
-            setupKind === 'LONG_TERM_PULLBACK' ||
-            setupKind === 'LONG_TERM_TREND' ||
-            setupKind === 'SHORT_TERM_SWEEP' ||
-            setupKind === 'SHORT_TERM_PULLBACK' ||
-            setupKind === 'SHORT_TERM_TREND'
+       pullbackType:
+    setupKind === 'LONG_TERM_SWEEP'
+        ? 'LONG_TERM_SWEEP_PULLBACK'
+        : setupKind === 'SHORT_TERM_SWEEP'
+            ? 'SHORT_TERM_SWEEP_PULLBACK'
+            : setupKind === 'LONG_TERM_TREND'
                 ? 'LONG_TERM_TREND_PULLBACK'
-                : 'LONG_TERM_TREND',
+                : setupKind === 'SHORT_TERM_TREND'
+                    ? 'SHORT_TERM_TREND_PULLBACK'
+                    : 'LONG_TERM_TREND',
 
         triggerType:
             triggerTypeLocal,
@@ -6802,11 +7136,35 @@ if(!trade){
 
     // ===== STEP 4: CHECK MIN QTY =====
     if(qty < minQty){
+
+    const requiredQty = normalizeQtyFinal(
+        Math.ceil(minQty / stepSize) * stepSize,
+        stepSize
+    )
+
+    const requiredRisk = requiredQty * diff
+    const maxAllowedRisk = trade.risk * 2.0
+
+    if(requiredRisk > maxAllowedRisk){
         console.log(
-            `❌ MIN QTY FAIL ${best.symbol}`
+            `❌ MIN QTY + RISK FAIL ${best.symbol} | ` +
+            `qty=${qty} | ` +
+            `minQty=${minQty} | ` +
+            `requiredQty=${requiredQty} | ` +
+            `requiredRisk=${requiredRisk} | ` +
+            `maxAllowedRisk=${maxAllowedRisk}`
         )
         continue
     }
+
+    console.log(
+        `⚠️ MIN QTY AUTO-FIX ${best.symbol} | ` +
+        `qty=${qty} → ${requiredQty} | ` +
+        `risk=${trade.risk} → ${requiredRisk}`
+    )
+
+    qty = requiredQty
+}
 
     notional =
         qty * best.price
@@ -6828,7 +7186,7 @@ if(!trade){
             requiredQty * diff
 
         let maxAllowedRisk =
-            trade.risk * 1.10
+            trade.risk * 2.0
 
         if(requiredRisk > maxAllowedRisk){
 
@@ -6867,7 +7225,7 @@ if(!trade){
 
     if(
         finalRisk >
-        trade.risk * 1.10
+        trade.risk * 2.0
     ){
         console.log(
             `❌ FINAL RISK TOO HIGH ${best.symbol}`
