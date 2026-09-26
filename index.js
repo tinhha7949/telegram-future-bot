@@ -4234,6 +4234,7 @@ function startCore6hReport() {
 // =========================================================
 
 startCore6hReport()
+
 function scoreRF15Signal(data15, side) {
   const candles = prepare(data15, 600);
   if (!candles) return { adjustment: 0 };
@@ -4352,10 +4353,10 @@ async function scan(symbol){
         // ==================================================
         // 4. NO SIGNAL
         // ==================================================
-        const rfRank = scoreRF15Signal(data15, r.side);
         if(!r || !r.side){
             return null
         }
+        const rfRank = scoreRF15Signal(data15, r.side);
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
