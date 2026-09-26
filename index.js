@@ -402,6 +402,8 @@ let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
 let scanning = false
+let NEXT_ENTRY_ALLOWED_AT = 0;
+const ENTRY_COOLDOWN_MS = 60 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
@@ -2774,7 +2776,7 @@ async function getTopSymbols() {
           last <= 0 ||
           low <= 0 ||
           high < low ||
-          quoteVolume < 1_000_000
+          quoteVolume < 5_000_000
         ) {
           continue;
         }
@@ -2797,7 +2799,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 150)
+        .slice(0, 50)
         .map(candidate => candidate.symbol);
 
       console.log(
@@ -4601,6 +4603,14 @@ async function scanner(){
     isScanning = true
 
      try{
+        const cooldownLeft = NEXT_ENTRY_ALLOWED_AT - Date.now();
+
+if (cooldownLeft > 0) {
+  console.log(
+    `⏳ ENTRY COOLDOWN: còn ${Math.ceil(cooldownLeft / 60000)} phút`
+  );
+  return;
+}
 
         // ===== DB HEALTH =====
         if(!await ensureDB()){
@@ -4873,7 +4883,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered//.slice(0, 3)
+let picks = filtered.slice(0, 1);
 for (let best of picks){
 
     //let realActive = activeTrades.filter(
@@ -5395,7 +5405,7 @@ trade.waitingEntry = false
 // BINANCE ENTRY ĐÃ THÀNH CÔNG
 // BẬT DYNAMIC TPSL NGAY LẬP TỨC
 // ==================================================
-
+NEXT_ENTRY_ALLOWED_AT = Date.now() + ENTRY_COOLDOWN_MS;
 TPSL_PHASE[trade.symbol] = "ACTIVE"
 
 console.log(
@@ -6601,10 +6611,10 @@ setInterval(
 
         }
 
-        // scan mỗi 2 phút
-        await new Promise(r =>
-            setTimeout(r,120000)
-        )
+        // scan mỗi 1 phút
+await new Promise(r =>
+    setTimeout(r, 60000)
+)
     }
 }
         // ==================================================
