@@ -2719,236 +2719,101 @@ async function getData(symbol, interval, limit){
     }
 }
 // ================= SYMBOL (PRO) =================
-async function getTopSymbols(){
+async function getTopSymbols() {
+  const url = 'https://fapi.binance.com/fapi/v1/ticker/24hr';
 
-    const urls = [
-        "https://api.binance.com/api/v3/ticker/24hr",
-        "https://data-api.binance.vision/api/v3/ticker/24hr"
-    ]
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await safeFetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      });
 
-    for(const url of urls){
+      if (!res || !res.ok) continue;
 
-        for(let attempt = 0; attempt < 2; attempt++){
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length === 0) continue;
 
-            try{
+      if (
+        !(validFuturesSymbols instanceof Set) ||
+        validFuturesSymbols.size === 0
+      ) {
+        console.log('❌ SYMBOL FAIL: valid USDⓈ-M Futures symbol list is not loaded');
+        return null;
+      }
 
-                const res = await safeFetch(
-                    url,
-                    {
-                        headers:{
-                            "User-Agent":"Mozilla/5.0"
-                        }
-                    }
-                )
+      const excludedBases = new Set([
+        'USDC', 'BUSD', 'FDUSD', 'TUSD', 'USDP',
+        'DAI', 'EUR', 'TRY', 'USD1', 'RLUSD'
+      ]);
 
-                if(!res || !res.ok){
-                    continue
-                }
+      const candidates = [];
 
-                const data = await res.json()
+      for (const ticker of data) {
+        const symbol = String(ticker.symbol || '');
 
-                if(
-                    !Array.isArray(data) ||
-                    data.length === 0
-                ){
-                    continue
-                }
-
-                // =====================================================
-                // 1. BASE FILTER
-                //
-                // Chỉ loại những coin thực sự không phù hợp.
-                //
-                // Không dùng 24H movement để quyết định coin có
-                // được scan hay không.
-                // CoreLogic mới sẽ tự quyết định trend/pullback.
-                // =====================================================
-
-                const base = data
-                    .filter(c => {
-
-                        const symbol =
-                            String(c.symbol || "")
-
-                        return (
-                            symbol.endsWith("USDT") &&
-                            !symbol.includes("UP") &&
-                            !symbol.includes("DOWN") &&
-                            !symbol.includes("BUSD") &&
-                            !symbol.includes("USD1") &&
-                            !symbol.includes("FDUSD") &&
-                            !symbol.includes("USDC") &&
-                            !symbol.includes("EUR") &&
-                            !symbol.includes("TRY") &&
-                            !symbol.includes("RLUSD")
-                        )
-                    })
-
-                    // =================================================
-                    // Chỉ lấy Futures symbol hợp lệ
-                    // =================================================
-
-                    .filter(c =>
-                        validFuturesSymbols &&
-                        validFuturesSymbols.size > 0 &&
-                        validFuturesSymbols.has(c.symbol)
-                    )
-
-                    // =================================================
-                    // Thanh khoản tối thiểu
-                    //
-                    // 1.5M vẫn đủ an toàn nhưng rộng hơn bản cũ 2M.
-                    // =================================================
-
-                    .filter(c => {
-
-                        const volume =
-                            Number(c.quoteVolume)
-
-                        return (
-                            Number.isFinite(volume) &&
-                            volume >= 1_500_000
-                        )
-                    })
-
-                // =====================================================
-                // 2. SCORE
-                //
-                // Đây KHÔNG phải score entry.
-                //
-                // Chỉ dùng để xếp coin nào đáng cho Core soi trước.
-                //
-                // Không ưu tiên coin tăng mạnh vô hạn.
-                //
-                // 0.5% -> vẫn có thể được chọn
-                // 3-8% -> rất tốt
-                // >8% -> điểm movement bị giới hạn
-                //
-                // Điều này hợp với:
-                //
-                // TREND
-                // +
-                // PULLBACK
-                //
-                // hơn việc ưu tiên coin đang pump mạnh.
-                // =====================================================
-const scoreCoin = c => {
-
-    const volume =
-        Number(c.quoteVolume)
-
-    const move =
-        Math.abs(
-            Number(
-                c.priceChangePercent
-            )
-        )
-
-    if(
-        !Number.isFinite(volume) ||
-        !Number.isFinite(move) ||
-        volume <= 0
-    ){
-        return -Infinity
-    }
-
-    // Thanh khoản là tiêu chí chính.
-    const volumeScore =
-        Math.log10(
-            Math.max(volume, 1)
-        ) * 3
-
-    // Movement chỉ dùng để ưu tiên coin đang có hoạt động,
-    // không để coin pump mạnh áp đảo bảng xếp hạng.
-    const movementScore =
-        Math.min(move, 6) * 0.50
-
-    return (
-        volumeScore +
-        movementScore
-    )
-}
-                // =====================================================
-                // 3. SORT
-                //
-                // Không còn:
-                //
-                // quiet 30
-                // moving 40
-                // strong 35
-                // extreme 15
-                //
-                // Tất cả coin hợp lệ được xếp chung.
-                // =====================================================
-
-                const ranked =
-                    base
-                        .map(c => ({
-                            symbol: c.symbol,
-                            score: scoreCoin(c)
-                        }))
-                        .filter(x =>
-                            Number.isFinite(x.score)
-                        )
-                        .sort(
-                            (a,b) =>
-                                b.score - a.score
-                        )
-
-                // =====================================================
-                // 4. SELECT
-                //
-                // Lấy tối đa 120 coin.
-                //
-                // Nếu base chỉ có 80 coin thì lấy 80.
-                // Không ép thêm coin rác chỉ để đủ 120.
-                // =====================================================
-
-                const selected =
-                    ranked
-                        .slice(0, 200)
-                        .map(x => x.symbol)
-
-                // =====================================================
-                // 5. LOG
-                // =====================================================
-
-                console.log(
-                    `📊 SYMBOLS ${selected.length} ` +
-                    `BASE=${base.length} ` +
-                    `RANKED=${ranked.length}`
-                )
-
-                if(
-                    selected.length > 0
-                ){
-
-                    console.log(
-                        `🎯 TOP SYMBOLS: ` +
-                        `${selected.slice(0,10).join(", ")}`
-                    )
-                }
-// =====================================================
-                // 6. RETURN
-                // =====================================================
-
-                return selected
-
-            }catch(e){
-
-                if(attempt === 1){
-
-                    console.log(
-                        "❌ SYMBOL FAIL:",
-                        url,
-                        e?.message || e
-                    )
-                }
-            }
+        if (!symbol.endsWith('USDT') || !validFuturesSymbols.has(symbol)) {
+          continue;
         }
-    }
 
-    return null
+        const base = symbol.slice(0, -4);
+        if (
+          !base ||
+          excludedBases.has(base) ||
+          /(UP|DOWN|BULL|BEAR)$/.test(base)
+        ) {
+          continue;
+        }
+
+        const quoteVolume = Number(ticker.quoteVolume);
+        const last = Number(ticker.lastPrice);
+        const high = Number(ticker.highPrice);
+        const low = Number(ticker.lowPrice);
+
+        if (
+          ![quoteVolume, last, high, low].every(Number.isFinite) ||
+          last <= 0 ||
+          low <= 0 ||
+          high < low ||
+          quoteVolume < 1_000_000
+        ) {
+          continue;
+        }
+
+        // Biên độ high-low của 24 giờ gần nhất, tính theo giá hiện tại.
+        const range24 = (high - low) / last;
+        if (range24 < 0.05) continue;
+
+        const bid = Number(ticker.bidPrice);
+        const ask = Number(ticker.askPrice);
+
+        if (bid > 0 && ask > 0) {
+          const mid = (bid + ask) / 2;
+          if (mid > 0 && (ask - bid) / mid > 0.004) continue;
+        }
+
+        candidates.push({ symbol, quoteVolume, range24 });
+      }
+
+      candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
+
+      const selected = candidates
+        .slice(0, 150)
+        .map(candidate => candidate.symbol);
+
+      console.log(
+        `📊 RANGE FILTER UNIVERSE ${selected.length}` +
+        ` (eligible=${candidates.length}, minRange24h=5%)`
+      );
+
+      return selected;
+    } catch (error) {
+      if (attempt === 2) {
+        console.log('❌ SYMBOL FAIL:', error?.message || error);
+      }
+    }
+  }
+
+  return null;
 }
 async function loadValidFuturesSymbols(){
 
