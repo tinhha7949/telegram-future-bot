@@ -4234,6 +4234,77 @@ function startCore6hReport() {
 // =========================================================
 
 startCore6hReport()
+function scoreRF15Signal(data15, side) {
+  const candles = prepare(data15, 600);
+  if (!candles) return { adjustment: 0 };
+
+  const rf = rangeFilter(candles, 100, 3);
+  const i = candles.length - 1;
+  const lookback = 12;
+  const anchor = i - 3;
+
+  if (i < lookback || anchor < 0) {
+    return { adjustment: 0 };
+  }
+
+  // ER thấp thường là giá giật qua lại;
+  // ER cao nghĩa là giá đi tương đối liền mạch.
+  let path = 0;
+  for (let j = i - lookback + 1; j <= i; j++) {
+    path += Math.abs(candles[j].c - candles[j - 1].c);
+  }
+
+  const netMove = candles[i].c - candles[i - lookback].c;
+  const efficiency = path > 0
+    ? Math.abs(netMove) / path
+    : 0;
+
+  const alignedMove =
+    side === 'LONG' ? netMove > 0 :
+    side === 'SHORT' ? netMove < 0 :
+    false;
+
+  // Đo giá đã chạy vượt envelope cũ theo hướng tín hiệu bao xa,
+  // tính theo số lần Range Filter hiện tại.
+  const oldFilter = rf.filter[anchor];
+  const oldRange = rf.range[anchor];
+  const currentRange = rf.range[i];
+  const price = candles[i].c;
+
+  let extensionUnits = 0;
+
+  if (
+    [oldFilter, oldRange, currentRange, price].every(finite) &&
+    oldRange > 0 &&
+    currentRange > 0
+  ) {
+    const oldOuterEdge = side === 'LONG'
+      ? oldFilter + oldRange
+      : oldFilter - oldRange;
+
+    extensionUnits = side === 'LONG'
+      ? (price - oldOuterEdge) / currentRange
+      : (oldOuterEdge - price) / currentRange;
+  }
+
+  extensionUnits = Math.max(0, extensionUnits);
+
+  const alignmentPoints = alignedMove ? 4 : -4;
+  const extensionPenalty = Math.min(
+    10,
+    Math.max(0, extensionUnits - 1) * 3
+  );
+
+  return {
+    adjustment:
+      efficiency * 10 +
+      alignmentPoints -
+      extensionPenalty,
+    efficiency,
+    alignedMove,
+    extensionUnits
+  };
+}
 // ================= SCAN =================
 async function scan(symbol){
 
@@ -4299,7 +4370,13 @@ async function scan(symbol){
 
         return {
             symbol,
-            ...r
+            ...r,
+            rankAdjustment: rfRank.adjustment,
+rankMetrics: {
+  efficiency: rfRank.efficiency,
+  alignedMove: rfRank.alignedMove,
+  extensionUnits: rfRank.extensionUnits
+}
         }
 
     }catch(e){
@@ -4810,7 +4887,11 @@ if(dbMain.total >= 30){
 // Không dùng s.score nữa
 
 const coreQuality = Number(s.qualityScore ?? s.score ?? 0)
-const rankScore = coreQuality + Math.max(-10, Math.min(10, aiMain))
+const rfAdjustment = Number(s.rankAdjustment) || 0;
+const rankScore =
+  coreQuality +
+  rfAdjustment +
+  Math.max(-10, Math.min(10, aiMain));
 candidates.push({
     ...s,
     finalScore: aiMain,
