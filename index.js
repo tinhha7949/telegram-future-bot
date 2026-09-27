@@ -387,7 +387,7 @@ const TRADE_CONFIG = {
     riskPerTrade: 0.01,      
     maxRiskPerTrade: 0.01,    
     maxPositionPercent: 1.5,  
-    maxActivePositions: 20      
+    maxActivePositions: 50      
 }
 let ACCOUNT_BALANCE = 0
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
@@ -403,7 +403,7 @@ let lastSymbolsUpdate = 0
 let isScanning = false
 let scanning = false
 let NEXT_ENTRY_ALLOWED_AT = 0;
-const ENTRY_COOLDOWN_MS = 15 * 60 * 1000;
+const ENTRY_COOLDOWN_MS = 8 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
@@ -4356,7 +4356,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 3);
+let picks = filtered.slice(0, 8);
 for (let best of picks){
 
     //let realActive = activeTrades.filter(
@@ -4391,7 +4391,7 @@ try{
         break
     }
 
-    if(totalPending >= 25){
+    if(totalPending >= 100){
         console.log(`⚠️ MAX TOTAL PENDING: ${totalPending}`)
         break
     }
