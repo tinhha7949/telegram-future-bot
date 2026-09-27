@@ -2783,7 +2783,7 @@ async function getTopSymbols() {
 
         // Biên độ high-low của 24 giờ gần nhất, tính theo giá hiện tại.
         const range24 = (high - low) / last;
-        if (range24 < 0.05) continue;
+        if (range24 < 0.03) continue;
 
         const bid = Number(ticker.bidPrice);
         const ask = Number(ticker.askPrice);
@@ -2799,7 +2799,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 50)
+        .slice(0, 80)
         .map(candidate => candidate.symbol);
 
       console.log(
@@ -3698,7 +3698,6 @@ function scoreRF15Signal(data15, side) {
   return { adjustment, efficiency, alignedMove: aligned, extensionUnits: extension, runBars, early };
 }
 
-
 // ================= SCAN =================
 async function scan(symbol){
 
@@ -4516,13 +4515,6 @@ if(risk <= 0){
     )
     continue
 }
-// Cho phép risk tối đa 25% cao hơn risk gốc,
-// nhưng không vượt 1.25% số dư.
-const maxAllowedRisk = Math.min(
-    risk * 1.25,
-    balance * 0.0125
-)
-
     let diff = Math.abs(best.price - best.sl)
     if(!diff){
 
@@ -4699,6 +4691,9 @@ if(!trade){
         let requiredRisk =
             requiredQty * diff
 
+            let maxAllowedRisk =
+            trade.risk * 1.10
+
         if(requiredRisk > maxAllowedRisk){
 
             console.log(
@@ -4735,7 +4730,8 @@ if(!trade){
     }
 
     if(
-        finalRisk > maxAllowedRisk
+        finalRisk >
+trade.risk * 1.10
     ){
         console.log(
             `❌ FINAL RISK TOO HIGH ${best.symbol}`
