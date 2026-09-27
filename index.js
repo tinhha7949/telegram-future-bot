@@ -403,7 +403,7 @@ let lastSymbolsUpdate = 0
 let isScanning = false
 let scanning = false
 let NEXT_ENTRY_ALLOWED_AT = 0;
-const ENTRY_COOLDOWN_MS = 60 * 60 * 1000;
+const ENTRY_COOLDOWN_MS = 30 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
