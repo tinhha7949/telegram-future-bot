@@ -2799,7 +2799,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 80)
+        .slice(0, 50)
         .map(candidate => candidate.symbol);
 
       console.log(
@@ -3631,7 +3631,7 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   const risk = Math.abs(price - sl);
   if (!finite(risk) || risk <= 0 || (side === 'LONG' ? sl >= price : sl <= price)) return null;
 
-  const targetR = 1.5;
+  const targetR = 1.6;
   const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
   const rank = scoreRF15Signal(data15, side);
   const score = clamp(Math.round(70 + rank.adjustment), 0, 100);
@@ -3639,9 +3639,9 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
 
   return {
     side, symbol, price, sl, tp,
-    setup: 'RANGE_FILTER_DW_15M_TURN',
+    setup: 'RANGE_FILTER',
     pullbackType: 'NONE',
-    triggerType: side === 'LONG' ? '15M_DW_UP_TURN' : '15M_DW_DOWN_TURN',
+    triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
     marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
     volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
     qualityScore: score, score,
@@ -4516,6 +4516,12 @@ if(risk <= 0){
     )
     continue
 }
+// Cho phép risk tối đa 25% cao hơn risk gốc,
+// nhưng không vượt 1.25% số dư.
+const maxAllowedRisk = Math.min(
+    risk * 1.25,
+    balance * 0.0125
+)
 
     let diff = Math.abs(best.price - best.sl)
     if(!diff){
@@ -4693,9 +4699,6 @@ if(!trade){
         let requiredRisk =
             requiredQty * diff
 
-        let maxAllowedRisk =
-            trade.risk * 1.10
-
         if(requiredRisk > maxAllowedRisk){
 
             console.log(
@@ -4732,8 +4735,7 @@ if(!trade){
     }
 
     if(
-        finalRisk >
-        trade.risk * 1.10
+        finalRisk > maxAllowedRisk
     ){
         console.log(
             `❌ FINAL RISK TOO HIGH ${best.symbol}`
