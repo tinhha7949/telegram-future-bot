@@ -403,7 +403,7 @@ let lastSymbolsUpdate = 0
 let isScanning = false
 let scanning = false
 let NEXT_ENTRY_ALLOWED_AT = 0;
-const ENTRY_COOLDOWN_MS = 30 * 60 * 1000;
+const ENTRY_COOLDOWN_MS = 15 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
@@ -4356,7 +4356,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 1);
+let picks = filtered.slice(0, 3);
 for (let best of picks){
 
     //let realActive = activeTrades.filter(
