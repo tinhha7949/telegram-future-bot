@@ -2799,7 +2799,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 50)
+        .slice(0, 80)
         .map(candidate => candidate.symbol);
 
       console.log(
@@ -2848,341 +2848,8 @@ async function loadValidFuturesSymbols(){
         console.log("❌ LOAD FUTURES SYMBOL:", e.message)
     }
 }
-
-// =========================================================
-// CORE 24H ANALYTICS
-// =========================================================
-
-const CORE_REJECT_STATS = {
-
-    VALIDATION: 0,
-    DATA_LENGTH: 0,
-    INVALID_DATA: 0,
-
-    ATR5: 0,
-
-    "1H_DIRECTION": 0,
-    BIAS: 0,
-
-    VOL5: 0,
-    PULLBACK: 0,
-    CONFIRMATION: 0,
-    VOL1: 0,
-    CHASE: 0,
-
-    RSI_INVALID: 0,
-    RSI_LONG_EXTREME: 0,
-    RSI_SHORT_EXTREME: 0,
-
-    FINAL_SETUP: 0,
-
-    RISK_INVALID: 0,
-    RISK_TOO_SMALL: 0,
-    RISK_TOO_WIDE: 0,
-    RISK_PERCENT: 0,
-
-    ROOM_LONG: 0,
-    ROOM_SHORT: 0,
-
-    FINAL_RR: 0,
-
-    ACCEPT: 0,
-    ACCEPT_LONG: 0,
-    ACCEPT_SHORT: 0
-}
-
-const CORE_SIDE_STATS = {
-    LONG: 0,
-    SHORT: 0
-}
-
-// Số lần scan core được gọi
-let CORE_TOTAL_CALLS = 0
-
-// Lưu một vài detail tiêu biểu cho mỗi reject
-const CORE_REJECT_DETAILS = {}
-
-// Thời điểm bắt đầu chu kỳ thống kê
-let CORE_STATS_START =
-    Date.now()
-
-
-// =========================================================
-// REJECT
-// =========================================================
-
-const reject = (stage, details = {}) => {
-
-    CORE_REJECT_STATS[stage] =
-        (CORE_REJECT_STATS[stage] || 0) + 1
-
-    // Chỉ giữ detail mới nhất
-    CORE_REJECT_DETAILS[stage] = {
-        ...details,
-        timestamp: Date.now()
-    }
-
-    return null
-}
-// =========================================================
-// BUILD CORE 24H REPORT
-// =========================================================
-
-function buildCore24hReport() {
-
-    const now = Date.now()
-
-    const hours =
-        (now - CORE_STATS_START) /
-        (60 * 60 * 1000)
-
-    const total =
-        CORE_TOTAL_CALLS
-
-    const accepted =
-        CORE_REJECT_STATS.ACCEPT
-
-    const rejected =
-        Math.max(
-            total - accepted,
-            0
-        )
-
-    const acceptRate =
-        total > 0
-            ? accepted / total * 100
-            : 0
-
-    const rejectRate =
-        total > 0
-            ? rejected / total * 100
-            : 0
-
-
-    // =====================================================
-    // SORT REJECT
-    // =====================================================
-
-    const rejectList =
-        Object.entries(
-            CORE_REJECT_STATS
-        )
-        .filter(
-            ([stage, count]) =>
-                stage !== "ACCEPT" &&
-                count > 0
-        )
-        .sort(
-            (a, b) =>
-                b[1] - a[1]
-        )
-
-
-    // =====================================================
-    // TOP REJECTS
-    // =====================================================
-
-    const topRejects =
-        rejectList
-            .slice(0, 10)
-
-
-    // =====================================================
-    // SIDE
-    // =====================================================
-
-    const long =
-        CORE_SIDE_STATS.LONG
-
-    const short =
-        CORE_SIDE_STATS.SHORT
-
-    const sideTotal =
-        long + short
-
-    const longPct =
-        sideTotal > 0
-            ? long / sideTotal * 100
-            : 0
-
-    const shortPct =
-        sideTotal > 0
-            ? short / sideTotal * 100
-            : 0
-
-
-    // =====================================================
-    // REPORT
-    // =====================================================
-
-    let msg = ""
-
-    msg +=
-        `📊 CORE 24H REPORT\n`
-
-    msg +=
-        `━━━━━━━━━━━━━━━━━━━━\n`
-
-    msg +=
-        `⏱ Period: ${hours.toFixed(1)}h\n`
-
-    msg +=
-        `🔎 Total scans: ${total.toLocaleString()}\n`
-
-    msg +=
-        `✅ Accept: ${accepted.toLocaleString()} (${acceptRate.toFixed(2)}%)\n`
-
-    msg +=
-        `❌ Reject: ${rejected.toLocaleString()} (${rejectRate.toFixed(2)}%)\n`
-
-    msg +=
-        `\n`
-
-    msg +=
-        `📈 ACCEPT SIDE\n`
-
-    msg +=
-        `LONG: ${long.toLocaleString()} (${longPct.toFixed(1)}%)\n`
-
-    msg +=
-        `SHORT: ${short.toLocaleString()} (${shortPct.toFixed(1)}%)\n`
-
-    msg +=
-        `\n`
-
-    msg +=
-        `🚫 TOP REJECTS\n`
-
-    msg +=
-        `━━━━━━━━━━━━━━━━━━━━\n`
-
-
-    if (!topRejects.length) {
-
-        msg +=
-            `Không có reject.\n`
-
-    } else {
-
-        topRejects.forEach(
-            ([stage, count], index) => {
-
-                const pctTotal =
-                    total > 0
-                        ? count / total * 100
-                        : 0
-
-                msg +=
-                    `${index + 1}. ${stage}: ` +
-                    `${count.toLocaleString()} ` +
-                    `(${pctTotal.toFixed(2)}%)\n`
-            }
-        )
-    }
-
-
-    // =====================================================
-    // FULL STATS
-    // =====================================================
-
-    msg +=
-        `\n📋 FULL CORE STATS\n`
-
-    msg +=
-        `━━━━━━━━━━━━━━━━━━━━\n`
-
-    Object.entries(
-        CORE_REJECT_STATS
-    ).forEach(
-        ([stage, count]) => {
-
-            if (count <= 0)
-                return
-
-            msg +=
-                `${stage}: ` +
-                `${count.toLocaleString()}\n`
-        }
-    )
-
-
-    // =====================================================
-    // DEBUG DETAILS
-    // =====================================================
-
-    msg +=
-        `\n🔬 LAST REJECT DETAILS\n`
-
-    msg +=
-        `━━━━━━━━━━━━━━━━━━━━\n`
-
-    topRejects
-        .slice(0, 5)
-        .forEach(
-            ([stage]) => {
-
-                const detail =
-                    CORE_REJECT_DETAILS[stage]
-
-                if (!detail)
-                    return
-
-                const copy = {
-                    ...detail
-                }
-
-                delete copy.timestamp
-
-                msg +=
-                    `\n${stage}:\n`
-
-                msg +=
-                    JSON.stringify(
-                        copy
-                    )
-            }
-        )
-
-    return msg
-}
-// =========================================================
-// RESET CORE 24H STATS
-// =========================================================
-
-function resetCore24hStats() {
-
-    Object.keys(
-        CORE_REJECT_STATS
-    ).forEach(
-        key => {
-            CORE_REJECT_STATS[key] = 0
-        }
-    )
-
-    CORE_SIDE_STATS.LONG = 0
-    CORE_SIDE_STATS.SHORT = 0
-
-    CORE_TOTAL_CALLS = 0
-
-    Object.keys(
-        CORE_REJECT_DETAILS
-    ).forEach(
-        key => {
-            delete CORE_REJECT_DETAILS[key]
-        }
-    )
-
-    CORE_STATS_START =
-        Date.now()
-}
-
-// ============================================================ // RANGE FILTER CORE // // Single entry indicator: TradingView Range Filter Buy and Sell // Source close / Sampling period 100 / Range multiplier 3 / 5m // Stop: opposite Range Filter envelope // Target: 1.5R // Other timeframes remain in function signature for compatibility. // ============================================================
+// ============================================================ // RANGE FILTER CORE // // Single entry indicator: TradingView Range Filter [DW] // Chart settings: Type 1 / Close / 2.618 Average Change / period 14 / smoothing 27 / 15m // Stop: opposite Range Filter envelope // Target: 1.5R // Other timeframes remain in function signature for compatibility. // ============================================================
 const finite = Number.isFinite;
-const CORE_REJECTS = Object.create(null);
-let CORE_CALLS = 0;
-function coreReject(stage) { CORE_REJECTS.REJECTED = (CORE_REJECTS.REJECTED || 0) + 1; CORE_REJECTS[stage] = (CORE_REJECTS[stage] || 0) + 1; return null; }
-function getCoreRejectStats() { return { TOTAL_CALLS: CORE_CALLS, ...CORE_REJECTS }; }
-function resetCoreRejectStats() { CORE_CALLS = 0; for (const key of Object.keys(CORE_REJECTS)) delete CORE_REJECTS[key]; }
 // ============================================================ // BASIC // ============================================================
 function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 function avg(arr) { if (!arr.length) return NaN;
@@ -3384,115 +3051,185 @@ result =
   );
 }
 return result === Infinity ? NaN : result; }
-function rangeFilter(candles, period = 100, multiplier = 3) {
-  const src = candles.map(candle => Number(candle.c));
-  const absChange = new Array(src.length).fill(NaN);
-
-  for (let i = 1; i < src.length; i++) {
-    if (finite(src[i]) && finite(src[i - 1])) {
-      absChange[i] = Math.abs(src[i] - src[i - 1]);
-    }
-  }
-
-  // Guikroth: EMA(abs(close - close[1]), period),
-  // sau đó EMA(..., period * 2 - 1), rồi nhân multiplier.
-  const avgRange = ema(absChange, period);
-  const smoothRange = ema(avgRange, period * 2 - 1);
-  const smrng = smoothRange.map(value =>
-    finite(value) ? value * multiplier : NaN
-  );
-
-  const filt = new Array(src.length).fill(NaN);
-  const upward = new Array(src.length).fill(0);
-  const downward = new Array(src.length).fill(0);
-  const direction = new Array(src.length).fill(0);
-  const signal = new Array(src.length).fill(0);
-  const buy = new Array(src.length).fill(false);
-  const sell = new Array(src.length).fill(false);
-
-  let condIni = 0;
-
-  for (let i = 0; i < src.length; i++) {
-    const price = src[i];
-    const range = smrng[i];
-    const previousFilter = i > 0 ? filt[i - 1] : NaN;
-    const previousUp = i > 0 ? upward[i - 1] : 0;
-    const previousDown = i > 0 ? downward[i - 1] : 0;
-    const previousPrice = i > 0 ? src[i - 1] : NaN;
-    const priorCond = condIni;
-
-    // Range filter dùng nz(filt[1]) = 0 khi chưa có filter trước đó.
-    if (finite(price) && finite(range)) {
-      const previous = finite(previousFilter) ? previousFilter : 0;
-
-      if (price > previous) {
-        filt[i] = price - range < previous
-          ? previous
-          : price - range;
-      } else {
-        filt[i] = price + range > previous
-          ? previous
-          : price + range;
-      }
-    }
-
-    // Pine giữ bộ đếm trước đó nếu không thể so sánh filt với filt[1].
-    if (finite(filt[i]) && finite(previousFilter)) {
-      if (filt[i] > previousFilter) {
-        upward[i] = previousUp + 1;
-        downward[i] = 0;
-      } else if (filt[i] < previousFilter) {
-        downward[i] = previousDown + 1;
-        upward[i] = 0;
-      } else {
-        upward[i] = previousUp;
-        downward[i] = previousDown;
-      }
-    } else {
-      upward[i] = previousUp;
-      downward[i] = previousDown;
-    }
-
-    const closeChanged =
-      finite(previousPrice) &&
-      (price > previousPrice || price < previousPrice);
-
-    // Giống longCond/shortCond của nhãn Buy/Sell:
-    // close bằng close trước thì không phát điều kiện.
-    const longCond =
-      finite(price) &&
-      finite(filt[i]) &&
-      closeChanged &&
-      price > filt[i] &&
-      upward[i] > 0;
-
-    const shortCond =
-      finite(price) &&
-      finite(filt[i]) &&
-      closeChanged &&
-      price < filt[i] &&
-      downward[i] > 0;
-
-    if (longCond) condIni = 1;
-    else if (shortCond) condIni = -1;
-
-    buy[i] = longCond && priorCond === -1;
-    sell[i] = shortCond && priorCond === 1;
-
-    if (buy[i]) signal[i] = 1;
-    else if (sell[i]) signal[i] = -1;
-
-    direction[i] = condIni;
-  }
-
-  return {
-    filter: filt,
-    direction,
-    signal,
-    buy,
-    sell,
-    range: smrng
+function rangeFilter(candles, options = {}) {
+  const cfg = {
+    filterType: 'Type 1',
+    movementSource: 'Close',
+    rangeSize: 2.618,
+    rangeScale: 'Average Change',
+    rangePeriod: 14,
+    smoothRange: true,
+    smoothPeriod: 27,
+    averageFilterChanges: false,
+    averageChanges: 2,
+    tickSize: 0.01,
+    pointValue: 1,
+    ...options
   };
+  const { filterType, movementSource, rangeSize, rangeScale,
+    rangePeriod, smoothRange, smoothPeriod, averageFilterChanges,
+    averageChanges, tickSize, pointValue } = cfg;
+
+  if (!Array.isArray(candles)) throw new TypeError('candles phải là một mảng');
+  if (!Number.isInteger(rangePeriod) || rangePeriod < 1 ||
+      !Number.isInteger(smoothPeriod) || smoothPeriod < 1 ||
+      !Number.isInteger(averageChanges) || averageChanges < 1 ||
+      !Number.isFinite(rangeSize) || rangeSize <= 0) {
+    throw new RangeError('Tham số Range Filter không hợp lệ');
+  }
+
+  const n = candles.length;
+  const close = candles.map(c => Number(c?.c));
+  const high = candles.map((c, i) => movementSource === 'Wicks' ? Number(c?.h) : close[i]);
+  const low = candles.map((c, i) => movementSource === 'Wicks' ? Number(c?.l) : close[i]);
+  const basis = high.map((h, i) => (h + low[i]) / 2);
+
+  // Pine Cond_EMA: update only when condition is true, seeding with first sample.
+  function conditionalEma(values, length, condition = () => true) {
+    const out = new Array(values.length).fill(NaN);
+    const alpha = 2 / (length + 1);
+    let state = NaN;
+    for (let i = 0; i < values.length; i++) {
+      const x = values[i];
+      if (condition(i) && Number.isFinite(x)) {
+        state = Number.isFinite(state) ? state + alpha * (x - state) : x;
+      }
+      out[i] = state;
+    }
+    return out;
+  }
+
+  const trueRange = new Array(n).fill(NaN);
+  const absChange = new Array(n).fill(NaN);
+  for (let i = 0; i < n; i++) {
+    if (![high[i], low[i]].every(Number.isFinite)) continue;
+    if (i === 0) trueRange[i] = high[i] - low[i];
+    else if (Number.isFinite(close[i - 1])) {
+      trueRange[i] = Math.max(
+        high[i] - low[i],
+        Math.abs(high[i] - close[i - 1]),
+        Math.abs(low[i] - close[i - 1])
+      );
+    }
+    if (i > 0 && Number.isFinite(basis[i]) && Number.isFinite(basis[i - 1])) {
+      absChange[i] = Math.abs(basis[i] - basis[i - 1]);
+    }
+  }
+
+  // DW dynamic range inputs: EMA(True Range), EMA(Average Change), or
+  // population standard deviation, sampled over rangePeriod.
+  const atrLike = conditionalEma(trueRange, rangePeriod);
+  const avgChange = conditionalEma(absChange, rangePeriod);
+  const stdev = new Array(n).fill(NaN);
+  for (let i = 0; i < n; i++) {
+    const start = Math.max(0, i - rangePeriod + 1);
+    const values = basis.slice(start, i + 1);
+    if (values.length && values.every(Number.isFinite)) {
+      const mean = values.reduce((a, b) => a + b, 0) / values.length;
+      const variance = values.reduce((a, x) => a + (x - mean) ** 2, 0) / values.length;
+      stdev[i] = Math.sqrt(variance);
+    }
+  }
+
+  const rawRange = basis.map((price, i) => {
+    if (!Number.isFinite(price)) return NaN;
+    switch (rangeScale) {
+      case 'Points': return rangeSize * pointValue;
+      case 'Pips': return rangeSize * 0.0001;
+      case 'Ticks': return rangeSize * tickSize;
+      case '% of Price': return close[i] * rangeSize / 100;
+      case 'ATR': return rangeSize * atrLike[i];
+      case 'Average Change': return rangeSize * avgChange[i];
+      case 'Standard Deviation': return rangeSize * stdev[i];
+      case 'Absolute': return rangeSize;
+      default: throw new RangeError(`Range Scale không hợp lệ: ${rangeScale}`);
+    }
+  });
+  const smooth = conditionalEma(rawRange, smoothPeriod);
+  const range = rawRange.map((v, i) => smoothRange ? smooth[i] : v);
+
+  const filter = new Array(n).fill(NaN);
+  const upperBand = new Array(n).fill(NaN);
+  const lowerBand = new Array(n).fill(NaN);
+  const direction = new Array(n).fill(0);
+  const buy = new Array(n).fill(false);
+  const sell = new Array(n).fill(false);
+  const signal = new Array(n).fill(0);
+  const upward = new Array(n).fill(false);
+  const downward = new Array(n).fill(false);
+  let filterState = NaN;
+  let heldDirection = 0;
+  let avgFilterState = NaN;
+  let avgUpperState = NaN;
+  let avgLowerState = NaN;
+  let changedSamples = 0;
+  const changeAlpha = 2 / (averageChanges + 1);
+
+  for (let i = 0; i < n; i++) {
+    const h = high[i], l = low[i], r = range[i];
+    if (![h, l, r].every(Number.isFinite) || r < 0) {
+      direction[i] = heldDirection;
+      continue;
+    }
+
+    // DW Type 1: move the filter only when price clears the prior filter
+    // by the current range. Type 2 advances in discrete range increments.
+    const previous = Number.isFinite(filterState) ? filterState : basis[i];
+    if (filterType === 'Type 1') {
+      if (h - r > previous) filterState = h - r;
+      if (l + r < previous) filterState = l + r;
+      if (!Number.isFinite(filterState)) filterState = basis[i];
+    } else if (filterType === 'Type 2') {
+      if (h >= previous + r && r > 0) {
+        filterState = previous + Math.floor(Math.abs(h - previous) / r) * r;
+      }
+      if (l <= previous - r && r > 0) {
+        filterState = previous - Math.floor(Math.abs(l - previous) / r) * r;
+      }
+      if (!Number.isFinite(filterState)) filterState = basis[i];
+    } else {
+      throw new RangeError(`Filter Type không hợp lệ: ${filterType}`);
+    }
+
+    filter[i] = filterState;
+    upperBand[i] = filterState + r;
+    lowerBand[i] = filterState - r;
+
+    if (i > 0 && Number.isFinite(filter[i - 1])) {
+      if (filter[i] > filter[i - 1]) heldDirection = 1;
+      else if (filter[i] < filter[i - 1]) heldDirection = -1;
+    }
+    direction[i] = heldDirection;
+    upward[i] = heldDirection === 1;
+    downward[i] = heldDirection === -1;
+
+    const changed = i > 0 && Number.isFinite(filter[i - 1]) && filter[i] !== filter[i - 1];
+    if (changed) {
+      changedSamples++;
+      if (!Number.isFinite(avgFilterState)) {
+        avgFilterState = filter[i];
+        avgUpperState = upperBand[i];
+        avgLowerState = lowerBand[i];
+      } else {
+        avgFilterState += changeAlpha * (filter[i] - avgFilterState);
+        avgUpperState += changeAlpha * (upperBand[i] - avgUpperState);
+        avgLowerState += changeAlpha * (lowerBand[i] - avgLowerState);
+      }
+    }
+    if (averageFilterChanges && changedSamples > 0) {
+      filter[i] = avgFilterState;
+      upperBand[i] = avgUpperState;
+      lowerBand[i] = avgLowerState;
+    }
+
+    if (i > 0) {
+      buy[i] = direction[i] === 1 && direction[i - 1] !== 1;
+      sell[i] = direction[i] === -1 && direction[i - 1] !== -1;
+      signal[i] = buy[i] ? 1 : sell[i] ? -1 : 0;
+    }
+  }
+
+  return { filter, upperBand, lowerBand, direction, upward, downward, signal, buy, sell, range };
 }
 // ============================================================ // TREND TRADER // // HPotter / Andrew Abraham // // Length     = 21 // Multiplier = 3 // ============================================================
 function trendTrader( candles, length = 21, multiplier = 3 ) {
@@ -3861,451 +3598,107 @@ low:
   )
 }; }
 async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
-  CORE_CALLS++;
+  // Match the Range Filter [DW] settings shown on the user's 15m chart:
+  // Type 1, Close, 2.618 Average Change, period 14, smooth range 27.
+  const candles = prepare(data15, 600);
+  if (!candles) return null;
+  const rf = rangeFilter(candles, {
+    filterType: 'Type 1', movementSource: 'Close',
+    rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
+    smoothRange: true, smoothPeriod: 27,
+    averageFilterChanges: false, averageChanges: 2
+  });
+  const i = candles.length - 1;
+  if (i < 1 || !Array.isArray(rf.direction)) return null;
 
-  // Chỉ dùng Range Filter 100/3 trên 15M.
-  const candles15 = prepare(data15, 600);
-  if (!candles15) return coreReject('RF_WARMUP_15M');
+  // Trade only the first closed candle where DW's held trend direction flips.
+  const side = rf.buy[i] ? 'LONG' : rf.sell[i] ? 'SHORT' : null;
+  if (!side) return null;
 
-  const rf15 = rangeFilter(candles15, 100, 3);
-  const i15 = candles15.length - 1;
+  const price = candles[i].c;
+  const filter = rf.filter[i];
+  const range = rf.range[i];
+  if (![price, filter, range].every(finite) || price <= 0 || range <= 0) return null;
+  if (side === 'LONG' ? price <= filter : price >= filter) return null;
 
-  if (!Array.isArray(rf15.buy) || !Array.isArray(rf15.sell)) {
-    return coreReject('RF_BUY_SELL_ARRAY_MISSING');
-  }
+  // Filter the flat state: a real DW turn must move off its prior value.
+  const priorFilter = rf.filter[i - 1];
+  if (!finite(priorFilter)) return null;
+  const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
+  if (move <= 0) return null;
 
-  const buy = rf15.buy[i15] === true;
-  const sell = rf15.sell[i15] === true;
-
-  if (!buy && !sell) return coreReject('RF_15M_NO_BUY_SELL');
-  if (buy && sell) return coreReject('RF_15M_CONFLICTING_SIGNAL');
-
-  const side = buy ? 'LONG' : 'SHORT';
-  const price = candles15[i15].c;
-  const filter15 = rf15.filter[i15];
-  const range15 = rf15.range[i15];
-
-  if (
-    ![price, filter15, range15].every(finite) ||
-    price <= 0 ||
-    range15 <= 0
-  ) {
-    return coreReject('RF_15M_INVALID_VALUE');
-  }
-
-  // SL theo envelope đối diện của Range Filter 15M.
-  const sl = buy
-    ? filter15 - range15
-    : filter15 + range15;
-
+  const sl = side === 'LONG' ? rf.lowerBand[i] : rf.upperBand[i];
   const risk = Math.abs(price - sl);
+  if (!finite(risk) || risk <= 0 || (side === 'LONG' ? sl >= price : sl <= price)) return null;
 
-  if (
-    !finite(risk) ||
-    risk <= 0 ||
-    (buy ? sl >= price : sl <= price)
-  ) {
-    return coreReject('RF_15M_INVALID_STOP');
-  }
-
-  const targetR = 3.5;
-  const tp = buy
-    ? price + risk * targetR
-    : price - risk * targetR;
-
-  const volRatio = range15 / price;
-  const score = 80;
-
-  CORE_REJECTS.ACCEPTED = (CORE_REJECTS.ACCEPTED || 0) + 1;
+  const targetR = 1.5;
+  const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
+  const rank = scoreRF15Signal(data15, side);
+  const score = clamp(Math.round(70 + rank.adjustment), 0, 100);
+  const volRatio = range / price;
 
   return {
-    side,
-    price,
-    sl,
-    tp,
-    setup: '15M_BUY_SELL',
+    side, symbol, price, sl, tp,
+    setup: 'RANGE_FILTER_DW_15M_TURN',
     pullbackType: 'NONE',
-    triggerType: buy
-      ? '15M_BUY'
-      : '15M_SELL',
-    marketState: buy
-      ? 'FILTER_BUY'
-      : 'FILTER_SELL',
-    volatility: volRatio < 0.001
-      ? 'LOW'
-      : volRatio < 0.004
-        ? 'NORMAL'
-        : 'HIGH',
-    qualityScore: score,
-    score,
-    risk: { risk, initialRisk: risk, rr: targetR, targetR }
+    triggerType: side === 'LONG' ? '15M_DW_UP_TURN' : '15M_DW_DOWN_TURN',
+    marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
+    volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
+    qualityScore: score, score,
+    risk: { risk, initialRisk: risk, rr: targetR, targetR },
+    rankAdjustment: rank.adjustment,
+    filterMove: move,
+    filterRange: range
   };
 }
-
-coreLogic.getRejectStats = getCoreRejectStats;
-coreLogic.resetRejectStats = resetCoreRejectStats;
-// =========================================================
-// CORE REPORT — MỖI 6 GIỜ
-// =========================================================
-
-const CORE_REPORT_INTERVAL =
-    6 * 60 * 60 * 1000
-
-let CORE_REPORT_TIMER = null
-let CORE_REPORT_RUNNING = false
-
-
-// =========================================================
-// SEND CORE REPORT
-// =========================================================
-
-async function sendCoreReport() {
-
-    // Không cho phép 2 report chạy cùng lúc
-    if (CORE_REPORT_RUNNING) {
-
-        console.log(
-            "⚠️ CORE REPORT ALREADY RUNNING -> SKIP"
-        )
-
-        return false
-    }
-
-    CORE_REPORT_RUNNING = true
-
-    try {
-
-        console.log(
-            "\n🚨🚨🚨 CORE 6H REPORT TRIGGERED 🚨🚨🚨"
-        )
-
-        console.log(
-            "🕐 TIME:",
-            new Date().toLocaleString(
-                "vi-VN",
-                {
-                    timeZone:
-                        "Asia/Ho_Chi_Minh"
-                }
-            )
-        )
-
-        console.log(
-            "🔎 SCANS SINCE LAST REPORT:",
-            CORE_TOTAL_CALLS
-        )
-
-
-        // =====================================================
-        // BUILD REPORT
-        // =====================================================
-
-        const report =
-            buildCore24hReport()
-
-        console.log(
-            "📊 CORE REPORT BUILT"
-        )
-
-        console.log(
-            "━━━━━━━━━━━━━━━━━━━━"
-        )
-
-        console.log(report)
-
-        console.log(
-            "━━━━━━━━━━━━━━━━━━━━"
-        )
-
-
-        // =====================================================
-        // SEND TELEGRAM
-        // =====================================================
-
-        console.log(
-            "📤 SENDING TO TELEGRAM..."
-        )
-
-        const sent =
-            await sendTelegram(report)
-
-        console.log(
-            "📨 TELEGRAM RESULT:",
-            sent
-        )
-
-
-        // =====================================================
-        // SUCCESS
-        // =====================================================
-
-        if (sent === true) {
-
-            console.log(
-                "✅ CORE REPORT SENT SUCCESSFULLY"
-            )
-
-            // Chỉ reset khi Telegram xác nhận gửi thành công
-            resetCore24hStats()
-
-            console.log(
-                "♻️ CORE STATS RESET"
-            )
-
-            console.log(
-                "📊 NEW SCAN COUNT:",
-                CORE_TOTAL_CALLS
-            )
-
-            return true
-        }
-
-
-        // =====================================================
-        // FAIL
-        // =====================================================
-
-        console.error(
-            "❌ CORE REPORT NOT SENT"
-        )
-
-        console.error(
-            "⚠️ CORE STATS NOT RESET"
-        )
-
-        console.error(
-            "⚠️ NEXT REPORT WILL KEEP CURRENT STATS"
-        )
-
-        return false
-
-
-    } catch (err) {
-
-        console.error(
-            "❌ CORE REPORT ERROR:",
-            err?.message || err
-        )
-
-        console.error(
-            err
-        )
-
-        console.error(
-            "⚠️ CORE STATS NOT RESET"
-        )
-
-        return false
-
-
-    } finally {
-
-        CORE_REPORT_RUNNING = false
-
-        console.log(
-            "🏁 CORE REPORT SEND FUNCTION FINISHED"
-        )
-    }
-}
-
-
-// =========================================================
-// START CORE 6H REPORT TIMER
-// =========================================================
-
-function startCore6hReport() {
-
-    console.log(
-        "\n🔥 CORE REPORT SYSTEM STARTED"
-    )
-
-    console.log(
-        "⏰ CORE REPORT: EVERY 6 HOURS"
-    )
-
-    console.log(
-        "🕐 START TIME:",
-        new Date().toLocaleString(
-            "vi-VN",
-            {
-                timeZone:
-                    "Asia/Ho_Chi_Minh"
-            }
-        )
-    )
-
-
-    // =====================================================
-    // CHỐNG START TIMER 2 LẦN
-    // =====================================================
-
-    if (CORE_REPORT_TIMER) {
-
-        console.log(
-            "⚠️ CORE REPORT TIMER ALREADY EXISTS -> SKIP"
-        )
-
-        return
-    }
-
-
-    // =====================================================
-    // TẠO TIMER DUY NHẤT
-    // =====================================================
-
-    CORE_REPORT_TIMER =
-        setInterval(
-            async () => {
-
-                console.log(
-                    "\n🚨🚨🚨 CORE REPORT INTERVAL FIRED 🚨🚨🚨"
-                )
-
-                console.log(
-                    "🕐 TIME:",
-                    new Date().toLocaleString(
-                        "vi-VN",
-                        {
-                            timeZone:
-                                "Asia/Ho_Chi_Minh"
-                        }
-                    )
-                )
-
-                console.log(
-                    "🔎 SCANS SINCE LAST REPORT:",
-                    CORE_TOTAL_CALLS
-                )
-
-
-                // =================================================
-                // GỌI SEND
-                // =================================================
-
-                const result =
-                    await sendCoreReport()
-
-
-                // =================================================
-                // RESULT LOG
-                // =================================================
-
-                if (result === true) {
-
-                    console.log(
-                        "✅ CORE 6H REPORT COMPLETED"
-                    )
-
-                } else {
-
-                    console.error(
-                        "❌ CORE 6H REPORT FAILED"
-                    )
-
-                }
-
-
-                console.log(
-                    "⏳ NEXT CORE REPORT IN: 6 HOURS"
-                )
-
-            },
-            CORE_REPORT_INTERVAL
-        )
-
-
-    // =====================================================
-    // TIMER CREATED
-    // =====================================================
-
-    console.log(
-        "✅ CORE REPORT TIMER CREATED"
-    )
-
-    console.log(
-        "⏳ NEXT CORE REPORT IN: 6 HOURS"
-    )
-
-}
-
-
-// =========================================================
-// START ON BOT STARTUP
-// =========================================================
-
-startCore6hReport()
 
 function scoreRF15Signal(data15, side) {
   const candles = prepare(data15, 600);
-  if (!candles) return { adjustment: 0 };
-
-  const rf = rangeFilter(candles, 100, 3);
+  if (!candles) return { adjustment: -100, early: false };
+  const rf = rangeFilter(candles, {
+    filterType: 'Type 1', movementSource: 'Close',
+    rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
+    smoothRange: true, smoothPeriod: 27,
+    averageFilterChanges: false, averageChanges: 2
+  });
   const i = candles.length - 1;
-  const lookback = 12;
-  const anchor = i - 3;
+  if (i < 3) return { adjustment: -100, early: false };
 
-  if (i < lookback || anchor < 0) {
-    return { adjustment: 0 };
+  // Rank higher when the latest DW turn just began; lower as the slope ages.
+  let runBars = 0;
+  for (let j = i; j > 0; j--) {
+    const a = rf.filter[j - 1], b = rf.filter[j];
+    if (!finite(a) || !finite(b)) break;
+    const d = b - a;
+    if (side === 'LONG' ? d > 0 : d < 0) runBars++;
+    else break;
   }
-
-  // ER thấp thường là giá giật qua lại;
-  // ER cao nghĩa là giá đi tương đối liền mạch.
+  const recent = side === 'LONG' ? rf.buy[i] : rf.sell[i];
   let path = 0;
-  for (let j = i - lookback + 1; j <= i; j++) {
+  const lookback = 8;
+  for (let j = Math.max(1, i - lookback + 1); j <= i; j++) {
     path += Math.abs(candles[j].c - candles[j - 1].c);
   }
+  const net = candles[i].c - candles[Math.max(0, i - lookback)].c;
+  const aligned = side === 'LONG' ? net > 0 : net < 0;
+  const efficiency = path > 0 ? Math.abs(net) / path : 0;
 
-  const netMove = candles[i].c - candles[i - lookback].c;
-  const efficiency = path > 0
-    ? Math.abs(netMove) / path
-    : 0;
-
-  const alignedMove =
-    side === 'LONG' ? netMove > 0 :
-    side === 'SHORT' ? netMove < 0 :
-    false;
-
-  // Đo giá đã chạy vượt envelope cũ theo hướng tín hiệu bao xa,
-  // tính theo số lần Range Filter hiện tại.
-  const oldFilter = rf.filter[anchor];
-  const oldRange = rf.range[anchor];
-  const currentRange = rf.range[i];
-  const price = candles[i].c;
-
-  let extensionUnits = 0;
-
-  if (
-    [oldFilter, oldRange, currentRange, price].every(finite) &&
-    oldRange > 0 &&
-    currentRange > 0
-  ) {
-    const oldOuterEdge = side === 'LONG'
-      ? oldFilter + oldRange
-      : oldFilter - oldRange;
-
-    extensionUnits = side === 'LONG'
-      ? (price - oldOuterEdge) / currentRange
-      : (oldOuterEdge - price) / currentRange;
+  const anchor = Math.max(0, i - 3);
+  const oldFilter = rf.filter[anchor], oldRange = rf.range[anchor];
+  const currentRange = rf.range[i], price = candles[i].c;
+  let extension = 0;
+  if ([oldFilter, oldRange, currentRange, price].every(finite) && oldRange > 0 && currentRange > 0) {
+    const oldEdge = side === 'LONG' ? oldFilter + oldRange : oldFilter - oldRange;
+    extension = side === 'LONG' ? (price - oldEdge) / currentRange : (oldEdge - price) / currentRange;
   }
-
-  extensionUnits = Math.max(0, extensionUnits);
-
-  const alignmentPoints = alignedMove ? 4 : -4;
-  const extensionPenalty = Math.min(
-    10,
-    Math.max(0, extensionUnits - 1) * 3
-  );
-
-  return {
-    adjustment:
-      efficiency * 10 +
-      alignmentPoints -
-      extensionPenalty,
-    efficiency,
-    alignedMove,
-    extensionUnits
-  };
+  extension = Math.max(0, extension);
+  const early = recent && runBars <= 2;
+  const freshness = early ? 12 - runBars * 2 : -Math.min(20, Math.max(0, runBars - 2) * 4);
+  const adjustment = efficiency * 8 + (aligned ? 4 : -6) + freshness - Math.min(20, extension * 5);
+  return { adjustment, efficiency, alignedMove: aligned, extensionUnits: extension, runBars, early };
 }
+
+
 // ================= SCAN =================
 async function scan(symbol){
 
