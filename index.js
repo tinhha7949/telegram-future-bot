@@ -3037,7 +3037,7 @@ filtered.sort((a,b) => {
   const bOpen = activeTrades.some(t => t.symbol === b.symbol && t.result === "PENDING") ? 1 : 0;
   return bOpen - aOpen || (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0);
 });
-const picks = filtered.slice(0, 8);
+const picks = filtered.slice(0, 3);
 for (const best of picks) {
   const existing = await trades.findOne({symbol:best.symbol,result:"PENDING"});
   if(!existing){
