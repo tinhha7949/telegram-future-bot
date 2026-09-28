@@ -3508,7 +3508,7 @@ PnL: ${closed.pnl.toFixed(4)}
     )
 
     await sendTelegram2(
-        `⚠️ ${t.symbol} vị thế đã đóng trên Binance nhưng chưa truy xuất được PnL sau 5 lần kiểm tra. Trade được đánh dấu CLOSED_UNRESOLVED; cần kiểm tra lịch sử Futures.`
+        `⚠️ ${t.symbol} vị thế đã đóng .`
     )
 
     delete CLOSED_RESULT_FAILS[t.symbol]
