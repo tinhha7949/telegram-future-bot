@@ -192,9 +192,11 @@ async function getClosedTradeResult(t){
 
     try{
 
+        const openTime = Number(t.enteredAt || t.openedAt || t.createdAt || 0);
         const trades = await binance.futuresUserTrades({
             symbol: t.symbol,
-            limit: 50,
+            startTime: Math.max(0, openTime - 5000),
+            limit: 1000,
             recvWindow: 20000
         })
 
@@ -202,13 +204,14 @@ async function getClosedTradeResult(t){
             return null
         }
 
-        // Chỉ lấy các fill có realized PnL (lệnh đóng vị thế)
-        const openTime = t.enteredAt || t.createdAt || 0
-
-const exits = trades.filter(x =>
-    Number(x.realizedPnl || 0) !== 0 &&
-    Number(x.time || 0) >= openTime
-)
+        // Find closing-side fills after entry, including exact break-even fills.
+        const closingSide = String(t.side).toUpperCase() === "LONG" ? "SELL" : "BUY";
+        const exits = trades
+            .filter(x =>
+                String(x.side || "").toUpperCase() === closingSide &&
+                Number(x.time || 0) >= openTime - 5000
+            )
+            .sort((a,b) => Number(a.time || 0) - Number(b.time || 0));
 
         if(exits.length === 0){
             return null
@@ -2642,7 +2645,10 @@ async function alertRangeExitProblem(symbol,detail){
 }
 async function closeOpenPositionOnRangeFlip(flip){
     const symbol=flip?.symbol;
-    if(!symbol||flip?.isFlip!==true||RANGE_EXIT_LOCK[symbol]) return {matched:false,closed:false};
+    if(!symbol||flip?.isFlip!==true) return {matched:false,closed:false};
+    // The independent position monitor may already be closing this confirmed flip.
+    // Tell scanner to consume the event rather than falling through to its own close path.
+    if(RANGE_EXIT_LOCK[symbol]) return {matched:true,closed:false,inProgress:true,reason:"EXIT_IN_PROGRESS"};
     RANGE_EXIT_LOCK[symbol]=true;
     try{
         let openTrade=null;
@@ -2895,9 +2901,9 @@ let signals = results
 const justClosedOnFlip = new Set();
 for(const flip of signals){
     const exitResult=await closeOpenPositionOnRangeFlip(flip);
-    if(exitResult?.matched){
+    if(exitResult?.matched||exitResult?.inProgress){
         justClosedOnFlip.add(flip.symbol);
-        if(!exitResult.closed) console.log(`⚠ ${flip.symbol} exit pending retry: ${exitResult.reason||"unknown"}`);
+        if(!exitResult.closed&&!exitResult.inProgress) console.log(`⚠ ${flip.symbol} exit pending retry: ${exitResult.reason||"unknown"}`);
     }
 }
 signals=signals.filter(s=>!justClosedOnFlip.has(s.symbol));
@@ -3478,9 +3484,9 @@ PnL: ${closed.pnl.toFixed(4)}
     )
 
     // Cho Binance/API thêm thời gian
-    if(CLOSED_RESULT_FAILS[t.symbol] < 10){
-        continue
-    }
+        if(CLOSED_RESULT_FAILS[t.symbol] < 5){
+            continue
+        }
 
     // ===== ORPHAN =====
 
@@ -3488,8 +3494,9 @@ PnL: ${closed.pnl.toFixed(4)}
         `🧹 CLEAR ORPHAN TRADE ${t.symbol}`
     )
 
+    const unresolvedQuery=t._id?{_id:t._id,result:"PENDING"}:{symbol:t.symbol,createdAt:t.createdAt,result:"PENDING"};
     await trades.updateOne(
-        { _id:t._id },
+        unresolvedQuery,
         {
             $set:{
                 result:"CLOSED_UNRESOLVED",
@@ -3498,6 +3505,10 @@ PnL: ${closed.pnl.toFixed(4)}
                     "NO_POSITION_AFTER_VERIFY_AND_NO_CLOSED_RESULT"
             }
         }
+    )
+
+    await sendTelegram2(
+        `⚠️ ${t.symbol} vị thế đã đóng trên Binance nhưng chưa truy xuất được PnL sau 5 lần kiểm tra. Trade được đánh dấu CLOSED_UNRESOLVED; cần kiểm tra lịch sử Futures.`
     )
 
     delete CLOSED_RESULT_FAILS[t.symbol]
