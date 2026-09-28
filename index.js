@@ -2637,7 +2637,11 @@ async function closeOpenPositionOnRangeFlip(flip){
         POS_CACHE=null; POS_CACHE_TIME=0;
         const positions=await getPositionsCached();
         const livePos=(positions||[]).find(p=>p.symbol===symbol&&Math.abs(Number(p.positionAmt||0))>0);
-        if(!livePos) return {matched:true,closed:false,reason:"NO_LIVE_POSITION"};
+        if(!livePos){
+            // A scanner signal with no exchange position is an ENTRY candidate, not an exit failure.
+            // Return unmatched so the scanner keeps it in the new-entry flow.
+            return {matched:false,closed:false,reason:"NO_LIVE_POSITION"};
+        }
         const liveSide=Number(livePos.positionAmt)>0?"LONG":"SHORT";
         if(liveSide===flip.side) return {matched:false,closed:false,reason:"SAME_DIRECTION"};
         if(openTrade){
