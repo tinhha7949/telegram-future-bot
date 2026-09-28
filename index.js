@@ -3113,11 +3113,13 @@ for (const best of picks) {
             lotFilter?.minQty || 0
         )
 
+    // Use the symbol's actual Binance rule when present. Do not invent a $5
+    // minimum for symbols whose exchangeInfo does not specify one.
     let minNotional =
     Number(
         minNotionalFilter?.minNotional ??
         minNotionalFilter?.notional ??
-        5
+        0
     )
 
     // ===== STEP 3: ROUND STEP =====
@@ -3139,7 +3141,7 @@ for (const best of picks) {
         qty * best.price
 
     // Never inflate a 1.5% allocation to Binance's minimum order size.
-    if(notional<minNotional){
+    if(minNotional>0&&notional<minNotional){
         console.log(`⏭ SKIP ${best.symbol}: ${TRADE_CONFIG.maxPositionPercent}% position=${notional.toFixed(4)} USDT is below exchange minimum=${minNotional} USDT`);
         continue;
     }
