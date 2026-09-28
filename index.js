@@ -387,7 +387,7 @@ const TRADE_CONFIG = {
     riskPerTrade: 0.01,      
     maxRiskPerTrade: 0.01,    
     maxPositionPercent: 1.5,  
-    maxActivePositions: 50      
+    maxActivePositions: 30      
 }
 let ACCOUNT_BALANCE = 0
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
@@ -3600,7 +3600,7 @@ low:
 async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   // Match the Range Filter [DW] settings shown on the user's 15m chart:
   // Type 1, Close, 2.618 Average Change, period 14, smooth range 27.
-  const candles = prepare(data15, 600);
+  const candles = prepare(data15, 1300);
   if (!candles) return null;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -3714,7 +3714,7 @@ async function scan(symbol){
     data5
 ] = await Promise.all([
     getData(symbol,"4h",1),
-    getData(symbol,"15m",601),
+    getData(symbol,"15m",1301),
     getData(symbol,"1h",1),
     getData(symbol,"5m",1),
 ])
