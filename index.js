@@ -3064,7 +3064,8 @@ for (const best of picks) {
   if(!replacingExisting&&totalPending>=100){ console.log(`⚠️ MAX TOTAL PENDING: ${totalPending}`); continue; }
   // This strategy has no stop distance; size by the existing notional allocation cap.
   const balance=ACCOUNT_BALANCE;
-  const positionBudget=balance*TRADE_CONFIG.maxPositionPercent;
+  // maxPositionPercent is a percentage (1.5 means 1.5%), not a multiplier (1.5x).
+  const positionBudget=balance*(TRADE_CONFIG.maxPositionPercent/100);
   const trade=buildTradeFromCoreSignal(best,btcRegime,positionBudget);
   if(!trade){ console.log(`🚫 FILTER BUILD TRADE: ${best.symbol}`); continue; }
   let qty=positionBudget/best.price;
@@ -3137,12 +3138,10 @@ for (const best of picks) {
     notional =
         qty * best.price
 
-    // ===== MIN NOTIONAL =====
+    // Never inflate a 1.5% allocation to Binance's minimum order size.
     if(notional<minNotional){
-        const requiredQty=normalizeQtyFinal(Math.ceil((minNotional/best.price)/stepSize)*stepSize,stepSize);
-        const requiredNotional=requiredQty*best.price;
-        if(requiredNotional>maxPositionValue){ console.log(`❌ MIN NOTIONAL EXCEEDS POSITION CAP ${best.symbol}`); continue; }
-        qty=requiredQty;notional=requiredNotional;
+        console.log(`⏭ SKIP ${best.symbol}: ${TRADE_CONFIG.maxPositionPercent}% position=${notional.toFixed(4)} USDT is below exchange minimum=${minNotional} USDT`);
+        continue;
     }
     if(notional>maxPositionValue||notional<minNotional||!Number.isFinite(notional)||!Number.isFinite(qty)||qty<=0){
         console.log(`❌ FINAL POSITION SIZE INVALID ${best.symbol}`);continue;
