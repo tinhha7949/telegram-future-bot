@@ -3,6 +3,7 @@ const OPEN_POSITION_LOCK = {}
 const RANGE_EXIT_LOCK = {}
 const RANGE_EXIT_ALERT_AT = {}
 const RANGE_EXIT_DATA_FAILS = {}
+const LAST_RF_SIGNAL_CANDLE = {}
 const RF_CANDLE_COUNT = 1300;
 const RF_FETCH_COUNT = RF_CANDLE_COUNT + 1;
 let DB_RECONNECTING = false
@@ -2376,6 +2377,19 @@ async function scan(symbol){
         if(!r || !r.side){
             return null
         }
+        // The scanner polls every minute while a 5m candle stays the latest
+        // closed candle. Consume each Range Filter flip once, and reject an
+        // old flip if the scanner/data feed was delayed by more than one bar.
+        const flipTime=Number(r.flipTime);
+        const flipAge=getTimestamp()-(flipTime+5*60*1000);
+        if(!Number.isFinite(flipTime)||flipAge>5*60*1000){
+            console.log(`⏭ STALE RANGE FLIP ${symbol} ${r.side} age=${Math.round(flipAge/60000)}m`);
+            return null;
+        }
+        if(LAST_RF_SIGNAL_CANDLE[symbol]===flipTime){
+            return null;
+        }
+        LAST_RF_SIGNAL_CANDLE[symbol]=flipTime;
         const rfRank = scoreRF5Signal(data5, r.side);
         // ==================================================
         // 5. SIGNAL FOUND
