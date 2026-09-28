@@ -3173,7 +3173,7 @@ for (const best of picks) {
         console.error(`🚨 DB SAVE FAIL ${trade.symbol}:`,dbErr?.message||dbErr);
         activeTrades.push({...trade,dbSaveFailed:true,dbRecoveryNeeded:true});
       }
-        const msg=`🔥 RANGE FILTER FLIP\n\n📊 ${trade.symbol}\n📈 ${trade.side}\n🎯 Entry: ${trade.entry}\n📦 Position: ${safeFixed(trade.notional,2)} USDT\n🧭 Giữ đến khi Range Filter xác nhận đảo chiều.`
+        const msg=`🔥 RANGE \n\n📊 ${trade.symbol}\n📈 ${trade.side}\n🎯 Entry: ${trade.entry}\n📦 Position: ${safeFixed(trade.notional,2)} USDT\n🧭 Wait.`
 
         await sendTelegram(msg)
 
