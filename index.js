@@ -2294,7 +2294,7 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
 }
 
 function scoreRF5Signal(data5, side) {
-  const candles = prepare(data5, RF_CANDLE_COUNT);
+  const candles = prepare(data5, 600);
   if (!candles) return { adjustment: -100, early: false };
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
