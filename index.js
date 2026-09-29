@@ -386,7 +386,7 @@ const LIMIT_1H  = 200 //100
 
 
 const TRADE_CONFIG = {
-    maxPositionPercent: 7.5,  
+    maxPositionPercent: 3.0,  
     maxActivePositions: 20      
 }
 let ACCOUNT_BALANCE = 0
@@ -1458,7 +1458,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 80)
+        .slice(0, 150)
         .map(candidate => candidate.symbol);
 
       console.log(
