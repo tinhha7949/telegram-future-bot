@@ -386,7 +386,7 @@ const LIMIT_1H  = 200 //100
 
 
 const TRADE_CONFIG = {
-    maxPositionPercent: 3.0,  
+    maxPositionPercent: 0.03,  
     maxActivePositions: 20      
 }
 let ACCOUNT_BALANCE = 0
@@ -3082,92 +3082,237 @@ for (const best of picks) {
   let totalPending=0;
   try { totalPending=await trades.countDocuments({result:"PENDING"}); } catch(e){ console.log("⚠ COUNT PENDING FAIL"); }
   if(!replacingExisting&&totalPending>=100){ console.log(`⚠️ MAX TOTAL PENDING: ${totalPending}`); continue; }
+  console.log(`⚡ INSTANT ENTRY ${best.symbol}`);
   // This strategy has no stop distance; size by the existing notional allocation cap.
-  const balance=ACCOUNT_BALANCE;
-  // maxPositionPercent is a percentage (1.5 means 1.5%), not a multiplier (1.5x).
-  const positionBudget=balance*(TRADE_CONFIG.maxPositionPercent/100);
-  const trade=buildTradeFromCoreSignal(best,btcRegime,positionBudget);
-  if(!trade){ console.log(`🚫 FILTER BUILD TRADE: ${best.symbol}`); continue; }
-  let qty=positionBudget/best.price;
-  const maxPositionValue=balance*3;
-  qty=Math.min(qty,maxPositionValue/best.price);
-  let notional=qty*best.price;
-  if(!(balance>0&&qty>0&&Number.isFinite(qty))){ console.log(`❌ QTY INVALID ${best.symbol}`); continue; }
+  // =====================================================
+// POSITION SIZE
+// CAPITAL ALLOCATION = SAME BASELINE SCANNER
+// NO TP/SL — THIS STRATEGY USES NOTIONAL SIZING
+// =====================================================
+const balance = ACCOUNT_BALANCE;
 
-    // ===== SYMBOL INFO =====
-    let info =
-        await getSymbolInfo(trade.symbol)
+const positionBudget =
+    balance * TRADE_CONFIG.maxPositionPercent;
 
-    if(!info || !info.filters){
+console.log(
+    `🧮 CAPITAL CALC ${best.symbol} | ` +
+    `balance=${balance} | ` +
+    `maxPositionPercent=${TRADE_CONFIG.maxPositionPercent} | ` +
+    `positionBudget=${positionBudget}`
+);
+
+const trade =
+    buildTradeFromCoreSignal(
+        best,
+        btcRegime,
+        positionBudget
+    );
+
+if(!trade){
+    console.log(
+        `🚫 FILTER BUILD TRADE: ${best.symbol}`
+    );
+    continue;
+}
+
+if(
+    !(balance > 0) ||
+    !(best.price > 0) ||
+    !Number.isFinite(balance) ||
+    !Number.isFinite(best.price)
+){
+    console.log(
+        `❌ INVALID BALANCE/PRICE ${best.symbol}`
+    );
+    continue;
+}
+
+
+// =====================================================
+// SYMBOL INFO
+// =====================================================
+
+let info =
+    await getSymbolInfo(trade.symbol);
+
+if(!info || !info.filters){
 
     console.log(
         `🚫 SYMBOL INFO FAIL: ${best.symbol}`
-    )
+    );
 
-    continue
+    continue;
 }
 
-    let lotFilter =
+
+// =====================================================
+// BINANCE LOT SIZE
+// =====================================================
+
+let lotFilter =
     info.filters.find(
         f => f.filterType === "MARKET_LOT_SIZE"
     ) ||
     info.filters.find(
         f => f.filterType === "LOT_SIZE"
-    )
+    );
 
-    let minNotionalFilter =
+
+// =====================================================
+// BINANCE NOTIONAL
+// =====================================================
+
+let minNotionalFilter =
     info.filters.find(
         f => f.filterType === "NOTIONAL"
     ) ||
     info.filters.find(
         f => f.filterType === "MIN_NOTIONAL"
-    )
+    );
 
-    let stepSize =
-        parseFloat(
-            lotFilter?.stepSize || 0.001
-        )
 
-    let minQty =
-        parseFloat(
-            lotFilter?.minQty || 0
-        )
+const stepSize =
+    parseFloat(
+        lotFilter?.stepSize || 0.001
+    );
 
-    // Use the symbol's actual Binance rule when present. Do not invent a $5
-    // minimum for symbols whose exchangeInfo does not specify one.
-    let minNotional =
+const minQty =
+    parseFloat(
+        lotFilter?.minQty || 0
+    );
+
+const minNotional =
     Number(
         minNotionalFilter?.minNotional ??
         minNotionalFilter?.notional ??
         0
-    )
+    );
 
-    // ===== STEP 3: ROUND STEP =====
-    qty =
-        normalizeQtyFinal(
-            Math.floor(qty / stepSize) * stepSize,
-            stepSize
-        )
 
-    // ===== STEP 4: CHECK MIN QTY =====
-    if(qty < minQty){
-        console.log(
-            `❌ MIN QTY FAIL ${best.symbol}`
-        )
-        continue
-    }
+if(
+    !(stepSize > 0) ||
+    !Number.isFinite(stepSize)
+){
 
-    notional =
-        qty * best.price
+    console.log(
+        `❌ INVALID STEP SIZE ${best.symbol}`
+    );
 
-    // Never inflate a 1.5% allocation to Binance's minimum order size.
-    if(minNotional>0&&notional<minNotional){
-        console.log(`⏭ SKIP ${best.symbol}: ${TRADE_CONFIG.maxPositionPercent}% position=${notional.toFixed(4)} USDT is below exchange minimum=${minNotional} USDT`);
-        continue;
-    }
-    if(notional>maxPositionValue||notional<minNotional||!Number.isFinite(notional)||!Number.isFinite(qty)||qty<=0){
-        console.log(`❌ FINAL POSITION SIZE INVALID ${best.symbol}`);continue;
-    }
+    continue;
+}
+// =====================================================
+// NORMAL SIZE
+// =====================================================
+let targetNotional =
+    positionBudget;
+
+// =====================================================
+// BUILD INITIAL QTY
+// =====================================================
+let qty =
+    targetNotional / best.price;
+
+if(
+    !Number.isFinite(qty) ||
+    qty <= 0
+){
+    console.log(
+        `❌ QTY INVALID ${best.symbol} | ` +
+        `budget=${targetNotional} | ` +
+        `price=${best.price}`
+    );
+    continue;
+}
+
+qty = normalizeQtyFinal(
+    Math.floor(qty / stepSize) * stepSize,
+    stepSize
+);
+
+notional =
+    qty * best.price;
+
+// =====================================================
+// FINAL MIN QTY CHECK
+// =====================================================
+if(
+    minQty > 0 &&
+    qty < minQty
+){
+    console.log(
+        `❌ MIN QTY FAIL ${best.symbol} | ` +
+        `qty=${qty} < minQty=${minQty} | ` +
+        `step=${stepSize}`
+    );
+
+    continue;
+}
+
+// =====================================================
+// CHECK MIN QTY AGAIN
+// =====================================================
+
+if(
+    minQty > 0 &&
+    qty < minQty
+){
+
+    console.log(
+        `❌ MIN QTY FAIL ${best.symbol} | ` +
+        `qty=${qty} < minQty=${minQty} | ` +
+        `step=${stepSize}`
+    );
+
+    continue;
+}
+// =====================================================
+// CHECK MIN NOTIONAL AGAIN
+// =====================================================
+if(
+    minNotional > 0 &&
+    notional < minNotional
+){
+    console.log(
+        `❌ MIN NOTIONAL FAIL ${best.symbol} | ` +
+        `notional=${notional.toFixed(6)} < ` +
+        `min=${minNotional} | ` +
+        `budget=${positionBudget.toFixed(6)}`
+    );
+
+    continue;
+}
+
+// =====================================================
+// FINAL VALIDATION
+// =====================================================
+
+if(
+    !Number.isFinite(qty) ||
+    !Number.isFinite(notional) ||
+    qty <= 0 ||
+    notional <= 0
+){
+
+    console.log(
+        `❌ FINAL POSITION SIZE INVALID ${best.symbol}`
+    );
+
+    continue;
+}
+
+
+// =====================================================
+// LOG FINAL SIZE
+// =====================================================
+
+console.log(
+    `💰 SIZE ${best.symbol} | ` +
+    `budget=${positionBudget.toFixed(4)} | ` +
+    `final=${notional.toFixed(4)} USDT | ` +
+    `qty=${qty} | ` +
+    `minQty=${minQty} | ` +
+    `minNotional=${minNotional}`
+);
 
     // ===== OPENING LOCK =====
     if(OPENING_POSITIONS[trade.symbol]){ console.log(`⛔ OPENING LOCK ${trade.symbol}`); continue; }
