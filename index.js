@@ -386,7 +386,7 @@ const LIMIT_1H  = 200 //100
 
 
 const TRADE_CONFIG = {
-    maxPositionPercent: 3.5,  
+    maxPositionPercent: 7.5,  
     maxActivePositions: 20      
 }
 let ACCOUNT_BALANCE = 0
