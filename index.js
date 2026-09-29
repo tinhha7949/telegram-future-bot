@@ -13,6 +13,10 @@ let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
 const OPENING_POSITIONS = {}
+const TRADE_CONFIG = {
+    maxPositionPercent: 0.38,  
+    maxActivePositions: 20      
+}
 const fs = require("fs")
 
 const PID_FILE = "./bot.pid"
@@ -383,12 +387,6 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 
 const LIMIT_15M = 300 //300
 const LIMIT_1H  = 200 //100
-
-
-const TRADE_CONFIG = {
-    maxPositionPercent: 0.03,  
-    maxActivePositions: 20      
-}
 let ACCOUNT_BALANCE = 0
 const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
 // const MIN_VOL_24H = 15000000
