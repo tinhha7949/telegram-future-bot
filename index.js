@@ -3494,7 +3494,7 @@ async function recoverOrphanPositions(){
     }
 
     console.log(
-        `♻️ RECOVER DB TRADE ${symbol} → ACTIVE UNTIL RANGE FLIP`
+        `♻️ RECOVER DB TRADE ${symbol} → ACTIVE `
     )
 
     continue
@@ -3636,7 +3636,7 @@ if(existingIndex !== -1){
     // Không tạo thêm trade thứ 2.
 
     console.log(
-        `♻️ ORPHAN ${symbol} ALREADY ACTIVE → SKIP DUPLICATE`
+        `♻️ ORPHAN ${symbol} ALREADY ACTIVE`
     )
 
     continue
@@ -3848,7 +3848,7 @@ setInterval(
 )
 
 console.log(
-    `♻️ AFTER ORPHAN RECOVERY: ${activeTrades.length} ACTIVE`
+    `♻️ RECOVERY: ${activeTrades.length} ACTIVE`
 )
 
 
