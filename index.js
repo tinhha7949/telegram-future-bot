@@ -6,6 +6,8 @@ const RANGE_EXIT_DATA_FAILS = {}
 const LAST_RF_SIGNAL_CANDLE = {}
 const RF_CANDLE_COUNT = 1300;
 const RF_FETCH_COUNT = RF_CANDLE_COUNT + 1;
+let NEXT_ENTRY_ALLOWED_AT = 0;
+const ENTRY_COOLDOWN_MS = 0;//8 * 60 * 1000;
 let DB_RECONNECTING = false
 let DB_LAST_ERROR = 0
 let TIME_SYNCED = false
@@ -400,8 +402,6 @@ let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
 let scanning = false
-let NEXT_ENTRY_ALLOWED_AT = 0;
-const ENTRY_COOLDOWN_MS = 8 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
@@ -2635,7 +2635,7 @@ filtered.sort((a,b) => {
   const bOpen = activeTrades.some(t => t.symbol === b.symbol && t.result === "PENDING") ? 1 : 0;
   return bOpen - aOpen || (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0);
 });
-const picks = filtered.slice(0, 3);
+const picks = filtered.slice(0, 1);
 for (const best of picks) {
   const existing = await trades.findOne({symbol:best.symbol,result:"PENDING"});
   if(!existing){
