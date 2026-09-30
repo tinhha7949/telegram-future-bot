@@ -2571,11 +2571,9 @@ if(dbMain.total >= 30){
 // CORE MỚI KHÔNG CÒN SCORE CŨ
 // Không dùng s.score nữa
 
-const coreQuality = Number(s.qualityScore ?? s.score ?? 0)
-const rfAdjustment = Number(s.rankAdjustment) || 0;
+const coreQuality = Number(s.qualityScore ?? s.score ?? 0);
 const rankScore =
   coreQuality +
-  rfAdjustment +
   Math.max(-10, Math.min(10, aiMain));
 candidates.push({
     ...s,
