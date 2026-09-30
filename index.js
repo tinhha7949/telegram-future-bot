@@ -1,5 +1,6 @@
 let DB_READY = false
 const OPEN_POSITION_LOCK = {}
+const RANGE_REVERSE_READY = {};
 const RANGE_EXIT_LOCK = {}
 const RANGE_EXIT_ALERT_AT = {}
 const RANGE_EXIT_DATA_FAILS = {}
@@ -2597,13 +2598,22 @@ if(!stillTradeable){
         };
     }
 
-    const ordersCleared=await cancelAllOrders(symbol);
+    let ordersCleared=false;
 
-    if(!ordersCleared){
-        console.log(
-            `⚠ DROP ${symbol}: cancel old orders failed`
-        );
-    }
+try{
+    ordersCleared=await cancelAllOrders(symbol);
+}catch(e){
+    console.log(
+        `⚠ DROP ${symbol}: cancelAllOrders failed: `+
+        `${e?.message||e}`
+    );
+}
+
+if(!ordersCleared){
+    console.log(
+        `⚠ DROP ${symbol}: cancel old orders failed`
+    );
+}
 
     if(openTrade){
         const closeQuery=
@@ -2642,6 +2652,7 @@ if(!stillTradeable){
         `✅ DROPPED ${symbol}: ` +
         `${liveSide} closed; no ${flip.side} entry`
     );
+    delete RANGE_REVERSE_READY[symbol];
 
     return {
         matched:true,
@@ -2690,13 +2701,22 @@ if(!stillTradeable){
          * 2. HỦY ORDER CŨ SAU KHI CLOSE ĐÃ XÁC NHẬN
          * =====================================================
          */
-        const ordersCleared=await cancelAllOrders(symbol);
+        let ordersCleared=false;
 
-        if(!ordersCleared){
-            console.log(
-                `⚠ REVERSAL ${symbol}: cancel old orders failed`
-            );
-        }
+try{
+    ordersCleared=await cancelAllOrders(symbol);
+}catch(e){
+    console.log(
+        `⚠ REVERSAL ${symbol}: cancelAllOrders failed: `+
+        `${e?.message||e}`
+    );
+}
+
+if(!ordersCleared){
+    console.log(
+        `⚠ REVERSAL ${symbol}: cancel old orders failed`
+    );
+}
 
         /*
          * =====================================================
@@ -2739,6 +2759,11 @@ if(!stillTradeable){
                     String(openTrade._id)
             );
         }
+        RANGE_REVERSE_READY[symbol]={
+    side:flip.side,
+    flipTime:Number(flip.flipTime)||Date.now(),
+    createdAt:Date.now()
+};
 
         console.log(
             `✅ REVERSAL CLOSED ${symbol}: ` +
@@ -3133,280 +3158,90 @@ for (const best of picks) {
   try { POS_CACHE=null; POS_CACHE_TIME=0; positions=await getPositionsCached(); }
   catch(e){ console.log(`⚠ POSITION CHECK FAIL ${best.symbol}: ${e.message}`); continue; }
   let realPos = positions.find(p => p.symbol===best.symbol && Math.abs(Number(p.positionAmt||0))>0);
-  if(existing){
-    if(!realPos){
+  let rangeReverseReady=false;
+
+const readyReverse=RANGE_REVERSE_READY[best.symbol];
+
+if(
+    readyReverse &&
+    readyReverse.side===best.side
+){
+    const age=Date.now()-(Number(readyReverse.createdAt)||0);
+
+    if(age<=30000){
+        delete RANGE_REVERSE_READY[best.symbol];
+        rangeReverseReady=true;
+
         console.log(
-            `⏳ ${best.symbol} DB pending but no exchange position; wait reconciliation`
+            `⚡ RANGE REVERSE READY ${best.symbol}: `+
+            `-> ${best.side}`
         );
-        continue;
+    }else{
+        delete RANGE_REVERSE_READY[best.symbol];
     }
-
-    const realSide =
-        Number(realPos.positionAmt)>0
-            ? "LONG"
-            : "SHORT";
-
-    // Cùng chiều → giữ lệnh hiện tại, không chồng lệnh.
-    if(realSide===best.side){
-        console.log(
-            `⏭ ${best.symbol} already ${realSide}; no duplicate`
-        );
-        continue;
-    }
-
-    // Ngược chiều nhưng phải là Range Filter flip đã xác nhận.
-    if(best.isFlip!==true){
-        console.log(
-            `⛔ ${best.symbol} opposite side without a confirmed Range Filter flip`
-        );
-        continue;
-    }
-    const stillTradeable =
-    await isSymbolStillTradeable(
-        best.symbol,
-        best.side
-    );
-
-if(!stillTradeable){
-    console.log(
-        `⛔ DROP ${best.symbol}: ` +
-        `current RF flip has insufficient force; ` +
-        `close old ${realSide} but do NOT reverse`
-    );
-
-    const closed =
-        await closePosition(
-            best.symbol,
-            realSide,
-            Math.abs(Number(realPos.positionAmt))
-        );
-
-    if(!closed){
-        console.log(
-            `🚨 DROP ABORT ${best.symbol}: ` +
-            `close not verified`
-        );
-        continue;
-    }
-
-    const ordersCleared =
-        await cancelAllOrders(best.symbol);
-
-    if(!ordersCleared){
-        console.log(
-            `⚠ DROP ${best.symbol}: ` +
-            `cancel old orders failed`
-        );
-    }
-
-    const updateQuery =
-        existing._id
-            ? {
-                _id:existing._id,
-                result:"PENDING"
-            }
-            : {
-                symbol:best.symbol,
-                result:"PENDING"
-            };
-
-    try{
-        await trades.updateOne(
-            updateQuery,
-            {
-                $set:{
-                    result:"CLOSED",
-                    closedAt:Date.now(),
-                    closeReason:"NO_LONGER_TRADEABLE",
-                    closeFlipTime:
-                        Number(best.flipTime)||Date.now(),
-                    reversedFrom:realSide,
-                    reversedTo:null
-                }
-            }
-        );
-    }catch(e){
-        console.log(
-            `🚨 DROP DB UPDATE FAIL ` +
-            `${best.symbol}: ${e.message}`
-        );
-    }
-
-    activeTrades =
-        activeTrades.filter(
-            t =>
-                String(t._id)!==
-                String(existing._id)
-        );
-
-    console.log(
-        `✅ DROP COMPLETE ${best.symbol}: ` +
-        `${realSide} closed; no ${best.side} reverse`
-    );
-
-    continue;
 }
+    if(!rangeReverseReady && existing && realPos){
+      const realSide =
+          Number(realPos.positionAmt)>0
+              ? "LONG"
+              : "SHORT";
 
-    console.log(
-        `🔁 REVERSAL ${best.symbol}: ` +
-        `${realSide} -> ${best.side}; ` +
-        `close old position first`
-    );
+      // Cùng chiều → giữ lệnh hiện tại.
+      if(realSide===best.side){
+          console.log(
+              `⏭ ${best.symbol} already ${realSide}; no duplicate`
+          );
+          continue;
+      }
 
-    // =====================================================
-    // 1. CLOSE OLD POSITION
-    // =====================================================
-    const closed =
-        await closePosition(
-            best.symbol,
-            realSide,
-            Math.abs(Number(realPos.positionAmt))
-        );
+      // Khác chiều nhưng không phải flip → không xử lý.
+      if(best.isFlip!==true){
+          console.log(
+              `⛔ ${best.symbol} opposite side without confirmed Range Filter flip`
+          );
+          continue;
+      }
 
-    if(!closed){
-        console.log(
-            `🚨 REVERSAL ABORT ${best.symbol}: close not verified`
-        );
-        continue;
-    }
+      // =====================================================
+      // CHỈ closeOpenPositionOnRangeFlip() ĐƯỢC QUYỀN ĐÓNG
+      // =====================================================
+      const flipResult =
+          await closeOpenPositionOnRangeFlip({
+              symbol:best.symbol,
+              side:best.side,
+              isFlip:true,
+              flipTime:best.flipTime
+          });
 
-    // =====================================================
-    // 2. CANCEL OLD SL / TP / ORDERS
-    // =====================================================
-    const ordersCleared =
-        await cancelAllOrders(best.symbol);
+      if(!flipResult?.closed){
+          console.log(
+              `⏭ RANGE FLIP NOT COMPLETED ${best.symbol}: `+
+              `${flipResult?.reason||"unknown"}`
+          );
+          continue;
+      }
 
-    if(!ordersCleared){
-        console.log(
-            `⚠ REVERSAL ${best.symbol}: cancel old orders failed`
-        );
-    }
+      // Flip yếu:
+      // closeOpenPositionOnRangeFlip() đã đóng lệnh cũ
+      // nhưng KHÔNG tạo RANGE_REVERSE_READY.
+      if(!flipResult.reversed){
+          continue;
+      }
 
-    // =====================================================
-    // 3. OLD TRADE = REVERSED
-    //    KHÔNG TÍNH WIN / LOSS
-    // =====================================================
-    const updateQuery =
-        existing._id
-            ? {
-                _id:existing._id,
-                result:"PENDING"
-            }
-            : {
-                symbol:best.symbol,
-                result:"PENDING"
-            };
+      // Flip đủ lực:
+      // closeOpenPositionOnRangeFlip() đã đóng lệnh cũ
+      // và đánh dấu READY cho chiều mới.
+      console.log(
+          `⚡ RANGE REVERSE READY ${best.symbol}: `+
+          `${flipResult.oldSide} -> ${flipResult.newSide}`
+      );
 
-    try{
-
-        const dbUpdate =
-            await trades.updateOne(
-                updateQuery,
-                {
-                    $set:{
-                        result:"REVERSED",
-                        closedAt:Date.now(),
-                        closeReason:"CORE_TREND_REVERSED",
-                        closeFlipTime:
-                            Number(best.flipTime)||Date.now(),
-                        reversedFrom:realSide,
-                        reversedTo:best.side
-                    }
-                }
-            );
-
-        if(
-            existing._id &&
-            Number(dbUpdate?.matchedCount||0)<1
-        ){
-            console.log(
-                `🚨 REVERSAL DB UPDATE MATCHED NO TRADE ` +
-                `${best.symbol}; opposite entry blocked`
-            );
-            continue;
-        }
-
-    }catch(e){
-
-        console.log(
-            `🚨 REVERSAL DB UPDATE FAIL ` +
-            `${best.symbol}: ${e.message}`
-        );
-
-        continue;
-    }
-
-    // =====================================================
-    // 4. REMOVE OLD TRADE FROM RAM
-    // =====================================================
-    activeTrades =
-        activeTrades.filter(
-            t =>
-                String(t._id)!==
-                String(existing._id)
-        );
-
-    // =====================================================
-    // 5. VERIFY POSITION IS REALLY CLOSED
-    // =====================================================
-    POS_CACHE=null;
-    POS_CACHE_TIME=0;
-
-    try{
-        positions =
-            await getPositionsCached();
-    }catch(e){
-
-        console.log(
-            `🚨 POST-CLOSE POSITION CHECK FAIL ` +
-            `${best.symbol}`
-        );
-
-        continue;
-    }
-
-    realPos =
-        positions.find(
-            p =>
-                p.symbol===best.symbol &&
-                Math.abs(
-                    Number(p.positionAmt||0)
-                )>0
-        );
-
-    if(realPos){
-
-        console.log(
-            `🚨 ${best.symbol} still has a position ` +
-            `after reversal close; do not open opposite`
-        );
-
-        continue;
-    }
-
-    console.log(
-        `✅ REVERSAL READY ${best.symbol}: ` +
-        `${realSide} closed -> opening ${best.side}`
-    );
-
-    /*
-     * QUAN TRỌNG:
-     *
-     * KHÔNG continue ở đây.
-     *
-     * Flow sẽ chạy tiếp xuống:
-     *
-     * cooldown
-     * max active
-     * position sizing
-     * buildTradeFromCoreSignal
-     * openPosition()
-     *
-     * => mở chiều mới.
-     */
-} else if(realPos){
-    console.log(`⛔ ${best.symbol} exchange position exists without matching pending record; wait orphan recovery`);
-    continue;
+      rangeReverseReady=true;
+  } else if(realPos && !rangeReverseReady){
+      console.log(
+          `⛔ ${best.symbol} exchange position exists without matching pending record; wait orphan recovery`
+      );
+      continue;
   }
   if(cooldownLeft>0&&!replacingExisting){ console.log(`⏳ Skip new entry ${best.symbol} during cooldown`); continue; }
   const realActive=positions.filter(p=>Math.abs(Number(p.positionAmt||0))>0).length;
