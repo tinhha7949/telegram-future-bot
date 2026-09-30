@@ -1855,11 +1855,11 @@ function rangeFilter(candles, options = {}) {
 
   return { filter, upperBand, lowerBand, direction, upward, downward, signal, buy, sell, range };
 }
-async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
+async function coreLogic(data4h, data15, data1h, data5, data1, symbol = null) {
   // Range Filter [DW], matched to the user's chart: Type 1 / Close / 2.618
   // Average Change / 14 / smoothed with period 27. prepare() excludes the
   // current forming candle so signals only come from a closed 5m candle.
-  const candles = prepare(data5, RF_CANDLE_COUNT);
+  const candles = prepare(data1, RF_CANDLE_COUNT);
   if (!candles) return null;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -1878,7 +1878,7 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   if (!finite(priorFilter)) return null;
   const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
   if (move <= 0) return null;
-  const rank = scoreRF5Signal(data5, side);
+  const rank = scoreRF5Signal(data1, side);
   const score = clamp(Math.round(70 + rank.adjustment), 0, 100);
   const volRatio = range / price;
   return {
@@ -1892,8 +1892,8 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   };
 }
 
-function scoreRF5Signal(data5, side) {
-  const candles = prepare(data5, 600);
+function scoreRF5Signal(data1, side) {
+  const candles = prepare(data1, 600);
   if (!candles) return { adjustment: -100, early: false };
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -1947,8 +1947,8 @@ async function scan(symbol){
         // 1. LOAD MARKET DATA
         // ==================================================
 
-        const data5 = await getData(symbol,"5m",RF_FETCH_COUNT);
-        if(!data5) return null;
+        const data1 = await getData(symbol,"1m",RF_FETCH_COUNT);
+        if(!data1) return null;
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
@@ -1957,7 +1957,7 @@ async function scan(symbol){
 
         try{
 
-            r = await coreLogic(null, null, null, data5, symbol)
+            r = await coreLogic(null, null, null, null, data1, symbol)
 
         }catch(coreErr){
 
@@ -1983,16 +1983,16 @@ async function scan(symbol){
         // closed candle. Consume each Range Filter flip once, and reject an
         // old flip if the scanner/data feed was delayed by more than one bar.
         const flipTime=Number(r.flipTime);
-        const flipAge=getTimestamp()-(flipTime+5*60*1000);
-        if(!Number.isFinite(flipTime)||flipAge>5*60*1000){
-            console.log(`⏭ STALE RANGE FLIP ${symbol} ${r.side} age=${Math.round(flipAge/60000)}m`);
-            return null;
-        }
+const flipAge=getTimestamp()-(flipTime+60*1000);
+if(!Number.isFinite(flipTime)||flipAge>60*1000){
+    console.log(`⏭ STALE RANGE FLIP ${symbol} ${r.side} age=${Math.round(flipAge/60000)}m`);
+    return null;
+}
         if(LAST_RF_SIGNAL_CANDLE[symbol]===flipTime){
             return null;
         }
         LAST_RF_SIGNAL_CANDLE[symbol]=flipTime;
-        const rfRank = scoreRF5Signal(data5, r.side);
+        const rfRank = scoreRF5Signal(data1, r.side);
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
@@ -2296,13 +2296,13 @@ async function monitorOpenRangeFlipsOnce(){
         const batch=symbols.slice(i,i+5);
         await Promise.all(batch.map(async symbol=>{
             try{
-                const data5=await Promise.race([
-                    getData(symbol,"5m",RF_FETCH_COUNT),
-                    new Promise((_,reject)=>setTimeout(()=>reject(new Error("5m data timeout")),12000))
+                const data1=await Promise.race([
+                    getData(symbol,"1m",RF_FETCH_COUNT),
+                    new Promise((_,reject)=>setTimeout(()=>reject(new Error("1m data timeout")),12000))
                 ]);
-                if(!data5) throw new Error("5m data empty");
+                if(!data1) throw new Error("1m data empty");
                 RANGE_EXIT_DATA_FAILS[symbol]=0;
-                const candles=prepare(data5,RF_CANDLE_COUNT);
+                const candles=prepare(data1,RF_CANDLE_COUNT);
                 if(!candles) throw new Error("5m candles insufficient for Range Filter");
                 const rf=rangeFilter(candles,{
                     filterType:"Type 1", movementSource:"Close",
