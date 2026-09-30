@@ -1992,7 +1992,7 @@ async function scan(symbol){
             return null;
         }
         LAST_RF_SIGNAL_CANDLE[symbol]=flipTime;
-        const rfRank = scoreRF5Signal(data5, r.side);
+        const rfRank = scoreRF5Signal(data15, r.side);
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
