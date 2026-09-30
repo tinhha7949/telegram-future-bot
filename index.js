@@ -1859,7 +1859,7 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   // Range Filter [DW], matched to the user's chart: Type 1 / Close / 2.618
   // Average Change / 14 / smoothed with period 27. prepare() excludes the
   // current forming candle so signals only come from a closed 5m candle.
-  const candles = prepare(data15, RF_CANDLE_COUNT);
+  const candles = prepare(data5, RF_CANDLE_COUNT);
   if (!candles) return null;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -1878,7 +1878,7 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   if (!finite(priorFilter)) return null;
   const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
   if (move <= 0) return null;
-  const rank = scoreRF5Signal(data15, side);
+  const rank = scoreRF5Signal(data5, side);
   const score = clamp(Math.round(70 + rank.adjustment), 0, 100);
   const volRatio = range / price;
   return {
@@ -1892,8 +1892,8 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   };
 }
 
-function scoreRF5Signal(data15, side) {
-  const candles = prepare(data15, 600);
+function scoreRF5Signal(data5, side) {
+  const candles = prepare(data5, 600);
   if (!candles) return { adjustment: -100, early: false };
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -1947,8 +1947,8 @@ async function scan(symbol){
         // 1. LOAD MARKET DATA
         // ==================================================
 
-        const data15 = await getData(symbol,"15m",RF_FETCH_COUNT);
-        if(!data15) return null;
+        const data5 = await getData(symbol,"5m",RF_FETCH_COUNT);
+        if(!data5) return null;
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
@@ -1957,7 +1957,7 @@ async function scan(symbol){
 
         try{
 
-            r = await coreLogic(null, null, null, data15, symbol)
+            r = await coreLogic(null, null, null, data5, symbol)
 
         }catch(coreErr){
 
@@ -1992,7 +1992,7 @@ async function scan(symbol){
             return null;
         }
         LAST_RF_SIGNAL_CANDLE[symbol]=flipTime;
-        const rfRank = scoreRF5Signal(data15, r.side);
+        const rfRank = scoreRF5Signal(data5, r.side);
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
@@ -2000,8 +2000,7 @@ async function scan(symbol){
         console.log(
             `🟢 SIGNAL: ${symbol} | ` +
             `SIDE=${r.side} | ` +
-            `SETUP=${r.setup || "N/A"} | ` +
-            `QUALITY=${r.qualityScore ?? "N/A"}`
+            `SETUP=${r.setup || "N/A"} | `
         )
 
         return {
