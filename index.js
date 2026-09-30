@@ -1618,39 +1618,6 @@ if (!finite(prev)) {
 out[i] = prev;
 }
 return out; }
-// ============================================================ // WMA // ============================================================
-function wma(values, length) {
-const out = new Array(values.length) .fill(NaN);
-if (length <= 0) { return out; }
-const denom = length * (length + 1) / 2;
-for ( let i = length - 1; i < values.length; i++ ) {
-let sum = 0;
-let valid = true;
-
-for (
-  let j = 0;
-  j < length;
-  j++
-) {
-
-  const v =
-    values[i - j];
-
-  if (!finite(v)) {
-    valid = false;
-    break;
-  }
-
-  sum +=
-    v * (length - j);
-}
-
-if (valid) {
-  out[i] =
-    sum / denom;
-}
-}
-return out; }
 // ============================================================ // TRUE RANGE // ============================================================
 function trueRange(candles) {
     const out = new Array(candles.length) .fill(NaN);
@@ -1888,377 +1855,11 @@ function rangeFilter(candles, options = {}) {
 
   return { filter, upperBand, lowerBand, direction, upward, downward, signal, buy, sell, range };
 }
-// ============================================================ // TREND TRADER // // HPotter / Andrew Abraham // // Length     = 21 // Multiplier = 3 // ============================================================
-function trendTrader( candles, length = 21, multiplier = 3 ) {
-const tr = trueRange(candles);
-const avgTR = wma( tr, length );
-const ret = new Array(candles.length) .fill(NaN);
-const pos = new Array(candles.length) .fill(0);
-const signal = new Array(candles.length) .fill(0);
-for ( let i = 0; i < candles.length; i++ ) {
-if (i === 0) {
-
-  ret[i] =
-    candles[i].c;
-
-  continue;
-}
-
-const previousATR =
-  avgTR[i - 1];
-
-let hiLimit = NaN;
-let loLimit = NaN;
-
-if (
-  i >= length &&
-  finite(previousATR)
-) {
-
-  hiLimit =
-    highestHigh(
-      candles,
-      i,
-      length
-    ) -
-    previousATR *
-    multiplier;
-
-  loLimit =
-    lowestLow(
-      candles,
-      i,
-      length
-    ) +
-    previousATR *
-    multiplier;
-}
-
-if (
-  finite(hiLimit) &&
-  candles[i].c > hiLimit &&
-  candles[i].c > loLimit
-) {
-
-  ret[i] =
-    hiLimit;
-
-} else if (
-  finite(loLimit) &&
-  candles[i].c < loLimit &&
-  candles[i].c < hiLimit
-) {
-
-  ret[i] =
-    loLimit;
-
-} else {
-
-  ret[i] =
-    finite(ret[i - 1])
-      ? ret[i - 1]
-      : candles[i].c;
-}
-
-if (
-  candles[i].c >
-  ret[i]
-) {
-
-  pos[i] = 1;
-
-} else if (
-  candles[i].c <
-  ret[i]
-) {
-
-  pos[i] = -1;
-
-} else {
-
-  pos[i] =
-    pos[i - 1];
-}
-
-if (
-  pos[i] === 1 &&
-  pos[i - 1] === -1
-) {
-
-  signal[i] = 1;
-
-} else if (
-  pos[i] === -1 &&
-  pos[i - 1] === 1
-) {
-
-  signal[i] = -1;
-}
-}
-return { line: ret, direction: pos, signal }; }
-// ============================================================ // DMI / ADX // // Wilder 14 // ============================================================
-function dmi( candles, length = 14 ) {
-const tr = new Array(candles.length) .fill(NaN);
-const plusDM = new Array(candles.length) .fill(0);
-const minusDM = new Array(candles.length) .fill(0);
-for ( let i = 1; i < candles.length; i++ ) {
-const upMove =
-  candles[i].h -
-  candles[i - 1].h;
-
-const downMove =
-  candles[i - 1].l -
-  candles[i].l;
-
-plusDM[i] =
-  upMove > downMove &&
-  upMove > 0
-    ? upMove
-    : 0;
-
-minusDM[i] =
-  downMove > upMove &&
-  downMove > 0
-    ? downMove
-    : 0;
-
-tr[i] =
-  Math.max(
-    candles[i].h -
-      candles[i].l,
-
-    Math.abs(
-      candles[i].h -
-      candles[i - 1].c
-    ),
-
-    Math.abs(
-      candles[i].l -
-      candles[i - 1].c
-    )
-  );
-}
-const atrR = rma( tr, length );
-const plusR = rma( plusDM, length );
-const minusR = rma( minusDM, length );
-const plus = new Array(candles.length) .fill(NaN);
-const minus = new Array(candles.length) .fill(NaN);
-const dx = new Array(candles.length) .fill(NaN);
-for ( let i = 0; i < candles.length; i++ ) {
-if (
-  !finite(atrR[i]) ||
-  atrR[i] <= 0
-) {
-  continue;
-}
-
-plus[i] =
-  100 *
-  plusR[i] /
-  atrR[i];
-
-minus[i] =
-  100 *
-  minusR[i] /
-  atrR[i];
-
-const sum =
-  plus[i] +
-  minus[i];
-
-if (sum > 0) {
-
-  dx[i] =
-    100 *
-    Math.abs(
-      plus[i] -
-      minus[i]
-    ) /
-    sum;
-}
-}
-return { adx: rma(dx, length), plus, minus }; }
-// ============================================================ // SUPERTREND // // Standard ATR-based SuperTrend // ATR 10 / multiplier 3 // ============================================================
-function supertrend( candles, atrLength = 10, multiplier = 3 ) {
-const atrSeries = atr( candles, atrLength );
-const upper = new Array(candles.length) .fill(NaN);
-const lower = new Array(candles.length) .fill(NaN);
-const line = new Array(candles.length) .fill(NaN);
-const direction = new Array(candles.length) .fill(0);
-const signal = new Array(candles.length) .fill(0);
-for ( let i = 0; i < candles.length; i++ ) {
-if (!finite(atrSeries[i])) {
-  continue;
-}
-
-const hl2 =
-  (
-    candles[i].h +
-    candles[i].l
-  ) / 2;
-
-const basicUpper =
-  hl2 +
-  multiplier *
-  atrSeries[i];
-
-const basicLower =
-  hl2 -
-  multiplier *
-  atrSeries[i];
-
-if (
-  i === 0 ||
-  !finite(upper[i - 1])
-) {
-
-  upper[i] =
-    basicUpper;
-
-  lower[i] =
-    basicLower;
-
-  direction[i] =
-    1;
-
-  line[i] =
-    lower[i];
-
-  continue;
-}
-
-upper[i] =
-  basicUpper < upper[i - 1] ||
-  candles[i - 1].c >
-    upper[i - 1]
-    ? basicUpper
-    : upper[i - 1];
-
-lower[i] =
-  basicLower > lower[i - 1] ||
-  candles[i - 1].c <
-    lower[i - 1]
-    ? basicLower
-    : lower[i - 1];
-
-const previousLine =
-  line[i - 1];
-
-if (
-  previousLine ===
-  upper[i - 1]
-) {
-
-  direction[i] =
-    candles[i].c <= upper[i]
-      ? -1
-      : 1;
-
-} else {
-
-  direction[i] =
-    candles[i].c >= lower[i]
-      ? 1
-      : -1;
-}
-
-line[i] =
-  direction[i] === 1
-    ? lower[i]
-    : upper[i];
-
-if (
-  direction[i] === 1 &&
-  direction[i - 1] === -1
-) {
-
-  signal[i] = 1;
-
-} else if (
-  direction[i] === -1 &&
-  direction[i - 1] === 1
-) {
-
-  signal[i] = -1;
-}
-}
-return { line, direction, signal }; }
-// ============================================================ // VOLUME // ============================================================
-function volumeRatio( candles, length = 20 ) {
-if ( candles.length <= length ) { return 1; }
-const base = avg( candles .slice( -length - 1, -1 ) .map(x => x.v) );
-if ( !finite(base) || base <= 0 ) { return 1; }
-return ( candles.at(-1).v / base ); }
-// ============================================================ // BARS SINCE SIGNAL // ============================================================
-function barsSince( signal, direction, maxBars = 12 ) {
-for ( let i = signal.length - 1;
-i >=
-  Math.max(
-    0,
-    signal.length - maxBars
-  );
-
-i--
-) {
-if (
-  signal[i] ===
-  direction
-) {
-
-  return (
-    signal.length -
-    1 -
-    i
-  );
-}
-}
-return Infinity; }
-// ============================================================ // MARKET STRUCTURE // ============================================================
-function swingStructure( candles, lookback = 40 ) {
-const recent = candles.slice( -lookback );
-if ( recent.length < 20 ) {
-return {
-  bull: false,
-  bear: false,
-  high: NaN,
-  low: NaN
-};
-}
-const mid = Math.floor( recent.length / 2 );
-const first = recent.slice( 0, mid );
-const second = recent.slice( mid );
-const firstHigh = Math.max( ...first.map( x => x.h ) );
-const secondHigh = Math.max( ...second.map( x => x.h ) );
-const firstLow = Math.min( ...first.map( x => x.l ) );
-const secondLow = Math.min( ...second.map( x => x.l ) );
-return {
-bull:
-  secondHigh > firstHigh &&
-  secondLow >= firstLow,
-
-bear:
-  secondLow < firstLow &&
-  secondHigh <= firstHigh,
-
-high:
-  Math.max(
-    ...candles
-      .slice(-12, -1)
-      .map(x => x.h)
-  ),
-
-low:
-  Math.min(
-    ...candles
-      .slice(-12, -1)
-      .map(x => x.l)
-  )
-}; }
 async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   // Range Filter [DW], matched to the user's chart: Type 1 / Close / 2.618
   // Average Change / 14 / smoothed with period 27. prepare() excludes the
   // current forming candle so signals only come from a closed 5m candle.
-  const candles = prepare(data5, RF_CANDLE_COUNT);
+  const candles = prepare(data15, RF_CANDLE_COUNT);
   if (!candles) return null;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -2277,7 +1878,7 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   if (!finite(priorFilter)) return null;
   const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
   if (move <= 0) return null;
-  const rank = scoreRF5Signal(data5, side);
+  const rank = scoreRF5Signal(data15, side);
   const score = clamp(Math.round(70 + rank.adjustment), 0, 100);
   const volRatio = range / price;
   return {
@@ -2291,8 +1892,8 @@ async function coreLogic(data4h, data15, data1h, data5, symbol = null) {
   };
 }
 
-function scoreRF5Signal(data5, side) {
-  const candles = prepare(data5, 600);
+function scoreRF5Signal(data15, side) {
+  const candles = prepare(data15, 600);
   if (!candles) return { adjustment: -100, early: false };
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -2346,8 +1947,8 @@ async function scan(symbol){
         // 1. LOAD MARKET DATA
         // ==================================================
 
-        const data5 = await getData(symbol,"5m",RF_FETCH_COUNT);
-        if(!data5) return null;
+        const data15 = await getData(symbol,"15m",RF_FETCH_COUNT);
+        if(!data15) return null;
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
@@ -2356,7 +1957,7 @@ async function scan(symbol){
 
         try{
 
-            r = await coreLogic(null, null, null, data5, symbol)
+            r = await coreLogic(null, null, null, data15, symbol)
 
         }catch(coreErr){
 
@@ -3237,24 +2838,6 @@ if(
     minQty > 0 &&
     qty < minQty
 ){
-    console.log(
-        `❌ MIN QTY FAIL ${best.symbol} | ` +
-        `qty=${qty} < minQty=${minQty} | ` +
-        `step=${stepSize}`
-    );
-
-    continue;
-}
-
-// =====================================================
-// CHECK MIN QTY AGAIN
-// =====================================================
-
-if(
-    minQty > 0 &&
-    qty < minQty
-){
-
     console.log(
         `❌ MIN QTY FAIL ${best.symbol} | ` +
         `qty=${qty} < minQty=${minQty} | ` +
