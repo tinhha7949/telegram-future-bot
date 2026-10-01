@@ -1556,7 +1556,8 @@ v: Number(
 function prepare(data, minLength) {
 if (!Array.isArray(data)) { return null; }
 const candles = data .map(normalizeCandle) .filter(x => finite(x.o) && finite(x.h) && finite(x.l) && finite(x.c) && finite(x.v) );
-const closed = candles.length > 1 ? candles.slice(0, -1) : [];
+//const closed = candles.length > 1 ? candles.slice(0, -1) : [];
+const closed = candles;
 if (closed.length < minLength) { return null; }
 return closed; }
 // ============================================================ // EMA // ============================================================
