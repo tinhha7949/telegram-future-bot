@@ -2037,180 +2037,7 @@ function safeFixed(value, digits = 2){
 
     return n.toFixed(digits)
 }
-// ================= BTC REGIME =================
-async function getBtcRegime() {
-
-    // Cache 2 phút
-    if(
-        BTC_REGIME_CACHE &&
-        Date.now() - BTC_REGIME_CACHE_TIME < 120000
-    ){
-        return BTC_REGIME_CACHE
-    }
-
-    const raw15 = await getData(
-        "BTCUSDT",
-        "15m",
-        120
-    )
-
-    const raw1h = await getData(
-        "BTCUSDT",
-        "1h",
-        120
-    )
-
-    if(!raw15 || !raw1h){
-        return "NEUTRAL"
-    }
-
-    // Chỉ dùng nến đã đóng
-    const data15 = raw15.slice(0, -1)
-    const data1h = raw1h.slice(0, -1)
-
-    if(
-        data15.length < 60 ||
-        data1h.length < 60
-    ){
-        return "NEUTRAL"
-    }
-
-    const close15 =
-        data15.map(x => Number(x[4]))
-
-    const close1h =
-        data1h.map(x => Number(x[4]))
-
-    const high15 =
-        data15.map(x => Number(x[2]))
-
-    const low15 =
-        data15.map(x => Number(x[3]))
-
-    const volume15 =
-        data15.map(x => Number(x[5]))
-
-    // ================= 15M =================
-
-    const ema20_15 =
-        ema(close15.slice(-60),20)
-
-    const ema50_15 =
-        ema(close15.slice(-100),50)
-
-    const ema20_15_prev =
-        ema(close15.slice(-61,-1),20)
-
-    // ================= 1H =================
-
-    const ema20_1h =
-        ema(close1h.slice(-60),20)
-
-    const ema50_1h =
-        ema(close1h.slice(-100),50)
-
-    const ema20_1h_prev =
-        ema(close1h.slice(-61,-1),20)
-
-    const ema50_1h_prev =
-        ema(close1h.slice(-101,-1),50)
-
-    const p15 = close15.at(-1)
-    const p1h = close1h.at(-1)
-
-    if(
-        !p15 ||
-        !p1h ||
-        !ema20_15 ||
-        !ema50_15 ||
-        !ema20_1h ||
-        !ema50_1h
-    ){
-        return "NEUTRAL"
-    }
-
-    // ================= TREND STRENGTH =================
-
-    const strength15 =
-        Math.abs(
-            ema20_15 - ema50_15
-        ) / p15
-
-    const strength1h =
-        Math.abs(
-            ema20_1h - ema50_1h
-        ) / p1h
-
-    // ================= SLOPE =================
-
-    const slope20_15 =
-        ema20_15_prev !== 0
-            ? (ema20_15 - ema20_15_prev)
-                / ema20_15_prev
-            : 0
-
-    const slope20_1h =
-        ema20_1h_prev !== 0
-            ? (ema20_1h - ema20_1h_prev)
-                / ema20_1h_prev
-            : 0
-
-    // ================= BTC BULL =================
-
-    const bull15 =
-        p15 > ema20_15 &&
-        ema20_15 > ema50_15 &&
-        slope20_15 > 0 &&
-        strength15 >= 0.0010
-
-    const bull1h =
-        p1h > ema20_1h &&
-        ema20_1h > ema50_1h &&
-        slope20_1h > 0 &&
-        ema50_1h >= ema50_1h_prev &&
-        strength1h >= 0.0010
-
-    // ================= BTC BEAR =================
-
-    const bear15 =
-        p15 < ema20_15 &&
-        ema20_15 < ema50_15 &&
-        slope20_15 < 0 &&
-        strength15 >= 0.0010
-
-    const bear1h =
-        p1h < ema20_1h &&
-        ema20_1h < ema50_1h &&
-        slope20_1h < 0 &&
-        ema50_1h <= ema50_1h_prev &&
-        strength1h >= 0.0010
-
-    // ================= FINAL REGIME =================
-
-    let regime = "NEUTRAL"
-
-    // BTC chỉ được BULL khi cả 15M + 1H cùng xác nhận
-    if(bull15 && bull1h){
-        regime = "BULL"
-    }
-
-    // BTC chỉ được BEAR khi cả 15M + 1H cùng xác nhận
-    else if(bear15 && bear1h){
-        regime = "BEAR"
-    }
-
-    BTC_REGIME_CACHE = regime
-    BTC_REGIME_CACHE_TIME = Date.now()
-
-    return regime
-}
-
-// Input: `best` is the core signal plus symbol:
-// const best = { ...signal, symbol }
-// Returns a DB-ready trade, or null when the signal is invalid.
-// Accepts the stable minimum core contract (side, price/entry, sl, tp),
-// carries additional core fields through unchanged, and normalizes DB fields.
-function buildTradeFromCoreSignal(best, btcRegime, positionBudget) {
+function buildTradeFromCoreSignal(best, positionBudget) {
   const side = String(best?.side ?? '').toUpperCase();
   const entry = Number(best?.price ?? best?.entry);
   const budget = Number(positionBudget);
@@ -2224,7 +2051,6 @@ function buildTradeFromCoreSignal(best, btcRegime, positionBudget) {
     setup: best.setup ?? 'RANGE_FILTER',
     marketState: best.marketState ?? null,
     volatility: best.volatility ?? null,
-    btcRegime: btcRegime ?? best.btcRegime ?? null,
     qualityScore: Number(best.qualityScore ?? best.score ?? 0) || 0,
     positionBudget: budget, quantity: 0, notional: 0,
     waitingEntry: false, breakoutTriggered: false,
@@ -2233,7 +2059,6 @@ function buildTradeFromCoreSignal(best, btcRegime, positionBudget) {
     result: 'PENDING'
   };
 }
-
 async function alertRangeExitProblem(symbol,detail){
     const now=Date.now();
     if(now-(RANGE_EXIT_ALERT_AT[symbol]||0)<60000) return;
@@ -2251,7 +2076,7 @@ async function closeOpenPositionOnRangeFlip(flip){
         let openTrade=null;
         try { openTrade=await trades.findOne({symbol,result:"PENDING"}); }
         catch(e) { console.log(`⚠ EXIT DB LOOKUP FAIL ${symbol}: ${e.message}; checking exchange position anyway`); }
-        POS_CACHE=null; POS_CACHE_TIME=0;
+        //POS_CACHE=null; POS_CACHE_TIME=0;
         const positions=await getPositionsCached();
         const livePos=(positions||[]).find(p=>p.symbol===symbol&&Math.abs(Number(p.positionAmt||0))>0);
         if(!livePos){
@@ -2282,9 +2107,8 @@ async function closeOpenPositionOnRangeFlip(flip){
         delete RANGE_EXIT_LOCK[symbol];
     }
 }
-
 async function monitorOpenRangeFlipsOnce(){
-    POS_CACHE=null; POS_CACHE_TIME=0;
+    //POS_CACHE=null; POS_CACHE_TIME=0;
     const positions=await getPositionsCached();
     if(!Array.isArray(positions)) throw new Error("Binance positions response invalid");
     const symbols=[...new Set([
@@ -2327,13 +2151,12 @@ async function monitorOpenRangeFlipsOnce(){
         }));
     }
 }
-
 async function rangeExitMonitorLoop(){
-    console.log("🟢 INDEPENDENT RANGE EXIT MONITOR STARTED (10s cycle)");
+    console.log("🟢 INDEPENDENT RANGE EXIT MONITOR STARTED (20s cycle)");
     while(true){
         try{ await monitorOpenRangeFlipsOnce(); }
         catch(e){ console.log(`🚨 RANGE EXIT MONITOR CYCLE FAIL: ${e?.message||e}`); await alertRangeExitProblem("ALL OPEN POSITIONS",e?.message||"Binance position check failed"); }
-        await new Promise(r=>setTimeout(r,10000));
+        await new Promise(r=>setTimeout(r,15000));
     }
 }
 // ================= SCANNER ================
@@ -2361,10 +2184,6 @@ if (cooldownLeft > 0) {
 
         console.log("🚀 SMART SCAN...")
 
-const btcRegime = await getBtcRegime()
-
-console.log(`₿ BTC REGIME: ${btcRegime}`)
-
 let now = Date.now()
 
         // ===== UPDATE SYMBOL =====
@@ -2388,7 +2207,7 @@ let now = Date.now()
         // Keep every open position in the scan universe, even if it dropped out of the top 80.
         const trackedSymbols = activeTrades.filter(t=>t?.result==="PENDING").map(t=>t.symbol).filter(Boolean);
         try {
-            POS_CACHE=null; POS_CACHE_TIME=0;
+            //POS_CACHE=null; POS_CACHE_TIME=0;
             const exchangePositions=await getPositionsCached();
             for(const pos of exchangePositions||[]) if(pos?.symbol&&Math.abs(Number(pos.positionAmt||0))>0) trackedSymbols.push(pos.symbol);
         } catch(e) {
@@ -2582,16 +2401,6 @@ candidates.push({
 })
 }
 
-// ================= BTC CONTEXT =================
-
-// Chỉ lưu BTC regime.
-// Không cộng/trừ score của CORE.
-
-candidates = candidates.map(c => ({
-    ...c,
-    btcRegime
-}))
-
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
             console.log("❌ No signal")
@@ -2641,7 +2450,8 @@ for (const best of picks) {
   }
   const replacingExisting = Boolean(existing);
   let positions;
-  try { POS_CACHE=null; POS_CACHE_TIME=0; positions=await getPositionsCached(); }
+  try { //POS_CACHE=null; POS_CACHE_TIME=0;
+     positions=await getPositionsCached(); }
   catch(e){ console.log(`⚠ POSITION CHECK FAIL ${best.symbol}: ${e.message}`); continue; }
   let realPos = positions.find(p => p.symbol===best.symbol && Math.abs(Number(p.positionAmt||0))>0);
   if(existing){
@@ -2699,7 +2509,6 @@ console.log(
 const trade =
     buildTradeFromCoreSignal(
         best,
-        btcRegime,
         positionBudget
     );
 
@@ -3071,7 +2880,7 @@ if(!t.enteredAt){
 let stillOpen = null
 let verifyOK = false
 
-for(let retry = 0; retry < 5; retry++){
+for(let retry = 0; retry < 3; retry++){
 
     try{
 
@@ -3099,13 +2908,13 @@ for(let retry = 0; retry < 5; retry++){
         }
 
         console.log(
-            `⚠️ VERIFY POSITION ${t.symbol} ${retry + 1}/5`
+            `⚠️ VERIFY POSITION ${t.symbol} ${retry + 1}/3`
         )
 
     }catch(e){
 
         console.log(
-            `❌ VERIFY API FAIL ${t.symbol} ${retry + 1}/5:`,
+            `❌ VERIFY API FAIL ${t.symbol} ${retry + 1}/3:`,
             e?.message || e
         )
 
@@ -3206,7 +3015,7 @@ PnL: ${closed.pnl.toFixed(4)}
     )
 
     // Cho Binance/API thêm thời gian
-        if(CLOSED_RESULT_FAILS[t.symbol] < 5){
+        if(CLOSED_RESULT_FAILS[t.symbol] < 3){
             continue
         }
 
@@ -3579,7 +3388,6 @@ async function recoverOrphanPositions(){
                 setup: "ORPHAN_RECOVERY",
                 marketState: "RECOVERY",
                 volatility: "UNKNOWN",
-                btcRegime: "UNKNOWN",
 
                 quantity:
                     Math.abs(positionAmt),
