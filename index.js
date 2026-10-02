@@ -2184,23 +2184,12 @@ async function monitorLossCutOnce(positions){
             positionAmt > 0
                 ? "LONG"
                 : "SHORT";
-
-        console.log(
-            `📉 LOSS WATCH ${symbol} | ` +
-            `${liveSide} | ` +
-            `Entry=${entryPrice} | ` +
-            `Mark=${markPrice} | ` +
-            `Lev=${leverage}x | ` +
-            `ROI=${roiPercent.toFixed(2)}%`
-        );
         // ====================================================
         // LOSS CUT: -30%
         // ====================================================
-
         if(roiPercent > -30){
             continue;
         }
-
         console.log(
             `🚨 AUTO LOSS CUT ${symbol} | ` +
             `${liveSide} | ` +
