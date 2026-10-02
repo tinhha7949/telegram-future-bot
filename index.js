@@ -1439,8 +1439,15 @@ async function getTopSymbols() {
         }
 
         // Biên độ high-low của 24 giờ gần nhất, tính theo giá hiện tại.
-        const range24 = (high - low) / last;
-        if (range24 < 0.03) continue;
+        const change24 = Number(ticker.priceChangePercent);
+
+if (
+  !Number.isFinite(change24) ||
+  Math.abs(change24) < 1 ||
+  Math.abs(change24) > 30
+) {
+  continue;
+}
 
         const bid = Number(ticker.bidPrice);
         const ask = Number(ticker.askPrice);
@@ -1450,7 +1457,7 @@ async function getTopSymbols() {
           if (mid > 0 && (ask - bid) / mid > 0.004) continue;
         }
 
-        candidates.push({ symbol, quoteVolume, range24 });
+        candidates.push({ symbol, quoteVolume, change24 });
       }
 
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
@@ -1461,7 +1468,7 @@ async function getTopSymbols() {
 
       console.log(
         `📊 RANGE FILTER UNIVERSE ${selected.length}` +
-        ` (eligible=${candidates.length}, minRange24h=3%)`
+        ` (eligible=${candidates.length}, absChange=1%→30%)`
       );
 
       return selected;
@@ -2107,10 +2114,158 @@ async function closeOpenPositionOnRangeFlip(flip){
         delete RANGE_EXIT_LOCK[symbol];
     }
 }
+// ============================================================
+// AUTO LOSS CUT
+// CLOSE POSITION WHEN BINANCE-STYLE ROI <= -30%
+// USDⓈ-M FUTURES / MARK PRICE
+// ============================================================
+async function monitorLossCutOnce(positions){
+
+    if(!Array.isArray(positions)) return;
+
+    for(const pos of positions){
+
+        const symbol = String(pos?.symbol || "");
+        const positionAmt = Number(pos?.positionAmt || 0);
+        const entryPrice = Number(pos?.entryPrice || 0);
+        const markPrice = Number(pos?.markPrice || 0);
+        const leverage = Number(pos?.leverage || 0);
+
+        // Không có vị thế
+        if(
+            !symbol ||
+            !Number.isFinite(positionAmt) ||
+            Math.abs(positionAmt) <= 0
+        ){
+            continue;
+        }
+
+        // Dữ liệu không đủ để tính ROI
+        if(
+            !Number.isFinite(entryPrice) ||
+            entryPrice <= 0 ||
+            !Number.isFinite(markPrice) ||
+            markPrice <= 0 ||
+            !Number.isFinite(leverage) ||
+            leverage <= 0
+        ){
+            console.log(
+                `⚠️ LOSS CUT SKIP ${symbol} | ` +
+                `invalid entry=${entryPrice} mark=${markPrice} leverage=${leverage}`
+            );
+            continue;
+        }
+
+        // LONG = +1
+        // SHORT = -1
+        const side = positionAmt > 0 ? 1 : -1;
+        /*
+         * Binance USDⓈ-M ROI theo Mark Price:
+         *
+         * ROI% =
+         * ((MarkPrice - EntryPrice) * Side)
+         * / MarkPrice
+         * * Leverage
+         * * 100
+         *
+         * Side:
+         * LONG  = +1
+         * SHORT = -1
+         */
+        const roiPercent =
+            (
+                ((markPrice - entryPrice) * side)
+                / markPrice
+            ) *
+            leverage *
+            100;
+
+        const liveSide =
+            positionAmt > 0
+                ? "LONG"
+                : "SHORT";
+
+        console.log(
+            `📉 LOSS WATCH ${symbol} | ` +
+            `${liveSide} | ` +
+            `Entry=${entryPrice} | ` +
+            `Mark=${markPrice} | ` +
+            `Lev=${leverage}x | ` +
+            `ROI=${roiPercent.toFixed(2)}%`
+        );
+        // ====================================================
+        // LOSS CUT: -30%
+        // ====================================================
+
+        if(roiPercent > -30){
+            continue;
+        }
+
+        console.log(
+            `🚨 AUTO LOSS CUT ${symbol} | ` +
+            `${liveSide} | ` +
+            `ROI=${roiPercent.toFixed(2)}% <= -30%`
+        );
+        try{
+            // Xóa các exit/order cũ trước
+            const cleared = await clearSymbolOrders(symbol);
+            if(!cleared){
+                console.log(
+                    `⚠️ LOSS CUT ${symbol}: ` +
+                    `legacy orders could not be cleared; ` +
+                    `still prioritizing market close`
+                );
+            }
+            // Đóng đúng chiều ngược lại
+            const closed = await closePosition(
+                symbol,
+                liveSide,
+                Math.abs(positionAmt)
+            );
+            // Bắt buộc bỏ cache để lần kiểm tra tiếp theo
+            // lấy lại vị thế thật từ Binance
+            //POS_CACHE = null;
+            //POS_CACHE_TIME = 0;
+            if(closed){
+
+                console.log(
+                    `✅ AUTO LOSS CUT CLOSED ${symbol} | ` +
+                    `${liveSide} | ` +
+                    `ROI=${roiPercent.toFixed(2)}%`
+                );
+
+            }else{
+
+                console.log(
+                    `🚨 AUTO LOSS CUT NOT VERIFIED ${symbol} | ` +
+                    `ROI=${roiPercent.toFixed(2)}%`
+                );
+
+                await alertRangeExitProblem(
+                    symbol,
+                    `Auto loss cut -30% chưa xác minh được vị thế đã đóng. ROI=${roiPercent.toFixed(2)}%`
+                );
+            }
+
+        }catch(e){
+
+            console.log(
+                `🚨 AUTO LOSS CUT ERROR ${symbol}:`,
+                e?.message || e
+            );
+
+            await alertRangeExitProblem(
+                symbol,
+                `Auto loss cut error: ${e?.message || e}`
+            );
+        }
+    }
+}
 async function monitorOpenRangeFlipsOnce(){
     //POS_CACHE=null; POS_CACHE_TIME=0;
     const positions=await getPositionsCached();
     if(!Array.isArray(positions)) throw new Error("Binance positions response invalid");
+    await monitorLossCutOnce(positions);
     const symbols=[...new Set([
         ...activeTrades.filter(t=>t?.result==="PENDING").map(t=>t.symbol),
         ...positions.filter(p=>Math.abs(Number(p.positionAmt||0))>0).map(p=>p.symbol)
