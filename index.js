@@ -1439,15 +1439,8 @@ async function getTopSymbols() {
         }
 
         // Biên độ high-low của 24 giờ gần nhất, tính theo giá hiện tại.
-        const change24 = Number(ticker.priceChangePercent);
-
-if (
-  !Number.isFinite(change24) ||
-  Math.abs(change24) < 1 ||
-  Math.abs(change24) > 30
-) {
-  continue;
-}
+        const range24 = (high - low) / last;
+        if (range24 < 0.03) continue;
 
         const bid = Number(ticker.bidPrice);
         const ask = Number(ticker.askPrice);
@@ -1457,7 +1450,7 @@ if (
           if (mid > 0 && (ask - bid) / mid > 0.004) continue;
         }
 
-        candidates.push({ symbol, quoteVolume, change24 });
+        candidates.push({ symbol, quoteVolume, range24 });
       }
 
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
@@ -1468,7 +1461,7 @@ if (
 
       console.log(
         `📊 RANGE FILTER UNIVERSE ${selected.length}` +
-        ` (eligible=${candidates.length}, absChange=1%→30%)`
+        ` (eligible=${candidates.length}, range24=3%→100%)`
       );
 
       return selected;
@@ -1886,7 +1879,37 @@ async function coreLogic(data4h, data15, data1h, data5, data1, symbol = null) {
   const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
   if (move <= 0) return null;
   const rank = scoreRF5Signal(data15, side);
-  const score = clamp(Math.round(70 + rank.adjustment), 0, 100);
+
+// ============================================================
+// HISTORY BEHAVIOR FILTER
+// ============================================================
+
+const historyBehavior =
+    analyzeRFHistoryBehavior(
+        candles,
+        rf,
+        side,
+        i
+    );
+
+if (!historyBehavior?.ok) {
+    return null;
+}
+
+// Không loại thẳng.
+// Dùng behavior lịch sử để điều chỉnh quality score.
+const historyAdjustment =
+    Number(historyBehavior.adjustment || 0);
+
+const score = clamp(
+    Math.round(
+        70 +
+        rank.adjustment +
+        historyAdjustment
+    ),
+    0,
+    100
+);
   const volRatio = range / price;
   return {
     side, symbol, price, isFlip: true, flipTime: candles[i].t,
@@ -1895,10 +1918,26 @@ async function coreLogic(data4h, data15, data1h, data5, data1, symbol = null) {
     marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
     volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
     qualityScore: score, score,
-    rankAdjustment: rank.adjustment, filterMove: move, filterRange: range
-  };
+    // RF original score
+    // RF original score
+    rankAdjustment: rank.adjustment,
+    rankMetrics: {
+        efficiency: rank.efficiency,
+        alignedMove: rank.alignedMove,
+        extensionUnits: rank.extensionUnits
+    },
+    filterMove: move,
+    filterRange: range,
+    // ========================================================
+    // HISTORY BEHAVIOR
+    // ========================================================
+    trendBehavior:
+        historyBehavior.trendBehavior,
+    largeFlipBehavior:
+        historyBehavior.largeFlipBehavior,
+    historyAdjustment
+};
 }
-
 function scoreRF5Signal(data15, side) {
   const candles = prepare(data15, 600);
   if (!candles) return { adjustment: -100, early: false };
@@ -1944,7 +1983,531 @@ function scoreRF5Signal(data15, side) {
   const adjustment = efficiency * 8 + (aligned ? 4 : -6) + freshness - Math.min(20, extension * 5);
   return { adjustment, efficiency, alignedMove: aligned, extensionUnits: extension, runBars, early };
 }
+// ============================================================
+// RF HISTORY BEHAVIOR
+// 1) TREND BEHAVIOR
+// 2) LARGE FLIP BEHAVIOR
+//
+// Dùng chính dữ liệu 15m đã đóng.
+// Không dùng nến tương lai cho tín hiệu hiện tại.
+// ============================================================
 
+function analyzeRFHistoryBehavior(candles, rf, side, currentIndex) {
+    if (
+        !Array.isArray(candles) ||
+        !Array.isArray(rf?.direction) ||
+        currentIndex < 100
+    ) {
+        return {
+            ok: true,
+            adjustment: 0,
+            trendBehavior: null,
+            largeFlipBehavior: null
+        };
+    }
+
+    // --------------------------------------------------------
+    // SETTINGS
+    // --------------------------------------------------------
+
+    const MIN_TREND_RUN = 3;
+
+    // Sau một large flip, theo dõi 6 cây 15m tiếp theo.
+    // Nếu RF đảo ngược trong khoảng này + không có follow-through
+    // => coi là large-flip failure.
+    const LARGE_FLIP_FORWARD_BARS = 6;
+
+    // Large candle threshold.
+    // Dùng ATR để chuẩn hóa giữa các coin.
+    const LARGE_BODY_ATR = 2.0;
+    const LARGE_RANGE_ATR = 2.5;
+
+    // Chỉ đánh giá large-flip profile nếu có đủ mẫu.
+    const MIN_LARGE_FLIP_SAMPLES = 4;
+
+    // --------------------------------------------------------
+    // ATR SERIES
+    // --------------------------------------------------------
+
+    const atrPeriod = 14;
+    const atr = new Array(candles.length).fill(NaN);
+
+    let trSum = 0;
+
+    for (let j = 0; j < candles.length; j++) {
+        const c = candles[j];
+
+        if (
+            !finite(c?.h) ||
+            !finite(c?.l) ||
+            !finite(c?.c)
+        ) {
+            continue;
+        }
+
+        let tr;
+
+        if (
+            j === 0 ||
+            !finite(candles[j - 1]?.c)
+        ) {
+            tr = c.h - c.l;
+        } else {
+            const prevClose = candles[j - 1].c;
+
+            tr = Math.max(
+                c.h - c.l,
+                Math.abs(c.h - prevClose),
+                Math.abs(c.l - prevClose)
+            );
+        }
+
+        if (!finite(tr) || tr <= 0) continue;
+
+        trSum += tr;
+
+        if (j >= atrPeriod) {
+            const oldC = candles[j - atrPeriod];
+
+            if (
+                finite(oldC?.h) &&
+                finite(oldC?.l) &&
+                finite(candles[j - atrPeriod - 1]?.c)
+            ) {
+                const prev = candles[j - atrPeriod - 1].c;
+
+                const oldTR = Math.max(
+                    oldC.h - oldC.l,
+                    Math.abs(oldC.h - prev),
+                    Math.abs(oldC.l - prev)
+                );
+
+                if (finite(oldTR)) {
+                    trSum -= oldTR;
+                }
+            }
+        }
+
+        if (j >= atrPeriod - 1) {
+            atr[j] = trSum / atrPeriod;
+        }
+    }
+
+    // ========================================================
+    // 1. TREND BEHAVIOR
+    // ========================================================
+
+    // Lấy các đoạn direction liên tục.
+    //
+    // Ví dụ:
+    // LONG 18 bars
+    // SHORT 4 bars
+    // LONG 27 bars
+    // SHORT 2 bars
+    //
+    // => coin có trend khá tốt nhưng đôi lúc whipsaw.
+    //
+    // LONG 2
+    // SHORT 3
+    // LONG 2
+    // SHORT 4
+    //
+    // => whipsaw cao.
+
+    const runs = [];
+
+    let runDirection = null;
+    let runLength = 0;
+
+    for (let j = 0; j <= currentIndex; j++) {
+        const d = Number(rf.direction[j]);
+
+        if (d !== 1 && d !== -1) {
+            if (runLength > 0 && runDirection) {
+                runs.push({
+                    direction: runDirection,
+                    length: runLength
+                });
+            }
+
+            runDirection = null;
+            runLength = 0;
+            continue;
+        }
+
+        const currentDirection =
+            d === 1 ? "LONG" : "SHORT";
+
+        if (currentDirection === runDirection) {
+            runLength++;
+        } else {
+            if (runLength > 0 && runDirection) {
+                runs.push({
+                    direction: runDirection,
+                    length: runLength
+                });
+            }
+
+            runDirection = currentDirection;
+            runLength = 1;
+        }
+    }
+
+    if (runLength > 0 && runDirection) {
+        runs.push({
+            direction: runDirection,
+            length: runLength
+        });
+    }
+
+    // Không tính đoạn hiện tại porque nó ainda está em formação.
+    // Chúng ta muốn lịch sử hoàn chỉnh.
+    if (runs.length > 1) {
+        runs.pop();
+    }
+
+    if (!runs.length) {
+        return {
+            ok: true,
+            adjustment: 0,
+            trendBehavior: null,
+            largeFlipBehavior: null
+        };
+    }
+
+    const lengths = runs
+        .map(x => Number(x.length))
+        .filter(Number.isFinite);
+
+    lengths.sort((a, b) => a - b);
+
+    const medianRun =
+        lengths[Math.floor(lengths.length / 2)];
+
+    const p75Run =
+        lengths[Math.floor((lengths.length - 1) * 0.75)];
+
+    const longRuns =
+        lengths.filter(x => x >= 8).length;
+
+    const shortRuns =
+        lengths.filter(x => x <= MIN_TREND_RUN).length;
+
+    const whipsawRate =
+        lengths.length > 0
+            ? shortRuns / lengths.length
+            : 0;
+
+    const longTrendRate =
+        lengths.length > 0
+            ? longRuns / lengths.length
+            : 0;
+
+    let trendAdjustment = 0;
+
+    // Coin thường có trend dài.
+    if (medianRun >= 10) {
+        trendAdjustment += 12;
+    } else if (medianRun >= 7) {
+        trendAdjustment += 7;
+    } else if (medianRun <= 4) {
+        trendAdjustment -= 8;
+    }
+
+    // Có nhiều trend >= 8 cây.
+    if (longTrendRate >= 0.45) {
+        trendAdjustment += 8;
+    } else if (longTrendRate >= 0.30) {
+        trendAdjustment += 4;
+    }
+
+    // Whipsaw cao thì trừ điểm.
+    if (whipsawRate >= 0.55) {
+        trendAdjustment -= 15;
+    } else if (whipsawRate >= 0.40) {
+        trendAdjustment -= 9;
+    } else if (whipsawRate <= 0.20) {
+        trendAdjustment += 5;
+    }
+
+    const trendBehavior = {
+        medianRun,
+        p75Run,
+        longTrendRate,
+        whipsawRate,
+        runCount: lengths.length
+    };
+
+    // ========================================================
+    // 2. LARGE FLIP BEHAVIOR
+    // ========================================================
+
+    // Tìm các lần RF flip trong lịch sử.
+    //
+    // Một flip được coi là "large" khi:
+    //
+    // body >= 2 ATR
+    // HOẶC
+    // range >= 2.5 ATR
+    //
+    // Sau đó xem 6 cây tiếp theo:
+    //
+    // A. RF có đảo chiều nhanh không?
+    // B. Giá có chạy tiếp theo hướng flip không?
+    //
+    // Đây chính là thứ dùng để phát hiện:
+    //
+    // "nến to -> đổi hướng -> đi ngang -> quay đầu"
+
+    const largeFlipSamples = [];
+
+    for (
+        let j = atrPeriod;
+        j < currentIndex;
+        j++
+    ) {
+        const isLongFlip =
+            !!rf.buy?.[j];
+
+        const isShortFlip =
+            !!rf.sell?.[j];
+
+        if (!isLongFlip && !isShortFlip) {
+            continue;
+        }
+
+        const flipSide =
+            isLongFlip ? "LONG" : "SHORT";
+
+        const a = atr[j];
+
+        if (!finite(a) || a <= 0) {
+            continue;
+        }
+
+        const candle = candles[j];
+
+        const body =
+            Math.abs(candle.c - candle.o);
+
+        const candleRange =
+            candle.h - candle.l;
+
+        if (
+            !finite(body) ||
+            !finite(candleRange)
+        ) {
+            continue;
+        }
+
+        const bodyATR = body / a;
+        const rangeATR = candleRange / a;
+
+        const isLarge =
+            bodyATR >= LARGE_BODY_ATR ||
+            rangeATR >= LARGE_RANGE_ATR;
+
+        if (!isLarge) {
+            continue;
+        }
+
+        // --------------------------------------------
+        // Evaluate next 6 bars
+        // --------------------------------------------
+
+        const end =
+            Math.min(
+                currentIndex,
+                j + LARGE_FLIP_FORWARD_BARS
+            );
+
+        if (end <= j) continue;
+
+        const entryPrice = candle.c;
+
+        let maxFavorable = 0;
+        let maxAdverse = 0;
+
+        for (let k = j + 1; k <= end; k++) {
+            const future = candles[k];
+
+            if (
+                !finite(future.h) ||
+                !finite(future.l)
+            ) {
+                continue;
+            }
+
+            if (flipSide === "LONG") {
+                maxFavorable = Math.max(
+                    maxFavorable,
+                    future.h - entryPrice
+                );
+
+                maxAdverse = Math.max(
+                    maxAdverse,
+                    entryPrice - future.l
+                );
+            } else {
+                maxFavorable = Math.max(
+                    maxFavorable,
+                    entryPrice - future.l
+                );
+
+                maxAdverse = Math.max(
+                    maxAdverse,
+                    future.h - entryPrice
+                );
+            }
+        }
+
+        const favorableATR =
+            maxFavorable / a;
+
+        const adverseATR =
+            maxAdverse / a;
+
+        // RF đảo ngược trong 6 cây?
+        let reversedQuickly = false;
+
+        for (
+            let k = j + 1;
+            k <= end;
+            k++
+        ) {
+            const d =
+                Number(rf.direction[k]);
+
+            if (
+                (flipSide === "LONG" && d === -1) ||
+                (flipSide === "SHORT" && d === 1)
+            ) {
+                reversedQuickly = true;
+                break;
+            }
+        }
+
+        // Một large flip được coi là SUCCESS khi:
+        //
+        // - giá đi thuận ít nhất 0.75 ATR
+        // - và không bị RF đảo chiều quá nhanh
+        //
+        const continued =
+            favorableATR >= 0.75 &&
+            !reversedQuickly;
+
+        // Failure đúng kiểu mày mô tả:
+        //
+        // - không follow-through đáng kể
+        // - hoặc RF đảo chiều nhanh
+        //
+        const failed =
+            reversedQuickly ||
+            favorableATR < 0.50;
+
+        largeFlipSamples.push({
+            side: flipSide,
+            bodyATR,
+            rangeATR,
+            favorableATR,
+            adverseATR,
+            continued,
+            failed
+        });
+    }
+
+    let largeFlipBehavior = null;
+    let largeFlipAdjustment = 0;
+
+    if (
+        largeFlipSamples.length >=
+        MIN_LARGE_FLIP_SAMPLES
+    ) {
+        const successful =
+            largeFlipSamples.filter(
+                x => x.continued
+            ).length;
+
+        const failed =
+            largeFlipSamples.filter(
+                x => x.failed
+            ).length;
+
+        const continuationRate =
+            successful /
+            largeFlipSamples.length;
+
+        const failureRate =
+            failed /
+            largeFlipSamples.length;
+
+        largeFlipBehavior = {
+            samples: largeFlipSamples.length,
+            continuationRate,
+            failureRate
+        };
+
+        // --------------------------------------------
+        // Chỉ áp dụng penalty nếu CURRENT flip cũng lớn.
+        // --------------------------------------------
+
+        const currentATR = atr[currentIndex];
+
+        if (
+            finite(currentATR) &&
+            currentATR > 0
+        ) {
+            const currentCandle =
+                candles[currentIndex];
+
+            const currentBody =
+                Math.abs(
+                    currentCandle.c -
+                    currentCandle.o
+                );
+
+            const currentRange =
+                currentCandle.h -
+                currentCandle.l;
+
+            const currentBodyATR =
+                currentBody / currentATR;
+
+            const currentRangeATR =
+                currentRange / currentATR;
+
+            const currentIsLarge =
+                currentBodyATR >= LARGE_BODY_ATR ||
+                currentRangeATR >= LARGE_RANGE_ATR;
+
+            if (currentIsLarge) {
+
+                // Coin này thường large flip chạy tiếp.
+                if (continuationRate >= 0.70) {
+                    largeFlipAdjustment += 10;
+                }
+
+                // Coin này thường large flip fail.
+                if (failureRate >= 0.60) {
+                    largeFlipAdjustment -= 20;
+                } else if (failureRate >= 0.45) {
+                    largeFlipAdjustment -= 10;
+                }
+            }
+        }
+    }
+
+    return {
+        ok: true,
+
+        adjustment:
+            trendAdjustment +
+            largeFlipAdjustment,
+
+        trendBehavior,
+        largeFlipBehavior
+    };
+}
 // ================= SCAN =================
 async function scan(symbol){
 
@@ -1998,7 +2561,6 @@ if(!Number.isFinite(flipTime)||flipAge>15*60*1000){
             return null;
         }
         LAST_RF_SIGNAL_CANDLE[symbol]=flipTime;
-        const rfRank = scoreRF5Signal(data15, r.side);
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
@@ -2012,12 +2574,6 @@ if(!Number.isFinite(flipTime)||flipAge>15*60*1000){
         return {
             symbol,
             ...r,
-            rankAdjustment: rfRank.adjustment,
-rankMetrics: {
-  efficiency: rfRank.efficiency,
-  alignedMove: rfRank.alignedMove,
-  extensionUnits: rfRank.extensionUnits
-}
         }
 
     }catch(e){
