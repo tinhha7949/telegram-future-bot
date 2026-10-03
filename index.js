@@ -1878,35 +1878,20 @@ async function coreLogic(data4h, data15, data1h, data5, data1, symbol = null) {
   if (!finite(priorFilter)) return null;
   const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
   if (move <= 0) return null;
-  const rank = scoreRF5Signal(data15, side);
-
+  // ============================================================
+// MDF — MOVE QUALITY / CONTINUATION QUALITY
+// RF quyết định hướng.
+// MDF chỉ đánh giá chất lượng / nhiên liệu của cú move.
 // ============================================================
-// HISTORY BEHAVIOR FILTER
-// ============================================================
 
-const historyBehavior =
-    analyzeRFHistoryBehavior(
-        candles,
-        rf,
-        side,
-        i
-    );
+const mdf = analyzeMomentumDecayField(candles, side, i);
 
-if (!historyBehavior?.ok) {
-    return null;
-}
+if (!mdf?.ok) return null;
 
-// Không loại thẳng.
-// Dùng behavior lịch sử để điều chỉnh quality score.
-const historyAdjustment =
-    Number(historyBehavior.adjustment || 0);
+const mdfAdjustment = Number(mdf.adjustment || 0);
 
 const score = clamp(
-    Math.round(
-        70 +
-        rank.adjustment +
-        historyAdjustment
-    ),
+    Math.round(70 + mdfAdjustment),
     0,
     100
 );
@@ -1917,595 +1902,824 @@ const score = clamp(
     triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
     marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
     volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
-    qualityScore: score, score,
-    // RF original score
-    // RF original score
-    rankAdjustment: rank.adjustment,
-    rankMetrics: {
-        efficiency: rank.efficiency,
-        alignedMove: rank.alignedMove,
-        extensionUnits: rank.extensionUnits
-    },
-    filterMove: move,
-    filterRange: range,
-    // ========================================================
-    // HISTORY BEHAVIOR
-    // ========================================================
-    trendBehavior:
-        historyBehavior.trendBehavior,
-    largeFlipBehavior:
-        historyBehavior.largeFlipBehavior,
-    historyAdjustment
+    qualityScore: score,
+score,
+
+// ============================================================
+// MDF METRICS
+// ============================================================
+mdfAdjustment,
+
+mdf: {
+    impulseDetected: !!mdf.impulseDetected,
+
+    e0: Number(mdf.e0 || 0),
+    energyPct: Number(mdf.energyPct || 0),
+
+    halfLife: Number(mdf.halfLife || 0),
+    elapsedBars: Number(mdf.elapsedBars || 0),
+
+    etaToExhaustion:
+        mdf.etaToExhaustion == null
+            ? null
+            : Number(mdf.etaToExhaustion),
+
+    phase: mdf.phase || null,
+
+    weak: !!mdf.weak,
+    exhausted: !!mdf.exhausted,
+
+    bodyAtr: Number(mdf.bodyAtr || 0),
+    rangeAtr: Number(mdf.rangeAtr || 0),
+    bodyEfficiency: Number(mdf.bodyEfficiency || 0)
+},
+
+filterMove: move,
+filterRange: range
 };
 }
-function scoreRF5Signal(data15, side) {
-  const candles = prepare(data15, 600);
-  if (!candles) return { adjustment: -100, early: false };
-  const rf = rangeFilter(candles, {
-    filterType: 'Type 1', movementSource: 'Close',
-    rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
-    smoothRange: true, smoothPeriod: 27,
-    averageFilterChanges: false, averageChanges: 2
-  });
-  const i = candles.length - 1;
-  if (i < 3) return { adjustment: -100, early: false };
-
-  // Rank higher when the latest DW turn just began; lower as the slope ages.
-  let runBars = 0;
-  for (let j = i; j > 0; j--) {
-    const a = rf.filter[j - 1], b = rf.filter[j];
-    if (!finite(a) || !finite(b)) break;
-    const d = b - a;
-    if (side === 'LONG' ? d > 0 : d < 0) runBars++;
-    else break;
-  }
-  const recent = side === 'LONG' ? rf.buy[i] : rf.sell[i];
-  let path = 0;
-  const lookback = 8;
-  for (let j = Math.max(1, i - lookback + 1); j <= i; j++) {
-    path += Math.abs(candles[j].c - candles[j - 1].c);
-  }
-  const net = candles[i].c - candles[Math.max(0, i - lookback)].c;
-  const aligned = side === 'LONG' ? net > 0 : net < 0;
-  const efficiency = path > 0 ? Math.abs(net) / path : 0;
-
-  const anchor = Math.max(0, i - 3);
-  const oldFilter = rf.filter[anchor], oldRange = rf.range[anchor];
-  const currentRange = rf.range[i], price = candles[i].c;
-  let extension = 0;
-  if ([oldFilter, oldRange, currentRange, price].every(finite) && oldRange > 0 && currentRange > 0) {
-    const oldEdge = side === 'LONG' ? oldFilter + oldRange : oldFilter - oldRange;
-    extension = side === 'LONG' ? (price - oldEdge) / currentRange : (oldEdge - price) / currentRange;
-  }
-  extension = Math.max(0, extension);
-  const early = recent && runBars <= 2;
-  const freshness = early ? 12 - runBars * 2 : -Math.min(20, Math.max(0, runBars - 2) * 4);
-  const adjustment = efficiency * 8 + (aligned ? 4 : -6) + freshness - Math.min(20, extension * 5);
-  return { adjustment, efficiency, alignedMove: aligned, extensionUnits: extension, runBars, early };
-}
 // ============================================================
-// RF HISTORY BEHAVIOR
-// 1) TREND BEHAVIOR
-// 2) LARGE FLIP BEHAVIOR
+// MOMENTUM DECAY FIELD
+// ============================================================
 //
-// Dùng chính dữ liệu 15m đã đóng.
-// Không dùng nến tương lai cho tín hiệu hiện tại.
+// RF = direction trigger
+// MDF = impulse / energy / continuation quality
+//
+// KHÔNG dùng MDF BULL/BEAR để quyết định LONG/SHORT.
+// Side chỉ được dùng để đo body theo hướng RF.
 // ============================================================
 
-function analyzeRFHistoryBehavior(candles, rf, side, currentIndex) {
+function analyzeMomentumDecayField(candles, side, currentIndex) {
+
     if (
         !Array.isArray(candles) ||
-        !Array.isArray(rf?.direction) ||
-        currentIndex < 100
+        currentIndex < 20 ||
+        !['LONG', 'SHORT'].includes(side)
     ) {
         return {
             ok: true,
             adjustment: 0,
-            trendBehavior: null,
-            largeFlipBehavior: null
+            impulseDetected: false,
+            e0: 0,
+            energyPct: 0,
+            halfLife: 4,
+            elapsedBars: 0,
+            etaToExhaustion: 0,
+            phase: 'DEPLETED',
+            weak: false,
+            exhausted: false,
+            bodyAtr: 0,
+            rangeAtr: 0,
+            bodyEfficiency: 0
         };
     }
 
     // --------------------------------------------------------
     // SETTINGS
+    // 15m
     // --------------------------------------------------------
 
-    const MIN_TREND_RUN = 3;
+    const ATR_PERIOD = 14;
 
-    // Sau một large flip, theo dõi 6 cây 15m tiếp theo.
-    // Nếu RF đảo ngược trong khoảng này + không có follow-through
-    // => coi là large-flip failure.
-    const LARGE_FLIP_FORWARD_BARS = 6;
+    // MDF intraday-style impulse thresholds.
+    const IMPULSE_BODY_ATR = 1.20;
+    const IMPULSE_RANGE_ATR = 1.50;
+    const MIN_BODY_EFFICIENCY = 0.45;
 
-    // Large candle threshold.
-    // Dùng ATR để chuẩn hóa giữa các coin.
-    const LARGE_BODY_ATR = 2.0;
-    const LARGE_RANGE_ATR = 2.5;
-
-    // Chỉ đánh giá large-flip profile nếu có đủ mẫu.
-    const MIN_LARGE_FLIP_SAMPLES = 4;
+    // Energy model.
+    const BASE_HALF_LIFE = 6;
+    const EXHAUSTION_ENERGY = 0.20;
 
     // --------------------------------------------------------
-    // ATR SERIES
+    // ATR
     // --------------------------------------------------------
 
-    const atrPeriod = 14;
-    const atr = new Array(candles.length).fill(NaN);
+    const tr = [];
 
-    let trSum = 0;
+    for (
+        let j = 1;
+        j <= currentIndex;
+        j++
+    ) {
 
-    for (let j = 0; j < candles.length; j++) {
-        const c = candles[j];
+        const h = Number(candles[j].h);
+        const l = Number(candles[j].l);
+        const pc = Number(candles[j - 1].c);
 
         if (
-            !finite(c?.h) ||
-            !finite(c?.l) ||
-            !finite(c?.c)
+            !finite(h) ||
+            !finite(l) ||
+            !finite(pc)
         ) {
+            tr.push(0);
             continue;
         }
 
-        let tr;
-
-        if (
-            j === 0 ||
-            !finite(candles[j - 1]?.c)
-        ) {
-            tr = c.h - c.l;
-        } else {
-            const prevClose = candles[j - 1].c;
-
-            tr = Math.max(
-                c.h - c.l,
-                Math.abs(c.h - prevClose),
-                Math.abs(c.l - prevClose)
-            );
-        }
-
-        if (!finite(tr) || tr <= 0) continue;
-
-        trSum += tr;
-
-        if (j >= atrPeriod) {
-            const oldC = candles[j - atrPeriod];
-
-            if (
-                finite(oldC?.h) &&
-                finite(oldC?.l) &&
-                finite(candles[j - atrPeriod - 1]?.c)
-            ) {
-                const prev = candles[j - atrPeriod - 1].c;
-
-                const oldTR = Math.max(
-                    oldC.h - oldC.l,
-                    Math.abs(oldC.h - prev),
-                    Math.abs(oldC.l - prev)
-                );
-
-                if (finite(oldTR)) {
-                    trSum -= oldTR;
-                }
-            }
-        }
-
-        if (j >= atrPeriod - 1) {
-            atr[j] = trSum / atrPeriod;
-        }
+        tr.push(
+            Math.max(
+                h - l,
+                Math.abs(h - pc),
+                Math.abs(l - pc)
+            )
+        );
     }
 
-    // ========================================================
-    // 1. TREND BEHAVIOR
-    // ========================================================
+    const atrStart =
+        Math.max(
+            0,
+            tr.length - ATR_PERIOD
+        );
 
-    // Lấy các đoạn direction liên tục.
-    //
-    // Ví dụ:
-    // LONG 18 bars
-    // SHORT 4 bars
-    // LONG 27 bars
-    // SHORT 2 bars
-    //
-    // => coin có trend khá tốt nhưng đôi lúc whipsaw.
-    //
-    // LONG 2
-    // SHORT 3
-    // LONG 2
-    // SHORT 4
-    //
-    // => whipsaw cao.
+    const atrValues =
+        tr.slice(atrStart)
+            .filter(x => finite(x) && x > 0);
 
-    const runs = [];
-
-    let runDirection = null;
-    let runLength = 0;
-
-    for (let j = 0; j <= currentIndex; j++) {
-        const d = Number(rf.direction[j]);
-
-        if (d !== 1 && d !== -1) {
-            if (runLength > 0 && runDirection) {
-                runs.push({
-                    direction: runDirection,
-                    length: runLength
-                });
-            }
-
-            runDirection = null;
-            runLength = 0;
-            continue;
-        }
-
-        const currentDirection =
-            d === 1 ? "LONG" : "SHORT";
-
-        if (currentDirection === runDirection) {
-            runLength++;
-        } else {
-            if (runLength > 0 && runDirection) {
-                runs.push({
-                    direction: runDirection,
-                    length: runLength
-                });
-            }
-
-            runDirection = currentDirection;
-            runLength = 1;
-        }
-    }
-
-    if (runLength > 0 && runDirection) {
-        runs.push({
-            direction: runDirection,
-            length: runLength
-        });
-    }
-
-    // Không tính đoạn hiện tại porque nó ainda está em formação.
-    // Chúng ta muốn lịch sử hoàn chỉnh.
-    if (runs.length > 1) {
-        runs.pop();
-    }
-
-    if (!runs.length) {
+    if (!atrValues.length) {
         return {
             ok: true,
             adjustment: 0,
-            trendBehavior: null,
-            largeFlipBehavior: null
+            impulseDetected: false,
+            e0: 0,
+            energyPct: 0,
+            halfLife: BASE_HALF_LIFE,
+            elapsedBars: 0,
+            etaToExhaustion: 0,
+            phase: 'DEPLETED',
+            weak: false,
+            exhausted: false,
+            bodyAtr: 0,
+            rangeAtr: 0,
+            bodyEfficiency: 0
         };
     }
 
-    const lengths = runs
-        .map(x => Number(x.length))
-        .filter(Number.isFinite);
+    const atr =
+        atrValues.reduce(
+            (a, b) => a + b,
+            0
+        ) / atrValues.length;
 
-    lengths.sort((a, b) => a - b);
-
-    const medianRun =
-        lengths[Math.floor(lengths.length / 2)];
-
-    const p75Run =
-        lengths[Math.floor((lengths.length - 1) * 0.75)];
-
-    const longRuns =
-        lengths.filter(x => x >= 8).length;
-
-    const shortRuns =
-        lengths.filter(x => x <= MIN_TREND_RUN).length;
-
-    const whipsawRate =
-        lengths.length > 0
-            ? shortRuns / lengths.length
-            : 0;
-
-    const longTrendRate =
-        lengths.length > 0
-            ? longRuns / lengths.length
-            : 0;
-
-    let trendAdjustment = 0;
-
-    // Coin thường có trend dài.
-    if (medianRun >= 10) {
-        trendAdjustment += 12;
-    } else if (medianRun >= 7) {
-        trendAdjustment += 7;
-    } else if (medianRun <= 4) {
-        trendAdjustment -= 8;
+    if (!(atr > 0)) {
+        return {
+            ok: true,
+            adjustment: 0,
+            impulseDetected: false,
+            e0: 0,
+            energyPct: 0,
+            halfLife: BASE_HALF_LIFE,
+            elapsedBars: 0,
+            etaToExhaustion: 0,
+            phase: 'DEPLETED',
+            weak: false,
+            exhausted: false,
+            bodyAtr: 0,
+            rangeAtr: 0,
+            bodyEfficiency: 0
+        };
     }
 
-    // Có nhiều trend >= 8 cây.
-    if (longTrendRate >= 0.45) {
-        trendAdjustment += 8;
-    } else if (longTrendRate >= 0.30) {
-        trendAdjustment += 4;
-    }
+    // --------------------------------------------------------
+    // CURRENT CANDLE
+    // --------------------------------------------------------
 
-    // Whipsaw cao thì trừ điểm.
-    if (whipsawRate >= 0.55) {
-        trendAdjustment -= 15;
-    } else if (whipsawRate >= 0.40) {
-        trendAdjustment -= 9;
-    } else if (whipsawRate <= 0.20) {
-        trendAdjustment += 5;
-    }
+    const c = candles[currentIndex];
 
-    const trendBehavior = {
-        medianRun,
-        p75Run,
-        longTrendRate,
-        whipsawRate,
-        runCount: lengths.length
-    };
+    const o = Number(c.o);
+    const h = Number(c.h);
+    const l = Number(c.l);
+    const close = Number(c.c);
 
-    // ========================================================
-    // 2. LARGE FLIP BEHAVIOR
-    // ========================================================
-
-    // Tìm các lần RF flip trong lịch sử.
-    //
-    // Một flip được coi là "large" khi:
-    //
-    // body >= 2 ATR
-    // HOẶC
-    // range >= 2.5 ATR
-    //
-    // Sau đó xem 6 cây tiếp theo:
-    //
-    // A. RF có đảo chiều nhanh không?
-    // B. Giá có chạy tiếp theo hướng flip không?
-    //
-    // Đây chính là thứ dùng để phát hiện:
-    //
-    // "nến to -> đổi hướng -> đi ngang -> quay đầu"
-
-    const largeFlipSamples = [];
-
-    for (
-        let j = atrPeriod;
-        j < currentIndex;
-        j++
-    ) {
-        const isLongFlip =
-            !!rf.buy?.[j];
-
-        const isShortFlip =
-            !!rf.sell?.[j];
-
-        if (!isLongFlip && !isShortFlip) {
-            continue;
-        }
-
-        const flipSide =
-            isLongFlip ? "LONG" : "SHORT";
-
-        const a = atr[j];
-
-        if (!finite(a) || a <= 0) {
-            continue;
-        }
-
-        const candle = candles[j];
-
-        const body =
-            Math.abs(candle.c - candle.o);
-
-        const candleRange =
-            candle.h - candle.l;
-
-        if (
-            !finite(body) ||
-            !finite(candleRange)
-        ) {
-            continue;
-        }
-
-        const bodyATR = body / a;
-        const rangeATR = candleRange / a;
-
-        const isLarge =
-            bodyATR >= LARGE_BODY_ATR ||
-            rangeATR >= LARGE_RANGE_ATR;
-
-        if (!isLarge) {
-            continue;
-        }
-
-        // --------------------------------------------
-        // Evaluate next 6 bars
-        // --------------------------------------------
-
-        const end =
-            Math.min(
-                currentIndex,
-                j + LARGE_FLIP_FORWARD_BARS
-            );
-
-        if (end <= j) continue;
-
-        const entryPrice = candle.c;
-
-        let maxFavorable = 0;
-        let maxAdverse = 0;
-
-        for (let k = j + 1; k <= end; k++) {
-            const future = candles[k];
-
-            if (
-                !finite(future.h) ||
-                !finite(future.l)
-            ) {
-                continue;
-            }
-
-            if (flipSide === "LONG") {
-                maxFavorable = Math.max(
-                    maxFavorable,
-                    future.h - entryPrice
-                );
-
-                maxAdverse = Math.max(
-                    maxAdverse,
-                    entryPrice - future.l
-                );
-            } else {
-                maxFavorable = Math.max(
-                    maxFavorable,
-                    entryPrice - future.l
-                );
-
-                maxAdverse = Math.max(
-                    maxAdverse,
-                    future.h - entryPrice
-                );
-            }
-        }
-
-        const favorableATR =
-            maxFavorable / a;
-
-        const adverseATR =
-            maxAdverse / a;
-
-        // RF đảo ngược trong 6 cây?
-        let reversedQuickly = false;
-
-        for (
-            let k = j + 1;
-            k <= end;
-            k++
-        ) {
-            const d =
-                Number(rf.direction[k]);
-
-            if (
-                (flipSide === "LONG" && d === -1) ||
-                (flipSide === "SHORT" && d === 1)
-            ) {
-                reversedQuickly = true;
-                break;
-            }
-        }
-
-        // Một large flip được coi là SUCCESS khi:
-        //
-        // - giá đi thuận ít nhất 0.75 ATR
-        // - và không bị RF đảo chiều quá nhanh
-        //
-        const continued =
-            favorableATR >= 0.75 &&
-            !reversedQuickly;
-
-        // Failure đúng kiểu mày mô tả:
-        //
-        // - không follow-through đáng kể
-        // - hoặc RF đảo chiều nhanh
-        //
-        const failed =
-            reversedQuickly ||
-            favorableATR < 0.50;
-
-        largeFlipSamples.push({
-            side: flipSide,
-            bodyATR,
-            rangeATR,
-            favorableATR,
-            adverseATR,
-            continued,
-            failed
-        });
-    }
-
-    let largeFlipBehavior = null;
-    let largeFlipAdjustment = 0;
+    const candleRange = h - l;
+    const body = Math.abs(close - o);
 
     if (
-        largeFlipSamples.length >=
-        MIN_LARGE_FLIP_SAMPLES
+        !(candleRange > 0) ||
+        !finite(body)
     ) {
-        const successful =
-            largeFlipSamples.filter(
-                x => x.continued
-            ).length;
-
-        const failed =
-            largeFlipSamples.filter(
-                x => x.failed
-            ).length;
-
-        const continuationRate =
-            successful /
-            largeFlipSamples.length;
-
-        const failureRate =
-            failed /
-            largeFlipSamples.length;
-
-        largeFlipBehavior = {
-            samples: largeFlipSamples.length,
-            continuationRate,
-            failureRate
+        return {
+            ok: true,
+            adjustment: -5,
+            impulseDetected: false,
+            e0: 0,
+            energyPct: 0,
+            halfLife: BASE_HALF_LIFE,
+            elapsedBars: 0,
+            etaToExhaustion: 0,
+            phase: 'DEPLETED',
+            weak: false,
+            exhausted: false,
+            bodyAtr: 0,
+            rangeAtr: 0,
+            bodyEfficiency: 0
         };
+    }
 
-        // --------------------------------------------
-        // Chỉ áp dụng penalty nếu CURRENT flip cũng lớn.
-        // --------------------------------------------
+    const bodyAtr =
+        body / atr;
 
-        const currentATR = atr[currentIndex];
+    const rangeAtr =
+        candleRange / atr;
+
+    const bodyEfficiency =
+        body / candleRange;
+    // --------------------------------------------------------
+    // TÌM IMPULSE GẦN NHẤT
+    //
+    // Không nhất thiết phải là chính cây RF flip.
+    // MDF vốn tạo energy cycle từ impulse candle.
+    // --------------------------------------------------------
+
+    let impulseIndex = -1;
+
+    const MAX_LOOKBACK = 12;
+
+    for (
+        let j = currentIndex;
+        j >= Math.max(1, currentIndex - MAX_LOOKBACK);
+        j--
+    ) {
+
+        const cj = candles[j];
+
+        const jo = Number(cj.o);
+        const jh = Number(cj.h);
+        const jl = Number(cj.l);
+        const jc = Number(cj.c);
+
+        const prevClose =
+            Number(candles[j - 1].c);
 
         if (
-            finite(currentATR) &&
-            currentATR > 0
+            ![
+                jo,
+                jh,
+                jl,
+                jc,
+                prevClose
+            ].every(finite)
         ) {
-            const currentCandle =
-                candles[currentIndex];
+            continue;
+        }
 
-            const currentBody =
-                Math.abs(
-                    currentCandle.c -
-                    currentCandle.o
+        const jr = jh - jl;
+        const jb = Math.abs(jc - jo);
+
+        if (!(jr > 0 && jb >= 0)) {
+            continue;
+        }
+
+        // ATR tại candle j.
+        const localTR = [];
+
+        for (
+            let k = Math.max(1, j - ATR_PERIOD + 1);
+            k <= j;
+            k++
+        ) {
+
+            const kh = Number(candles[k].h);
+            const kl = Number(candles[k].l);
+            const kpc = Number(candles[k - 1].c);
+
+            if (
+                finite(kh) &&
+                finite(kl) &&
+                finite(kpc)
+            ) {
+                localTR.push(
+                    Math.max(
+                        kh - kl,
+                        Math.abs(kh - kpc),
+                        Math.abs(kl - kpc)
+                    )
                 );
-
-            const currentRange =
-                currentCandle.h -
-                currentCandle.l;
-
-            const currentBodyATR =
-                currentBody / currentATR;
-
-            const currentRangeATR =
-                currentRange / currentATR;
-
-            const currentIsLarge =
-                currentBodyATR >= LARGE_BODY_ATR ||
-                currentRangeATR >= LARGE_RANGE_ATR;
-
-            if (currentIsLarge) {
-
-                // Coin này thường large flip chạy tiếp.
-                if (continuationRate >= 0.70) {
-                    largeFlipAdjustment += 10;
-                }
-
-                // Coin này thường large flip fail.
-                if (failureRate >= 0.60) {
-                    largeFlipAdjustment -= 20;
-                } else if (failureRate >= 0.45) {
-                    largeFlipAdjustment -= 10;
-                }
             }
+        }
+
+        if (!localTR.length) {
+            continue;
+        }
+
+        const localATR =
+            localTR.reduce(
+                (a, b) => a + b,
+                0
+            ) / localTR.length;
+
+        if (!(localATR > 0)) {
+            continue;
+        }
+
+        const jBodyAtr =
+            jb / localATR;
+
+        const jRangeAtr =
+            jr / localATR;
+
+        const jEfficiency =
+            jb / jr;
+
+        const jDirectionalBody =
+            side === 'LONG'
+                ? jc - jo
+                : jo - jc;
+
+        if (
+            jBodyAtr >= IMPULSE_BODY_ATR &&
+            jRangeAtr >= IMPULSE_RANGE_ATR &&
+            jEfficiency >= MIN_BODY_EFFICIENCY &&
+            jDirectionalBody > 0
+        ) {
+            impulseIndex = j;
+            break;
         }
     }
 
+    const impulseDetected = impulseIndex >= 0;
+
+    // --------------------------------------------------------
+    // Không có impulse gần đây
+    // --------------------------------------------------------
+
+    if (impulseIndex < 0) {
+
+        return {
+            ok: true,
+
+            // Không block RF.
+            adjustment: -12,
+
+            impulseDetected: false,
+
+            e0: 0,
+            energyPct: 0,
+
+            halfLife: BASE_HALF_LIFE,
+
+            elapsedBars: 0,
+            etaToExhaustion: 0,
+
+            phase: 'DEPLETED',
+
+            weak: false,
+            exhausted: true,
+
+            bodyAtr,
+            rangeAtr,
+            bodyEfficiency
+        };
+    }
+
+    // --------------------------------------------------------
+    // IMPULSE DATA
+    // --------------------------------------------------------
+
+    const ic = candles[impulseIndex];
+
+    const io = Number(ic.o);
+    const ih = Number(ic.h);
+    const il = Number(ic.l);
+    const iclose = Number(ic.c);
+
+    const impulseRange =
+        ih - il;
+
+    const impulseBody =
+        Math.abs(iclose - io);
+
+    const elapsedBars =
+        Math.max(
+            0,
+            currentIndex - impulseIndex
+        );
+
+    // ATR của impulse.
+    const impulseTR = [];
+
+    for (
+        let j =
+            Math.max(
+                1,
+                impulseIndex - ATR_PERIOD + 1
+            );
+        j <= impulseIndex;
+        j++
+    ) {
+
+        const h2 = Number(candles[j].h);
+        const l2 = Number(candles[j].l);
+        const pc2 = Number(candles[j - 1].c);
+
+        if (
+            finite(h2) &&
+            finite(l2) &&
+            finite(pc2)
+        ) {
+            impulseTR.push(
+                Math.max(
+                    h2 - l2,
+                    Math.abs(h2 - pc2),
+                    Math.abs(l2 - pc2)
+                )
+            );
+        }
+    }
+
+    const impulseATR =
+        impulseTR.length
+            ? impulseTR.reduce(
+                (a, b) => a + b,
+                0
+            ) / impulseTR.length
+            : atr;
+
+    const impulseBodyAtr =
+        impulseATR > 0
+            ? impulseBody / impulseATR
+            : 0;
+
+    const impulseRangeAtr =
+        impulseATR > 0
+            ? impulseRange / impulseATR
+            : 0;
+
+    const impulseEfficiency =
+        impulseRange > 0
+            ? impulseBody / impulseRange
+            : 0;
+
+    // --------------------------------------------------------
+    // VELOCITY
+    //
+    // Net displacement / ATR.
+    // Chỉ dùng làm energy magnitude.
+    // --------------------------------------------------------
+
+    const velocityLookback =
+        Math.min(
+            3,
+            elapsedBars + 1
+        );
+
+    const velocityStart =
+        Math.max(
+            impulseIndex,
+            currentIndex - velocityLookback + 1
+        );
+
+    const velocityMove =
+        side === 'LONG'
+            ? candles[currentIndex].c -
+              candles[velocityStart].c
+            : candles[velocityStart].c -
+              candles[currentIndex].c;
+
+    const velocity =
+        atr > 0
+            ? Math.max(
+                0,
+                velocityMove / atr
+            )
+            : 0;
+
+    // --------------------------------------------------------
+    // E0
+    //
+    // Giới hạn 5 giống concept MDF.
+    // --------------------------------------------------------
+
+    const rawE0 =
+        impulseBodyAtr * 0.55 +
+        impulseRangeAtr * 0.25 +
+        velocity * 0.20;
+
+    const e0 =
+        Math.max(
+            0,
+            Math.min(
+                5,
+                rawE0
+            )
+        );
+
+    // --------------------------------------------------------
+    // HALF LIFE
+    //
+    // Impulse mạnh + efficiency tốt
+    // => cycle có half-life dài hơn.
+    // --------------------------------------------------------
+
+    const halfLife =
+        Math.max(
+            3,
+            Math.min(
+                12,
+                BASE_HALF_LIFE +
+                (impulseEfficiency - 0.45) * 5 +
+                Math.min(2, impulseBodyAtr - 1)
+            )
+        );
+
+    // --------------------------------------------------------
+    // ENERGY DECAY
+    // E(t) = E0 * exp(-lambda*t)
+    // lambda = ln(2) / halfLife
+    // --------------------------------------------------------
+
+    const lambda =
+        Math.log(2) / halfLife;
+
+    const energy =
+        e0 *
+        Math.exp(
+            -lambda * elapsedBars
+        );
+
+    const energyPct =
+        e0 > 0
+            ? energy / e0
+            : 0;
+
+    // --------------------------------------------------------
+    // ETA TO EXHAUSTION
+    // --------------------------------------------------------
+
+    let etaToExhaustion = 0;
+
+    if (
+        energy > EXHAUSTION_ENERGY &&
+        e0 > EXHAUSTION_ENERGY
+    ) {
+
+        etaToExhaustion =
+            Math.max(
+                0,
+                Math.ceil(
+                    Math.log(
+                        energy /
+                        EXHAUSTION_ENERGY
+                    ) / lambda
+                )
+            );
+    }
+
+    // --------------------------------------------------------
+    // PHASE
+    // --------------------------------------------------------
+
+    let phase = 'DEPLETED';
+
+    if (energyPct >= 0.75) {
+        phase = 'CHARGED';
+
+    } else if (energyPct >= 0.50) {
+        phase = 'ACTIVE';
+
+    } else if (energyPct >= 0.30) {
+        phase = 'DECAYING';
+
+    } else if (energyPct > 0.10) {
+        phase = 'FADING';
+
+    } else {
+        phase = 'DEPLETED';
+    }
+
+    const exhausted =
+        energy <= EXHAUSTION_ENERGY;
+// --------------------------------------------------------
+// WEAK IMPULSE
+//
+// So sánh impulse hiện tại với impulse trước
+// bằng ATR riêng của từng impulse.
+// --------------------------------------------------------
+
+let weak = false;
+
+if (currentIndex > impulseIndex) {
+
+    for (
+        let j = impulseIndex - 1;
+        j >= Math.max(1, impulseIndex - 8);
+        j--
+    ) {
+
+        const pc = candles[j];
+
+        const po = Number(pc.o);
+        const ph = Number(pc.h);
+        const pl = Number(pc.l);
+        const pcl = Number(pc.c);
+
+        if (
+            ![
+                po,
+                ph,
+                pl,
+                pcl
+            ].every(finite)
+        ) {
+            continue;
+        }
+
+        const pr = ph - pl;
+        const pb = Math.abs(pcl - po);
+
+        if (!(pr > 0)) {
+            continue;
+        }
+
+        if (
+            side === 'LONG' &&
+            pcl <= iclose
+        ) {
+            continue;
+        }
+
+        if (
+            side === 'SHORT' &&
+            pcl >= iclose
+        ) {
+            continue;
+        }
+
+        // ATR riêng tại impulse trước.
+        const previousTR = [];
+
+        for (
+            let k = Math.max(1, j - ATR_PERIOD + 1);
+            k <= j;
+            k++
+        ) {
+
+            const kh = Number(candles[k].h);
+            const kl = Number(candles[k].l);
+            const kpc = Number(candles[k - 1].c);
+
+            if (
+                finite(kh) &&
+                finite(kl) &&
+                finite(kpc)
+            ) {
+                previousTR.push(
+                    Math.max(
+                        kh - kl,
+                        Math.abs(kh - kpc),
+                        Math.abs(kl - kpc)
+                    )
+                );
+            }
+        }
+
+        if (!previousTR.length) {
+            continue;
+        }
+
+        const previousATR =
+            previousTR.reduce(
+                (a, b) => a + b,
+                0
+            ) / previousTR.length;
+
+        if (!(previousATR > 0)) {
+            continue;
+        }
+
+        const previousImpulseStrength =
+            pb / previousATR;
+
+        const currentImpulseStrength =
+            impulseBodyAtr;
+
+        if (
+            previousImpulseStrength > 0 &&
+            currentImpulseStrength <=
+                previousImpulseStrength * 0.75
+        ) {
+            weak = true;
+        }
+
+        break;
+    }
+}
+    // --------------------------------------------------------
+    // QUALITY ADJUSTMENT
+    //
+    // Đây là phần thay thế scoreRF5Signal +
+    // analyzeRFHistoryBehavior.
+    // --------------------------------------------------------
+
+    let adjustment = 0;
+
+    // Có impulse cùng hướng RF.
+    if (impulseDetected) {
+        adjustment += 10;
+    } else {
+        adjustment -= 8;
+    }
+
+    // E0.
+    if (e0 >= 3.5) {
+        adjustment += 12;
+
+    } else if (e0 >= 2.5) {
+        adjustment += 7;
+
+    } else if (e0 < 1.5) {
+        adjustment -= 8;
+    }
+
+    // Energy còn lại.
+    if (energyPct >= 0.75) {
+        adjustment += 8;
+
+    } else if (energyPct >= 0.50) {
+        adjustment += 5;
+
+    } else if (energyPct < 0.25) {
+        adjustment -= 8;
+    }
+
+    // Phase.
+    if (phase === 'CHARGED') {
+        adjustment += 5;
+
+    } else if (phase === 'ACTIVE') {
+        adjustment += 4;
+
+    } else if (phase === 'FADING') {
+        adjustment -= 5;
+
+    } else if (phase === 'DEPLETED') {
+        adjustment -= 10;
+    }
+
+    // Half-life.
+    if (halfLife >= 8) {
+        adjustment += 5;
+
+    } else if (halfLife <= 4) {
+        adjustment -= 4;
+    }
+
+    // Weak impulse.
+    if (weak) {
+        adjustment -= 8;
+    }
+
+    // Exhaustion.
+    if (exhausted) {
+        adjustment -= 12;
+    }
+
+    // Không cho MDF bóp score quá mạnh.
+    adjustment =
+        Math.max(
+            -25,
+            Math.min(
+                30,
+                adjustment
+            )
+        );
+
     return {
+
         ok: true,
 
-        adjustment:
-            trendAdjustment +
-            largeFlipAdjustment,
+        adjustment,
 
-        trendBehavior,
-        largeFlipBehavior
+        impulseDetected:
+            impulseDetected,
+
+        e0,
+
+        energyPct,
+
+        halfLife,
+
+        elapsedBars,
+
+        etaToExhaustion,
+
+        phase,
+
+        weak,
+
+        exhausted,
+
+        bodyAtr,
+
+        rangeAtr,
+
+        bodyEfficiency,
+
+        impulseBodyAtr,
+
+        impulseRangeAtr,
+
+        impulseEfficiency,
+
+        velocity
     };
 }
 // ================= SCAN =================
@@ -3030,116 +3244,62 @@ if(!signals || signals.length === 0){
 
         // ===== BUILD CANDIDATES + AI =====
 let candidates = []
-let dbCache = {}
 
 for (let s of signals){
-
-    // ===== MAIN =====
-    let keyMain = `${s.setup}-${s.marketState}-${s.side}-${s.volatility}`
-
-    if(!dbCache[keyMain]){
-        dbCache[keyMain] = await getDBStats(
-            s.setup,
-            s.marketState,
-            s.side,
-            s.volatility
-        )
-    }
-
-    let dbMain = dbCache[keyMain]
-
-if(!dbMain){
-    console.log(
-        `⛔ DB unavailable - skip ${s.symbol}`
-    )
-    continue
+// ============================================================
+// Scanner chỉ chọn signal có qualityScore cao nhất.
+// ============================================================
+const coreQuality = Number(
+    s.qualityScore ?? s.score ?? 0
+);
+// Loại signal quá yếu ngay tại scanner.
+const MIN_CORE_SCORE = 60;
+if (!Number.isFinite(coreQuality)) {
+    continue;
 }
-
-let aiMain = 0
-
-if(dbMain.total >= 30){
-
-    const edge =
-        dbMain.winrate - 0.50
-
-    const confidence =
-        Math.min(dbMain.total / 100, 1)
-
-    aiMain =
-        edge * 60 * confidence
+if (coreQuality < MIN_CORE_SCORE) {
+    continue;
 }
-
-// DB chỉ loại setup có lịch sử rất xấu
-// ===== DB EDGE — CHỈ LOG, KHÔNG BLOCK =====
-
-if(dbMain.total >= 30){
-
-    const wr = dbMain.winrate
-
-    if(wr < 0.42){
-
-        console.log(
-        `🚫 DB BAD EDGE: ${s.symbol} | ` +
-        `WR=${(dbMain.winrate * 100).toFixed(1)}% | ` +
-        `N=${dbMain.total}`
-    )
-    }
-}
-
-// CORE MỚI KHÔNG CÒN SCORE CŨ
-// Không dùng s.score nữa
-
-const coreQuality = Number(s.qualityScore ?? s.score ?? 0);
-const rankScore =
-  coreQuality +
-  Math.max(-10, Math.min(10, aiMain));
 candidates.push({
     ...s,
-    finalScore: aiMain,
-    rankScore,
+    qualityScore: coreQuality,
     type: "MAIN"
-})
+});
 }
-
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
             console.log("❌ No signal")
             return
         }
-
         // Rank all valid signals collected during this scan cycle.
 candidates.sort((a, b) =>
-    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0) ||
-    (Number(b.qualityScore ?? b.score) || 0) - (Number(a.qualityScore ?? a.score) || 0)
-)
-// Range Filter entries are confirmed flips; no RR/TP/SL filter applies.
-let filtered = candidates.slice().sort((a,b) =>
-    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0) ||
-    (Number(b.qualityScore ?? b.score) || 0) - (Number(a.qualityScore ?? a.score) || 0)
-)
-
+    Number(b.qualityScore || 0) -
+    Number(a.qualityScore || 0)
+);
 // ===== UNIQUE COIN =====
 let unique = []
 let used = new Set()
-
-for(let c of filtered){
+for(let c of candidates){
     if(!used.has(c.symbol)){
         unique.push(c)
         used.add(c.symbol)
     }
 }
-
-filtered = unique
-
+let filtered = unique
 if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-// Put live-position flips first so they are not delayed behind new entries.
-filtered.sort((a,b) => {
-  const aOpen = activeTrades.some(t => t.symbol === a.symbol && t.result === "PENDING") ? 1 : 0;
-  const bOpen = activeTrades.some(t => t.symbol === b.symbol && t.result === "PENDING") ? 1 : 0;
-  return bOpen - aOpen || (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0);
+filtered.sort((a, b) => {
+    const aOpen = activeTrades.some(
+        t => t.symbol === a.symbol && t.result === "PENDING"
+    ) ? 1 : 0;
+    const bOpen = activeTrades.some(
+        t => t.symbol === b.symbol && t.result === "PENDING"
+    ) ? 1 : 0;
+    return bOpen - aOpen ||
+        Number(b.qualityScore || 0) -
+        Number(a.qualityScore || 0);
 });
 const picks = filtered.slice(0, 1);
 for (const best of picks) {
@@ -3450,8 +3610,10 @@ console.log(
 
 
     console.log(
-    `✅ ADD: ${best.symbol} | DB Edge: ${safeFixed(best.finalScore, 1)}`
-)
+    `✅ ADD: ${best.symbol} | ` +
+    `QUALITY=${safeFixed(best.qualityScore, 1)} | ` +
+    `SIDE=${best.side}`
+);
 
     // One successfully opened coin per scan cycle; existing duplicate/opening
     // guards above remain the final authority for this symbol.
