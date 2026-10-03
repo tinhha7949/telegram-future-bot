@@ -1938,16 +1938,6 @@ filterMove: move,
 filterRange: range
 };
 }
-// ============================================================
-// MOMENTUM DECAY FIELD
-// ============================================================
-//
-// RF = direction trigger
-// MDF = impulse / energy / continuation quality
-//
-// KHÔNG dùng MDF BULL/BEAR để quyết định LONG/SHORT.
-// Side chỉ được dùng để đo body theo hướng RF.
-// ============================================================
 
 function analyzeMomentumDecayField(candles, side, currentIndex) {
 
@@ -2490,8 +2480,9 @@ function analyzeMomentumDecayField(candles, side, currentIndex) {
 // --------------------------------------------------------
 // WEAK IMPULSE
 //
-// So sánh impulse hiện tại với impulse trước
-// bằng ATR riêng của từng impulse.
+// So sánh impulse hiện tại với impulse hợp lệ trước đó.
+// Weak chỉ là thông tin momentum decay.
+// KHÔNG trừ điểm trực tiếp.
 // --------------------------------------------------------
 
 let weak = false;
@@ -2522,28 +2513,14 @@ if (currentIndex > impulseIndex) {
             continue;
         }
 
-        const pr = ph - pl;
-        const pb = Math.abs(pcl - po);
+        const previousRange = ph - pl;
+        const previousBody = Math.abs(pcl - po);
 
-        if (!(pr > 0)) {
+        if (!(previousRange > 0)) {
             continue;
         }
 
-        if (
-            side === 'LONG' &&
-            pcl <= iclose
-        ) {
-            continue;
-        }
-
-        if (
-            side === 'SHORT' &&
-            pcl >= iclose
-        ) {
-            continue;
-        }
-
-        // ATR riêng tại impulse trước.
+        // ATR riêng tại candle j.
         const previousTR = [];
 
         for (
@@ -2585,21 +2562,45 @@ if (currentIndex > impulseIndex) {
             continue;
         }
 
-        const previousImpulseStrength =
-            pb / previousATR;
+        const previousBodyAtr =
+            previousBody / previousATR;
 
-        const currentImpulseStrength =
-            impulseBodyAtr;
+        const previousRangeAtr =
+            previousRange / previousATR;
 
+        const previousEfficiency =
+            previousBody / previousRange;
+
+        const previousDirectionalBody =
+            side === 'LONG'
+                ? pcl - po
+                : po - pcl;
+
+        // Phải thực sự là impulse cùng hướng.
         if (
-            previousImpulseStrength > 0 &&
-            currentImpulseStrength <=
-                previousImpulseStrength * 0.75
+            previousBodyAtr >= IMPULSE_BODY_ATR &&
+            previousRangeAtr >= IMPULSE_RANGE_ATR &&
+            previousEfficiency >= MIN_BODY_EFFICIENCY &&
+            previousDirectionalBody > 0
         ) {
-            weak = true;
-        }
 
-        break;
+            const previousImpulseStrength =
+                previousBodyAtr;
+
+            const currentImpulseStrength =
+                impulseBodyAtr;
+
+            if (
+                previousImpulseStrength > 0 &&
+                currentImpulseStrength <=
+                    previousImpulseStrength * 0.75
+            ) {
+                weak = true;
+            }
+
+            // Đã tìm được previous impulse hợp lệ.
+            break;
+        }
     }
 }
     // --------------------------------------------------------
@@ -2663,9 +2664,9 @@ if (currentIndex > impulseIndex) {
     }
 
     // Weak impulse.
-    if (weak) {
-        adjustment -= 8;
-    }
+    //if (weak) {
+       // adjustment -= 8;
+    //}
 
     // Exhaustion.
     if (exhausted) {
