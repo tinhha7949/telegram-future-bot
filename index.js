@@ -3590,9 +3590,15 @@ console.log(
         console.error(`🚨 DB SAVE FAIL ${trade.symbol}:`,dbErr?.message||dbErr);
         activeTrades.push({...trade,dbSaveFailed:true,dbRecoveryNeeded:true});
       }
-        const msg=`🔥 RANGE \n\n📊 ${trade.symbol}\n📈 ${trade.side}\n🎯 Entry: ${trade.entry}\n📦 Position: ${safeFixed(trade.notional,2)} USDT\n🧭 Wait.`
+        const msg=`🔥 RANGE
 
-        await sendTelegram(msg)
+📊 ${trade.symbol}
+📈 ${trade.side}
+⭐ Score: ${safeFixed(trade.qualityScore ?? best.qualityScore ?? 0, 1)}
+🎯 Entry: ${trade.entry}
+📦 Position: ${safeFixed(trade.notional,2)} USDT`;
+
+await sendTelegram(msg);
 
     }catch(err){
 
