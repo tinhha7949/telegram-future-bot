@@ -2112,6 +2112,122 @@ function analyzeMomentumDecayField(candles, side, currentIndex) {
 
     const bodyEfficiency =
         body / candleRange;
+        // --------------------------------------------------------
+// CLIMAX / CHASE / CONTINUATION
+// --------------------------------------------------------
+
+const directionalBody =
+    side === 'LONG'
+        ? close - o
+        : o - close;
+
+const upperWick =
+    h - Math.max(o, close);
+
+const lowerWick =
+    Math.min(o, close) - l;
+
+const rejectionWick =
+    side === 'LONG'
+        ? upperWick
+        : lowerWick;
+
+const rejectionRatio =
+    candleRange > 0
+        ? rejectionWick / candleRange
+        : 0;
+
+const extremeBodyAtr =
+    bodyAtr >= 2.20;
+
+const extremeRangeAtr =
+    rangeAtr >= 2.80;
+
+const strongDirectionalCandle =
+    directionalBody > 0 &&
+    bodyEfficiency >= 0.60;
+    // --------------------------------------------------------
+// CLIMAX DETECTION
+//
+// Không phạt chỉ vì nến to.
+// Chỉ xem là climax khi:
+// - nến cực lớn
+// - đi đúng hướng
+// - và có dấu hiệu bị từ chối / chase quá mạnh
+// --------------------------------------------------------
+
+let climax = false;
+
+if (
+    strongDirectionalCandle &&
+    (extremeBodyAtr || extremeRangeAtr)
+) {
+    if (rejectionRatio >= 0.30) {
+        climax = true;
+    }
+}
+// --------------------------------------------------------
+// CONTINUATION QUALITY
+//
+// Kiểm tra 3 candle trước entry có thực sự duy trì
+// cùng hướng hay chỉ là một cú spike đơn độc.
+// --------------------------------------------------------
+
+let continuationScore = 0;
+
+const CONT_LOOKBACK = 3;
+
+for (
+    let j = Math.max(1, currentIndex - CONT_LOOKBACK);
+    j < currentIndex;
+    j++
+) {
+    const cc = candles[j];
+
+    const co = Number(cc.o);
+    const ch = Number(cc.h);
+    const cl = Number(cc.l);
+    const ccClose = Number(cc.c);
+
+    if (
+        ![
+            co,
+            ch,
+            cl,
+            ccClose
+        ].every(finite)
+    ) {
+        continue;
+    }
+
+    const cr = ch - cl;
+
+    if (!(cr > 0)) {
+        continue;
+    }
+
+    const cb = Math.abs(ccClose - co);
+
+    const ce =
+        cb / cr;
+
+    const directional =
+        side === 'LONG'
+            ? ccClose > co
+            : ccClose < co;
+
+    if (
+        directional &&
+        ce >= 0.45
+    ) {
+        continuationScore += 1;
+    }
+}
+const continuationGood =
+    continuationScore >= 2;
+
+const continuationWeak =
+    continuationScore <= 1;
     // --------------------------------------------------------
     // TÌM IMPULSE GẦN NHẤT
     //
@@ -2282,6 +2398,30 @@ function analyzeMomentumDecayField(candles, side, currentIndex) {
             0,
             currentIndex - impulseIndex
         );
+        const spikeEntry =
+    impulseIndex === currentIndex &&
+    (extremeBodyAtr || extremeRangeAtr) &&
+    continuationWeak;
+
+        // --------------------------------------------------------
+// PRICE EXTENSION
+//
+// Giá đã chạy quá xa khỏi impulse chưa?
+// --------------------------------------------------------
+
+const impulseDistance =
+    side === 'LONG'
+        ? close - iclose
+        : iclose - close;
+
+const impulseDistanceAtr =
+    atr > 0
+        ? Math.max(0, impulseDistance / atr)
+        : 0;
+
+const chaseRisk =
+    elapsedBars >= 2 &&
+    impulseDistanceAtr >= 2.50;
 
     // ATR của impulse.
     const impulseTR = [];
@@ -2619,16 +2759,20 @@ if (currentIndex > impulseIndex) {
         adjustment -= 8;
     }
 
-    // E0.
-    if (e0 >= 3.5) {
-        adjustment += 12;
+    // --------------------------------------------------------
+// E0
+//
+// Không thưởng quá mạnh cho impulse cực lớn.
+// Nến cực lớn có thể là climax.
+// --------------------------------------------------------
 
-    } else if (e0 >= 2.5) {
-        adjustment += 7;
-
-    } else if (e0 < 1.5) {
-        adjustment -= 8;
-    }
+if (e0 >= 3.5) {
+    adjustment += 6;
+} else if (e0 >= 2.5) {
+    adjustment += 7;
+} else if (e0 < 1.5) {
+    adjustment -= 8;
+}
 
     // Energy còn lại.
     if (energyPct >= 0.75) {
@@ -2662,6 +2806,38 @@ if (currentIndex > impulseIndex) {
     } else if (halfLife <= 4) {
         adjustment -= 4;
     }
+    // --------------------------------------------------------
+// CONTINUATION QUALITY
+// --------------------------------------------------------
+
+if (continuationGood) {
+    adjustment += 5;
+} else if (continuationWeak) {
+    adjustment -= 5;
+}
+if (spikeEntry) {
+    adjustment -= 10;
+}
+// --------------------------------------------------------
+// CLIMAX
+//
+// Nến cực lớn + rejection = nguy cơ đảo chiều.
+// Không phạt nến lớn đơn thuần.
+// --------------------------------------------------------
+
+if (climax) {
+    adjustment -= 10;
+}
+
+// --------------------------------------------------------
+// CHASE
+//
+// Đã chạy quá xa khỏi impulse.
+// --------------------------------------------------------
+
+if (chaseRisk) {
+    adjustment -= 6;
+}
 
     // Weak impulse.
     //if (weak) {
