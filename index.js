@@ -17,7 +17,7 @@ let serverTimeOffset = 0
 const OPENING_POSITIONS = {}
 const TRADE_CONFIG = {
     maxPositionPercent: 2.0,  
-    maxActivePositions: 20      
+    maxActivePositions: 10      
 }
 const fs = require("fs")
 
