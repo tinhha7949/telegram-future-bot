@@ -2353,7 +2353,7 @@ const continuationWeak =
             ok: true,
 
             // Không block RF.
-            adjustment: -12,
+            adjustment: -8,
 
             impulseDetected: false,
 
@@ -2400,7 +2400,10 @@ const continuationWeak =
         );
         const spikeEntry =
     impulseIndex === currentIndex &&
-    (extremeBodyAtr || extremeRangeAtr) &&
+    (
+        bodyAtr >= 2.60 ||
+        rangeAtr >= 3.20
+    ) &&
     continuationWeak;
 
         // --------------------------------------------------------
@@ -2744,109 +2747,100 @@ if (currentIndex > impulseIndex) {
     }
 }
     // --------------------------------------------------------
-// MDF QUALITY ADJUSTMENT
+// QUALITY ADJUSTMENT
 //
-// RF  = direction trigger
-// MDF = continuation / move-quality filter
+// RF = direction trigger
+// MDF = continuation / exhaustion quality
 //
-// IMPORTANT:
-// Không thưởng quá nhiều chỉ vì impulse lớn.
-// Extreme impulse thường là climax / exhaustion risk.
-//
-// DB cho thấy:
-// - bodyAtr >= 2.6  -> 0% WIN
-// - rangeAtr >= 3.2 -> ~10% WIN
-// - halfLife >= 9.5  -> 0% WIN
-// - e0 >= 3.0        -> 0% WIN
-// - elapsedBars 5-7  -> 0% WIN
+// Nguyên tắc:
+// 1. Bình thường: gần như không cộng điểm.
+// 2. Tín hiệu tốt: chỉ cộng nhẹ.
+// 3. Dấu hiệu xấu: trừ mạnh.
+// 4. Dấu hiệu cực đoan kết hợp: trừ rất mạnh.
+// 5. Không dùng future information.
+// 6. weak chỉ là thông tin, không phạt trực tiếp.
 // --------------------------------------------------------
 
 let adjustment = 0;
 
 
 // --------------------------------------------------------
-// 1. IMPULSE PRESENCE
+// 1. IMPULSE CONFIRMATION
+// --------------------------------------------------------
+//
+// Có impulse cùng hướng RF:
+// chỉ xác nhận nhẹ.
+//
+// Không có impulse:
+// không block RF, nhưng MDF không có bằng chứng
+// continuation tốt.
 // --------------------------------------------------------
 
-// Có impulse cùng hướng RF = tốt.
-// Nhưng chỉ thưởng nhẹ.
-// Không để impulse tự nó tạo score quá cao.
-
 if (impulseDetected) {
-
-    adjustment += 4;
-
+    adjustment += 2;
 } else {
-
     adjustment -= 8;
 }
 
 
 // --------------------------------------------------------
-// 2. E0 / IMPULSE MAGNITUDE
+// 2. E0
+// --------------------------------------------------------
+//
+// E0 vừa phải = bình thường / tốt nhẹ.
+// E0 quá lớn = dễ là cú spike / exhaustion.
+//
+// DB:
+// E0 >= 3.0 → 0 WIN.
 // --------------------------------------------------------
 
-// E0 không còn được hiểu là:
-// "càng lớn càng tốt".
-//
-// DB cho thấy impulse cực lớn thường nguy hiểm.
-//
-// < 1.20       = yếu
-// 1.20 - 1.50  = chấp nhận được
-// 1.50 - 2.20  = vùng tốt nhất
-// 2.20 - 2.60  = bắt đầu quá mạnh
-// 2.60 - 3.00  = extreme
-// >= 3.00      = extreme/climax risk
+if (e0 >= 3.0) {
 
-if (e0 < 1.20) {
+    adjustment -= 8;
 
-    adjustment -= 4;
+} else if (e0 >= 2.6) {
 
-} else if (e0 < 1.50) {
+    adjustment -= 6;
+
+} else if (e0 >= 2.2) {
+
+    adjustment -= 2;
+
+} else if (e0 >= 1.5) {
 
     adjustment += 1;
 
-} else if (e0 < 2.20) {
+} else if (e0 >= 1.2) {
 
-    adjustment += 3;
-
-} else if (e0 < 2.60) {
-
-    adjustment += 1;
-
-} else if (e0 < 3.00) {
-
-    adjustment -= 5;
+    adjustment += 0;
 
 } else {
 
-    adjustment -= 8;
+    adjustment -= 3;
 }
 
 
 // --------------------------------------------------------
 // 3. ENERGY
 // --------------------------------------------------------
-
-// KHÔNG thưởng energy cao ngay tại impulse.
 //
-// Khi elapsedBars = 0:
-// energyPct gần như luôn = 1
-// nhưng DB chứng minh điều này không đồng nghĩa
-// với continuation tốt.
+// Không thưởng energy ở bar 0-1.
 //
-// Chỉ bắt đầu đánh giá energy sau khi impulse
-// đã tồn tại ít nhất 2 cây.
+// Vì tại entry mới:
+// energyPct thường gần 1.0 chỉ vì impulse vừa xảy ra.
+//
+// Chỉ bắt đầu đánh giá từ bar >= 2.
+// --------------------------------------------------------
 
 if (elapsedBars >= 2) {
 
     if (energyPct >= 0.75) {
 
-        adjustment += 2;
+        adjustment += 1;
 
     } else if (energyPct >= 0.50) {
 
-        adjustment += 1;
+        adjustment += 0;
 
     } else if (energyPct < 0.30) {
 
@@ -2859,46 +2853,33 @@ if (elapsedBars >= 2) {
 // 4. PHASE
 // --------------------------------------------------------
 
-// Không thưởng CHARGED mạnh nữa.
-//
-// CHARGED tại elapsedBars = 0 chỉ có nghĩa
-// impulse vừa được tạo.
-//
-// Chỉ phạt khi momentum thực sự bước vào
-// vùng decay/fading/depleted.
+if (phase === 'FADING') {
 
-if (elapsedBars >= 1) {
+    adjustment -= 4;
 
-    if (phase === 'FADING') {
+} else if (phase === 'DEPLETED') {
 
-        adjustment -= 4;
-
-    } else if (phase === 'DEPLETED') {
-
-        adjustment -= 8;
-    }
+    adjustment -= 8;
 }
 
 
 // --------------------------------------------------------
-// 5. HALF-LIFE
+// 5. HALF LIFE
 // --------------------------------------------------------
-
-// Half-life hiện tại được tính một phần từ
-// impulse strength.
-//
-// Vì vậy không được thưởng quá mạnh.
 //
 // DB:
-// halfLife >= 9.5 -> 0% WIN.
+// halfLife >= 9.5 → 0 WIN.
+//
+// Không thưởng mạnh halfLife dài.
+// --------------------------------------------------------
 
-if (halfLife >= 8 && halfLife < 9) {
+if (halfLife >= 9.5) {
+
+    adjustment -= 8;
+
+} else if (halfLife >= 8.0) {
 
     adjustment += 1;
-
-} else if (halfLife >= 9.5) {
-
-    adjustment -= 6;
 
 } else if (halfLife < 7.5) {
 
@@ -2907,55 +2888,53 @@ if (halfLife >= 8 && halfLife < 9) {
 
 
 // --------------------------------------------------------
-// 6. EXTREME BODY
+// 6. BODY ATR
 // --------------------------------------------------------
-
-// Đây là bộ lọc quan trọng nhất cho vấn đề:
 //
-// "nến rất to -> vào -> quay đầu ngay"
+// Đây là một trong những bộ lọc mạnh nhất.
 //
 // DB:
-// bodyAtr >= 2.6 -> 0% WIN.
-//
-// Không block trực tiếp.
-// Chỉ trừ score rất mạnh.
+// bodyAtr >= 2.6 → 0 WIN.
+// --------------------------------------------------------
 
-if (bodyAtr >= 3.00) {
+if (bodyAtr >= 3.0) {
+
+    adjustment -= 12;
+
+} else if (bodyAtr >= 2.6) {
 
     adjustment -= 10;
 
-} else if (bodyAtr >= 2.60) {
+} else if (bodyAtr >= 2.2) {
 
-    adjustment -= 8;
+    adjustment -= 5;
 
-} else if (bodyAtr >= 2.20) {
-
-    adjustment -= 4;
-
-} else if (bodyAtr >= 1.50 && bodyAtr < 2.20) {
+} else if (bodyAtr >= 1.5) {
 
     adjustment += 1;
 }
 
 
 // --------------------------------------------------------
-// 7. EXTREME RANGE
+// 7. RANGE ATR
+// --------------------------------------------------------
+//
+// DB:
+// rangeAtr >= 3.2 → chỉ 1 WIN / 10.
+//
+// Nhưng không loại cứng chỉ vì range lớn,
+// vì vẫn tồn tại WIN.
 // --------------------------------------------------------
 
-// DB:
-// rangeAtr >= 3.2 có winrate cực thấp.
-//
-// Đây là dấu hiệu thị trường đã expand quá mạnh.
+if (rangeAtr >= 4.0) {
 
-if (rangeAtr >= 4.00) {
+    adjustment -= 9;
+
+} else if (rangeAtr >= 3.2) {
 
     adjustment -= 7;
 
-} else if (rangeAtr >= 3.20) {
-
-    adjustment -= 5;
-
-} else if (rangeAtr >= 2.50) {
+} else if (rangeAtr >= 2.5) {
 
     adjustment += 1;
 }
@@ -2964,15 +2943,16 @@ if (rangeAtr >= 4.00) {
 // --------------------------------------------------------
 // 8. BODY EFFICIENCY
 // --------------------------------------------------------
-
-// Efficiency thấp không phải lúc nào cũng xấu,
-// vì một số winner vẫn có efficiency thấp.
 //
-// Vì vậy chỉ dùng adjustment nhẹ.
+// Không phạt mạnh efficiency thấp.
+// DB chưa chứng minh đây là filter mạnh.
+//
+// Chỉ thưởng nhẹ vùng tương đối ổn.
+// --------------------------------------------------------
 
 if (bodyEfficiency < 0.45) {
 
-    adjustment -= 2;
+    adjustment -= 1;
 
 } else if (
     bodyEfficiency >= 0.75 &&
@@ -2988,52 +2968,38 @@ if (bodyEfficiency < 0.45) {
 
 
 // --------------------------------------------------------
-// 9. STALE IMPULSE ENTRY
+// 9. ELAPSED BARS
 // --------------------------------------------------------
 //
-// DB cho thấy:
+// DB:
+// 5-7 bars → 0 WIN.
+// >=8 bars → 5 WIN / 10.
 //
-// elapsedBars 5-7 -> 0% WIN.
-//
-// Nghĩa là RF flip xuất hiện sau khi impulse
-// đã già đi một đoạn khá rõ.
-//
-// Đây là vùng rất nguy hiểm.
-//
-// Không block RF.
-// Chỉ giảm score.
+// Vì vậy:
+// 5-7 = penalty mạnh.
+// >=8 = penalty nhẹ.
+// --------------------------------------------------------
 
 if (
     elapsedBars >= 5 &&
     elapsedBars <= 7
 ) {
 
-    adjustment -= 7;
+    adjustment -= 8;
 
 } else if (elapsedBars >= 8) {
 
-    adjustment -= 3;
+    adjustment -= 2;
 }
 
 
 // --------------------------------------------------------
 // 10. CONTINUATION QUALITY
 // --------------------------------------------------------
-//
-// continuationGood / continuationWeak được tính
-// từ 3 candle trước entry.
-//
-// Đây mới là phần có ý nghĩa để phân biệt:
-//
-// impulse thật sự đang được follow-through
-// hay chỉ là một spike đơn độc.
-//
-// Không thưởng quá nhiều.
-// Weak thì phạt mạnh hơn trước một chút.
 
 if (continuationGood) {
 
-    adjustment += 3;
+    adjustment += 2;
 
 } else if (continuationWeak) {
 
@@ -3044,9 +3010,12 @@ if (continuationGood) {
 // --------------------------------------------------------
 // 11. SPIKE ENTRY
 // --------------------------------------------------------
-
-// Extreme candle ngay entry + continuation yếu
-// = setup rất dễ bị đảo chiều.
+//
+// Entry đúng vào impulse cực lớn
+// + continuation yếu.
+//
+// Đây là một trong các mẫu cần đánh mạnh.
+// --------------------------------------------------------
 
 if (spikeEntry) {
 
@@ -3057,8 +3026,10 @@ if (spikeEntry) {
 // --------------------------------------------------------
 // 12. CLIMAX
 // --------------------------------------------------------
-
-// Extreme candle + rejection wick.
+//
+// Nến lớn + rejection.
+// Đây là reversal risk thực sự.
+// --------------------------------------------------------
 
 if (climax) {
 
@@ -3069,8 +3040,9 @@ if (climax) {
 // --------------------------------------------------------
 // 13. CHASE
 // --------------------------------------------------------
-
+//
 // Giá đã chạy quá xa khỏi impulse.
+// --------------------------------------------------------
 
 if (chaseRisk) {
 
@@ -3079,7 +3051,17 @@ if (chaseRisk) {
 
 
 // --------------------------------------------------------
-// 14. EXHAUSTION
+// 14. WEAK
+// --------------------------------------------------------
+//
+// KHÔNG phạt trực tiếp.
+//
+// weak hiện chưa đủ dữ liệu DB để làm filter.
+// --------------------------------------------------------
+
+
+// --------------------------------------------------------
+// 15. EXHAUSTION
 // --------------------------------------------------------
 
 if (exhausted) {
@@ -3087,43 +3069,83 @@ if (exhausted) {
     adjustment -= 12;
 }
 
-
-// --------------------------------------------------------
-// 15. WEAK
-// --------------------------------------------------------
-//
-// KHÔNG dùng weak để trừ điểm.
-//
-// DB hiện tại chỉ có quá ít mẫu weak=true
-// để kết luận weak là predictor đáng tin.
-//
-// Giữ weak làm thông tin diagnostic.
-//
-// if (weak) {
-//     adjustment -= ...
-// }
-
-
 // --------------------------------------------------------
 // 16. FINAL CLAMP
 // --------------------------------------------------------
 //
-// Trước đây:
-// -25 .. +30
-//
-// +30 khiến MDF dễ đẩy score lên 100,
-// trong khi DB chứng minh nhóm adjustment cao
-// lại có kết quả rất kém.
-//
-// Giảm trần xuống +20.
+// Không cho MDF cộng quá nhiều.
+// Cho phép penalty xuống đủ sâu để loại
+// những entry thực sự xấu.
+// --------------------------------------------------------
 
 adjustment = Math.max(
-    -25,
+    -30,
     Math.min(
-        20,
+        8,
         adjustment
     )
 );
+
+// --------------------------------------------------------
+// HARD REJECT
+// --------------------------------------------------------
+//
+// Chỉ block khi có tổ hợp cực đoan.
+// Không block chỉ vì một metric.
+// --------------------------------------------------------
+
+const hardReject =
+    (
+        bodyAtr >= 2.6 &&
+        rangeAtr >= 3.2 &&
+        continuationWeak
+    ) ||
+    (
+        e0 >= 3.0 &&
+        halfLife >= 9.5 &&
+        bodyAtr >= 2.6
+    ) ||
+    (
+        spikeEntry &&
+        climax
+    ) ||
+    (
+        continuationWeak &&
+        phase === 'FADING' &&
+        energyPct < 0.30
+    );
+
+if (hardReject) {
+    return {
+        ok: false,
+        adjustment: -30,
+
+        impulseDetected,
+        e0,
+        energyPct,
+        halfLife,
+        elapsedBars,
+        etaToExhaustion,
+        phase,
+        weak,
+        exhausted,
+
+        bodyAtr,
+        rangeAtr,
+        bodyEfficiency,
+
+        impulseBodyAtr,
+        impulseRangeAtr,
+        impulseEfficiency,
+        velocity,
+
+        spikeEntry,
+        climax,
+        chaseRisk,
+        continuationGood,
+        continuationWeak
+    };
+}
 
     return {
 
@@ -3696,7 +3718,7 @@ const coreQuality = Number(
     s.qualityScore ?? s.score ?? 0
 );
 // Loại signal quá yếu ngay tại scanner.
-const MIN_CORE_SCORE = 60;
+const MIN_CORE_SCORE = 65;
 if (!Number.isFinite(coreQuality)) {
     continue;
 }
