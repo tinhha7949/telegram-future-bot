@@ -1896,15 +1896,362 @@ const score = clamp(
     100
 );
   const volRatio = range / price;
+
+// ============================================================
+// RF / CANDLE DIAGNOSTICS
+// Chỉ lưu dữ liệu để phân tích DB về sau.
+// KHÔNG dùng các field này để đổi hướng RF.
+// ============================================================
+
+const candle = candles[i];
+const prevCandle = candles[i - 1];
+const prev2Candle = i >= 2 ? candles[i - 2] : null;
+
+// ============================================================
+// CURRENT RF FLIP CANDLE
+// ============================================================
+
+const candleOpen = Number(candle.o);
+const candleHigh = Number(candle.h);
+const candleLow = Number(candle.l);
+const candleClose = Number(candle.c);
+
+const candleBody = Math.abs(candleClose - candleOpen);
+const candleRange = candleHigh - candleLow;
+
+const candleBodyPct =
+    candleRange > 0
+        ? candleBody / candleRange
+        : 0;
+
+const upperWick =
+    candleHigh - Math.max(candleOpen, candleClose);
+
+const lowerWick =
+    Math.min(candleOpen, candleClose) - candleLow;
+
+const upperWickPct =
+    candleRange > 0
+        ? upperWick / candleRange
+        : 0;
+
+const lowerWickPct =
+    candleRange > 0
+        ? lowerWick / candleRange
+        : 0;
+
+const candleDirection =
+    candleClose > candleOpen
+        ? 'UP'
+        : candleClose < candleOpen
+            ? 'DOWN'
+            : 'FLAT';
+
+const candleAligned =
+    (
+        side === 'LONG' &&
+        candleDirection === 'UP'
+    ) ||
+    (
+        side === 'SHORT' &&
+        candleDirection === 'DOWN'
+    );
+
+// ============================================================
+// PREVIOUS CANDLE
+// ============================================================
+
+const prevOpen = Number(prevCandle.o);
+const prevHigh = Number(prevCandle.h);
+const prevLow = Number(prevCandle.l);
+const prevClose = Number(prevCandle.c);
+
+const prevBody = Math.abs(prevClose - prevOpen);
+const prevRange = prevHigh - prevLow;
+
+const prevBodyPct =
+    prevRange > 0
+        ? prevBody / prevRange
+        : 0;
+
+const prevUpperWick =
+    prevHigh - Math.max(prevOpen, prevClose);
+
+const prevLowerWick =
+    Math.min(prevOpen, prevClose) - prevLow;
+
+const prevUpperWickPct =
+    prevRange > 0
+        ? prevUpperWick / prevRange
+        : 0;
+
+const prevLowerWickPct =
+    prevRange > 0
+        ? prevLowerWick / prevRange
+        : 0;
+
+const prevCandleDirection =
+    prevClose > prevOpen
+        ? 'UP'
+        : prevClose < prevOpen
+            ? 'DOWN'
+            : 'FLAT';
+
+// ============================================================
+// PREVIOUS 2 CANDLE
+// Chỉ lấy direction để biết context trước RF flip.
+// ============================================================
+
+const prev2Open =
+    prev2Candle ? Number(prev2Candle.o) : null;
+
+const prev2Close =
+    prev2Candle ? Number(prev2Candle.c) : null;
+
+const prev2Direction =
+    prev2Candle
+        ? (
+            prev2Close > prev2Open
+                ? 'UP'
+                : prev2Close < prev2Open
+                    ? 'DOWN'
+                    : 'FLAT'
+        )
+        : null;
+
+// ============================================================
+// RF STATE BEFORE FLIP
+// ============================================================
+
+const priorSide =
+    rf.buy[i - 1]
+        ? 'LONG'
+        : rf.sell[i - 1]
+            ? 'SHORT'
+            : null;
+
+// ============================================================
+// RF FILTER HISTORY
+// ============================================================
+
+const filter2Back =
+    i >= 2
+        ? Number(rf.filter[i - 2])
+        : null;
+
+const filter3Back =
+    i >= 3
+        ? Number(rf.filter[i - 3])
+        : null;
+
+// Current RF move
+const rfMoveRatio =
+    range > 0
+        ? move / range
+        : 0;
+
+// Previous RF move
+const priorMove =
+    finite(filter2Back)
+        ? (
+            side === 'LONG'
+                ? priorFilter - filter2Back
+                : filter2Back - priorFilter
+        )
+        : null;
+
+// RF move 2 bars back
+const move2Back =
+    finite(filter3Back) && finite(filter2Back)
+        ? (
+            side === 'LONG'
+                ? filter2Back - filter3Back
+                : filter3Back - filter2Back
+        )
+        : null;
+
+// Normalized previous RF moves
+const priorMoveRatio =
+    priorMove != null && range > 0
+        ? priorMove / range
+        : null;
+
+const move2BackRatio =
+    move2Back != null && range > 0
+        ? move2Back / range
+        : null;
+
+// ============================================================
+// PRICE VS RF FILTER
+// ============================================================
+
+const filterDistance =
+    side === 'LONG'
+        ? price - filter
+        : filter - price;
+
+const filterDistanceRatio =
+    range > 0
+        ? filterDistance / range
+        : 0;
+
+// ============================================================
+// RF RANGE CHANGE
+// ============================================================
+
+const priorRange =
+    i >= 1
+        ? Number(rf.range[i - 1])
+        : null;
+
+const rangeChangeRatio =
+    finite(priorRange) && priorRange > 0
+        ? range / priorRange
+        : null;
+
+// ============================================================
+// HOW LONG THE PREVIOUS RF DIRECTION EXISTED
+// ============================================================
+
+let priorRfBars = 0;
+
+if (priorSide) {
+    for (let j = i - 1; j >= 0; j--) {
+
+        const s =
+            rf.buy[j]
+                ? 'LONG'
+                : rf.sell[j]
+                    ? 'SHORT'
+                    : null;
+
+        if (s !== priorSide) break;
+
+        priorRfBars++;
+    }
+}
+
   return {
     side, symbol, price, isFlip: true, flipTime: candles[i].t,
     setup: 'RANGE_FILTER', pullbackType: 'NONE',
     triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
     marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
     volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
+    rfVersion: 'RF_DW_V1',
+mdfVersion: 'MDF_V1',
     qualityScore: score,
 score,
+// ============================================================
+// RF DIAGNOSTICS
+// ============================================================
+rf: {
+    side,
+    priorSide,
 
+    filter: Number(filter),
+    priorFilter: Number(priorFilter),
+
+    filter2Back:
+        filter2Back == null
+            ? null
+            : Number(filter2Back),
+
+    filter3Back:
+        filter3Back == null
+            ? null
+            : Number(filter3Back),
+
+    move: Number(move),
+
+    priorMove:
+        priorMove == null
+            ? null
+            : Number(priorMove),
+
+    move2Back:
+        move2Back == null
+            ? null
+            : Number(move2Back),
+
+    range: Number(range),
+
+    priorRange:
+        priorRange == null
+            ? null
+            : Number(priorRange),
+
+    moveRatio: Number(rfMoveRatio),
+
+    priorMoveRatio:
+        priorMoveRatio == null
+            ? null
+            : Number(priorMoveRatio),
+
+    move2BackRatio:
+        move2BackRatio == null
+            ? null
+            : Number(move2BackRatio),
+
+    distance: Number(filterDistance),
+    distanceRatio: Number(filterDistanceRatio),
+
+    volatilityRatio: Number(volRatio),
+
+    rangeChangeRatio:
+        rangeChangeRatio == null
+            ? null
+            : Number(rangeChangeRatio),
+
+    priorDirectionBars: Number(priorRfBars)
+},
+// ============================================================
+// RF FLIP CANDLE
+// ============================================================
+rfCandle: {
+    time: candles[i].t,
+
+    open: Number(candleOpen),
+    high: Number(candleHigh),
+    low: Number(candleLow),
+    close: Number(candleClose),
+
+    body: Number(candleBody),
+    range: Number(candleRange),
+
+    bodyPct: Number(candleBodyPct),
+
+    upperWickPct: Number(upperWickPct),
+    lowerWickPct: Number(lowerWickPct),
+
+    direction: candleDirection,
+    aligned: !!candleAligned
+},
+prevCandle: {
+    time: candles[i - 1].t,
+
+    open: Number(prevOpen),
+    high: Number(prevHigh),
+    low: Number(prevLow),
+    close: Number(prevClose),
+
+    body: Number(prevBody),
+    range: Number(prevRange),
+
+    bodyPct: Number(prevBodyPct),
+
+    upperWickPct: Number(prevUpperWickPct),
+    lowerWickPct: Number(prevLowerWickPct),
+
+    direction: prevCandleDirection
+},
+prev2Candle: {
+    time:
+        prev2Candle
+            ? candles[i - 2].t
+            : null,
+
+    direction: prev2Direction
+},
 // ============================================================
 // MDF METRICS
 // ============================================================
@@ -1931,11 +2278,25 @@ mdf: {
 
     bodyAtr: Number(mdf.bodyAtr || 0),
     rangeAtr: Number(mdf.rangeAtr || 0),
-    bodyEfficiency: Number(mdf.bodyEfficiency || 0)
+    bodyEfficiency: Number(mdf.bodyEfficiency || 0),
+
+    // Impulse trước đó
+    impulseBodyAtr:
+        Number(mdf.impulseBodyAtr || 0),
+
+    impulseRangeAtr:
+        Number(mdf.impulseRangeAtr || 0),
+
+    impulseEfficiency:
+        Number(mdf.impulseEfficiency || 0),
+
+    velocity:
+        Number(mdf.velocity || 0)
 },
 
 filterMove: move,
-filterRange: range
+filterRange: range,
+
 };
 }
 
@@ -2793,33 +3154,19 @@ if (impulseDetected) {
 // DB:
 // E0 >= 3.0 → 0 WIN.
 // --------------------------------------------------------
-
 if (e0 >= 3.0) {
-
     adjustment -= 8;
-
 } else if (e0 >= 2.6) {
-
     adjustment -= 6;
-
 } else if (e0 >= 2.2) {
-
     adjustment -= 2;
-
 } else if (e0 >= 1.5) {
-
-    adjustment += 1;
-
-} else if (e0 >= 1.2) {
-
     adjustment += 0;
-
+} else if (e0 >= 1.2) {
+    adjustment += 0;
 } else {
-
     adjustment -= 3;
 }
-
-
 // --------------------------------------------------------
 // 3. ENERGY
 // --------------------------------------------------------
@@ -2872,21 +3219,13 @@ if (phase === 'FADING') {
 //
 // Không thưởng mạnh halfLife dài.
 // --------------------------------------------------------
-
 if (halfLife >= 9.5) {
-
     adjustment -= 8;
-
 } else if (halfLife >= 8.0) {
-
-    adjustment += 1;
-
+    adjustment += 0;
 } else if (halfLife < 7.5) {
-
     adjustment -= 2;
 }
-
-
 // --------------------------------------------------------
 // 6. BODY ATR
 // --------------------------------------------------------
@@ -2896,50 +3235,31 @@ if (halfLife >= 9.5) {
 // DB:
 // bodyAtr >= 2.6 → 0 WIN.
 // --------------------------------------------------------
-
 if (bodyAtr >= 3.0) {
-
     adjustment -= 12;
-
 } else if (bodyAtr >= 2.6) {
-
     adjustment -= 10;
-
 } else if (bodyAtr >= 2.2) {
-
     adjustment -= 5;
-
 } else if (bodyAtr >= 1.5) {
-
-    adjustment += 1;
+    adjustment += 0;
 }
-
-
 // --------------------------------------------------------
 // 7. RANGE ATR
 // --------------------------------------------------------
-//
 // DB:
-// rangeAtr >= 3.2 → chỉ 1 WIN / 10.
+// rangeAtr >= 3.2 → 1 WIN / 10.
 //
-// Nhưng không loại cứng chỉ vì range lớn,
-// vì vẫn tồn tại WIN.
+// Đây là ngưỡng hard reject.
+// Chấp nhận bỏ số ít WIN để loại phần lớn LOSS.
 // --------------------------------------------------------
-
 if (rangeAtr >= 4.0) {
-
     adjustment -= 9;
-
 } else if (rangeAtr >= 3.2) {
-
     adjustment -= 7;
-
 } else if (rangeAtr >= 2.5) {
-
-    adjustment += 1;
+    adjustment += 0;
 }
-
-
 // --------------------------------------------------------
 // 8. BODY EFFICIENCY
 // --------------------------------------------------------
@@ -2949,24 +3269,16 @@ if (rangeAtr >= 4.0) {
 //
 // Chỉ thưởng nhẹ vùng tương đối ổn.
 // --------------------------------------------------------
-
 if (bodyEfficiency < 0.45) {
-
     adjustment -= 1;
-
 } else if (
     bodyEfficiency >= 0.75 &&
     bodyEfficiency <= 0.90
 ) {
-
-    adjustment += 1;
-
+    adjustment += 0;
 } else if (bodyEfficiency > 0.95) {
-
     adjustment -= 1;
 }
-
-
 // --------------------------------------------------------
 // 9. ELAPSED BARS
 // --------------------------------------------------------
@@ -2979,34 +3291,31 @@ if (bodyEfficiency < 0.45) {
 // 5-7 = penalty mạnh.
 // >=8 = penalty nhẹ.
 // --------------------------------------------------------
-
 if (
+    elapsedBars >= 2 &&
+    elapsedBars <= 4
+) {
+    adjustment -= 3;
+
+} else if (
     elapsedBars >= 5 &&
     elapsedBars <= 7
 ) {
-
     adjustment -= 8;
 
-} else if (elapsedBars >= 8) {
-
+} else if (
+    elapsedBars >= 8
+) {
     adjustment -= 2;
 }
-
-
 // --------------------------------------------------------
 // 10. CONTINUATION QUALITY
 // --------------------------------------------------------
-
 if (continuationGood) {
-
-    adjustment += 2;
-
+    adjustment += 1;
 } else if (continuationWeak) {
-
     adjustment -= 7;
 }
-
-
 // --------------------------------------------------------
 // 11. SPIKE ENTRY
 // --------------------------------------------------------
@@ -3093,22 +3402,43 @@ adjustment = Math.max(
 // Chỉ block khi có tổ hợp cực đoan.
 // Không block chỉ vì một metric.
 // --------------------------------------------------------
-
 const hardReject =
+    // Current candle quá lớn
+    bodyAtr >= 2.6 ||
+
+    // Current range quá lớn
+    rangeAtr >= 3.2 ||
+
+    // Initial impulse energy quá cực đoan
+    e0 >= 3.0 ||
+
+    // Momentum cycle quá dài
+    halfLife >= 9.5 ||
+
+    // Đã chạy 5-7 bars trước entry
     (
-        bodyAtr >= 2.6 &&
-        rangeAtr >= 3.2 &&
-        continuationWeak
+        elapsedBars >= 5 &&
+        elapsedBars <= 7
     ) ||
+
+    // Impulse trước đó quá lớn
     (
-        e0 >= 3.0 &&
-        halfLife >= 9.5 &&
-        bodyAtr >= 2.6
+        elapsedBars >= 1 &&
+        impulseBodyAtr >= 2.6
     ) ||
+
+    (
+        elapsedBars >= 1 &&
+        impulseRangeAtr >= 3.2
+    ) ||
+
+    // Spike + climax
     (
         spikeEntry &&
         climax
     ) ||
+
+    // Đã fading và continuation yếu
     (
         continuationWeak &&
         phase === 'FADING' &&
