@@ -2744,120 +2744,386 @@ if (currentIndex > impulseIndex) {
     }
 }
     // --------------------------------------------------------
-    // QUALITY ADJUSTMENT
-    //
-    // Đây là phần thay thế scoreRF5Signal +
-    // analyzeRFHistoryBehavior.
-    // --------------------------------------------------------
-
-    let adjustment = 0;
-
-    // Có impulse cùng hướng RF.
-    if (impulseDetected) {
-        adjustment += 10;
-    } else {
-        adjustment -= 8;
-    }
-
-    // --------------------------------------------------------
-// E0
+// MDF QUALITY ADJUSTMENT
 //
-// Không thưởng quá mạnh cho impulse cực lớn.
-// Nến cực lớn có thể là climax.
+// RF  = direction trigger
+// MDF = continuation / move-quality filter
+//
+// IMPORTANT:
+// Không thưởng quá nhiều chỉ vì impulse lớn.
+// Extreme impulse thường là climax / exhaustion risk.
+//
+// DB cho thấy:
+// - bodyAtr >= 2.6  -> 0% WIN
+// - rangeAtr >= 3.2 -> ~10% WIN
+// - halfLife >= 9.5  -> 0% WIN
+// - e0 >= 3.0        -> 0% WIN
+// - elapsedBars 5-7  -> 0% WIN
 // --------------------------------------------------------
 
-if (e0 >= 3.5) {
-    adjustment += 6;
-} else if (e0 >= 2.5) {
-    adjustment += 7;
-} else if (e0 < 1.5) {
+let adjustment = 0;
+
+
+// --------------------------------------------------------
+// 1. IMPULSE PRESENCE
+// --------------------------------------------------------
+
+// Có impulse cùng hướng RF = tốt.
+// Nhưng chỉ thưởng nhẹ.
+// Không để impulse tự nó tạo score quá cao.
+
+if (impulseDetected) {
+
+    adjustment += 4;
+
+} else {
+
     adjustment -= 8;
 }
 
-    // Energy còn lại.
+
+// --------------------------------------------------------
+// 2. E0 / IMPULSE MAGNITUDE
+// --------------------------------------------------------
+
+// E0 không còn được hiểu là:
+// "càng lớn càng tốt".
+//
+// DB cho thấy impulse cực lớn thường nguy hiểm.
+//
+// < 1.20       = yếu
+// 1.20 - 1.50  = chấp nhận được
+// 1.50 - 2.20  = vùng tốt nhất
+// 2.20 - 2.60  = bắt đầu quá mạnh
+// 2.60 - 3.00  = extreme
+// >= 3.00      = extreme/climax risk
+
+if (e0 < 1.20) {
+
+    adjustment -= 4;
+
+} else if (e0 < 1.50) {
+
+    adjustment += 1;
+
+} else if (e0 < 2.20) {
+
+    adjustment += 3;
+
+} else if (e0 < 2.60) {
+
+    adjustment += 1;
+
+} else if (e0 < 3.00) {
+
+    adjustment -= 5;
+
+} else {
+
+    adjustment -= 8;
+}
+
+
+// --------------------------------------------------------
+// 3. ENERGY
+// --------------------------------------------------------
+
+// KHÔNG thưởng energy cao ngay tại impulse.
+//
+// Khi elapsedBars = 0:
+// energyPct gần như luôn = 1
+// nhưng DB chứng minh điều này không đồng nghĩa
+// với continuation tốt.
+//
+// Chỉ bắt đầu đánh giá energy sau khi impulse
+// đã tồn tại ít nhất 2 cây.
+
+if (elapsedBars >= 2) {
+
     if (energyPct >= 0.75) {
-        adjustment += 8;
+
+        adjustment += 2;
 
     } else if (energyPct >= 0.50) {
-        adjustment += 5;
 
-    } else if (energyPct < 0.25) {
-        adjustment -= 8;
-    }
+        adjustment += 1;
 
-    // Phase.
-    if (phase === 'CHARGED') {
-        adjustment += 5;
+    } else if (energyPct < 0.30) {
 
-    } else if (phase === 'ACTIVE') {
-        adjustment += 4;
-
-    } else if (phase === 'FADING') {
         adjustment -= 5;
+    }
+}
+
+
+// --------------------------------------------------------
+// 4. PHASE
+// --------------------------------------------------------
+
+// Không thưởng CHARGED mạnh nữa.
+//
+// CHARGED tại elapsedBars = 0 chỉ có nghĩa
+// impulse vừa được tạo.
+//
+// Chỉ phạt khi momentum thực sự bước vào
+// vùng decay/fading/depleted.
+
+if (elapsedBars >= 1) {
+
+    if (phase === 'FADING') {
+
+        adjustment -= 4;
 
     } else if (phase === 'DEPLETED') {
-        adjustment -= 10;
-    }
 
-    // Half-life.
-    if (halfLife >= 8) {
-        adjustment += 5;
-
-    } else if (halfLife <= 4) {
-        adjustment -= 4;
+        adjustment -= 8;
     }
-    // --------------------------------------------------------
-// CONTINUATION QUALITY
+}
+
+
 // --------------------------------------------------------
+// 5. HALF-LIFE
+// --------------------------------------------------------
+
+// Half-life hiện tại được tính một phần từ
+// impulse strength.
+//
+// Vì vậy không được thưởng quá mạnh.
+//
+// DB:
+// halfLife >= 9.5 -> 0% WIN.
+
+if (halfLife >= 8 && halfLife < 9) {
+
+    adjustment += 1;
+
+} else if (halfLife >= 9.5) {
+
+    adjustment -= 6;
+
+} else if (halfLife < 7.5) {
+
+    adjustment -= 2;
+}
+
+
+// --------------------------------------------------------
+// 6. EXTREME BODY
+// --------------------------------------------------------
+
+// Đây là bộ lọc quan trọng nhất cho vấn đề:
+//
+// "nến rất to -> vào -> quay đầu ngay"
+//
+// DB:
+// bodyAtr >= 2.6 -> 0% WIN.
+//
+// Không block trực tiếp.
+// Chỉ trừ score rất mạnh.
+
+if (bodyAtr >= 3.00) {
+
+    adjustment -= 10;
+
+} else if (bodyAtr >= 2.60) {
+
+    adjustment -= 8;
+
+} else if (bodyAtr >= 2.20) {
+
+    adjustment -= 4;
+
+} else if (bodyAtr >= 1.50 && bodyAtr < 2.20) {
+
+    adjustment += 1;
+}
+
+
+// --------------------------------------------------------
+// 7. EXTREME RANGE
+// --------------------------------------------------------
+
+// DB:
+// rangeAtr >= 3.2 có winrate cực thấp.
+//
+// Đây là dấu hiệu thị trường đã expand quá mạnh.
+
+if (rangeAtr >= 4.00) {
+
+    adjustment -= 7;
+
+} else if (rangeAtr >= 3.20) {
+
+    adjustment -= 5;
+
+} else if (rangeAtr >= 2.50) {
+
+    adjustment += 1;
+}
+
+
+// --------------------------------------------------------
+// 8. BODY EFFICIENCY
+// --------------------------------------------------------
+
+// Efficiency thấp không phải lúc nào cũng xấu,
+// vì một số winner vẫn có efficiency thấp.
+//
+// Vì vậy chỉ dùng adjustment nhẹ.
+
+if (bodyEfficiency < 0.45) {
+
+    adjustment -= 2;
+
+} else if (
+    bodyEfficiency >= 0.75 &&
+    bodyEfficiency <= 0.90
+) {
+
+    adjustment += 1;
+
+} else if (bodyEfficiency > 0.95) {
+
+    adjustment -= 1;
+}
+
+
+// --------------------------------------------------------
+// 9. STALE IMPULSE ENTRY
+// --------------------------------------------------------
+//
+// DB cho thấy:
+//
+// elapsedBars 5-7 -> 0% WIN.
+//
+// Nghĩa là RF flip xuất hiện sau khi impulse
+// đã già đi một đoạn khá rõ.
+//
+// Đây là vùng rất nguy hiểm.
+//
+// Không block RF.
+// Chỉ giảm score.
+
+if (
+    elapsedBars >= 5 &&
+    elapsedBars <= 7
+) {
+
+    adjustment -= 7;
+
+} else if (elapsedBars >= 8) {
+
+    adjustment -= 3;
+}
+
+
+// --------------------------------------------------------
+// 10. CONTINUATION QUALITY
+// --------------------------------------------------------
+//
+// continuationGood / continuationWeak được tính
+// từ 3 candle trước entry.
+//
+// Đây mới là phần có ý nghĩa để phân biệt:
+//
+// impulse thật sự đang được follow-through
+// hay chỉ là một spike đơn độc.
+//
+// Không thưởng quá nhiều.
+// Weak thì phạt mạnh hơn trước một chút.
 
 if (continuationGood) {
-    adjustment += 5;
+
+    adjustment += 3;
+
 } else if (continuationWeak) {
-    adjustment -= 5;
+
+    adjustment -= 7;
 }
+
+
+// --------------------------------------------------------
+// 11. SPIKE ENTRY
+// --------------------------------------------------------
+
+// Extreme candle ngay entry + continuation yếu
+// = setup rất dễ bị đảo chiều.
+
 if (spikeEntry) {
-    adjustment -= 10;
+
+    adjustment -= 12;
 }
+
+
 // --------------------------------------------------------
-// CLIMAX
-//
-// Nến cực lớn + rejection = nguy cơ đảo chiều.
-// Không phạt nến lớn đơn thuần.
+// 12. CLIMAX
 // --------------------------------------------------------
+
+// Extreme candle + rejection wick.
 
 if (climax) {
+
     adjustment -= 10;
 }
 
+
 // --------------------------------------------------------
-// CHASE
-//
-// Đã chạy quá xa khỏi impulse.
+// 13. CHASE
 // --------------------------------------------------------
 
+// Giá đã chạy quá xa khỏi impulse.
+
 if (chaseRisk) {
+
     adjustment -= 6;
 }
 
-    // Weak impulse.
-    //if (weak) {
-       // adjustment -= 8;
-    //}
 
-    // Exhaustion.
-    if (exhausted) {
-        adjustment -= 12;
-    }
+// --------------------------------------------------------
+// 14. EXHAUSTION
+// --------------------------------------------------------
 
-    // Không cho MDF bóp score quá mạnh.
-    adjustment =
-        Math.max(
-            -25,
-            Math.min(
-                30,
-                adjustment
-            )
-        );
+if (exhausted) {
+
+    adjustment -= 12;
+}
+
+
+// --------------------------------------------------------
+// 15. WEAK
+// --------------------------------------------------------
+//
+// KHÔNG dùng weak để trừ điểm.
+//
+// DB hiện tại chỉ có quá ít mẫu weak=true
+// để kết luận weak là predictor đáng tin.
+//
+// Giữ weak làm thông tin diagnostic.
+//
+// if (weak) {
+//     adjustment -= ...
+// }
+
+
+// --------------------------------------------------------
+// 16. FINAL CLAMP
+// --------------------------------------------------------
+//
+// Trước đây:
+// -25 .. +30
+//
+// +30 khiến MDF dễ đẩy score lên 100,
+// trong khi DB chứng minh nhóm adjustment cao
+// lại có kết quả rất kém.
+//
+// Giảm trần xuống +20.
+
+adjustment = Math.max(
+    -25,
+    Math.min(
+        20,
+        adjustment
+    )
+);
 
     return {
 
