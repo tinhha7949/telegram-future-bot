@@ -2474,6 +2474,192 @@ function analyzeMomentumDecayField(candles, side, currentIndex) {
     const bodyEfficiency =
         body / candleRange;
         // --------------------------------------------------------
+// NEAR-ENTRY LARGE CANDLE DETECTION
+//
+// Bắt trường hợp:
+// - current candle quá lớn
+// - 1 candle trước quá lớn
+// - 2 candle trước quá lớn
+//
+// Chỉ tính candle đi CÙNG hướng với RF.
+// --------------------------------------------------------
+
+function getNearEntryCandleStats(index) {
+
+    if (index < 1) {
+        return null;
+    }
+
+    const cc = candles[index];
+
+    const co = Number(cc.o);
+    const ch = Number(cc.h);
+    const cl = Number(cc.l);
+    const ccClose = Number(cc.c);
+
+    if (
+        ![
+            co,
+            ch,
+            cl,
+            ccClose
+        ].every(finite)
+    ) {
+        return null;
+    }
+
+    const cr = ch - cl;
+
+    if (!(cr > 0)) {
+        return null;
+    }
+
+    const cb =
+        Math.abs(ccClose - co);
+
+    // ATR riêng tại candle này.
+    const localTR = [];
+
+    for (
+        let k = Math.max(1, index - ATR_PERIOD + 1);
+        k <= index;
+        k++
+    ) {
+
+        const kh = Number(candles[k].h);
+        const kl = Number(candles[k].l);
+        const kpc = Number(candles[k - 1].c);
+
+        if (
+            finite(kh) &&
+            finite(kl) &&
+            finite(kpc)
+        ) {
+            localTR.push(
+                Math.max(
+                    kh - kl,
+                    Math.abs(kh - kpc),
+                    Math.abs(kl - kpc)
+                )
+            );
+        }
+    }
+
+    if (!localTR.length) {
+        return null;
+    }
+
+    const localATR =
+        localTR.reduce(
+            (a, b) => a + b,
+            0
+        ) / localTR.length;
+
+    if (!(localATR > 0)) {
+        return null;
+    }
+
+    const bodyAtr =
+        cb / localATR;
+
+    const rangeAtr =
+        cr / localATR;
+
+    const efficiency =
+        cb / cr;
+
+    const directionalBody =
+        side === 'LONG'
+            ? ccClose - co
+            : co - ccClose;
+
+    const aligned =
+        directionalBody > 0;
+
+    return {
+        index,
+        bodyAtr,
+        rangeAtr,
+        efficiency,
+        aligned
+    };
+}
+
+const currentCandleStats =
+    getNearEntryCandleStats(currentIndex);
+
+const prevCandleStats =
+    getNearEntryCandleStats(currentIndex - 1);
+
+const prev2CandleStats =
+    getNearEntryCandleStats(currentIndex - 2);
+
+
+// --------------------------------------------------------
+// LARGE CANDLE FLAGS
+// --------------------------------------------------------
+
+const LARGE_BODY_ATR = 2.20;
+const LARGE_RANGE_ATR = 2.60;
+
+const currentLarge =
+    !!currentCandleStats &&
+    currentCandleStats.aligned &&
+    (
+        currentCandleStats.bodyAtr >= LARGE_BODY_ATR ||
+        currentCandleStats.rangeAtr >= LARGE_RANGE_ATR
+    );
+
+const prevLarge =
+    !!prevCandleStats &&
+    prevCandleStats.aligned &&
+    (
+        prevCandleStats.bodyAtr >= LARGE_BODY_ATR ||
+        prevCandleStats.rangeAtr >= LARGE_RANGE_ATR
+    );
+
+const prev2Large =
+    !!prev2CandleStats &&
+    prev2CandleStats.aligned &&
+    (
+        prev2CandleStats.bodyAtr >= LARGE_BODY_ATR ||
+        prev2CandleStats.rangeAtr >= LARGE_RANGE_ATR
+    );
+
+
+// --------------------------------------------------------
+// TWO LARGE CANDLES NEAR ENTRY
+//
+// Đặc biệt nguy hiểm:
+// i-2 và i-1 đều lớn cùng hướng,
+// nghĩa là giá đã bị đẩy mạnh ngay trước RF flip.
+// --------------------------------------------------------
+
+const twoPreviousLarge =
+    prevLarge &&
+    prev2Large;
+
+
+// --------------------------------------------------------
+// NEAR-ENTRY EXHAUSTION
+//
+// Một cây lớn ngay trước entry đã đáng ngại.
+// Hai cây lớn liên tiếp càng đáng ngại.
+// Current + previous cùng lớn là chase rất mạnh.
+// --------------------------------------------------------
+
+const nearEntryExhaustion =
+    currentLarge ||
+    prevLarge ||
+    prev2Large;
+
+const consecutiveLargeBeforeEntry =
+    twoPreviousLarge;
+
+const currentPlusPreviousLarge =
+    currentLarge &&
+    prevLarge;
+        // --------------------------------------------------------
 // CLIMAX / CHASE / CONTINUATION
 // --------------------------------------------------------
 
@@ -3357,7 +3543,45 @@ if (chaseRisk) {
 
     adjustment -= 6;
 }
+// --------------------------------------------------------
+// 13B. NEAR-ENTRY LARGE CANDLE
+//
+// Đây là filter chuyên bắt:
+// - current candle quá lớn
+// - i-1 quá lớn
+// - i-2 quá lớn
+//
+// Không cần rejection wick.
+// Chỉ cần magnitude + đúng hướng RF.
+// --------------------------------------------------------
 
+if (currentPlusPreviousLarge) {
+
+    // Current + previous đều lớn:
+    // cực dễ là entry sau khi move đã chạy quá mạnh.
+    adjustment -= 12;
+
+} else if (consecutiveLargeBeforeEntry) {
+
+    // i-2 + i-1 đều lớn:
+    // RF xác nhận sau một chuỗi impulse.
+    adjustment -= 10;
+
+} else if (currentLarge) {
+
+    // Chính cây entry quá lớn.
+    adjustment -= 8;
+
+} else if (prevLarge) {
+
+    // Cây ngay trước entry quá lớn.
+    adjustment -= 7;
+
+} else if (prev2Large) {
+
+    // Cây i-2 quá lớn.
+    adjustment -= 5;
+}
 
 // --------------------------------------------------------
 // 14. WEAK
@@ -3403,11 +3627,15 @@ adjustment = Math.max(
 // Không block chỉ vì một metric.
 // --------------------------------------------------------
 const hardReject =
-    // Current candle quá lớn
-    bodyAtr >= 2.6 ||
+
+    // Current candle quá lớn cùng hướng RF
+    currentLarge ||
+
+    // i-2 và i-1 đều quá lớn cùng hướng RF
+    twoPreviousLarge ||
 
     // Current range quá lớn
-    rangeAtr >= 3.2 ||
+    rangeAtr >= 2.3 ||
 
     // Initial impulse energy quá cực đoan
     e0 >= 3.0 ||
@@ -3464,6 +3692,22 @@ if (hardReject) {
         rangeAtr,
         bodyEfficiency,
 
+        nearEntry: {
+            current: currentCandleStats,
+            prev: prevCandleStats,
+            prev2: prev2CandleStats,
+
+            currentLarge,
+            prevLarge,
+            prev2Large,
+
+            currentPlusPreviousLarge,
+            twoPreviousLarge,
+
+            nearEntryExhaustion,
+            consecutiveLargeBeforeEntry
+        },
+
         impulseBodyAtr,
         impulseRangeAtr,
         impulseEfficiency,
@@ -3509,6 +3753,21 @@ if (hardReject) {
         bodyEfficiency,
 
         impulseBodyAtr,
+        nearEntry: {
+    current: currentCandleStats,
+    prev: prevCandleStats,
+    prev2: prev2CandleStats,
+
+    currentLarge,
+    prevLarge,
+    prev2Large,
+
+    currentPlusPreviousLarge,
+    twoPreviousLarge,
+
+    nearEntryExhaustion,
+    consecutiveLargeBeforeEntry
+},
 
         impulseRangeAtr,
 
