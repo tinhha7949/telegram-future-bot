@@ -1,4 +1,5 @@
 let DB_READY = false
+let rfSignalEvents = null;
 const OPEN_POSITION_LOCK = {}
 const RANGE_EXIT_LOCK = {}
 const RANGE_EXIT_ALERT_AT = {}
@@ -79,6 +80,15 @@ async function ensureDB(){
 
         db = client.db("trading")
         trades = db.collection("trades")
+        rfSignalEvents = db.collection("rf_signal_events");
+        await rfSignalEvents.createIndex(
+    { signalKey: 1 },
+    { unique: true }
+);
+
+await rfSignalEvents.createIndex(
+    { status: 1, symbol: 1, flipTime: 1 }
+);
 
         await db.command({
             ping: 1
@@ -1855,6 +1865,118 @@ function rangeFilter(candles, options = {}) {
 
   return { filter, upperBand, lowerBand, direction, upward, downward, signal, buy, sell, range };
 }
+
+async function saveRFSignalEvent(event) {
+    try {
+        if (!event?.signalKey) return false;
+        if (!await ensureDB()) return false;
+
+        await rfSignalEvents.updateOne(
+            { signalKey: event.signalKey },
+            {
+                $set: {
+                    ...event,
+                    updatedAt: Date.now()
+                },
+                $setOnInsert: {
+                    createdAt: Date.now()
+                }
+            },
+            { upsert: true }
+        );
+
+        return true;
+    } catch (e) {
+        console.error(
+            "RF EVENT SAVE ERROR:",
+            e?.message || e
+        );
+        return false;
+    }
+}
+
+async function updateRFForwardOutcomes(symbol, data15) {
+    try {
+        if (!Array.isArray(data15)) return;
+
+        const candles = prepare(data15, RF_CANDLE_COUNT);
+        if (!Array.isArray(candles) || candles.length < 2) return;
+        if (!await ensureDB()) return;
+
+        const events = await rfSignalEvents.find({
+            symbol,
+            entryPrice: { $gt: 0 },
+            "forwardReturns.h12": { $exists: false }
+        }).limit(300).toArray();
+
+        const horizons = [1, 2, 4, 8, 12];
+
+        for (const event of events) {
+            const entry = Number(event.entryPrice);
+            if (!(entry > 0)) continue;
+            if (!["LONG", "SHORT"].includes(event.side)) continue;
+
+            const idx = candles.findIndex(
+                c => String(c.t) === String(event.flipTime)
+            );
+            if (idx < 0) continue;
+
+            const available = candles.length - 1 - idx;
+            if (available < 1) continue;
+
+            const set = {};
+            const signedReturn = close => (
+                event.side === "LONG"
+                    ? (Number(close) - entry) / entry * 100
+                    : (entry - Number(close)) / entry * 100
+            );
+
+            for (const h of horizons) {
+                if (available < h) continue;
+
+                const future = candles[idx + h];
+                set[`forwardReturns.h${h}`] = {
+                    close: Number(future.c),
+                    returnPct: signedReturn(future.c),
+                    candleTime: future.t
+                };
+            }
+
+            if (available >= 12) {
+                const future12 = candles.slice(idx + 1, idx + 13);
+
+                const favorable = future12.map(c =>
+                    event.side === "LONG"
+                        ? (Number(c.h) - entry) / entry * 100
+                        : (entry - Number(c.l)) / entry * 100
+                );
+
+                const adverse = future12.map(c =>
+                    event.side === "LONG"
+                        ? (Number(c.l) - entry) / entry * 100
+                        : (entry - Number(c.h)) / entry * 100
+                );
+
+                set.forwardReturns.mfe12Pct = Math.max(...favorable);
+                set.forwardReturns.mae12Pct = Math.min(...adverse);
+                set.forwardReturns.completedAt = Date.now();
+            }
+
+            if (Object.keys(set).length) {
+                await rfSignalEvents.updateOne(
+                    { _id: event._id },
+                    { $set: set }
+                );
+            }
+        }
+    } catch (e) {
+        console.error(
+            `RF FORWARD OUTCOME ERROR ${symbol}:`,
+            e?.message || e
+        );
+    }
+}
+
 async function coreLogic(data4h, data15, data1h, data5, data1, symbol = null) {
   // Range Filter [DW], matched to the user's chart: Type 1 / Close / 2.618
   // Average Change / 14 / smoothed with period 27. prepare() excludes the
@@ -1869,26 +1991,106 @@ async function coreLogic(data4h, data15, data1h, data5, data1, symbol = null) {
   });
   const i = candles.length - 1;
   if (i < 1 || !Array.isArray(rf.direction)) return null;
-  const side = rf.buy[i] ? 'LONG' : rf.sell[i] ? 'SHORT' : null;
-  if (!side) return null;
+  
+const side = rf.buy[i] ? 'LONG' : rf.sell[i] ? 'SHORT' : null;
+if (!side) return null;
+
+const signalKey =
+    `${String(symbol || 'UNKNOWN')}:${String(candles[i].t)}:${side}`;
+
+const recordRFReject = async (reason, extra = {}) => {
+    await saveRFSignalEvent({
+        signalKey,
+        symbol,
+        side,
+        flipTime: candles[i].t,
+        entryPrice: Number(candles[i].c),
+        status: "REJECTED_CORE",
+        rejectionReason: reason,
+        rfDirection: side,
+        candle: {
+            o: Number(candles[i].o),
+            h: Number(candles[i].h),
+            l: Number(candles[i].l),
+            c: Number(candles[i].c),
+            previousOpen: Number(candles[i - 1]?.o),
+            previousClose: Number(candles[i - 1]?.c)
+        },
+        ...extra
+    });
+
+    return null;
+};
+
+// RF vẫn quyết định hướng.
+// Chỉ nhận flip khi nến đã đóng ngay trước đó cùng hướng RF.
+const previousCandle = candles[i - 1];
+
+const previousCandleAligned =
+    side === 'LONG'
+        ? previousCandle.c > previousCandle.o
+        : previousCandle.c < previousCandle.o;
+
+if (!previousCandleAligned) {
+    return await recordRFReject("PREVIOUS_CANDLE_NOT_ALIGNED");
+}
+
   const price = candles[i].c, filter = rf.filter[i], range = rf.range[i];
-  if (![price, filter, range].every(finite) || price <= 0 || range <= 0) return null;
-  if (side === 'LONG' ? price <= filter : price >= filter) return null;
+  if (
+    ![price, filter, range].every(finite) ||
+    price <= 0 ||
+    range <= 0
+) {
+    return await recordRFReject("INVALID_PRICE_FILTER_RANGE");
+}
+  if (side === 'LONG' ? price <= filter : price >= filter) {
+    return await recordRFReject("PRICE_WRONG_SIDE_OF_FILTER");
+}
   const priorFilter = rf.filter[i - 1];
-  if (!finite(priorFilter)) return null;
+  if (!finite(priorFilter)) {
+    return await recordRFReject("INVALID_PRIOR_FILTER");
+}
   const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
-  if (move <= 0) return null;
+  if (move <= 0) {
+    return await recordRFReject("FILTER_NOT_MOVING_IN_SIGNAL_DIRECTION");
+}
   // ============================================================
 // MDF — MOVE QUALITY / CONTINUATION QUALITY
 // RF quyết định hướng.
 // MDF chỉ đánh giá chất lượng / nhiên liệu của cú move.
 // ============================================================
 
+
 const mdf = analyzeMomentumDecayField(candles, side, i);
 
-if (!mdf?.ok) return null;
+if (!mdf?.ok) {
+    return await recordRFReject("MDF_HARD_REJECT", { mdf });
+}
 
 const mdfAdjustment = Number(mdf.adjustment || 0);
+
+// MDF chỉ đánh giá chất lượng, không được đổi hướng RF.
+const extremeImpulseAtEntry =
+    Number(mdf.elapsedBars) === 0 &&
+    Number(mdf.bodyAtr) >= 1.5 &&
+    Number(mdf.rangeAtr) >= 1.8;
+
+// Loại điểm MDF rất thấp hoặc nến vào lệnh quá mạnh
+// ngay tại thời điểm impulse bắt đầu.
+if (
+    mdfAdjustment <= -5 ||
+    extremeImpulseAtEntry
+) {
+    return await recordRFReject(
+        "MDF_ENTRY_REJECT",
+        {
+            mdf,
+            mdfAdjustment,
+            extremeImpulseAtEntry
+        }
+    );
+}
+
 
 const score = clamp(
     Math.round(70 + mdfAdjustment),
@@ -2024,11 +2226,9 @@ const prev2Direction =
 // ============================================================
 
 const priorSide =
-    rf.buy[i - 1]
-        ? 'LONG'
-        : rf.sell[i - 1]
-            ? 'SHORT'
-            : null;
+  rf.direction[i - 1] === 1 ? 'LONG' :
+  rf.direction[i - 1] === -1 ? 'SHORT' :
+  null;
 
 // ============================================================
 // RF FILTER HISTORY
@@ -2119,11 +2319,9 @@ if (priorSide) {
     for (let j = i - 1; j >= 0; j--) {
 
         const s =
-            rf.buy[j]
-                ? 'LONG'
-                : rf.sell[j]
-                    ? 'SHORT'
-                    : null;
+    rf.direction[j] === 1 ? 'LONG' :
+    rf.direction[j] === -1 ? 'SHORT' :
+    null;
 
         if (s !== priorSide) break;
 
@@ -2131,14 +2329,81 @@ if (priorSide) {
     }
 }
 
-  return {
+  
+  // ============================================================
+  // ENTRY TELEMETRY V1
+  // Chỉ ghi dữ liệu, không đổi hướng RF.
+  // ============================================================
+
+  const prev2High =
+      prev2Candle ? Number(prev2Candle.h) : null;
+
+  const prev2Low =
+      prev2Candle ? Number(prev2Candle.l) : null;
+
+  const prev2Range =
+      prev2Candle ? prev2High - prev2Low : null;
+
+  const prev2Body =
+      prev2Candle
+          ? Math.abs(prev2Close - prev2Open)
+          : null;
+
+  const prev2BodyPct =
+      prev2Range > 0
+          ? prev2Body / prev2Range
+          : null;
+
+  const prev2UpperWickPct =
+      prev2Range > 0
+          ? (prev2High - Math.max(prev2Open, prev2Close)) / prev2Range
+          : null;
+
+  const prev2LowerWickPct =
+      prev2Range > 0
+          ? (Math.min(prev2Open, prev2Close) - prev2Low) / prev2Range
+          : null;
+
+  const prev2CandleAligned =
+      prev2Direction == null
+          ? null
+          : side === 'LONG'
+              ? prev2Direction === 'UP'
+              : prev2Direction === 'DOWN';
+
+  const sideRelativeBodyPct =
+      candleRange > 0
+          ? (side === 'LONG' ? 1 : -1) *
+            (candleClose - candleOpen) / candleRange
+          : null;
+
+  const adverseWickPct =
+      side === 'LONG' ? upperWickPct : lowerWickPct;
+
+  const supportiveWickPct =
+      side === 'LONG' ? lowerWickPct : upperWickPct;
+
+  const distanceToFilterPct =
+      price > 0 ? filterDistance / price * 100 : null;
+
+  const distanceToFilterRange =
+      range > 0 ? filterDistance / range : null;
+
+  const filterMovePct =
+      price > 0 ? move / price * 100 : null;
+
+  const signal = {
     side, symbol, price, isFlip: true, flipTime: candles[i].t,
     setup: 'RANGE_FILTER', pullbackType: 'NONE',
     triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
     marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
     volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
-    rfVersion: 'RF_DW_V1',
-mdfVersion: 'MDF_V1',
+    
+    telemetryVersion: 'ENTRY_TELEMETRY_V1',
+    signalKey,
+
+    rfVersion: 'RF_DW_V2',
+mdfVersion: 'MDF_V2',
     qualityScore: score,
 score,
 // ============================================================
@@ -2244,35 +2509,24 @@ prevCandle: {
 
     direction: prevCandleDirection
 },
-prev2Candle: {
-    time:
-        prev2Candle
-            ? candles[i - 2].t
-            : null,
-
-    direction: prev2Direction
-},
 // ============================================================
 // MDF METRICS
 // ============================================================
 mdfAdjustment,
 
+
 mdf: {
     impulseDetected: !!mdf.impulseDetected,
-
     e0: Number(mdf.e0 || 0),
     energyPct: Number(mdf.energyPct || 0),
-
     halfLife: Number(mdf.halfLife || 0),
     elapsedBars: Number(mdf.elapsedBars || 0),
-
     etaToExhaustion:
         mdf.etaToExhaustion == null
             ? null
             : Number(mdf.etaToExhaustion),
 
     phase: mdf.phase || null,
-
     weak: !!mdf.weak,
     exhausted: !!mdf.exhausted,
 
@@ -2280,24 +2534,95 @@ mdf: {
     rangeAtr: Number(mdf.rangeAtr || 0),
     bodyEfficiency: Number(mdf.bodyEfficiency || 0),
 
-    // Impulse trước đó
-    impulseBodyAtr:
-        Number(mdf.impulseBodyAtr || 0),
+    impulseBodyAtr: Number(mdf.impulseBodyAtr || 0),
+    impulseRangeAtr: Number(mdf.impulseRangeAtr || 0),
+    impulseEfficiency: Number(mdf.impulseEfficiency || 0),
 
-    impulseRangeAtr:
-        Number(mdf.impulseRangeAtr || 0),
+    velocity: Number(mdf.velocity || 0),
 
-    impulseEfficiency:
-        Number(mdf.impulseEfficiency || 0),
+    spikeEntry: !!mdf.spikeEntry,
+    climax: !!mdf.climax,
+    chaseRisk: !!mdf.chaseRisk,
+    continuationGood: !!mdf.continuationGood,
+    continuationWeak: !!mdf.continuationWeak,
 
-    velocity:
-        Number(mdf.velocity || 0)
+    hardReject: !!mdf.hardReject,
+    hardRejectReasons: Array.isArray(mdf.hardRejectReasons)
+        ? mdf.hardRejectReasons
+        : [],
+
+    nearEntry: mdf.nearEntry || null,
 },
+
+
+    // ============================================================
+    // ENTRY DIAGNOSTICS
+    // Chỉ phục vụ phân tích dữ liệu sau này.
+    // ============================================================
+    entryDiagnostics: {
+        previousCandleAligned: !!previousCandleAligned,
+        prev2CandleAligned,
+
+        sideRelativeBodyPct:
+            sideRelativeBodyPct == null
+                ? null
+                : Number(sideRelativeBodyPct),
+
+        adverseWickPct: Number(adverseWickPct),
+        supportiveWickPct: Number(supportiveWickPct),
+
+        distanceToFilterPct:
+            distanceToFilterPct == null
+                ? null
+                : Number(distanceToFilterPct),
+
+        distanceToFilterRange:
+            distanceToFilterRange == null
+                ? null
+                : Number(distanceToFilterRange),
+
+        filterMovePct:
+            filterMovePct == null
+                ? null
+                : Number(filterMovePct)
+    },
+
+    // ============================================================
+    // PREVIOUS 2 CANDLE - FULL SNAPSHOT
+    // Thay thế object prev2Candle cũ, không tạo key trùng.
+    // ============================================================
+    prev2Candle: {
+        time: prev2Candle ? candles[i - 2].t : null,
+
+        open: prev2Open,
+        high: prev2High,
+        low: prev2Low,
+        close: prev2Close,
+
+        body: prev2Body,
+        range: prev2Range,
+        bodyPct: prev2BodyPct,
+
+        upperWickPct: prev2UpperWickPct,
+        lowerWickPct: prev2LowerWickPct,
+
+        direction: prev2Direction,
+        aligned: prev2CandleAligned
+    },
+
 
 filterMove: move,
 filterRange: range,
 
 };
+await saveRFSignalEvent({
+    ...signal,
+    entryPrice: Number(price),
+    status: "SIGNAL_ACCEPTED",
+    updatedAt: Date.now()
+});
+
+return signal;
 }
 
 function analyzeMomentumDecayField(candles, side, currentIndex) {
@@ -3626,52 +3951,54 @@ adjustment = Math.max(
 // Chỉ block khi có tổ hợp cực đoan.
 // Không block chỉ vì một metric.
 // --------------------------------------------------------
-const hardReject =
 
-    // Current candle quá lớn cùng hướng RF
-    currentLarge ||
+const hardRejectReasons = [];
 
-    // i-2 và i-1 đều quá lớn cùng hướng RF
-    twoPreviousLarge ||
+if (currentLarge) {
+    hardRejectReasons.push("CURRENT_LARGE_CANDLE");
+}
 
-    // Current range quá lớn
-    rangeAtr >= 2.3 ||
+if (twoPreviousLarge) {
+    hardRejectReasons.push("TWO_PREVIOUS_LARGE_CANDLES");
+}
 
-    // Initial impulse energy quá cực đoan
-    e0 >= 3.0 ||
+if (rangeAtr >= 2.3) {
+    hardRejectReasons.push("RANGE_ATR_GE_2_3");
+}
 
-    // Momentum cycle quá dài
-    halfLife >= 9.5 ||
+if (e0 >= 3.0) {
+    hardRejectReasons.push("E0_GE_3");
+}
 
-    // Đã chạy 5-7 bars trước entry
-    (
-        elapsedBars >= 5 &&
-        elapsedBars <= 7
-    ) ||
+if (halfLife >= 9.5) {
+    hardRejectReasons.push("HALF_LIFE_GE_9_5");
+}
 
-    // Impulse trước đó quá lớn
-    (
-        elapsedBars >= 1 &&
-        impulseBodyAtr >= 2.6
-    ) ||
+if (elapsedBars >= 5 && elapsedBars <= 7) {
+    hardRejectReasons.push("ELAPSED_BARS_5_TO_7");
+}
 
-    (
-        elapsedBars >= 1 &&
-        impulseRangeAtr >= 3.2
-    ) ||
+if (elapsedBars >= 1 && impulseBodyAtr >= 2.6) {
+    hardRejectReasons.push("IMPULSE_BODY_ATR_GE_2_6");
+}
 
-    // Spike + climax
-    (
-        spikeEntry &&
-        climax
-    ) ||
+if (elapsedBars >= 1 && impulseRangeAtr >= 3.2) {
+    hardRejectReasons.push("IMPULSE_RANGE_ATR_GE_3_2");
+}
 
-    // Đã fading và continuation yếu
-    (
-        continuationWeak &&
-        phase === 'FADING' &&
-        energyPct < 0.30
-    );
+if (spikeEntry && climax) {
+    hardRejectReasons.push("SPIKE_AND_CLIMAX");
+}
+
+if (
+    continuationWeak &&
+    phase === "FADING" &&
+    energyPct < 0.30
+) {
+    hardRejectReasons.push("FADING_WEAK_CONTINUATION");
+}
+
+const hardReject = hardRejectReasons.length > 0;
 
 if (hardReject) {
     return {
@@ -3717,64 +4044,62 @@ if (hardReject) {
         climax,
         chaseRisk,
         continuationGood,
-        continuationWeak
+        continuationWeak,
+        hardReject,
+hardRejectReasons
     };
 }
 
-    return {
+    
+return {
+    ok: true,
+    adjustment,
 
-        ok: true,
+    impulseDetected,
+    e0,
+    energyPct,
+    halfLife,
+    elapsedBars,
+    etaToExhaustion,
+    phase,
+    weak,
+    exhausted,
 
-        adjustment,
+    bodyAtr,
+    rangeAtr,
+    bodyEfficiency,
 
-        impulseDetected:
-            impulseDetected,
+    impulseBodyAtr,
+    impulseRangeAtr,
+    impulseEfficiency,
+    velocity,
 
-        e0,
+    spikeEntry,
+    climax,
+    chaseRisk,
+    continuationGood,
+    continuationWeak,
 
-        energyPct,
+    hardReject: false,
+    hardRejectReasons: [],
 
-        halfLife,
+    nearEntry: {
+        current: currentCandleStats,
+        prev: prevCandleStats,
+        prev2: prev2CandleStats,
 
-        elapsedBars,
+        currentLarge,
+        prevLarge,
+        prev2Large,
 
-        etaToExhaustion,
+        currentPlusPreviousLarge,
+        twoPreviousLarge,
 
-        phase,
+        nearEntryExhaustion,
+        consecutiveLargeBeforeEntry
+    }
+};
 
-        weak,
-
-        exhausted,
-
-        bodyAtr,
-
-        rangeAtr,
-
-        bodyEfficiency,
-
-        impulseBodyAtr,
-        nearEntry: {
-    current: currentCandleStats,
-    prev: prevCandleStats,
-    prev2: prev2CandleStats,
-
-    currentLarge,
-    prevLarge,
-    prev2Large,
-
-    currentPlusPreviousLarge,
-    twoPreviousLarge,
-
-    nearEntryExhaustion,
-    consecutiveLargeBeforeEntry
-},
-
-        impulseRangeAtr,
-
-        impulseEfficiency,
-
-        velocity
-    };
 }
 // ================= SCAN =================
 async function scan(symbol){
@@ -3784,9 +4109,10 @@ async function scan(symbol){
         // ==================================================
         // 1. LOAD MARKET DATA
         // ==================================================
+        const data15 = await getData(symbol, "15m", RF_FETCH_COUNT);
+if (!data15) return null;
 
-        const data15 = await getData(symbol,"15m",RF_FETCH_COUNT);
-        if(!data15) return null;
+await updateRFForwardOutcomes(symbol, data15);
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
@@ -3814,9 +4140,9 @@ async function scan(symbol){
         // ==================================================
         // 4. NO SIGNAL
         // ==================================================
-        if(!r || !r.side){
-            return null
-        }
+        if (!r || !r.side) {
+    return null;
+}
         // The scanner polls every minute while the latest closed 15m candle
 // remains the signal candle. Consume each Range Filter flip once.
         const flipTime=Number(r.flipTime);
@@ -3829,6 +4155,13 @@ if(!Number.isFinite(flipTime)||flipAge>15*60*1000){
             return null;
         }
         LAST_RF_SIGNAL_CANDLE[symbol]=flipTime;
+        await saveRFSignalEvent({
+    ...r,
+    status: "SIGNAL_ACCEPTED",
+    entryPrice: Number(r.price),
+    rejectionReason: null,
+    scannerCheckedAt: Date.now()
+});
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
@@ -3943,7 +4276,10 @@ async function closeOpenPositionOnRangeFlip(flip){
 // CLOSE POSITION WHEN BINANCE-STYLE ROI <= -30%
 // USDⓈ-M FUTURES / MARK PRICE
 // ============================================================
+const ENABLE_LOSS_CUT = false; // true = bật, false = tắt
+
 async function monitorLossCutOnce(positions){
+    if(!ENABLE_LOSS_CUT) return;
 
     if(!Array.isArray(positions)) return;
 
@@ -4312,6 +4648,13 @@ if (!Number.isFinite(coreQuality)) {
     continue;
 }
 if (coreQuality < MIN_CORE_SCORE) {
+    await saveRFSignalEvent({
+        ...s,
+        status: "BLOCKED_SCANNER",
+        rejectionReason: "QUALITY_SCORE_BELOW_MIN",
+        scannerScore: coreQuality,
+        minCoreScore: MIN_CORE_SCORE
+    });
     continue;
 }
 candidates.push({
@@ -4355,7 +4698,7 @@ filtered.sort((a, b) => {
         Number(b.qualityScore || 0) -
         Number(a.qualityScore || 0);
 });
-const picks = filtered.slice(0, 1);
+const picks = filtered//.slice(0, 1);
 for (const best of picks) {
   const existing = await trades.findOne({symbol:best.symbol,result:"PENDING"});
   if(!existing){
@@ -4384,6 +4727,34 @@ for (const best of picks) {
     if(closeInfo){updateSet.pnl=closeInfo.pnl;updateSet.exitOrderId=closeInfo.exitOrderId;}
     try { const dbUpdate=await trades.updateOne(updateQuery,{$set:updateSet}); if(existing._id && Number(dbUpdate?.matchedCount||0)<1){ console.log(`🚨 REVERSAL DB UPDATE MATCHED NO TRADE ${best.symbol}; opposite entry blocked`); continue; } }
     catch(e){ console.log(`🚨 REVERSAL DB UPDATE FAIL ${best.symbol}: ${e.message}`); continue; }
+    if (closeInfo && rfSignalEvents) {
+    const oldSignalKey =
+        existing.rfSignalKey || existing.signalKey;
+
+    if (oldSignalKey) {
+        try {
+            await rfSignalEvents.updateOne(
+                { signalKey: oldSignalKey },
+                {
+                    $set: {
+                        status: "TRADE_CLOSED",
+                        actualResult:
+                            closeInfo.pnl > 0 ? "WIN" : "LOSS",
+                        actualPnl: Number(closeInfo.pnl),
+                        actualClosedAt: Number(closedAt),
+                        closeReason: "RANGE_FILTER_FLIP",
+                        updatedAt: Date.now()
+                    }
+                }
+            );
+        } catch (eventErr) {
+            console.error(
+                `🚨 RF REVERSAL EVENT UPDATE FAIL ${best.symbol}:`,
+                eventErr?.message || eventErr
+            );
+        }
+    }
+}
     activeTrades=activeTrades.filter(t=>!(t.symbol===best.symbol&&t.result==="PENDING"));
     POS_CACHE=null;POS_CACHE_TIME=0;
     try { positions=await getPositionsCached(); } catch(e){ console.log(`🚨 POST-CLOSE POSITION CHECK FAIL ${best.symbol}`); continue; }
@@ -4425,6 +4796,7 @@ const trade =
         best,
         positionBudget
     );
+    
 
 if(!trade){
     console.log(
@@ -4432,7 +4804,8 @@ if(!trade){
     );
     continue;
 }
-
+trade.signalKey = best.signalKey;
+trade.rfSignalKey = best.signalKey;
 if(
     !(balance > 0) ||
     !(best.price > 0) ||
@@ -4629,20 +5002,89 @@ console.log(
       trade.price=trade.entry;
       trade.quantity=Math.abs(Number(realPosition.positionAmt));
       trade.notional=trade.quantity*trade.entry;
-      trade.enteredAt=Date.now();trade.openedAt=trade.enteredAt;trade.updatedAt=trade.enteredAt;
+      trade.enteredAt = Date.now();
+trade.openedAt = trade.enteredAt;
+trade.createdAt = trade.createdAt || trade.enteredAt;
+trade.updatedAt = trade.enteredAt;
       NEXT_ENTRY_ALLOWED_AT=Date.now()+ENTRY_COOLDOWN_MS;
-      let insertResult;
-      try{
-        if(!await ensureDB()) throw new Error("MONGODB OFFLINE AFTER ENTRY");
-        insertResult=await trades.insertOne(trade);
-        if(!insertResult?.insertedId) throw new Error(`DB INSERT FAILED ${trade.symbol}`);
-        trade._id=insertResult.insertedId;trade.dbSaveFailed=false;trade.dbRecoveryNeeded=false;
-        activeTrades.push(trade);
-        console.log(`💾 DB SAVED ${trade.symbol} SIDE=${trade.side} ENTRY=${trade.entry} QTY=${trade.quantity}`);
-      }catch(dbErr){
-        console.error(`🚨 DB SAVE FAIL ${trade.symbol}:`,dbErr?.message||dbErr);
-        activeTrades.push({...trade,dbSaveFailed:true,dbRecoveryNeeded:true});
-      }
+      let dbSaved = false;
+
+try {
+    if (!await ensureDB()) {
+        throw new Error("MONGODB OFFLINE AFTER ENTRY");
+    }
+
+    const insertResult = await trades.insertOne(trade);
+
+    if (!insertResult?.insertedId) {
+        throw new Error(`DB INSERT FAILED ${trade.symbol}`);
+    }
+
+    trade._id = insertResult.insertedId;
+    trade.dbSaveFailed = false;
+    trade.dbRecoveryNeeded = false;
+    dbSaved = true;
+
+} catch (dbErr) {
+    console.error(
+        `🚨 DB SAVE FAIL ${trade.symbol}:`,
+        dbErr?.message || dbErr
+    );
+
+    trade.dbSaveFailed = true;
+    trade.dbRecoveryNeeded = true;
+}
+
+// Chỉ thêm vào RAM một lần, không phụ thuộc việc ghi RF event thành công.
+activeTrades.push(trade);
+
+if (dbSaved) {
+    console.log(
+        `💾 DB SAVED ${trade.symbol} ` +
+        `SIDE=${trade.side} ENTRY=${trade.entry} QTY=${trade.quantity}`
+    );
+
+    try {
+        if (rfSignalEvents && trade.rfSignalKey) {
+            await rfSignalEvents.updateOne(
+                { signalKey: trade.rfSignalKey },
+                {
+                    $set: {
+                        status: "TRADE_OPENED",
+                        tradeId: String(trade._id),
+                        actualEntry: Number(trade.entry),
+                        actualQuantity: Number(trade.quantity),
+                        actualNotional: Number(trade.notional),
+                        openedAt: Number(trade.enteredAt),
+                        updatedAt: Date.now()
+                    }
+                }
+            );
+        }
+    } catch (eventErr) {
+        console.error(
+            `🚨 RF EVENT UPDATE FAIL ${trade.symbol}:`,
+            eventErr?.message || eventErr
+        );
+    }
+} else {
+    try {
+        await saveRFSignalEvent({
+            signalKey: trade.rfSignalKey,
+            symbol: trade.symbol,
+            side: trade.side,
+            status: "TRADE_OPENED_DB_SAVE_FAILED",
+            actualEntry: Number(trade.entry),
+            actualQuantity: Number(trade.quantity),
+            updatedAt: Date.now()
+        });
+    } catch (eventErr) {
+        console.error(
+            `🚨 RF EVENT SAVE FAIL ${trade.symbol}:`,
+            eventErr?.message || eventErr
+        );
+    }
+}
         const msg=`🔥 RANGE
 
 📊 ${trade.symbol}
@@ -4899,6 +5341,28 @@ await trades.updateOne(
         }
     }
 )
+if (rfSignalEvents && (t.rfSignalKey || t.signalKey)) {
+    try {
+        await rfSignalEvents.updateOne(
+            { signalKey: t.rfSignalKey || t.signalKey },
+            {
+                $set: {
+                    status: "TRADE_CLOSED",
+                    actualResult: isWin ? "WIN" : "LOSS",
+                    actualPnl: Number(closed.pnl),
+                    actualClosedAt: Number(closed.closedAt),
+                    closeReason: t.closeReason || "POSITION_CLOSED",
+                    updatedAt: Date.now()
+                }
+            }
+        );
+    } catch (eventErr) {
+        console.error(
+            `🚨 RF EVENT CLOSE UPDATE FAIL ${t.symbol}:`,
+            eventErr?.message || eventErr
+        );
+    }
+}
 
         const latestBalance = await updateBalance()
 
@@ -4948,17 +5412,42 @@ PnL: ${closed.pnl.toFixed(4)}
     )
 
     const unresolvedQuery=t._id?{_id:t._id,result:"PENDING"}:{symbol:t.symbol,createdAt:t.createdAt,result:"PENDING"};
-    await trades.updateOne(
-        unresolvedQuery,
-        {
-            $set:{
-                result:"CLOSED_UNRESOLVED",
-                closedAt:Date.now(),
-                debugReason:
-                    "NO_POSITION_AFTER_VERIFY_AND_NO_CLOSED_RESULT"
-            }
+    const unresolvedAt = Date.now();
+
+await trades.updateOne(
+    unresolvedQuery,
+    {
+        $set: {
+            result: "CLOSED_UNRESOLVED",
+            closedAt: unresolvedAt,
+            debugReason:
+                "NO_POSITION_AFTER_VERIFY_AND_NO_CLOSED_RESULT"
         }
-    )
+    }
+);
+
+if (rfSignalEvents && (t.rfSignalKey || t.signalKey)) {
+    try {
+        await rfSignalEvents.updateOne(
+            { signalKey: t.rfSignalKey || t.signalKey },
+            {
+                $set: {
+                    status: "TRADE_CLOSED_UNRESOLVED",
+                    actualResult: "UNKNOWN",
+                    actualClosedAt: unresolvedAt,
+                    closeReason:
+                        "NO_POSITION_AFTER_VERIFY_AND_NO_CLOSED_RESULT",
+                    updatedAt: Date.now()
+                }
+            }
+        );
+    } catch (eventErr) {
+        console.error(
+            `RF EVENT UNRESOLVED UPDATE FAIL ${t.symbol}:`,
+            eventErr?.message || eventErr
+        );
+    }
+}
 
     await sendTelegram2(
         `⚠️ ${t.symbol} vị thế đã đóng .`
@@ -5460,6 +5949,15 @@ while(!dbOK){
         })
         db = client.db("trading")
         trades = db.collection("trades")
+        rfSignalEvents = db.collection("rf_signal_events");
+        await rfSignalEvents.createIndex(
+    { signalKey: 1 },
+    { unique: true }
+);
+
+await rfSignalEvents.createIndex(
+    { status: 1, symbol: 1, flipTime: 1 }
+);
         // TEST DB THỰC SỰ ĐỌC ĐƯỢC
         await trades.findOne(
             {},
