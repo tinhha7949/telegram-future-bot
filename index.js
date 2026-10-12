@@ -1,41 +1,72 @@
 let DB_READY = false
-let rfSignalEvents = null;
 const OPEN_POSITION_LOCK = {}
-const RANGE_EXIT_LOCK = {}
-const RANGE_EXIT_ALERT_AT = {}
-const RANGE_EXIT_DATA_FAILS = {}
-const LAST_RF_SIGNAL_CANDLE = {}
-const RF_CANDLE_COUNT = 1300;
-const RF_FETCH_COUNT = RF_CANDLE_COUNT + 1;
-let NEXT_ENTRY_ALLOWED_AT = 0;
-const ENTRY_COOLDOWN_MS = 8 * 60 * 1000;
+const TPSL_LOCK = {}
+const TPSL_PHASE = {}
 let DB_RECONNECTING = false
-let DB_LAST_ERROR = 0
 let TIME_SYNCED = false
+const TPSL_PENDING = {}
+const TPSL_CLOSING = {}
+const DYNAMIC_LAST_UPDATE = {}
+const DYNAMIC_PHASE = {}
+const TRADE_CONFIG = {
+    riskPerTrade: 0.01,      
+    maxRiskPerTrade: 0.01,    
+    maxPositionPercent: 1.5,  
+    maxActivePositions: 20      
+}
 let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
 const OPENING_POSITIONS = {}
-const TRADE_CONFIG = {
-    maxPositionPercent: 2.0,  
-    maxActivePositions: 20      
-}
 const fs = require("fs")
 
 const PID_FILE = "./bot.pid"
 
-// nếu đã có bot chạy
-if(fs.existsSync(PID_FILE)){
-    const oldPid = parseInt(fs.readFileSync(PID_FILE,"utf8"))
-
+function pidIsAlive(pid){
+    if(!Number.isSafeInteger(pid) || pid <= 0) return false
     try{
-        process.kill(oldPid, 0)
-        console.log("⛔ BOT ĐANG CHẠY SẴN → EXIT")
-        process.exit(1)
+        process.kill(pid, 0)
+        return true
     }catch(e){
-        // process chết → ok
+        // EPERM means the process exists but cannot be signalled.
+        return e?.code !== "ESRCH"
     }
 }
+
+function acquirePidLock(){
+    for(let attempt = 0; attempt < 2; attempt++){
+        try{
+            // wx is atomic: only one bot process can create this lock.
+            fs.writeFileSync(PID_FILE, String(process.pid), { flag: "wx" })
+            return
+        }catch(e){
+            if(e?.code !== "EEXIST") throw e
+
+            let oldPid = NaN
+            try{
+                oldPid = Number(
+                    fs.readFileSync(PID_FILE, "utf8").trim()
+                )
+            }catch(readError){}
+
+            if(pidIsAlive(oldPid)){
+                console.log("⛔ BOT ĐANG CHẠY SẴN → EXIT")
+                process.exit(1)
+            }
+
+            // Remove a stale lock, then retry the exclusive create.
+            try{
+                fs.unlinkSync(PID_FILE)
+            }catch(unlinkError){
+                if(attempt === 1) throw unlinkError
+            }
+        }
+    }
+
+    throw new Error("Could not acquire bot PID lock")
+}
+
+acquirePidLock()
 //
 process.on("unhandledRejection", err => {
     console.log("UNHANDLED:", err)
@@ -80,15 +111,6 @@ async function ensureDB(){
 
         db = client.db("trading")
         trades = db.collection("trades")
-        rfSignalEvents = db.collection("rf_signal_events");
-        await rfSignalEvents.createIndex(
-    { signalKey: 1 },
-    { unique: true }
-);
-
-await rfSignalEvents.createIndex(
-    { status: 1, symbol: 1, flipTime: 1 }
-);
 
         await db.command({
             ping: 1
@@ -208,11 +230,9 @@ async function getClosedTradeResult(t){
 
     try{
 
-        const openTime = Number(t.enteredAt || t.openedAt || t.createdAt || 0);
         const trades = await binance.futuresUserTrades({
             symbol: t.symbol,
-            startTime: Math.max(0, openTime - 5000),
-            limit: 1000,
+            limit: 50,
             recvWindow: 20000
         })
 
@@ -220,14 +240,13 @@ async function getClosedTradeResult(t){
             return null
         }
 
-        // Find closing-side fills after entry, including exact break-even fills.
-        const closingSide = String(t.side).toUpperCase() === "LONG" ? "SELL" : "BUY";
-        const exits = trades
-            .filter(x =>
-                String(x.side || "").toUpperCase() === closingSide &&
-                Number(x.time || 0) >= openTime - 5000
-            )
-            .sort((a,b) => Number(a.time || 0) - Number(b.time || 0));
+        // Chỉ lấy các fill có realized PnL (lệnh đóng vị thế)
+        const openTime = t.enteredAt || t.createdAt || 0
+
+const exits = trades.filter(x =>
+    Number(x.realizedPnl || 0) !== 0 &&
+    Number(x.time || 0) >= openTime
+)
 
         if(exits.length === 0){
             return null
@@ -397,32 +416,27 @@ const CHAT_ID = process.env.CHAT_ID
 const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
 const AI_CHAT_ID = process.env.AI_CHAT_ID
 
-const LIMIT_15M = 300 //300
-const LIMIT_1H  = 200 //100
+const RR_THRESHOLD = 1.20 // 1.3 hoặc 1.4 nếu muốn 
 let ACCOUNT_BALANCE = 0
-const MIN_VOL_15M = 60000 // 100000 hoặc  nếu rác
 // const MIN_VOL_24H = 15000000
 
 const DEBUG_AI = false
-const ENABLE_REVERSAL = true
 
 let lastUpdateId = 0
 let cachedSymbols = null
 let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
-let scanning = false
+let NEXT_ENTRY_ALLOWED_AT = 0;
+const ENTRY_COOLDOWN_MS = 8 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
 let activeTrades = []
 let exchangeInfoCache = null
 let validFuturesSymbols = new Set()
-let pollingLock = true
-let telegramPolling = false
 let TELEGRAM_LOCK = 0
 let DATA_FAILS = {}
-let WATCHDOG_RUNNING = false
 let BTC_REGIME_CACHE = null
 let BTC_REGIME_CACHE_TIME = 0
 
@@ -446,30 +460,6 @@ async function updateBalance(){
         )
         return ACCOUNT_BALANCE
     }
-}
-function normalizePrice(price, tickSize){
-
-    if(!tickSize) return price
-
-    const precision =
-        (tickSize.toString().split(".")[1] || "")
-        .replace(/0+$/,"")
-        .length
-
-    const normalized =
-        Math.round(price / tickSize) * tickSize
-
-    return Number(
-        normalized.toFixed(precision)
-    )
-}
-function normalizeQty(qty, stepSize){
-    return Number(
-        (Math.floor(qty / stepSize) * stepSize)
-        .toFixed(
-            (stepSize.toString().split(".")[1] || "").length
-        )
-    )
 }
 async function getSymbolInfo(symbol){
 
@@ -644,7 +634,7 @@ function normalizeQtyFinal(qty, stepSize){
 
    // return Number(fixed.toFixed(precision))
 //}
-async function cancelLegacyAlgoOrders(symbol){
+async function cancelAlgoTPSL(symbol){
 
     if(!symbol){
         console.log("❌ CANCEL ALGO NO SYMBOL")
@@ -747,7 +737,7 @@ async function cancelLegacyAlgoOrders(symbol){
         }
 
         console.log(
-            `🗑 LEGACY ALGO ORDERS CANCELLED ${symbol}`
+            `🗑 ALGO TPSL CANCELLED ${symbol}`
         )
 
         return true
@@ -757,35 +747,11 @@ async function cancelLegacyAlgoOrders(symbol){
         await checkTimeError(e)
 
         console.log(
-            `❌ CANCEL LEGACY ALGO ORDERS ${symbol}:`,
+            `❌ CANCEL ALGO TPSL ${symbol}:`,
             e?.message || e
         )
 
         return false
-    }
-}
-async function getOpenTrade(symbol){
-
-    try{
-
-        const trade =
-            await trades.findOne({
-
-                symbol: symbol,
-                result: "PENDING"
-
-            })
-
-        return trade || null
-
-    }catch(e){
-
-        console.log(
-            `❌ GET OPEN TRADE ${symbol}:`,
-            e.message
-        )
-
-        return null
     }
 }
 async function hasPosition(symbol){
@@ -847,11 +813,11 @@ async function openPosition(symbol, side, qty){
             }
         }
         // =========================================
-// CLEAR LEGACY SYMBOL ORDERS
+// CLEAR STALE ORDERS / ALGO TPSL
 // =========================================
 
 const cleared =
-    await clearSymbolOrders(symbol)
+    await cancelAllOrders(symbol)
 
 if(!cleared){
 
@@ -1153,6 +1119,524 @@ if(!cleared){
         delete OPEN_POSITION_LOCK[symbol]
     }
 }
+async function placeTPSLWithRetry(
+    symbol,
+    side,
+    type,
+    stopPrice
+){
+
+    const closeSide =
+        side === "LONG"
+            ? "SELL"
+            : "BUY"
+
+    for(
+        let attempt = 1;
+        attempt <= 4;
+        attempt++
+    ){
+
+        try{
+
+            const result =
+                await binance.futuresOrder({
+
+                    symbol,
+                    side: closeSide,
+                    type,
+                    stopPrice,
+                    closePosition: true,
+                    workingType: "MARK_PRICE",
+                    recvWindow: 60000
+
+                })
+
+            if(
+                result &&
+                (
+                    result.algoId ||
+                    result.orderId
+                )
+            ){
+
+                return result
+            }
+
+        }catch(e){
+
+            await checkTimeError(e)
+
+            const msg =
+                String(
+                    e?.message ||
+                    e?.body ||
+                    e
+                )
+
+            const conflict =
+                msg.includes(
+                    "open stop or take profit order"
+                ) ||
+                msg.includes(
+                    "GTE and closePosition"
+                )
+
+            console.log(
+                `⚠️ TPSL ${type} RETRY ` +
+                `${symbol} ` +
+                `ATTEMPT=${attempt}/4: ` +
+                msg
+            )
+
+            if(!conflict){
+
+                throw e
+            }
+
+            if(attempt < 4){
+
+                await new Promise(r =>
+                    setTimeout(
+                        r,
+                        1000 * attempt
+                    )
+                )
+            }
+        }
+    }
+
+    return null
+}
+async function setDynamicTPSL(trade){
+
+    const symbol =
+        String(trade?.symbol || "").trim()
+
+    if(!symbol){
+        console.log("❌ DYNAMIC TPSL NO SYMBOL")
+        return false
+    }
+    const side = String(trade?.side || "").toUpperCase()
+
+if(side !== "LONG" && side !== "SHORT"){
+    console.log(
+        `❌ DYNAMIC INVALID SIDE ${symbol}: ${trade?.side}`
+    )
+    return false
+}
+
+    if(TPSL_LOCK[symbol]){
+        console.log(
+            `⛔ DYNAMIC TPSL LOCK BUSY ${symbol}`
+        )
+        return false
+    }
+
+    TPSL_LOCK[symbol] = true
+
+    try{
+
+        // =================================================
+        // 1. VERIFY REAL POSITION
+        // =================================================
+
+        const pos =
+            await waitPosition(symbol)
+
+        if(!pos){
+            console.log(
+                `❌ DYNAMIC NO POSITION ${symbol}`
+            )
+            return false
+        }
+
+        const positionAmt =
+            Number(pos.positionAmt)
+
+        if(
+            !Number.isFinite(positionAmt) ||
+            positionAmt === 0
+        ){
+            console.log(
+                `❌ DYNAMIC ZERO POSITION ${symbol}`
+            )
+            return false
+        }
+
+       const positionSide =
+    positionAmt > 0
+        ? "LONG"
+        : "SHORT"
+        if(side !== positionSide){
+    console.log(
+        `⛔ DYNAMIC SIDE MISMATCH ${symbol} ` +
+        `TRADE=${side} POSITION=${positionSide}`
+    )
+    return false
+}
+
+        const entry =
+            Number(pos.entryPrice)
+
+        if(
+            !Number.isFinite(entry) ||
+            entry <= 0
+        ){
+            console.log(
+                `❌ INVALID ENTRY ${symbol}`
+            )
+            return false
+        }
+
+        // =================================================
+        // 2. SYMBOL FILTERS
+        // =================================================
+
+        const info =
+            await getSymbolInfo(symbol)
+
+        if(!info || !info.filters){
+            console.log(
+                `❌ DYNAMIC SYMBOL INFO FAIL ${symbol}`
+            )
+            return false
+        }
+
+        const priceFilter =
+            info.filters.find(
+                f => f.filterType === "PRICE_FILTER"
+            )
+
+        if(!priceFilter){
+            console.log(
+                `❌ NO PRICE FILTER ${symbol}`
+            )
+            return false
+        }
+
+        const tickSize =
+            Number(priceFilter.tickSize)
+
+        if(
+            !Number.isFinite(tickSize) ||
+            tickSize <= 0
+        ){
+            console.log(
+                `❌ INVALID TICK SIZE ${symbol}`
+            )
+            return false
+        }
+
+        // =================================================
+        // 3. CURRENT MARKET PRICE
+        // =================================================
+
+        const currentPrice =
+            Number(
+                pos.markPrice ||
+                pos.entryPrice
+            )
+
+        if(
+            !Number.isFinite(currentPrice) ||
+            currentPrice <= 0
+        ){
+            console.log(
+                `❌ INVALID CURRENT PRICE ${symbol}`
+            )
+            return false
+        }
+
+        // =================================================
+        // 4. RAW SL / TP
+        // =================================================
+
+        let rawSL =
+            Number(trade.sl)
+
+        let rawTP =
+            Number(trade.tp)
+
+        if(
+            !Number.isFinite(rawSL) ||
+            !Number.isFinite(rawTP) ||
+            rawSL <= 0 ||
+            rawTP <= 0
+        ){
+
+            console.log(
+                `❌ INVALID DYNAMIC TPSL ${symbol} ` +
+                `SL=${rawSL} TP=${rawTP}`
+            )
+
+            return false
+        }
+
+        // =================================================
+// 5. DIRECTIONAL PRICE NORMALIZATION
+// =================================================
+
+let sl
+let tp
+
+if(positionSide==="LONG"){
+    sl=Math.ceil(rawSL/tickSize)*tickSize
+    tp=Math.ceil(rawTP/tickSize)*tickSize
+}else{
+    sl=Math.floor(rawSL/tickSize)*tickSize
+    tp=Math.floor(rawTP/tickSize)*tickSize
+}
+
+        sl =
+            Number(
+                sl.toFixed(
+                    Math.max(
+                        0,
+                        String(tickSize).split(".")[1]?.length || 0
+                    )
+                )
+            )
+
+        tp =
+            Number(
+                tp.toFixed(
+                    Math.max(
+                        0,
+                        String(tickSize).split(".")[1]?.length || 0
+                    )
+                )
+            )
+
+            const previousSL=Number(trade.previousSL)
+
+if(Number.isFinite(previousSL)&&previousSL>0){
+    if(positionSide==="LONG"&&sl<previousSL)sl=previousSL
+    if(positionSide==="SHORT"&&sl>previousSL)sl=previousSL
+    sl=Number(sl.toFixed(Math.max(0,String(tickSize).split(".")[1]?.length||0)))
+}
+
+        // =================================================
+        // 6. HARD VALIDATION
+        // =================================================
+
+        if(
+            !Number.isFinite(sl) ||
+            !Number.isFinite(tp) ||
+            sl <= 0 ||
+            tp <= 0
+        ){
+            console.log(
+                `❌ NORMALIZED TPSL INVALID ${symbol}`
+            )
+            return false
+        }
+
+        const safeDistance = tickSize
+
+if(positionSide === "LONG"){
+
+    if(
+        sl >= currentPrice - safeDistance ||
+        tp <= currentPrice + safeDistance
+    ){
+        console.log(
+            `⛔ DYNAMIC TPSL SKIP LONG ${symbol} ` +
+            `ENTRY=${entry} ` +
+            `CURRENT=${currentPrice} ` +
+            `SL=${sl} TP=${tp}`
+        )
+
+        return false
+    }
+
+}else{
+
+    if(
+        sl <= currentPrice + safeDistance ||
+        tp >= currentPrice - safeDistance
+    ){
+        console.log(
+            `⛔ DYNAMIC TPSL SKIP SHORT ${symbol} ` +
+            `ENTRY=${entry} ` +
+            `CURRENT=${currentPrice} ` +
+            `SL=${sl} TP=${tp}`
+        )
+
+        return false
+    }
+}
+
+        // =================================================
+        // 7. VERIFY POSITION STILL EXISTS BEFORE CHANGE
+        // =================================================
+
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
+
+        const verifyBefore =
+            await hasPosition(symbol)
+
+        if(!verifyBefore){
+
+            console.log(
+                `⚠️ POSITION DISAPPEARED BEFORE DYNAMIC ${symbol}`
+            )
+
+            return false
+        }
+
+        // =================================================
+        // 8. CANCEL OLD TPSL
+        // =================================================
+
+        const cancelled =
+            await cancelAllOrders(symbol)
+
+        if(!cancelled){
+
+            console.log(
+                `❌ DYNAMIC OLD TPSL NOT CLEARED ${symbol}`
+            )
+
+            return false
+        }
+        await new Promise(r =>
+    setTimeout(r, 1000)
+)
+
+        // =================================================
+        // 9. SET SL
+        // =================================================
+
+        const closeSide =
+            positionSide === "LONG"
+                ? "SELL"
+                : "BUY"
+
+        let slRes
+
+try{
+
+    slRes =
+        await placeTPSLWithRetry(
+            symbol,
+            positionSide,
+            "STOP_MARKET",
+            sl
+        )
+
+}catch(e){
+
+    await checkTimeError(e)
+
+    console.log(
+        `❌ DYNAMIC SL SET FAIL ${symbol}:`,
+        e?.message || e
+    )
+
+    return false
+}
+
+if(
+    !slRes ||
+    !(
+        slRes.algoId ||
+        slRes.orderId
+    )
+){
+
+    console.log(
+        `❌ SL INVALID RESPONSE ${symbol}:`,
+        JSON.stringify(slRes)
+    )
+
+    return false
+}
+
+const slOrderId =
+    slRes.algoId ||
+    slRes.orderId
+
+console.log(
+    `🛡 DYNAMIC SL SET ${symbol}: ${sl}`
+)
+        // =================================================
+        // 10. SET TP
+        // =================================================
+
+        let tpRes
+
+try{
+
+    tpRes =
+        await placeTPSLWithRetry(
+            symbol,
+            positionSide,
+            "TAKE_PROFIT_MARKET",
+            tp
+        )
+
+}catch(e){
+
+    await checkTimeError(e)
+
+    console.log(
+        `❌ DYNAMIC TP SET FAIL ${symbol}:`,
+        e?.message || e
+    )
+
+    return false
+}
+
+if(
+    !tpRes ||
+    !(
+        tpRes.algoId ||
+        tpRes.orderId
+    )
+){
+
+    console.log(
+        `❌ TP INVALID RESPONSE ${symbol}:`,
+        JSON.stringify(tpRes)
+    )
+
+    return false
+}
+
+const tpOrderId =
+    tpRes.algoId ||
+    tpRes.orderId
+
+console.log(
+    `🎯 DYNAMIC TP SET ${symbol}: ${tp}`
+)
+
+        return {
+    ok: true,
+    sl,
+    tp,
+    slOrderId,
+    tpOrderId
+}
+
+    }catch(e){
+
+        await checkTimeError(e)
+
+        console.log(
+            `❌ DYNAMIC TPSL FAIL ${symbol}:`,
+            e.message
+        )
+
+        return false
+
+    }finally{
+
+        delete TPSL_LOCK[symbol]
+    }
+}
 async function waitPosition(symbol){
 
     for(let i=0;i<15;i++){
@@ -1175,7 +1659,835 @@ async function waitPosition(symbol){
 
     return null
 }
-async function clearSymbolOrders(symbol){
+async function setInitialTPSL(trade){
+
+    const symbol =
+        String(trade?.symbol || "").trim()
+
+    if(!symbol){
+        console.log("❌ INITIAL TPSL NO SYMBOL")
+        return false
+    }
+
+    try{
+
+        const pos =
+            await waitPosition(symbol)
+
+        if(!pos){
+
+            console.log(
+                `❌ NO POSITION FOR TPSL ${symbol}`
+            )
+
+            return false
+        }
+
+        const positionAmt =
+            Number(pos.positionAmt)
+
+        if(
+            !Number.isFinite(positionAmt) ||
+            positionAmt === 0
+        ){
+
+            console.log(
+                `❌ ZERO POSITION FOR TPSL ${symbol}`
+            )
+
+            return false
+        }
+
+        const positionSide =
+            positionAmt > 0
+                ? "LONG"
+                : "SHORT"
+
+        const closeSide =
+            positionSide === "LONG"
+                ? "SELL"
+                : "BUY"
+
+        const info =
+            await getSymbolInfo(symbol)
+
+        if(!info || !info.filters){
+
+            console.log(
+                `❌ SYMBOL INFO FAIL ${symbol}`
+            )
+
+            return false
+        }
+
+        const priceFilter =
+            info.filters.find(
+                f => f.filterType === "PRICE_FILTER"
+            )
+
+        const tickSize =
+            parseFloat(
+                priceFilter?.tickSize || "0.01"
+            )
+
+        if(
+            !Number.isFinite(tickSize) ||
+            tickSize <= 0
+        ){
+
+            console.log(
+                `❌ INVALID TICK SIZE ${symbol}`
+            )
+
+            return false
+        }
+
+        const rawSL =
+            Number(trade.sl)
+
+        const rawTP =
+            Number(trade.tp)
+
+        if(
+            !Number.isFinite(rawSL) ||
+            !Number.isFinite(rawTP) ||
+            rawSL <= 0 ||
+            rawTP <= 0
+        ){
+
+            console.log(
+                `❌ INVALID INITIAL TPSL ${symbol} ` +
+                `SL=${rawSL} TP=${rawTP}`
+            )
+
+            return false
+        }
+
+        let sl
+        let tp
+
+        if(positionSide === "LONG"){
+
+            sl =
+                Math.floor(
+                    rawSL / tickSize
+                ) * tickSize
+
+            tp =
+                Math.ceil(
+                    rawTP / tickSize
+                ) * tickSize
+
+        }else{
+
+            sl =
+                Math.ceil(
+                    rawSL / tickSize
+                ) * tickSize
+
+            tp =
+                Math.floor(
+                    rawTP / tickSize
+                ) * tickSize
+        }
+
+        const decimals =
+            Math.max(
+                0,
+                String(tickSize)
+                    .split(".")[1]
+                    ?.length || 0
+            )
+
+        sl =
+            Number(
+                sl.toFixed(decimals)
+            )
+
+        tp =
+            Number(
+                tp.toFixed(decimals)
+            )
+
+        const entry =
+            Number(pos.entryPrice)
+
+        if(
+            !Number.isFinite(entry) ||
+            entry <= 0
+        ){
+
+            console.log(
+                `❌ INVALID ENTRY ${symbol}`
+            )
+
+            return false
+        }
+
+        if(positionSide === "LONG"){
+
+            if(
+                sl >= entry ||
+                tp <= entry
+            ){
+
+                console.log(
+                    `❌ INVALID LONG TPSL ${symbol} ` +
+                    `ENTRY=${entry} SL=${sl} TP=${tp}`
+                )
+
+                return false
+            }
+
+        }else{
+
+            if(
+                sl <= entry ||
+                tp >= entry
+            ){
+
+                console.log(
+                    `❌ INVALID SHORT TPSL ${symbol} ` +
+                    `ENTRY=${entry} SL=${sl} TP=${tp}`
+                )
+
+                return false
+            }
+        }
+
+        // =========================================
+        // GIỐNG CORE CŨ
+        // =========================================
+
+        const cancelled =
+            await cancelAllOrders(symbol)
+
+        if(!cancelled){
+
+            console.log(
+                `❌ OLD TPSL CLEAR FAIL ${symbol}`
+            )
+
+            return false
+        }
+
+        // =========================================
+        // SET SL
+        // =========================================
+
+        console.log(
+            `🛡 SET SL ${symbol}: ${sl}`
+        )
+
+        const slRes =
+    await placeTPSLWithRetry(
+        symbol,
+        positionSide,
+        "STOP_MARKET",
+        sl
+    )
+
+        console.log(
+            `✅ SL RESPONSE ${symbol}:`,
+            JSON.stringify(slRes)
+        )
+
+        if(
+            !slRes ||
+            !(
+                slRes.algoId ||
+                slRes.orderId
+            )
+        ){
+
+            console.log(
+                `❌ SL INVALID RESPONSE ${symbol}`
+            )
+
+            return false
+        }
+        const slOrderId =
+    slRes.algoId ||
+    slRes.orderId
+
+        // =========================================
+        // SET TP
+        // =========================================
+
+        console.log(
+            `🎯 SET TP ${symbol}: ${tp}`
+        )
+
+        const tpRes =
+    await placeTPSLWithRetry(
+        symbol,
+        positionSide,
+        "TAKE_PROFIT_MARKET",
+        tp
+    )
+
+        console.log(
+            `✅ TP RESPONSE ${symbol}:`,
+            JSON.stringify(tpRes)
+        )
+
+        if(
+    !tpRes ||
+    !(
+        tpRes.algoId ||
+        tpRes.orderId
+    )
+){
+
+    console.log(
+        `❌ TP INVALID RESPONSE ${symbol}:`,
+        JSON.stringify(tpRes)
+    )
+
+    await cancelAllOrders(symbol)
+
+    return false
+}
+
+
+const tpOrderId =
+    tpRes.algoId ||
+    tpRes.orderId
+
+        await new Promise(r =>
+            setTimeout(r, 3000)
+        )
+
+        return {
+    ok: true,
+    sl,
+    tp,
+    slOrderId,
+    tpOrderId
+}
+
+    }catch(e){
+
+        await checkTimeError(e)
+
+        console.log(
+            `❌ INITIAL TPSL FAIL ${symbol}:`,
+            e.message
+        )
+
+        return false
+    }
+}
+async function openPositionWithTPSL(trade, qty){
+
+    const symbol =
+        String(trade?.symbol || "").trim()
+
+    if(!symbol){
+        console.log("❌ ENTRY NO SYMBOL")
+        return false
+    }
+
+    const order =
+        await openPosition(
+            symbol,
+            trade.side,
+            qty
+        )
+
+    if(!order){
+
+        console.log(
+            `❌ ENTRY FAIL ${symbol}`
+        )
+
+        return false
+    }
+
+    if(order.skipped){
+
+        console.log(
+            `⛔ ENTRY SKIPPED ${symbol}: ` +
+            `${order.reason}`
+        )
+
+        return {
+            ok: false,
+            skipped: true,
+            reason: order.reason
+        }
+    }
+
+    let pos =
+        await waitPosition(symbol)
+
+    if(!pos){
+
+        pos =
+            await hasPosition(symbol)
+
+        if(!pos){
+
+            console.log(
+                `❌ NO POSITION AFTER ENTRY ${symbol}`
+            )
+
+            return false
+        }
+    }
+
+    const realEntry =
+        Number(pos.entryPrice)
+
+    if(
+        !Number.isFinite(realEntry) ||
+        realEntry <= 0
+    ){
+
+        console.log(
+            `❌ INVALID REAL ENTRY ${symbol}`
+        )
+
+        return false
+    }
+
+    trade.entry =
+        realEntry
+
+    const targetR = Number(trade.risk?.targetR || trade.riskDetail?.targetR || 1.6)
+    trade.tp = trade.side === "LONG"
+        ? realEntry + Math.abs(realEntry - Number(trade.sl)) * targetR
+        : realEntry - Math.abs(realEntry - Number(trade.sl)) * targetR
+
+    trade.initialRisk =
+        Math.abs(
+            realEntry -
+            Number(trade.sl)
+        )
+
+    if(
+        !Number.isFinite(trade.initialRisk) ||
+        trade.initialRisk <= 0
+    ){
+
+        console.log(
+            `❌ INVALID INITIAL RISK ${symbol}`
+        )
+
+        return false
+    }
+
+    trade.openedAt =
+        Date.now()
+
+    trade.enteredAt =
+        trade.openedAt
+
+    console.log(
+        `📌 ${symbol} ` +
+        `ENTRY=${trade.entry} ` +
+        `INITIAL_RISK=${trade.initialRisk}`
+    )
+
+    TPSL_PENDING[symbol] = true
+    TPSL_PHASE[symbol] = "INITIAL"
+
+    try{
+
+        await new Promise(r =>
+            setTimeout(r, 3000)
+        )
+
+        console.log(
+            `🛡 SETTING INITIAL TPSL ${symbol}`
+        )
+
+        const tpslResult =
+            await setInitialTPSL(
+                trade
+            )
+
+        if(!tpslResult?.ok){
+
+            console.log(
+                `🚨 INITIAL TPSL FAIL ${trade.symbol}`
+            )
+
+            POS_CACHE = null
+            POS_CACHE_TIME = 0
+
+            let realPos = null
+
+            try{
+
+                const positions =
+                    await getPositionsCached()
+
+                realPos =
+                    positions.find(p =>
+                        p.symbol === trade.symbol &&
+                        Math.abs(
+                            Number(p.positionAmt || 0)
+                        ) > 0
+                    )
+
+            }catch(e){
+
+                await checkTimeError(e)
+
+                console.log(
+                    `⚠️ INITIAL POSITION VERIFY FAIL ${trade.symbol}:`,
+                    e.message
+                )
+
+                return false
+            }
+
+            // Position đã biến mất → không close nữa
+            if(!realPos){
+
+                console.log(
+                    `ℹ️ POSITION ALREADY CLOSED ${trade.symbol}`
+                )
+
+                return false
+            }
+
+            // Position còn nhưng initial TPSL thất bại
+            const realQty =
+                Math.abs(
+                    Number(realPos.positionAmt)
+                )
+
+            if(
+                !Number.isFinite(realQty) ||
+                realQty <= 0
+            ){
+
+                console.log(
+                    `❌ INVALID REAL QTY ${trade.symbol}`
+                )
+
+                return false
+            }
+
+            console.log(
+                `🚨 INITIAL TPSL FAIL -> CLOSE ${trade.symbol}`
+            )
+
+            const closed =
+                await closePosition(
+                    trade.symbol,
+                    trade.side,
+                    realQty
+                )
+
+            if(!closed){
+
+                console.log(
+                    `🚨 CRITICAL INITIAL CLOSE FAIL ${trade.symbol}`
+                )
+
+                await sendTelegram2(
+                    `🚨 CRITICAL INITIAL TPSL FAILURE\n` +
+                    `${trade.symbol}\n` +
+                    `POSITION STILL OPEN\n` +
+                    `TPSL NOT ACTIVE\n` +
+                    `CLOSE FAILED`
+                )
+            }
+
+            return false
+        }
+
+        // =========================================
+        // SAVE REAL TPSL
+        // =========================================
+
+        trade.sl =
+            Number(tpslResult.sl)
+
+        trade.tp =
+            Number(tpslResult.tp)
+
+        trade.initialRisk =
+            Math.abs(
+                Number(trade.entry) -
+                Number(trade.sl)
+            )
+
+        if(
+            !Number.isFinite(trade.initialRisk) ||
+            trade.initialRisk <= 0
+        ){
+
+            console.log(
+                `🚨 INVALID FINAL RISK ${symbol}`
+            )
+
+            await cancelAllOrders(symbol)
+
+            const currentPos =
+                await hasPosition(symbol)
+
+            if(currentPos){
+
+                const qty =
+                    Math.abs(
+                        Number(currentPos.positionAmt)
+                    )
+
+                await closePosition(
+                    symbol,
+                    trade.side,
+                    qty
+                )
+            }
+
+            return false
+        }
+
+        // =========================================
+        // SAVE DB
+        // =========================================
+
+        TPSL_PHASE[symbol] =
+            "ACTIVE"
+
+        console.log(
+            `✅ TPSL ACTIVE ${symbol} ` +
+            `SL=${trade.sl} ` +
+            `TP=${trade.tp} ` +
+            `INITIAL_RISK=${trade.initialRisk}`
+        )
+
+        return {
+            ok: true,
+            entry: trade.entry,
+            sl: trade.sl,
+            tp: trade.tp,
+            initialRisk: trade.initialRisk
+        }
+
+    }catch(e){
+
+        await checkTimeError(e)
+
+        console.log(
+            `❌ ENTRY TPSL ERROR ${symbol}:`,
+            e.message
+        )
+
+        return false
+
+    }finally{
+
+        delete TPSL_PENDING[symbol]
+    }
+}
+async function manageDynamicTPSL(trade) {
+  try {
+    if (!trade?.symbol || !trade?.side) return;
+    const symbol = trade.symbol;
+    const side = String(trade.side).toUpperCase();
+    if (side !== 'LONG' && side !== 'SHORT') return;
+    if (TPSL_CLOSING[symbol] || TPSL_PENDING[symbol]) return;
+
+    const enteredAt = Number(trade.enteredAt || trade.openedAt || trade.createdAt);
+    if (!Number.isFinite(enteredAt) || enteredAt <= 0 || Date.now() - enteredAt < 90000) return;
+    TPSL_PENDING[symbol] = true;
+
+    const pos = await hasPosition(symbol);
+    if (!pos) {
+      delete DYNAMIC_LAST_UPDATE[symbol];
+      delete DYNAMIC_PHASE[symbol];
+      return;
+    }
+
+    const [data5, data15] = await Promise.all([
+      getData(symbol, '5m', 100),
+      getData(symbol, '15m', 100)
+    ]);
+    if (!Array.isArray(data5) || !Array.isArray(data15)) return;
+    const closed5 = data5.slice(0, -1);
+    const closed15 = data15.slice(0, -1);
+    if (closed5.length < 60 || closed15.length < 30) return;
+
+    const h5 = closed5.map(x => Number(x[2]));
+    const l5 = closed5.map(x => Number(x[3]));
+    const c5 = closed5.map(x => Number(x[4]));
+    const h15 = closed15.map(x => Number(x[2]));
+    const l15 = closed15.map(x => Number(x[3]));
+    const c15 = closed15.map(x => Number(x[4]));
+    if ([h5, l5, c5, h15, l15, c15].flat().some(x => !Number.isFinite(x))) return;
+
+    const current = Number(pos.markPrice || trade.markPrice || trade.entry);
+    const entry = Number(pos.entryPrice || trade.entry || trade.price);
+    const oldSL = Number(trade.sl);
+    const oldTP = Number(trade.tp);
+    if (!(current > 0 && entry > 0 && oldSL > 0 && oldTP > 0)) return;
+
+    // The initial R is fixed from the original core stop, not the trailed stop.
+    let initialRisk = Number(trade.initialRisk || trade.riskDetail?.initialRisk);
+    if (!(initialRisk > 0)) {
+      initialRisk = Math.abs(entry - oldSL);
+      if (!(initialRisk > 0)) return;
+      await trades.updateOne(
+        { symbol, result: 'PENDING' },
+        { $set: { initialRisk, updatedAt: Date.now() } }
+      );
+    }
+    const originalSL = side === 'LONG' ? entry - initialRisk : entry + initialRisk;
+    const R = (side === 'LONG' ? current - entry : entry - current) / initialRisk;
+    if (!Number.isFinite(R) || R < 1.0) return;
+
+    // Wilder ATR(22) from completed 15m candles, matching Chandelier Exit math.
+    const calcWilderATR = (candles, length) => {
+      const tr = [];
+      for (let i = 1; i < candles.length; i++) {
+        const high = Number(candles[i][2]);
+        const low = Number(candles[i][3]);
+        const prevClose = Number(candles[i - 1][4]);
+        tr.push(Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose)));
+      }
+      if (tr.length < length) return NaN;
+      let value = tr.slice(0, length).reduce((a, b) => a + b, 0) / length;
+      for (let i = length; i < tr.length; i++) value = ((value * (length - 1)) + tr[i]) / length;
+      return value;
+    };
+    const atr5 = calcWilderATR(closed5.slice(-40), 14);
+    const atr15 = calcWilderATR(closed15.slice(-50), 22);
+    if (!(atr5 > 0 && atr15 > 0)) return;
+    const buffer = Math.max(atr5 * 0.20, atr15 * 0.10, current * 0.00025);
+
+    let newSL = oldSL;
+    let newTP = oldTP;
+    let phase = 1;
+
+    // Protect gains in stages while leaving the position room to trend.
+    const floorR = R >= 3.0 ? 1.50 : R >= 2.0 ? 0.75 : 0.30;
+    if (R >= 2.0) phase = 2;
+    if (R >= 3.0) phase = 3;
+    const floor = side === 'LONG'
+      ? entry + initialRisk * floorR
+      : entry - initialRisk * floorR;
+    if (side === 'LONG' && floor > newSL && floor < current) newSL = floor;
+    if (side === 'SHORT' && floor < newSL && floor > current) newSL = floor;
+
+    // After a strong extension (+2.5R), trail with the 15m Chandelier Exit.
+    // The stop can tighten only; it never moves back toward the original risk.
+    if (R >= 2.5 && closed15.length >= 22) {
+      const lookbackHigh = Math.max(...h15.slice(-22));
+      const lookbackLow = Math.min(...l15.slice(-22));
+      const chandelier = side === 'LONG'
+        ? lookbackHigh - atr15 * 3
+        : lookbackLow + atr15 * 3;
+      if (Number.isFinite(chandelier)) {
+        if (side === 'LONG' && chandelier > newSL && chandelier < current) newSL = chandelier;
+        if (side === 'SHORT' && chandelier < newSL && chandelier > current) newSL = chandelier;
+      }
+    }
+
+    // Extend the original core TP only when both 5m and 15m momentum continue
+    // and the candles show room beyond the existing target.
+    const emaCalc = (values, length) => {
+      if (values.length < length) return NaN;
+      const alpha = 2 / (length + 1);
+      let value = values[0];
+      for (let i = 1; i < values.length; i++) value = alpha * values[i] + (1 - alpha) * value;
+      return value;
+    };
+    const e9_5 = emaCalc(c5.slice(-30), 9);
+    const e20_5 = emaCalc(c5.slice(-40), 20);
+    const e9_15 = emaCalc(c15.slice(-30), 9);
+    const e20_15 = emaCalc(c15.slice(-40), 20);
+    const v5 = closed5.map(x => Number(x[5]));
+    const avgV = v5.slice(-21, -1).reduce((a, b) => a + b, 0) / Math.max(1, v5.slice(-21, -1).length);
+    const volRatio = avgV > 0 ? v5.at(-1) / avgV : 0;
+    const momentumLong = e9_5 > e20_5 && e9_15 > e20_15 && c5.at(-1) >= c5.at(-2) && c15.at(-1) >= c15.at(-2) && volRatio >= 0.80;
+    const momentumShort = e9_5 < e20_5 && e9_15 < e20_15 && c5.at(-1) <= c5.at(-2) && c15.at(-1) <= c15.at(-2) && volRatio >= 0.80;
+
+    const nearestAbove = (values, value) => values.filter(x => Number.isFinite(x) && x > value).sort((a, b) => a - b)[0];
+    const nearestBelow = (values, value) => values.filter(x => Number.isFinite(x) && x < value).sort((a, b) => b - a)[0];
+    const allHighs = h5.slice(-48, -1).concat(h15.slice(-48, -1));
+    const allLows = l5.slice(-48, -1).concat(l15.slice(-48, -1));
+    const nearTP = side === 'LONG'
+      ? current < oldTP && oldTP - current <= Math.max(atr5 * 0.60, initialRisk * 0.30)
+      : current > oldTP && current - oldTP <= Math.max(atr5 * 0.60, initialRisk * 0.30);
+    const obstacle = side === 'LONG' ? nearestAbove(allHighs, oldTP) : nearestBelow(allLows, oldTP);
+    const extendedTP = side === 'LONG' ? Number(obstacle) - buffer * 0.20 : Number(obstacle) + buffer * 0.20;
+    const enoughRoom = side === 'LONG'
+      ? extendedTP >= oldTP + Math.max(atr15, initialRisk * 0.50)
+      : extendedTP <= oldTP - Math.max(atr15, initialRisk * 0.50);
+    if (R >= 1.0 && nearTP && enoughRoom &&
+        ((side === 'LONG' && momentumLong) || (side === 'SHORT' && momentumShort))) {
+      newTP = extendedTP;
+    }
+
+    // Invariants: never widen the initial/current stop or pull TP closer.
+    if (side === 'LONG') {
+      if (newSL < originalSL || newSL < oldSL || newSL >= current) newSL = oldSL;
+      if (newTP < oldTP) newTP = oldTP;
+    } else {
+      if (newSL > originalSL || newSL > oldSL || newSL <= current) newSL = oldSL;
+      if (newTP > oldTP) newTP = oldTP;
+    }
+
+    const info = await getSymbolInfo(symbol);
+    const tickSize = Number(info?.filters?.find(f => f.filterType === 'PRICE_FILTER')?.tickSize);
+    if (!(tickSize > 0)) return;
+    const precision = Math.max(0, String(tickSize).split('.')[1]?.length || 0);
+    // Round a protective stop toward a tighter valid tick; round target outward.
+    newSL = side === 'LONG'
+      ? Math.ceil(newSL / tickSize) * tickSize
+      : Math.floor(newSL / tickSize) * tickSize;
+    newTP = side === 'LONG'
+      ? Math.floor(newTP / tickSize) * tickSize
+      : Math.ceil(newTP / tickSize) * tickSize;
+    newSL = Number(newSL.toFixed(precision));
+    newTP = Number(newTP.toFixed(precision));
+
+    if (side === 'LONG' && newSL < oldSL) newSL = oldSL;
+    if (side === 'SHORT' && newSL > oldSL) newSL = oldSL;
+    if ((side === 'LONG' && newSL >= current) || (side === 'SHORT' && newSL <= current)) newSL = oldSL;
+    if (side === 'LONG' && newTP < oldTP) newTP = oldTP;
+    if (side === 'SHORT' && newTP > oldTP) newTP = oldTP;
+
+    const minimumChange = Math.max(entry * 0.00005, atr15 * 0.03);
+    if (Math.abs(newSL - oldSL) < minimumChange && Math.abs(newTP - oldTP) < minimumChange) return;
+
+    const updateTrade = { ...trade, symbol, side, entry, sl: newSL, tp: newTP, initialRisk, previousSL: oldSL };
+    const result = await setDynamicTPSL(updateTrade);
+    if (!result?.ok) {
+      console.log(`⚠️ DYNAMIC TPSL FAILED ${symbol}`);
+      return;
+    }
+    const finalSL = Number(result.sl), finalTP = Number(result.tp);
+    if (!(finalSL > 0 && finalTP > 0)) return;
+    const invalidLong = side === 'LONG' && (finalSL < oldSL || finalSL >= current || finalTP < oldTP);
+    const invalidShort = side === 'SHORT' && (finalSL > oldSL || finalSL <= current || finalTP > oldTP);
+    if (invalidLong || invalidShort) {
+      console.log(`🚨 REJECT INVALID DYNAMIC RESULT ${symbol}`);
+      return;
+    }
+
+    trade.sl = finalSL;
+    trade.tp = finalTP;
+    DYNAMIC_LAST_UPDATE[symbol] = Date.now();
+    DYNAMIC_PHASE[symbol] = phase;
+    await trades.updateOne(
+      { symbol, result: 'PENDING' },
+      { $set: { sl: finalSL, tp: finalTP, initialRisk, dynamicPhase: phase, dynamicUpdatedAt: Date.now(), updatedAt: Date.now() } }
+    );
+    console.log(`🎯 DYNAMIC ${symbol} ${side} R=${R.toFixed(2)} PHASE=${phase} SL ${oldSL}->${finalSL} TP=${finalTP}`);
+  } catch (e) {
+    await checkTimeError(e);
+    console.log(`❌ MANAGE DYNAMIC TPSL ERROR ${trade?.symbol || 'UNKNOWN'}: ${e.message}`);
+  } finally {
+    if (trade?.symbol) delete TPSL_PENDING[trade.symbol];
+  }
+}
+async function cancelAllOrders(symbol){
 
     if(!symbol){
         console.log("❌ CANCEL ALL NO SYMBOL")
@@ -1185,7 +2497,7 @@ async function clearSymbolOrders(symbol){
     try{
 
         console.log(
-            `🗑 CLEAR LEGACY SYMBOL ORDERS ${symbol}`
+            `🗑 CANCEL OLD TPSL ${symbol}`
         )
 
         // =========================================
@@ -1212,16 +2524,16 @@ async function clearSymbolOrders(symbol){
         }
 
         // =========================================
-        // 2. CANCEL LEGACY ALGO ORDERS
+        // 2. CANCEL ALGO TPSL
         // =========================================
 
         const algoCancelled =
-            await cancelLegacyAlgoOrders(symbol)
+            await cancelAlgoTPSL(symbol)
 
         if(!algoCancelled){
 
             console.log(
-                `❌ LEGACY ALGO CANCEL FAIL ${symbol}`
+                `❌ ALGO TPSL CANCEL FAIL ${symbol}`
             )
 
             return false
@@ -1236,7 +2548,7 @@ async function clearSymbolOrders(symbol){
         )
 
         console.log(
-            `🗑 LEGACY SYMBOL ORDERS CLEARED ${symbol}`
+            `🗑 OLD TPSL CLEARED ${symbol}`
         )
 
         return true
@@ -1246,7 +2558,7 @@ async function clearSymbolOrders(symbol){
         await checkTimeError(e)
 
         console.log(
-            `❌ CLEAR LEGACY ORDERS ${symbol}:`,
+            `❌ CANCEL TPSL ${symbol}:`,
             e?.message || e
         )
 
@@ -1254,7 +2566,6 @@ async function clearSymbolOrders(symbol){
     }
 }
 // ================= COMMAND =================
-let checkingCmd = false
 
 async function checkCommand(){
 
@@ -1298,7 +2609,6 @@ TELEGRAM_LOCK = Date.now()
         TELEGRAM_LOCK = 0
     }
 }
-// ================= INDICATORS =================
 function ema(arr, p){
     let k = 2 / (p + 1)
     let e = arr[0]
@@ -1308,32 +2618,6 @@ function ema(arr, p){
     }
 
     return e
-}
-
-function rsi(arr, p = 14){
-    if(arr.length < p + 1) return 50
-
-    let g = 0, l = 0
-
-    for(let i = arr.length - p; i < arr.length; i++){
-        let d = arr[i] - arr[i - 1]
-        if(d >= 0) g += d
-        else l -= d
-    }
-
-    let rs = g / (l || 1)
-    return 100 - (100 / (1 + rs))
-}
-
-
-function atr(data,p=14){
-    let trs=[]
-    for(let i=1;i<data.length;i++){
-        let h=+data[i][2], l=+data[i][3], pc=+data[i-1][4]
-        trs.push(Math.max(h-l, Math.abs(h-pc), Math.abs(l-pc)))
-    }
-    let slice = trs.slice(-p)
-return slice.reduce((a,b)=>a+b,0) / slice.length
 }
 async function getData(symbol, interval, limit){
 
@@ -1466,12 +2750,12 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 150)
+        .slice(0, 80)
         .map(candidate => candidate.symbol);
 
       console.log(
         `📊 RANGE FILTER UNIVERSE ${selected.length}` +
-        ` (eligible=${candidates.length}, range24=3%→100%)`
+        ` (eligible=${candidates.length}, minRange24h=3%)`
       );
 
       return selected;
@@ -1515,14 +2799,10 @@ async function loadValidFuturesSymbols(){
         console.log("❌ LOAD FUTURES SYMBOL:", e.message)
     }
 }
-// ============================================================ // RANGE FILTER CORE // // Single entry indicator: TradingView Range Filter [DW] // Chart settings: Type 1 / Close / 2.618 Average Change / period 14 / smoothing 27 / 5m // No TP/SL; exit on opposite confirmed Range Filter direction // Other timeframes remain in function signature for compatibility. // ============================================================
+// ============================================================ // RANGE FILTER CORE // // Single entry indicator: TradingView Range Filter [DW] // Chart settings: Type 1 / Close / 2.618 Average Change / period 14 / smoothing 27 / 15m // Stop: opposite Range Filter envelope // Target: 1.5R // Other timeframes remain in function signature for compatibility. // ============================================================
 const finite = Number.isFinite;
 // ============================================================ // BASIC // ============================================================
 function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
-function avg(arr) { if (!arr.length) return NaN;
-let sum = 0;
-for (const x of arr) { sum += x; }
-return sum / arr.length; }
 // ============================================================ // CANDLE NORMALIZATION // Binance: // [time, open, high, low, close, volume] // ============================================================
 function normalizeCandle(x) {
 if (Array.isArray(x)) {
@@ -1569,122 +2849,6 @@ const candles = data .map(normalizeCandle) .filter(x => finite(x.o) && finite(x.
 const closed = candles.length > 1 ? candles.slice(0, -1) : [];
 if (closed.length < minLength) { return null; }
 return closed; }
-// ============================================================ // EMA // ============================================================
-function ema(values, length) {
-const out = new Array(values.length) .fill(NaN);
-if (!values.length || length <= 0) { return out; }
-const alpha = 2 / (length + 1);
-let prev = NaN;
-for (let i = 0; i < values.length; i++) {
-const x = values[i];
-
-if (!finite(x)) {
-  out[i] = prev;
-  continue;
-}
-
-if (!finite(prev)) {
-  prev = x;
-} else {
-  prev =
-    alpha * x +
-    (1 - alpha) * prev;
-}
-
-out[i] = prev;
-}
-return out; }
-// ============================================================ // WILDER RMA // Used by ATR / DMI // ============================================================
-function rma(values, length) {
-const out = new Array(values.length) .fill(NaN);
-if (!values.length || length <= 0) { return out; }
-const alpha = 1 / length;
-let prev = NaN; let sum = 0; let count = 0;
-for (let i = 0; i < values.length; i++) {
-const x = values[i];
-
-if (!finite(x)) {
-  out[i] = prev;
-  continue;
-}
-
-if (!finite(prev)) {
-
-  sum += x;
-  count++;
-
-  if (count >= length) {
-    prev = sum / length;
-  }
-
-} else {
-
-  prev =
-    alpha * x +
-    (1 - alpha) * prev;
-
-}
-
-out[i] = prev;
-}
-return out; }
-// ============================================================ // TRUE RANGE // ============================================================
-function trueRange(candles) {
-    const out = new Array(candles.length) .fill(NaN);
-for ( let i = 0; i < candles.length; i++ ) {
-if (i === 0) {
-
-  out[i] =
-    candles[i].h -
-    candles[i].l;
-
-  continue;
-}
-
-out[i] =
-  Math.max(
-    candles[i].h -
-      candles[i].l,
-
-    Math.abs(
-      candles[i].h -
-      candles[i - 1].c
-    ),
-
-    Math.abs(
-      candles[i].l -
-      candles[i - 1].c
-    )
-  );
-}
-return out; }
-// ============================================================ // ATR // ============================================================
-function atr(candles, length = 14) {
-return rma( trueRange(candles), length ); }
-// ============================================================ // HIGHEST HIGH // ============================================================
-function highestHigh( candles, endExclusive, length ) {
-const start = Math.max( 0, endExclusive - length );
-let result = -Infinity;
-for ( let i = start; i < endExclusive; i++ ) {
-result =
-  Math.max(
-    result,
-    candles[i].h
-  );
-}
-return result === -Infinity ? NaN : result; }
-// ============================================================ // LOWEST LOW // ============================================================
-function lowestLow( candles, endExclusive, length ) {
-const start = Math.max( 0, endExclusive - length );
-let result = Infinity;
-for ( let i = start; i < endExclusive; i++ ) {
-result =
-  Math.min(
-    result,
-    candles[i].l
-  );
-}
-return result === Infinity ? NaN : result; }
 function rangeFilter(candles, options = {}) {
   const cfg = {
     filterType: 'Type 1',
@@ -1865,123 +3029,10 @@ function rangeFilter(candles, options = {}) {
 
   return { filter, upperBand, lowerBand, direction, upward, downward, signal, buy, sell, range };
 }
-
-async function saveRFSignalEvent(event) {
-    try {
-        if (!event?.signalKey) return false;
-        if (!await ensureDB()) return false;
-
-        await rfSignalEvents.updateOne(
-            { signalKey: event.signalKey },
-            {
-                $set: {
-                    ...event,
-                    updatedAt: Date.now()
-                },
-                $setOnInsert: {
-                    createdAt: Date.now()
-                }
-            },
-            { upsert: true }
-        );
-
-        return true;
-    } catch (e) {
-        console.error(
-            "RF EVENT SAVE ERROR:",
-            e?.message || e
-        );
-        return false;
-    }
-}
-
-async function updateRFForwardOutcomes(symbol, data15) {
-    try {
-        if (!Array.isArray(data15)) return;
-
-        const candles = prepare(data15, RF_CANDLE_COUNT);
-        if (!Array.isArray(candles) || candles.length < 2) return;
-        if (!await ensureDB()) return;
-
-        const events = await rfSignalEvents.find({
-            symbol,
-            entryPrice: { $gt: 0 },
-            "forwardReturns.h12": { $exists: false }
-        }).limit(300).toArray();
-
-        const horizons = [1, 2, 4, 8, 12];
-
-        for (const event of events) {
-            const entry = Number(event.entryPrice);
-            if (!(entry > 0)) continue;
-            if (!["LONG", "SHORT"].includes(event.side)) continue;
-
-            const idx = candles.findIndex(
-                c => String(c.t) === String(event.flipTime)
-            );
-            if (idx < 0) continue;
-
-            const available = candles.length - 1 - idx;
-            if (available < 1) continue;
-
-            const set = {};
-            const signedReturn = close => (
-                event.side === "LONG"
-                    ? (Number(close) - entry) / entry * 100
-                    : (entry - Number(close)) / entry * 100
-            );
-
-            for (const h of horizons) {
-                if (available < h) continue;
-
-                const future = candles[idx + h];
-                set[`forwardReturns.h${h}`] = {
-                    close: Number(future.c),
-                    returnPct: signedReturn(future.c),
-                    candleTime: future.t
-                };
-            }
-
-            if (available >= 12) {
-                const future12 = candles.slice(idx + 1, idx + 13);
-
-                const favorable = future12.map(c =>
-                    event.side === "LONG"
-                        ? (Number(c.h) - entry) / entry * 100
-                        : (entry - Number(c.l)) / entry * 100
-                );
-
-                const adverse = future12.map(c =>
-                    event.side === "LONG"
-                        ? (Number(c.l) - entry) / entry * 100
-                        : (entry - Number(c.h)) / entry * 100
-                );
-
-                set.forwardReturns.mfe12Pct = Math.max(...favorable);
-                set.forwardReturns.mae12Pct = Math.min(...adverse);
-                set.forwardReturns.completedAt = Date.now();
-            }
-
-            if (Object.keys(set).length) {
-                await rfSignalEvents.updateOne(
-                    { _id: event._id },
-                    { $set: set }
-                );
-            }
-        }
-    } catch (e) {
-        console.error(
-            `RF FORWARD OUTCOME ERROR ${symbol}:`,
-            e?.message || e
-        );
-    }
-}
-
-async function coreLogic(data4h, data15, data1h, data5, data1, symbol = null) {
-  // Range Filter [DW], matched to the user's chart: Type 1 / Close / 2.618
-  // Average Change / 14 / smoothed with period 27. prepare() excludes the
-  // current forming candle so signals only come from a closed 5m candle.
-  const candles = prepare(data15, RF_CANDLE_COUNT);
+async function coreLogic(data15, symbol = null) {
+  // Match the Range Filter [DW] settings shown on the user's 15m chart:
+  // Type 1, Close, 2.618 Average Change, period 14, smooth range 27.
+  const candles = prepare(data15, 1300);
   if (!candles) return null;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -1991,2116 +3042,111 @@ async function coreLogic(data4h, data15, data1h, data5, data1, symbol = null) {
   });
   const i = candles.length - 1;
   if (i < 1 || !Array.isArray(rf.direction)) return null;
-  
-const side = rf.buy[i] ? 'LONG' : rf.sell[i] ? 'SHORT' : null;
-if (!side) return null;
 
-const signalKey =
-    `${String(symbol || 'UNKNOWN')}:${String(candles[i].t)}:${side}`;
+  // Trade only the first closed candle where DW's held trend direction flips.
+  const side = rf.buy[i] ? 'LONG' : rf.sell[i] ? 'SHORT' : null;
+  if (!side) return null;
 
-const recordRFReject = async (reason, extra = {}) => {
-    await saveRFSignalEvent({
-        signalKey,
-        symbol,
-        side,
-        flipTime: candles[i].t,
-        entryPrice: Number(candles[i].c),
-        status: "REJECTED_CORE",
-        rejectionReason: reason,
-        rfDirection: side,
-        candle: {
-            o: Number(candles[i].o),
-            h: Number(candles[i].h),
-            l: Number(candles[i].l),
-            c: Number(candles[i].c),
-            previousOpen: Number(candles[i - 1]?.o),
-            previousClose: Number(candles[i - 1]?.c)
-        },
-        ...extra
-    });
+  const price = candles[i].c;
+  const filter = rf.filter[i];
+  const range = rf.range[i];
+  if (![price, filter, range].every(finite) || price <= 0 || range <= 0) return null;
+  if (side === 'LONG' ? price <= filter : price >= filter) return null;
 
-    return null;
-};
-
-// RF vẫn quyết định hướng.
-// Chỉ nhận flip khi nến đã đóng ngay trước đó cùng hướng RF.
-const previousCandle = candles[i - 1];
-
-const previousCandleAligned =
-    side === 'LONG'
-        ? previousCandle.c > previousCandle.o
-        : previousCandle.c < previousCandle.o;
-
-if (!previousCandleAligned) {
-    return await recordRFReject("PREVIOUS_CANDLE_NOT_ALIGNED");
-}
-
-  const price = candles[i].c, filter = rf.filter[i], range = rf.range[i];
-  if (
-    ![price, filter, range].every(finite) ||
-    price <= 0 ||
-    range <= 0
-) {
-    return await recordRFReject("INVALID_PRICE_FILTER_RANGE");
-}
-  if (side === 'LONG' ? price <= filter : price >= filter) {
-    return await recordRFReject("PRICE_WRONG_SIDE_OF_FILTER");
-}
+  // Filter the flat state: a real DW turn must move off its prior value.
   const priorFilter = rf.filter[i - 1];
-  if (!finite(priorFilter)) {
-    return await recordRFReject("INVALID_PRIOR_FILTER");
-}
+  if (!finite(priorFilter)) return null;
   const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
-  if (move <= 0) {
-    return await recordRFReject("FILTER_NOT_MOVING_IN_SIGNAL_DIRECTION");
-}
-  // ============================================================
-// MDF — MOVE QUALITY / CONTINUATION QUALITY
-// RF quyết định hướng.
-// MDF chỉ đánh giá chất lượng / nhiên liệu của cú move.
-// ============================================================
+  if (move <= 0) return null;
 
+  // Stop outside recent 15m structure with an ATR buffer, never closer than RF.
+  // Exclude the signal candle so its range does not distort the swing level.
+  const trValues = [];
+  for (let j = Math.max(1, i - 14); j < i; j++) {
+    const prevClose = candles[j - 1].c;
+    trValues.push(Math.max(candles[j].h - candles[j].l,
+      Math.abs(candles[j].h - prevClose), Math.abs(candles[j].l - prevClose)));
+  }
+  if (trValues.length < 10) return null;
+  const atr14 = trValues.reduce((sum, value) => sum + value, 0) / trValues.length;
+  const swingCandles = candles.slice(Math.max(0, i - 24), i);
+  if (!(atr14 > 0) || swingCandles.length < 10) return null;
+  const swingStop = side === 'LONG'
+    ? Math.min(...swingCandles.map(c => c.l)) - atr14 * 0.25
+    : Math.max(...swingCandles.map(c => c.h)) + atr14 * 0.25;
+  const sl = side === 'LONG'
+    ? Math.min(rf.lowerBand[i], swingStop)
+    : Math.max(rf.upperBand[i], swingStop);
+  const risk = Math.abs(price - sl);
+  if (!finite(risk) || risk <= 0 || (side === 'LONG' ? sl >= price : sl <= price)) return null;
 
-const mdf = analyzeMomentumDecayField(candles, side, i);
-
-if (!mdf?.ok) {
-    return await recordRFReject("MDF_HARD_REJECT", { mdf });
-}
-
-const mdfAdjustment = Number(mdf.adjustment || 0);
-
-// MDF chỉ đánh giá chất lượng, không được đổi hướng RF.
-const extremeImpulseAtEntry =
-    Number(mdf.elapsedBars) === 0 &&
-    Number(mdf.bodyAtr) >= 1.5 &&
-    Number(mdf.rangeAtr) >= 1.8;
-
-// Loại điểm MDF rất thấp hoặc nến vào lệnh quá mạnh
-// ngay tại thời điểm impulse bắt đầu.
-if (
-    mdfAdjustment <= -5 ||
-    extremeImpulseAtEntry
-) {
-    return await recordRFReject(
-        "MDF_ENTRY_REJECT",
-        {
-            mdf,
-            mdfAdjustment,
-            extremeImpulseAtEntry
-        }
-    );
-}
-
-
-const score = clamp(
-    Math.round(70 + mdfAdjustment),
-    0,
-    100
-);
+  const targetR = 1.6;
+  const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
+  const rank = scoreRF15Signal(data15, side);
+  const score = clamp(Math.round(70 + rank.adjustment), 0, 100);
   const volRatio = range / price;
 
-// ============================================================
-// RF / CANDLE DIAGNOSTICS
-// Chỉ lưu dữ liệu để phân tích DB về sau.
-// KHÔNG dùng các field này để đổi hướng RF.
-// ============================================================
-
-const candle = candles[i];
-const prevCandle = candles[i - 1];
-const prev2Candle = i >= 2 ? candles[i - 2] : null;
-
-// ============================================================
-// CURRENT RF FLIP CANDLE
-// ============================================================
-
-const candleOpen = Number(candle.o);
-const candleHigh = Number(candle.h);
-const candleLow = Number(candle.l);
-const candleClose = Number(candle.c);
-
-const candleBody = Math.abs(candleClose - candleOpen);
-const candleRange = candleHigh - candleLow;
-
-const candleBodyPct =
-    candleRange > 0
-        ? candleBody / candleRange
-        : 0;
-
-const upperWick =
-    candleHigh - Math.max(candleOpen, candleClose);
-
-const lowerWick =
-    Math.min(candleOpen, candleClose) - candleLow;
-
-const upperWickPct =
-    candleRange > 0
-        ? upperWick / candleRange
-        : 0;
-
-const lowerWickPct =
-    candleRange > 0
-        ? lowerWick / candleRange
-        : 0;
-
-const candleDirection =
-    candleClose > candleOpen
-        ? 'UP'
-        : candleClose < candleOpen
-            ? 'DOWN'
-            : 'FLAT';
-
-const candleAligned =
-    (
-        side === 'LONG' &&
-        candleDirection === 'UP'
-    ) ||
-    (
-        side === 'SHORT' &&
-        candleDirection === 'DOWN'
-    );
-
-// ============================================================
-// PREVIOUS CANDLE
-// ============================================================
-
-const prevOpen = Number(prevCandle.o);
-const prevHigh = Number(prevCandle.h);
-const prevLow = Number(prevCandle.l);
-const prevClose = Number(prevCandle.c);
-
-const prevBody = Math.abs(prevClose - prevOpen);
-const prevRange = prevHigh - prevLow;
-
-const prevBodyPct =
-    prevRange > 0
-        ? prevBody / prevRange
-        : 0;
-
-const prevUpperWick =
-    prevHigh - Math.max(prevOpen, prevClose);
-
-const prevLowerWick =
-    Math.min(prevOpen, prevClose) - prevLow;
-
-const prevUpperWickPct =
-    prevRange > 0
-        ? prevUpperWick / prevRange
-        : 0;
-
-const prevLowerWickPct =
-    prevRange > 0
-        ? prevLowerWick / prevRange
-        : 0;
-
-const prevCandleDirection =
-    prevClose > prevOpen
-        ? 'UP'
-        : prevClose < prevOpen
-            ? 'DOWN'
-            : 'FLAT';
-
-// ============================================================
-// PREVIOUS 2 CANDLE
-// Chỉ lấy direction để biết context trước RF flip.
-// ============================================================
-
-const prev2Open =
-    prev2Candle ? Number(prev2Candle.o) : null;
-
-const prev2Close =
-    prev2Candle ? Number(prev2Candle.c) : null;
-
-const prev2Direction =
-    prev2Candle
-        ? (
-            prev2Close > prev2Open
-                ? 'UP'
-                : prev2Close < prev2Open
-                    ? 'DOWN'
-                    : 'FLAT'
-        )
-        : null;
-
-// ============================================================
-// RF STATE BEFORE FLIP
-// ============================================================
-
-const priorSide =
-  rf.direction[i - 1] === 1 ? 'LONG' :
-  rf.direction[i - 1] === -1 ? 'SHORT' :
-  null;
-
-// ============================================================
-// RF FILTER HISTORY
-// ============================================================
-
-const filter2Back =
-    i >= 2
-        ? Number(rf.filter[i - 2])
-        : null;
-
-const filter3Back =
-    i >= 3
-        ? Number(rf.filter[i - 3])
-        : null;
-
-// Current RF move
-const rfMoveRatio =
-    range > 0
-        ? move / range
-        : 0;
-
-// Previous RF move
-const priorMove =
-    finite(filter2Back)
-        ? (
-            side === 'LONG'
-                ? priorFilter - filter2Back
-                : filter2Back - priorFilter
-        )
-        : null;
-
-// RF move 2 bars back
-const move2Back =
-    finite(filter3Back) && finite(filter2Back)
-        ? (
-            side === 'LONG'
-                ? filter2Back - filter3Back
-                : filter3Back - filter2Back
-        )
-        : null;
-
-// Normalized previous RF moves
-const priorMoveRatio =
-    priorMove != null && range > 0
-        ? priorMove / range
-        : null;
-
-const move2BackRatio =
-    move2Back != null && range > 0
-        ? move2Back / range
-        : null;
-
-// ============================================================
-// PRICE VS RF FILTER
-// ============================================================
-
-const filterDistance =
-    side === 'LONG'
-        ? price - filter
-        : filter - price;
-
-const filterDistanceRatio =
-    range > 0
-        ? filterDistance / range
-        : 0;
-
-// ============================================================
-// RF RANGE CHANGE
-// ============================================================
-
-const priorRange =
-    i >= 1
-        ? Number(rf.range[i - 1])
-        : null;
-
-const rangeChangeRatio =
-    finite(priorRange) && priorRange > 0
-        ? range / priorRange
-        : null;
-
-// ============================================================
-// HOW LONG THE PREVIOUS RF DIRECTION EXISTED
-// ============================================================
-
-let priorRfBars = 0;
-
-if (priorSide) {
-    for (let j = i - 1; j >= 0; j--) {
-
-        const s =
-    rf.direction[j] === 1 ? 'LONG' :
-    rf.direction[j] === -1 ? 'SHORT' :
-    null;
-
-        if (s !== priorSide) break;
-
-        priorRfBars++;
-    }
-}
-
-  
-  // ============================================================
-  // ENTRY TELEMETRY V1
-  // Chỉ ghi dữ liệu, không đổi hướng RF.
-  // ============================================================
-
-  const prev2High =
-      prev2Candle ? Number(prev2Candle.h) : null;
-
-  const prev2Low =
-      prev2Candle ? Number(prev2Candle.l) : null;
-
-  const prev2Range =
-      prev2Candle ? prev2High - prev2Low : null;
-
-  const prev2Body =
-      prev2Candle
-          ? Math.abs(prev2Close - prev2Open)
-          : null;
-
-  const prev2BodyPct =
-      prev2Range > 0
-          ? prev2Body / prev2Range
-          : null;
-
-  const prev2UpperWickPct =
-      prev2Range > 0
-          ? (prev2High - Math.max(prev2Open, prev2Close)) / prev2Range
-          : null;
-
-  const prev2LowerWickPct =
-      prev2Range > 0
-          ? (Math.min(prev2Open, prev2Close) - prev2Low) / prev2Range
-          : null;
-
-  const prev2CandleAligned =
-      prev2Direction == null
-          ? null
-          : side === 'LONG'
-              ? prev2Direction === 'UP'
-              : prev2Direction === 'DOWN';
-
-  const sideRelativeBodyPct =
-      candleRange > 0
-          ? (side === 'LONG' ? 1 : -1) *
-            (candleClose - candleOpen) / candleRange
-          : null;
-
-  const adverseWickPct =
-      side === 'LONG' ? upperWickPct : lowerWickPct;
-
-  const supportiveWickPct =
-      side === 'LONG' ? lowerWickPct : upperWickPct;
-
-  const distanceToFilterPct =
-      price > 0 ? filterDistance / price * 100 : null;
-
-  const distanceToFilterRange =
-      range > 0 ? filterDistance / range : null;
-
-  const filterMovePct =
-      price > 0 ? move / price * 100 : null;
-
-  const signal = {
-    side, symbol, price, isFlip: true, flipTime: candles[i].t,
-    setup: 'RANGE_FILTER', pullbackType: 'NONE',
+  return {
+    side, symbol, price, sl, tp,
+    setup: 'RANGE_FILTER',
+    pullbackType: 'NONE',
     triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
     marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
     volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
-    
-    telemetryVersion: 'ENTRY_TELEMETRY_V1',
-    signalKey,
-
-    rfVersion: 'RF_DW_V2',
-mdfVersion: 'MDF_V2',
-    qualityScore: score,
-score,
-// ============================================================
-// RF DIAGNOSTICS
-// ============================================================
-rf: {
-    side,
-    priorSide,
-
-    filter: Number(filter),
-    priorFilter: Number(priorFilter),
-
-    filter2Back:
-        filter2Back == null
-            ? null
-            : Number(filter2Back),
-
-    filter3Back:
-        filter3Back == null
-            ? null
-            : Number(filter3Back),
-
-    move: Number(move),
-
-    priorMove:
-        priorMove == null
-            ? null
-            : Number(priorMove),
-
-    move2Back:
-        move2Back == null
-            ? null
-            : Number(move2Back),
-
-    range: Number(range),
-
-    priorRange:
-        priorRange == null
-            ? null
-            : Number(priorRange),
-
-    moveRatio: Number(rfMoveRatio),
-
-    priorMoveRatio:
-        priorMoveRatio == null
-            ? null
-            : Number(priorMoveRatio),
-
-    move2BackRatio:
-        move2BackRatio == null
-            ? null
-            : Number(move2BackRatio),
-
-    distance: Number(filterDistance),
-    distanceRatio: Number(filterDistanceRatio),
-
-    volatilityRatio: Number(volRatio),
-
-    rangeChangeRatio:
-        rangeChangeRatio == null
-            ? null
-            : Number(rangeChangeRatio),
-
-    priorDirectionBars: Number(priorRfBars)
-},
-// ============================================================
-// RF FLIP CANDLE
-// ============================================================
-rfCandle: {
-    time: candles[i].t,
-
-    open: Number(candleOpen),
-    high: Number(candleHigh),
-    low: Number(candleLow),
-    close: Number(candleClose),
-
-    body: Number(candleBody),
-    range: Number(candleRange),
-
-    bodyPct: Number(candleBodyPct),
-
-    upperWickPct: Number(upperWickPct),
-    lowerWickPct: Number(lowerWickPct),
-
-    direction: candleDirection,
-    aligned: !!candleAligned
-},
-prevCandle: {
-    time: candles[i - 1].t,
-
-    open: Number(prevOpen),
-    high: Number(prevHigh),
-    low: Number(prevLow),
-    close: Number(prevClose),
-
-    body: Number(prevBody),
-    range: Number(prevRange),
-
-    bodyPct: Number(prevBodyPct),
-
-    upperWickPct: Number(prevUpperWickPct),
-    lowerWickPct: Number(prevLowerWickPct),
-
-    direction: prevCandleDirection
-},
-// ============================================================
-// MDF METRICS
-// ============================================================
-mdfAdjustment,
-
-
-mdf: {
-    impulseDetected: !!mdf.impulseDetected,
-    e0: Number(mdf.e0 || 0),
-    energyPct: Number(mdf.energyPct || 0),
-    halfLife: Number(mdf.halfLife || 0),
-    elapsedBars: Number(mdf.elapsedBars || 0),
-    etaToExhaustion:
-        mdf.etaToExhaustion == null
-            ? null
-            : Number(mdf.etaToExhaustion),
-
-    phase: mdf.phase || null,
-    weak: !!mdf.weak,
-    exhausted: !!mdf.exhausted,
-
-    bodyAtr: Number(mdf.bodyAtr || 0),
-    rangeAtr: Number(mdf.rangeAtr || 0),
-    bodyEfficiency: Number(mdf.bodyEfficiency || 0),
-
-    impulseBodyAtr: Number(mdf.impulseBodyAtr || 0),
-    impulseRangeAtr: Number(mdf.impulseRangeAtr || 0),
-    impulseEfficiency: Number(mdf.impulseEfficiency || 0),
-
-    velocity: Number(mdf.velocity || 0),
-
-    spikeEntry: !!mdf.spikeEntry,
-    climax: !!mdf.climax,
-    chaseRisk: !!mdf.chaseRisk,
-    continuationGood: !!mdf.continuationGood,
-    continuationWeak: !!mdf.continuationWeak,
-
-    hardReject: !!mdf.hardReject,
-    hardRejectReasons: Array.isArray(mdf.hardRejectReasons)
-        ? mdf.hardRejectReasons
-        : [],
-
-    nearEntry: mdf.nearEntry || null,
-},
-
-
-    // ============================================================
-    // ENTRY DIAGNOSTICS
-    // Chỉ phục vụ phân tích dữ liệu sau này.
-    // ============================================================
-    entryDiagnostics: {
-        previousCandleAligned: !!previousCandleAligned,
-        prev2CandleAligned,
-
-        sideRelativeBodyPct:
-            sideRelativeBodyPct == null
-                ? null
-                : Number(sideRelativeBodyPct),
-
-        adverseWickPct: Number(adverseWickPct),
-        supportiveWickPct: Number(supportiveWickPct),
-
-        distanceToFilterPct:
-            distanceToFilterPct == null
-                ? null
-                : Number(distanceToFilterPct),
-
-        distanceToFilterRange:
-            distanceToFilterRange == null
-                ? null
-                : Number(distanceToFilterRange),
-
-        filterMovePct:
-            filterMovePct == null
-                ? null
-                : Number(filterMovePct)
-    },
-
-    // ============================================================
-    // PREVIOUS 2 CANDLE - FULL SNAPSHOT
-    // Thay thế object prev2Candle cũ, không tạo key trùng.
-    // ============================================================
-    prev2Candle: {
-        time: prev2Candle ? candles[i - 2].t : null,
-
-        open: prev2Open,
-        high: prev2High,
-        low: prev2Low,
-        close: prev2Close,
-
-        body: prev2Body,
-        range: prev2Range,
-        bodyPct: prev2BodyPct,
-
-        upperWickPct: prev2UpperWickPct,
-        lowerWickPct: prev2LowerWickPct,
-
-        direction: prev2Direction,
-        aligned: prev2CandleAligned
-    },
-
-
-filterMove: move,
-filterRange: range,
-
-};
-await saveRFSignalEvent({
-    ...signal,
-    entryPrice: Number(price),
-    status: "SIGNAL_ACCEPTED",
-    updatedAt: Date.now()
-});
-
-return signal;
+    qualityScore: score, score,
+    risk: { risk, initialRisk: risk, rr: targetR, targetR },
+    rankAdjustment: rank.adjustment,
+    filterMove: move,
+    filterRange: range
+  };
 }
 
-function analyzeMomentumDecayField(candles, side, currentIndex) {
+function scoreRF15Signal(data15, side) {
+  const candles = prepare(data15, 600);
+  if (!candles) return { adjustment: -100, early: false };
+  const rf = rangeFilter(candles, {
+    filterType: 'Type 1', movementSource: 'Close',
+    rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
+    smoothRange: true, smoothPeriod: 27,
+    averageFilterChanges: false, averageChanges: 2
+  });
+  const i = candles.length - 1;
+  if (i < 3) return { adjustment: -100, early: false };
 
-    if (
-        !Array.isArray(candles) ||
-        currentIndex < 20 ||
-        !['LONG', 'SHORT'].includes(side)
-    ) {
-        return {
-            ok: true,
-            adjustment: 0,
-            impulseDetected: false,
-            e0: 0,
-            energyPct: 0,
-            halfLife: 4,
-            elapsedBars: 0,
-            etaToExhaustion: 0,
-            phase: 'DEPLETED',
-            weak: false,
-            exhausted: false,
-            bodyAtr: 0,
-            rangeAtr: 0,
-            bodyEfficiency: 0
-        };
-    }
+  // Rank higher when the latest DW turn just began; lower as the slope ages.
+  let runBars = 0;
+  for (let j = i; j > 0; j--) {
+    const a = rf.filter[j - 1], b = rf.filter[j];
+    if (!finite(a) || !finite(b)) break;
+    const d = b - a;
+    if (side === 'LONG' ? d > 0 : d < 0) runBars++;
+    else break;
+  }
+  const recent = side === 'LONG' ? rf.buy[i] : rf.sell[i];
+  let path = 0;
+  const lookback = 8;
+  for (let j = Math.max(1, i - lookback + 1); j <= i; j++) {
+    path += Math.abs(candles[j].c - candles[j - 1].c);
+  }
+  const net = candles[i].c - candles[Math.max(0, i - lookback)].c;
+  const aligned = side === 'LONG' ? net > 0 : net < 0;
+  const efficiency = path > 0 ? Math.abs(net) / path : 0;
 
-    // --------------------------------------------------------
-    // SETTINGS
-    // 15m
-    // --------------------------------------------------------
-
-    const ATR_PERIOD = 14;
-
-    // MDF intraday-style impulse thresholds.
-    const IMPULSE_BODY_ATR = 1.20;
-    const IMPULSE_RANGE_ATR = 1.50;
-    const MIN_BODY_EFFICIENCY = 0.45;
-
-    // Energy model.
-    const BASE_HALF_LIFE = 6;
-    const EXHAUSTION_ENERGY = 0.20;
-
-    // --------------------------------------------------------
-    // ATR
-    // --------------------------------------------------------
-
-    const tr = [];
-
-    for (
-        let j = 1;
-        j <= currentIndex;
-        j++
-    ) {
-
-        const h = Number(candles[j].h);
-        const l = Number(candles[j].l);
-        const pc = Number(candles[j - 1].c);
-
-        if (
-            !finite(h) ||
-            !finite(l) ||
-            !finite(pc)
-        ) {
-            tr.push(0);
-            continue;
-        }
-
-        tr.push(
-            Math.max(
-                h - l,
-                Math.abs(h - pc),
-                Math.abs(l - pc)
-            )
-        );
-    }
-
-    const atrStart =
-        Math.max(
-            0,
-            tr.length - ATR_PERIOD
-        );
-
-    const atrValues =
-        tr.slice(atrStart)
-            .filter(x => finite(x) && x > 0);
-
-    if (!atrValues.length) {
-        return {
-            ok: true,
-            adjustment: 0,
-            impulseDetected: false,
-            e0: 0,
-            energyPct: 0,
-            halfLife: BASE_HALF_LIFE,
-            elapsedBars: 0,
-            etaToExhaustion: 0,
-            phase: 'DEPLETED',
-            weak: false,
-            exhausted: false,
-            bodyAtr: 0,
-            rangeAtr: 0,
-            bodyEfficiency: 0
-        };
-    }
-
-    const atr =
-        atrValues.reduce(
-            (a, b) => a + b,
-            0
-        ) / atrValues.length;
-
-    if (!(atr > 0)) {
-        return {
-            ok: true,
-            adjustment: 0,
-            impulseDetected: false,
-            e0: 0,
-            energyPct: 0,
-            halfLife: BASE_HALF_LIFE,
-            elapsedBars: 0,
-            etaToExhaustion: 0,
-            phase: 'DEPLETED',
-            weak: false,
-            exhausted: false,
-            bodyAtr: 0,
-            rangeAtr: 0,
-            bodyEfficiency: 0
-        };
-    }
-
-    // --------------------------------------------------------
-    // CURRENT CANDLE
-    // --------------------------------------------------------
-
-    const c = candles[currentIndex];
-
-    const o = Number(c.o);
-    const h = Number(c.h);
-    const l = Number(c.l);
-    const close = Number(c.c);
-
-    const candleRange = h - l;
-    const body = Math.abs(close - o);
-
-    if (
-        !(candleRange > 0) ||
-        !finite(body)
-    ) {
-        return {
-            ok: true,
-            adjustment: -5,
-            impulseDetected: false,
-            e0: 0,
-            energyPct: 0,
-            halfLife: BASE_HALF_LIFE,
-            elapsedBars: 0,
-            etaToExhaustion: 0,
-            phase: 'DEPLETED',
-            weak: false,
-            exhausted: false,
-            bodyAtr: 0,
-            rangeAtr: 0,
-            bodyEfficiency: 0
-        };
-    }
-
-    const bodyAtr =
-        body / atr;
-
-    const rangeAtr =
-        candleRange / atr;
-
-    const bodyEfficiency =
-        body / candleRange;
-        // --------------------------------------------------------
-// NEAR-ENTRY LARGE CANDLE DETECTION
-//
-// Bắt trường hợp:
-// - current candle quá lớn
-// - 1 candle trước quá lớn
-// - 2 candle trước quá lớn
-//
-// Chỉ tính candle đi CÙNG hướng với RF.
-// --------------------------------------------------------
-
-function getNearEntryCandleStats(index) {
-
-    if (index < 1) {
-        return null;
-    }
-
-    const cc = candles[index];
-
-    const co = Number(cc.o);
-    const ch = Number(cc.h);
-    const cl = Number(cc.l);
-    const ccClose = Number(cc.c);
-
-    if (
-        ![
-            co,
-            ch,
-            cl,
-            ccClose
-        ].every(finite)
-    ) {
-        return null;
-    }
-
-    const cr = ch - cl;
-
-    if (!(cr > 0)) {
-        return null;
-    }
-
-    const cb =
-        Math.abs(ccClose - co);
-
-    // ATR riêng tại candle này.
-    const localTR = [];
-
-    for (
-        let k = Math.max(1, index - ATR_PERIOD + 1);
-        k <= index;
-        k++
-    ) {
-
-        const kh = Number(candles[k].h);
-        const kl = Number(candles[k].l);
-        const kpc = Number(candles[k - 1].c);
-
-        if (
-            finite(kh) &&
-            finite(kl) &&
-            finite(kpc)
-        ) {
-            localTR.push(
-                Math.max(
-                    kh - kl,
-                    Math.abs(kh - kpc),
-                    Math.abs(kl - kpc)
-                )
-            );
-        }
-    }
-
-    if (!localTR.length) {
-        return null;
-    }
-
-    const localATR =
-        localTR.reduce(
-            (a, b) => a + b,
-            0
-        ) / localTR.length;
-
-    if (!(localATR > 0)) {
-        return null;
-    }
-
-    const bodyAtr =
-        cb / localATR;
-
-    const rangeAtr =
-        cr / localATR;
-
-    const efficiency =
-        cb / cr;
-
-    const directionalBody =
-        side === 'LONG'
-            ? ccClose - co
-            : co - ccClose;
-
-    const aligned =
-        directionalBody > 0;
-
-    return {
-        index,
-        bodyAtr,
-        rangeAtr,
-        efficiency,
-        aligned
-    };
+  const anchor = Math.max(0, i - 3);
+  const oldFilter = rf.filter[anchor], oldRange = rf.range[anchor];
+  const currentRange = rf.range[i], price = candles[i].c;
+  let extension = 0;
+  if ([oldFilter, oldRange, currentRange, price].every(finite) && oldRange > 0 && currentRange > 0) {
+    const oldEdge = side === 'LONG' ? oldFilter + oldRange : oldFilter - oldRange;
+    extension = side === 'LONG' ? (price - oldEdge) / currentRange : (oldEdge - price) / currentRange;
+  }
+  extension = Math.max(0, extension);
+  const early = recent && runBars <= 2;
+  const freshness = early ? 12 - runBars * 2 : -Math.min(20, Math.max(0, runBars - 2) * 4);
+  const adjustment = efficiency * 8 + (aligned ? 4 : -6) + freshness - Math.min(20, extension * 5);
+  return { adjustment, efficiency, alignedMove: aligned, extensionUnits: extension, runBars, early };
 }
 
-const currentCandleStats =
-    getNearEntryCandleStats(currentIndex);
-
-const prevCandleStats =
-    getNearEntryCandleStats(currentIndex - 1);
-
-const prev2CandleStats =
-    getNearEntryCandleStats(currentIndex - 2);
-
-
-// --------------------------------------------------------
-// LARGE CANDLE FLAGS
-// --------------------------------------------------------
-
-const LARGE_BODY_ATR = 2.20;
-const LARGE_RANGE_ATR = 2.60;
-
-const currentLarge =
-    !!currentCandleStats &&
-    currentCandleStats.aligned &&
-    (
-        currentCandleStats.bodyAtr >= LARGE_BODY_ATR ||
-        currentCandleStats.rangeAtr >= LARGE_RANGE_ATR
-    );
-
-const prevLarge =
-    !!prevCandleStats &&
-    prevCandleStats.aligned &&
-    (
-        prevCandleStats.bodyAtr >= LARGE_BODY_ATR ||
-        prevCandleStats.rangeAtr >= LARGE_RANGE_ATR
-    );
-
-const prev2Large =
-    !!prev2CandleStats &&
-    prev2CandleStats.aligned &&
-    (
-        prev2CandleStats.bodyAtr >= LARGE_BODY_ATR ||
-        prev2CandleStats.rangeAtr >= LARGE_RANGE_ATR
-    );
-
-
-// --------------------------------------------------------
-// TWO LARGE CANDLES NEAR ENTRY
-//
-// Đặc biệt nguy hiểm:
-// i-2 và i-1 đều lớn cùng hướng,
-// nghĩa là giá đã bị đẩy mạnh ngay trước RF flip.
-// --------------------------------------------------------
-
-const twoPreviousLarge =
-    prevLarge &&
-    prev2Large;
-
-
-// --------------------------------------------------------
-// NEAR-ENTRY EXHAUSTION
-//
-// Một cây lớn ngay trước entry đã đáng ngại.
-// Hai cây lớn liên tiếp càng đáng ngại.
-// Current + previous cùng lớn là chase rất mạnh.
-// --------------------------------------------------------
-
-const nearEntryExhaustion =
-    currentLarge ||
-    prevLarge ||
-    prev2Large;
-
-const consecutiveLargeBeforeEntry =
-    twoPreviousLarge;
-
-const currentPlusPreviousLarge =
-    currentLarge &&
-    prevLarge;
-        // --------------------------------------------------------
-// CLIMAX / CHASE / CONTINUATION
-// --------------------------------------------------------
-
-const directionalBody =
-    side === 'LONG'
-        ? close - o
-        : o - close;
-
-const upperWick =
-    h - Math.max(o, close);
-
-const lowerWick =
-    Math.min(o, close) - l;
-
-const rejectionWick =
-    side === 'LONG'
-        ? upperWick
-        : lowerWick;
-
-const rejectionRatio =
-    candleRange > 0
-        ? rejectionWick / candleRange
-        : 0;
-
-const extremeBodyAtr =
-    bodyAtr >= 2.20;
-
-const extremeRangeAtr =
-    rangeAtr >= 2.80;
-
-const strongDirectionalCandle =
-    directionalBody > 0 &&
-    bodyEfficiency >= 0.60;
-    // --------------------------------------------------------
-// CLIMAX DETECTION
-//
-// Không phạt chỉ vì nến to.
-// Chỉ xem là climax khi:
-// - nến cực lớn
-// - đi đúng hướng
-// - và có dấu hiệu bị từ chối / chase quá mạnh
-// --------------------------------------------------------
-
-let climax = false;
-
-if (
-    strongDirectionalCandle &&
-    (extremeBodyAtr || extremeRangeAtr)
-) {
-    if (rejectionRatio >= 0.30) {
-        climax = true;
-    }
-}
-// --------------------------------------------------------
-// CONTINUATION QUALITY
-//
-// Kiểm tra 3 candle trước entry có thực sự duy trì
-// cùng hướng hay chỉ là một cú spike đơn độc.
-// --------------------------------------------------------
-
-let continuationScore = 0;
-
-const CONT_LOOKBACK = 3;
-
-for (
-    let j = Math.max(1, currentIndex - CONT_LOOKBACK);
-    j < currentIndex;
-    j++
-) {
-    const cc = candles[j];
-
-    const co = Number(cc.o);
-    const ch = Number(cc.h);
-    const cl = Number(cc.l);
-    const ccClose = Number(cc.c);
-
-    if (
-        ![
-            co,
-            ch,
-            cl,
-            ccClose
-        ].every(finite)
-    ) {
-        continue;
-    }
-
-    const cr = ch - cl;
-
-    if (!(cr > 0)) {
-        continue;
-    }
-
-    const cb = Math.abs(ccClose - co);
-
-    const ce =
-        cb / cr;
-
-    const directional =
-        side === 'LONG'
-            ? ccClose > co
-            : ccClose < co;
-
-    if (
-        directional &&
-        ce >= 0.45
-    ) {
-        continuationScore += 1;
-    }
-}
-const continuationGood =
-    continuationScore >= 2;
-
-const continuationWeak =
-    continuationScore <= 1;
-    // --------------------------------------------------------
-    // TÌM IMPULSE GẦN NHẤT
-    //
-    // Không nhất thiết phải là chính cây RF flip.
-    // MDF vốn tạo energy cycle từ impulse candle.
-    // --------------------------------------------------------
-
-    let impulseIndex = -1;
-
-    const MAX_LOOKBACK = 12;
-
-    for (
-        let j = currentIndex;
-        j >= Math.max(1, currentIndex - MAX_LOOKBACK);
-        j--
-    ) {
-
-        const cj = candles[j];
-
-        const jo = Number(cj.o);
-        const jh = Number(cj.h);
-        const jl = Number(cj.l);
-        const jc = Number(cj.c);
-
-        const prevClose =
-            Number(candles[j - 1].c);
-
-        if (
-            ![
-                jo,
-                jh,
-                jl,
-                jc,
-                prevClose
-            ].every(finite)
-        ) {
-            continue;
-        }
-
-        const jr = jh - jl;
-        const jb = Math.abs(jc - jo);
-
-        if (!(jr > 0 && jb >= 0)) {
-            continue;
-        }
-
-        // ATR tại candle j.
-        const localTR = [];
-
-        for (
-            let k = Math.max(1, j - ATR_PERIOD + 1);
-            k <= j;
-            k++
-        ) {
-
-            const kh = Number(candles[k].h);
-            const kl = Number(candles[k].l);
-            const kpc = Number(candles[k - 1].c);
-
-            if (
-                finite(kh) &&
-                finite(kl) &&
-                finite(kpc)
-            ) {
-                localTR.push(
-                    Math.max(
-                        kh - kl,
-                        Math.abs(kh - kpc),
-                        Math.abs(kl - kpc)
-                    )
-                );
-            }
-        }
-
-        if (!localTR.length) {
-            continue;
-        }
-
-        const localATR =
-            localTR.reduce(
-                (a, b) => a + b,
-                0
-            ) / localTR.length;
-
-        if (!(localATR > 0)) {
-            continue;
-        }
-
-        const jBodyAtr =
-            jb / localATR;
-
-        const jRangeAtr =
-            jr / localATR;
-
-        const jEfficiency =
-            jb / jr;
-
-        const jDirectionalBody =
-            side === 'LONG'
-                ? jc - jo
-                : jo - jc;
-
-        if (
-            jBodyAtr >= IMPULSE_BODY_ATR &&
-            jRangeAtr >= IMPULSE_RANGE_ATR &&
-            jEfficiency >= MIN_BODY_EFFICIENCY &&
-            jDirectionalBody > 0
-        ) {
-            impulseIndex = j;
-            break;
-        }
-    }
-
-    const impulseDetected = impulseIndex >= 0;
-
-    // --------------------------------------------------------
-    // Không có impulse gần đây
-    // --------------------------------------------------------
-
-    if (impulseIndex < 0) {
-
-        return {
-            ok: true,
-
-            // Không block RF.
-            adjustment: -8,
-
-            impulseDetected: false,
-
-            e0: 0,
-            energyPct: 0,
-
-            halfLife: BASE_HALF_LIFE,
-
-            elapsedBars: 0,
-            etaToExhaustion: 0,
-
-            phase: 'DEPLETED',
-
-            weak: false,
-            exhausted: true,
-
-            bodyAtr,
-            rangeAtr,
-            bodyEfficiency
-        };
-    }
-
-    // --------------------------------------------------------
-    // IMPULSE DATA
-    // --------------------------------------------------------
-
-    const ic = candles[impulseIndex];
-
-    const io = Number(ic.o);
-    const ih = Number(ic.h);
-    const il = Number(ic.l);
-    const iclose = Number(ic.c);
-
-    const impulseRange =
-        ih - il;
-
-    const impulseBody =
-        Math.abs(iclose - io);
-
-    const elapsedBars =
-        Math.max(
-            0,
-            currentIndex - impulseIndex
-        );
-        const spikeEntry =
-    impulseIndex === currentIndex &&
-    (
-        bodyAtr >= 2.60 ||
-        rangeAtr >= 3.20
-    ) &&
-    continuationWeak;
-
-        // --------------------------------------------------------
-// PRICE EXTENSION
-//
-// Giá đã chạy quá xa khỏi impulse chưa?
-// --------------------------------------------------------
-
-const impulseDistance =
-    side === 'LONG'
-        ? close - iclose
-        : iclose - close;
-
-const impulseDistanceAtr =
-    atr > 0
-        ? Math.max(0, impulseDistance / atr)
-        : 0;
-
-const chaseRisk =
-    elapsedBars >= 2 &&
-    impulseDistanceAtr >= 2.50;
-
-    // ATR của impulse.
-    const impulseTR = [];
-
-    for (
-        let j =
-            Math.max(
-                1,
-                impulseIndex - ATR_PERIOD + 1
-            );
-        j <= impulseIndex;
-        j++
-    ) {
-
-        const h2 = Number(candles[j].h);
-        const l2 = Number(candles[j].l);
-        const pc2 = Number(candles[j - 1].c);
-
-        if (
-            finite(h2) &&
-            finite(l2) &&
-            finite(pc2)
-        ) {
-            impulseTR.push(
-                Math.max(
-                    h2 - l2,
-                    Math.abs(h2 - pc2),
-                    Math.abs(l2 - pc2)
-                )
-            );
-        }
-    }
-
-    const impulseATR =
-        impulseTR.length
-            ? impulseTR.reduce(
-                (a, b) => a + b,
-                0
-            ) / impulseTR.length
-            : atr;
-
-    const impulseBodyAtr =
-        impulseATR > 0
-            ? impulseBody / impulseATR
-            : 0;
-
-    const impulseRangeAtr =
-        impulseATR > 0
-            ? impulseRange / impulseATR
-            : 0;
-
-    const impulseEfficiency =
-        impulseRange > 0
-            ? impulseBody / impulseRange
-            : 0;
-
-    // --------------------------------------------------------
-    // VELOCITY
-    //
-    // Net displacement / ATR.
-    // Chỉ dùng làm energy magnitude.
-    // --------------------------------------------------------
-
-    const velocityLookback =
-        Math.min(
-            3,
-            elapsedBars + 1
-        );
-
-    const velocityStart =
-        Math.max(
-            impulseIndex,
-            currentIndex - velocityLookback + 1
-        );
-
-    const velocityMove =
-        side === 'LONG'
-            ? candles[currentIndex].c -
-              candles[velocityStart].c
-            : candles[velocityStart].c -
-              candles[currentIndex].c;
-
-    const velocity =
-        atr > 0
-            ? Math.max(
-                0,
-                velocityMove / atr
-            )
-            : 0;
-
-    // --------------------------------------------------------
-    // E0
-    //
-    // Giới hạn 5 giống concept MDF.
-    // --------------------------------------------------------
-
-    const rawE0 =
-        impulseBodyAtr * 0.55 +
-        impulseRangeAtr * 0.25 +
-        velocity * 0.20;
-
-    const e0 =
-        Math.max(
-            0,
-            Math.min(
-                5,
-                rawE0
-            )
-        );
-
-    // --------------------------------------------------------
-    // HALF LIFE
-    //
-    // Impulse mạnh + efficiency tốt
-    // => cycle có half-life dài hơn.
-    // --------------------------------------------------------
-
-    const halfLife =
-        Math.max(
-            3,
-            Math.min(
-                12,
-                BASE_HALF_LIFE +
-                (impulseEfficiency - 0.45) * 5 +
-                Math.min(2, impulseBodyAtr - 1)
-            )
-        );
-
-    // --------------------------------------------------------
-    // ENERGY DECAY
-    // E(t) = E0 * exp(-lambda*t)
-    // lambda = ln(2) / halfLife
-    // --------------------------------------------------------
-
-    const lambda =
-        Math.log(2) / halfLife;
-
-    const energy =
-        e0 *
-        Math.exp(
-            -lambda * elapsedBars
-        );
-
-    const energyPct =
-        e0 > 0
-            ? energy / e0
-            : 0;
-
-    // --------------------------------------------------------
-    // ETA TO EXHAUSTION
-    // --------------------------------------------------------
-
-    let etaToExhaustion = 0;
-
-    if (
-        energy > EXHAUSTION_ENERGY &&
-        e0 > EXHAUSTION_ENERGY
-    ) {
-
-        etaToExhaustion =
-            Math.max(
-                0,
-                Math.ceil(
-                    Math.log(
-                        energy /
-                        EXHAUSTION_ENERGY
-                    ) / lambda
-                )
-            );
-    }
-
-    // --------------------------------------------------------
-    // PHASE
-    // --------------------------------------------------------
-
-    let phase = 'DEPLETED';
-
-    if (energyPct >= 0.75) {
-        phase = 'CHARGED';
-
-    } else if (energyPct >= 0.50) {
-        phase = 'ACTIVE';
-
-    } else if (energyPct >= 0.30) {
-        phase = 'DECAYING';
-
-    } else if (energyPct > 0.10) {
-        phase = 'FADING';
-
-    } else {
-        phase = 'DEPLETED';
-    }
-
-    const exhausted =
-        energy <= EXHAUSTION_ENERGY;
-// --------------------------------------------------------
-// WEAK IMPULSE
-//
-// So sánh impulse hiện tại với impulse hợp lệ trước đó.
-// Weak chỉ là thông tin momentum decay.
-// KHÔNG trừ điểm trực tiếp.
-// --------------------------------------------------------
-
-let weak = false;
-
-if (currentIndex > impulseIndex) {
-
-    for (
-        let j = impulseIndex - 1;
-        j >= Math.max(1, impulseIndex - 8);
-        j--
-    ) {
-
-        const pc = candles[j];
-
-        const po = Number(pc.o);
-        const ph = Number(pc.h);
-        const pl = Number(pc.l);
-        const pcl = Number(pc.c);
-
-        if (
-            ![
-                po,
-                ph,
-                pl,
-                pcl
-            ].every(finite)
-        ) {
-            continue;
-        }
-
-        const previousRange = ph - pl;
-        const previousBody = Math.abs(pcl - po);
-
-        if (!(previousRange > 0)) {
-            continue;
-        }
-
-        // ATR riêng tại candle j.
-        const previousTR = [];
-
-        for (
-            let k = Math.max(1, j - ATR_PERIOD + 1);
-            k <= j;
-            k++
-        ) {
-
-            const kh = Number(candles[k].h);
-            const kl = Number(candles[k].l);
-            const kpc = Number(candles[k - 1].c);
-
-            if (
-                finite(kh) &&
-                finite(kl) &&
-                finite(kpc)
-            ) {
-                previousTR.push(
-                    Math.max(
-                        kh - kl,
-                        Math.abs(kh - kpc),
-                        Math.abs(kl - kpc)
-                    )
-                );
-            }
-        }
-
-        if (!previousTR.length) {
-            continue;
-        }
-
-        const previousATR =
-            previousTR.reduce(
-                (a, b) => a + b,
-                0
-            ) / previousTR.length;
-
-        if (!(previousATR > 0)) {
-            continue;
-        }
-
-        const previousBodyAtr =
-            previousBody / previousATR;
-
-        const previousRangeAtr =
-            previousRange / previousATR;
-
-        const previousEfficiency =
-            previousBody / previousRange;
-
-        const previousDirectionalBody =
-            side === 'LONG'
-                ? pcl - po
-                : po - pcl;
-
-        // Phải thực sự là impulse cùng hướng.
-        if (
-            previousBodyAtr >= IMPULSE_BODY_ATR &&
-            previousRangeAtr >= IMPULSE_RANGE_ATR &&
-            previousEfficiency >= MIN_BODY_EFFICIENCY &&
-            previousDirectionalBody > 0
-        ) {
-
-            const previousImpulseStrength =
-                previousBodyAtr;
-
-            const currentImpulseStrength =
-                impulseBodyAtr;
-
-            if (
-                previousImpulseStrength > 0 &&
-                currentImpulseStrength <=
-                    previousImpulseStrength * 0.75
-            ) {
-                weak = true;
-            }
-
-            // Đã tìm được previous impulse hợp lệ.
-            break;
-        }
-    }
-}
-    // --------------------------------------------------------
-// QUALITY ADJUSTMENT
-//
-// RF = direction trigger
-// MDF = continuation / exhaustion quality
-//
-// Nguyên tắc:
-// 1. Bình thường: gần như không cộng điểm.
-// 2. Tín hiệu tốt: chỉ cộng nhẹ.
-// 3. Dấu hiệu xấu: trừ mạnh.
-// 4. Dấu hiệu cực đoan kết hợp: trừ rất mạnh.
-// 5. Không dùng future information.
-// 6. weak chỉ là thông tin, không phạt trực tiếp.
-// --------------------------------------------------------
-
-let adjustment = 0;
-
-
-// --------------------------------------------------------
-// 1. IMPULSE CONFIRMATION
-// --------------------------------------------------------
-//
-// Có impulse cùng hướng RF:
-// chỉ xác nhận nhẹ.
-//
-// Không có impulse:
-// không block RF, nhưng MDF không có bằng chứng
-// continuation tốt.
-// --------------------------------------------------------
-
-if (impulseDetected) {
-    adjustment += 2;
-} else {
-    adjustment -= 8;
-}
-
-
-// --------------------------------------------------------
-// 2. E0
-// --------------------------------------------------------
-//
-// E0 vừa phải = bình thường / tốt nhẹ.
-// E0 quá lớn = dễ là cú spike / exhaustion.
-//
-// DB:
-// E0 >= 3.0 → 0 WIN.
-// --------------------------------------------------------
-if (e0 >= 3.0) {
-    adjustment -= 8;
-} else if (e0 >= 2.6) {
-    adjustment -= 6;
-} else if (e0 >= 2.2) {
-    adjustment -= 2;
-} else if (e0 >= 1.5) {
-    adjustment += 0;
-} else if (e0 >= 1.2) {
-    adjustment += 0;
-} else {
-    adjustment -= 3;
-}
-// --------------------------------------------------------
-// 3. ENERGY
-// --------------------------------------------------------
-//
-// Không thưởng energy ở bar 0-1.
-//
-// Vì tại entry mới:
-// energyPct thường gần 1.0 chỉ vì impulse vừa xảy ra.
-//
-// Chỉ bắt đầu đánh giá từ bar >= 2.
-// --------------------------------------------------------
-
-if (elapsedBars >= 2) {
-
-    if (energyPct >= 0.75) {
-
-        adjustment += 1;
-
-    } else if (energyPct >= 0.50) {
-
-        adjustment += 0;
-
-    } else if (energyPct < 0.30) {
-
-        adjustment -= 5;
-    }
-}
-
-
-// --------------------------------------------------------
-// 4. PHASE
-// --------------------------------------------------------
-
-if (phase === 'FADING') {
-
-    adjustment -= 4;
-
-} else if (phase === 'DEPLETED') {
-
-    adjustment -= 8;
-}
-
-
-// --------------------------------------------------------
-// 5. HALF LIFE
-// --------------------------------------------------------
-//
-// DB:
-// halfLife >= 9.5 → 0 WIN.
-//
-// Không thưởng mạnh halfLife dài.
-// --------------------------------------------------------
-if (halfLife >= 9.5) {
-    adjustment -= 8;
-} else if (halfLife >= 8.0) {
-    adjustment += 0;
-} else if (halfLife < 7.5) {
-    adjustment -= 2;
-}
-// --------------------------------------------------------
-// 6. BODY ATR
-// --------------------------------------------------------
-//
-// Đây là một trong những bộ lọc mạnh nhất.
-//
-// DB:
-// bodyAtr >= 2.6 → 0 WIN.
-// --------------------------------------------------------
-if (bodyAtr >= 3.0) {
-    adjustment -= 12;
-} else if (bodyAtr >= 2.6) {
-    adjustment -= 10;
-} else if (bodyAtr >= 2.2) {
-    adjustment -= 5;
-} else if (bodyAtr >= 1.5) {
-    adjustment += 0;
-}
-// --------------------------------------------------------
-// 7. RANGE ATR
-// --------------------------------------------------------
-// DB:
-// rangeAtr >= 3.2 → 1 WIN / 10.
-//
-// Đây là ngưỡng hard reject.
-// Chấp nhận bỏ số ít WIN để loại phần lớn LOSS.
-// --------------------------------------------------------
-if (rangeAtr >= 4.0) {
-    adjustment -= 9;
-} else if (rangeAtr >= 3.2) {
-    adjustment -= 7;
-} else if (rangeAtr >= 2.5) {
-    adjustment += 0;
-}
-// --------------------------------------------------------
-// 8. BODY EFFICIENCY
-// --------------------------------------------------------
-//
-// Không phạt mạnh efficiency thấp.
-// DB chưa chứng minh đây là filter mạnh.
-//
-// Chỉ thưởng nhẹ vùng tương đối ổn.
-// --------------------------------------------------------
-if (bodyEfficiency < 0.45) {
-    adjustment -= 1;
-} else if (
-    bodyEfficiency >= 0.75 &&
-    bodyEfficiency <= 0.90
-) {
-    adjustment += 0;
-} else if (bodyEfficiency > 0.95) {
-    adjustment -= 1;
-}
-// --------------------------------------------------------
-// 9. ELAPSED BARS
-// --------------------------------------------------------
-//
-// DB:
-// 5-7 bars → 0 WIN.
-// >=8 bars → 5 WIN / 10.
-//
-// Vì vậy:
-// 5-7 = penalty mạnh.
-// >=8 = penalty nhẹ.
-// --------------------------------------------------------
-if (
-    elapsedBars >= 2 &&
-    elapsedBars <= 4
-) {
-    adjustment -= 3;
-
-} else if (
-    elapsedBars >= 5 &&
-    elapsedBars <= 7
-) {
-    adjustment -= 8;
-
-} else if (
-    elapsedBars >= 8
-) {
-    adjustment -= 2;
-}
-// --------------------------------------------------------
-// 10. CONTINUATION QUALITY
-// --------------------------------------------------------
-if (continuationGood) {
-    adjustment += 1;
-} else if (continuationWeak) {
-    adjustment -= 7;
-}
-// --------------------------------------------------------
-// 11. SPIKE ENTRY
-// --------------------------------------------------------
-//
-// Entry đúng vào impulse cực lớn
-// + continuation yếu.
-//
-// Đây là một trong các mẫu cần đánh mạnh.
-// --------------------------------------------------------
-
-if (spikeEntry) {
-
-    adjustment -= 12;
-}
-
-
-// --------------------------------------------------------
-// 12. CLIMAX
-// --------------------------------------------------------
-//
-// Nến lớn + rejection.
-// Đây là reversal risk thực sự.
-// --------------------------------------------------------
-
-if (climax) {
-
-    adjustment -= 10;
-}
-
-
-// --------------------------------------------------------
-// 13. CHASE
-// --------------------------------------------------------
-//
-// Giá đã chạy quá xa khỏi impulse.
-// --------------------------------------------------------
-
-if (chaseRisk) {
-
-    adjustment -= 6;
-}
-// --------------------------------------------------------
-// 13B. NEAR-ENTRY LARGE CANDLE
-//
-// Đây là filter chuyên bắt:
-// - current candle quá lớn
-// - i-1 quá lớn
-// - i-2 quá lớn
-//
-// Không cần rejection wick.
-// Chỉ cần magnitude + đúng hướng RF.
-// --------------------------------------------------------
-
-if (currentPlusPreviousLarge) {
-
-    // Current + previous đều lớn:
-    // cực dễ là entry sau khi move đã chạy quá mạnh.
-    adjustment -= 12;
-
-} else if (consecutiveLargeBeforeEntry) {
-
-    // i-2 + i-1 đều lớn:
-    // RF xác nhận sau một chuỗi impulse.
-    adjustment -= 10;
-
-} else if (currentLarge) {
-
-    // Chính cây entry quá lớn.
-    adjustment -= 8;
-
-} else if (prevLarge) {
-
-    // Cây ngay trước entry quá lớn.
-    adjustment -= 7;
-
-} else if (prev2Large) {
-
-    // Cây i-2 quá lớn.
-    adjustment -= 5;
-}
-
-// --------------------------------------------------------
-// 14. WEAK
-// --------------------------------------------------------
-//
-// KHÔNG phạt trực tiếp.
-//
-// weak hiện chưa đủ dữ liệu DB để làm filter.
-// --------------------------------------------------------
-
-
-// --------------------------------------------------------
-// 15. EXHAUSTION
-// --------------------------------------------------------
-
-if (exhausted) {
-
-    adjustment -= 12;
-}
-
-// --------------------------------------------------------
-// 16. FINAL CLAMP
-// --------------------------------------------------------
-//
-// Không cho MDF cộng quá nhiều.
-// Cho phép penalty xuống đủ sâu để loại
-// những entry thực sự xấu.
-// --------------------------------------------------------
-
-adjustment = Math.max(
-    -30,
-    Math.min(
-        8,
-        adjustment
-    )
-);
-
-// --------------------------------------------------------
-// HARD REJECT
-// --------------------------------------------------------
-//
-// Chỉ block khi có tổ hợp cực đoan.
-// Không block chỉ vì một metric.
-// --------------------------------------------------------
-
-const hardRejectReasons = [];
-
-if (currentLarge) {
-    hardRejectReasons.push("CURRENT_LARGE_CANDLE");
-}
-
-if (twoPreviousLarge) {
-    hardRejectReasons.push("TWO_PREVIOUS_LARGE_CANDLES");
-}
-
-if (rangeAtr >= 2.3) {
-    hardRejectReasons.push("RANGE_ATR_GE_2_3");
-}
-
-if (e0 >= 3.0) {
-    hardRejectReasons.push("E0_GE_3");
-}
-
-if (halfLife >= 9.5) {
-    hardRejectReasons.push("HALF_LIFE_GE_9_5");
-}
-
-if (elapsedBars >= 5 && elapsedBars <= 7) {
-    hardRejectReasons.push("ELAPSED_BARS_5_TO_7");
-}
-
-if (elapsedBars >= 1 && impulseBodyAtr >= 2.6) {
-    hardRejectReasons.push("IMPULSE_BODY_ATR_GE_2_6");
-}
-
-if (elapsedBars >= 1 && impulseRangeAtr >= 3.2) {
-    hardRejectReasons.push("IMPULSE_RANGE_ATR_GE_3_2");
-}
-
-if (spikeEntry && climax) {
-    hardRejectReasons.push("SPIKE_AND_CLIMAX");
-}
-
-if (
-    continuationWeak &&
-    phase === "FADING" &&
-    energyPct < 0.30
-) {
-    hardRejectReasons.push("FADING_WEAK_CONTINUATION");
-}
-
-const hardReject = hardRejectReasons.length > 0;
-
-if (hardReject) {
-    return {
-        ok: false,
-        adjustment: -30,
-
-        impulseDetected,
-        e0,
-        energyPct,
-        halfLife,
-        elapsedBars,
-        etaToExhaustion,
-        phase,
-        weak,
-        exhausted,
-
-        bodyAtr,
-        rangeAtr,
-        bodyEfficiency,
-
-        nearEntry: {
-            current: currentCandleStats,
-            prev: prevCandleStats,
-            prev2: prev2CandleStats,
-
-            currentLarge,
-            prevLarge,
-            prev2Large,
-
-            currentPlusPreviousLarge,
-            twoPreviousLarge,
-
-            nearEntryExhaustion,
-            consecutiveLargeBeforeEntry
-        },
-
-        impulseBodyAtr,
-        impulseRangeAtr,
-        impulseEfficiency,
-        velocity,
-
-        spikeEntry,
-        climax,
-        chaseRisk,
-        continuationGood,
-        continuationWeak,
-        hardReject,
-hardRejectReasons
-    };
-}
-
-    
-return {
-    ok: true,
-    adjustment,
-
-    impulseDetected,
-    e0,
-    energyPct,
-    halfLife,
-    elapsedBars,
-    etaToExhaustion,
-    phase,
-    weak,
-    exhausted,
-
-    bodyAtr,
-    rangeAtr,
-    bodyEfficiency,
-
-    impulseBodyAtr,
-    impulseRangeAtr,
-    impulseEfficiency,
-    velocity,
-
-    spikeEntry,
-    climax,
-    chaseRisk,
-    continuationGood,
-    continuationWeak,
-
-    hardReject: false,
-    hardRejectReasons: [],
-
-    nearEntry: {
-        current: currentCandleStats,
-        prev: prevCandleStats,
-        prev2: prev2CandleStats,
-
-        currentLarge,
-        prevLarge,
-        prev2Large,
-
-        currentPlusPreviousLarge,
-        twoPreviousLarge,
-
-        nearEntryExhaustion,
-        consecutiveLargeBeforeEntry
-    }
-};
-
-}
 // ================= SCAN =================
 async function scan(symbol){
 
@@ -4109,10 +3155,7 @@ async function scan(symbol){
         // ==================================================
         // 1. LOAD MARKET DATA
         // ==================================================
-        const data15 = await getData(symbol, "15m", RF_FETCH_COUNT);
-if (!data15) return null;
-
-await updateRFForwardOutcomes(symbol, data15);
+        const data15 = await getData(symbol, "15m", 1301)
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
@@ -4121,7 +3164,7 @@ await updateRFForwardOutcomes(symbol, data15);
 
         try{
 
-            r = await coreLogic(null, data15, null, null, null, symbol)
+            r = await coreLogic(data15, symbol)
 
         }catch(coreErr){
 
@@ -4140,28 +3183,10 @@ await updateRFForwardOutcomes(symbol, data15);
         // ==================================================
         // 4. NO SIGNAL
         // ==================================================
-        if (!r || !r.side) {
-    return null;
-}
-        // The scanner polls every minute while the latest closed 15m candle
-// remains the signal candle. Consume each Range Filter flip once.
-        const flipTime=Number(r.flipTime);
-const flipAge=getTimestamp()-(flipTime+15*60*1000);
-if(!Number.isFinite(flipTime)||flipAge>15*60*1000){
-    console.log(`⏭ STALE RANGE FLIP ${symbol} ${r.side} age=${Math.round(flipAge/60000)}m`);
-    return null;
-}
-        if(LAST_RF_SIGNAL_CANDLE[symbol]===flipTime){
-            return null;
+        if(!r || !r.side){
+            return null
         }
-        LAST_RF_SIGNAL_CANDLE[symbol]=flipTime;
-        await saveRFSignalEvent({
-    ...r,
-    status: "SIGNAL_ACCEPTED",
-    entryPrice: Number(r.price),
-    rejectionReason: null,
-    scannerCheckedAt: Date.now()
-});
+        const rfRank = scoreRF15Signal(data15, r.side);
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
@@ -4169,12 +3194,19 @@ if(!Number.isFinite(flipTime)||flipAge>15*60*1000){
         console.log(
             `🟢 SIGNAL: ${symbol} | ` +
             `SIDE=${r.side} | ` +
-            `SETUP=${r.setup || "N/A"} | `
+            `SETUP=${r.setup || "N/A"} | ` +
+            `QUALITY=${r.qualityScore ?? "N/A"}`
         )
 
         return {
             symbol,
             ...r,
+            rankAdjustment: rfRank.adjustment,
+rankMetrics: {
+  efficiency: rfRank.efficiency,
+  alignedMove: rfRank.alignedMove,
+  extensionUnits: rfRank.extensionUnits
+}
         }
 
     }catch(e){
@@ -4201,268 +3233,263 @@ function safeFixed(value, digits = 2){
 
     return n.toFixed(digits)
 }
-function buildTradeFromCoreSignal(best, positionBudget) {
-  const side = String(best?.side ?? '').toUpperCase();
+// ================= BTC REGIME =================
+async function getBtcRegime() {
+
+    // Cache 2 phút
+    if(
+        BTC_REGIME_CACHE &&
+        Date.now() - BTC_REGIME_CACHE_TIME < 120000
+    ){
+        return BTC_REGIME_CACHE
+    }
+
+    const raw15 = await getData(
+        "BTCUSDT",
+        "15m",
+        120
+    )
+
+    const raw1h = await getData(
+        "BTCUSDT",
+        "1h",
+        120
+    )
+
+    if(!raw15 || !raw1h){
+        return "NEUTRAL"
+    }
+
+    // Chỉ dùng nến đã đóng
+    const data15 = raw15.slice(0, -1)
+    const data1h = raw1h.slice(0, -1)
+
+    if(
+        data15.length < 60 ||
+        data1h.length < 60
+    ){
+        return "NEUTRAL"
+    }
+
+    const close15 =
+        data15.map(x => Number(x[4]))
+
+    const close1h =
+        data1h.map(x => Number(x[4]))
+
+    // ================= 15M =================
+
+    const ema20_15 =
+        ema(close15.slice(-60),20)
+
+    const ema50_15 =
+        ema(close15.slice(-100),50)
+
+    const ema20_15_prev =
+        ema(close15.slice(-61,-1),20)
+
+    // ================= 1H =================
+
+    const ema20_1h =
+        ema(close1h.slice(-60),20)
+
+    const ema50_1h =
+        ema(close1h.slice(-100),50)
+
+    const ema20_1h_prev =
+        ema(close1h.slice(-61,-1),20)
+
+    const ema50_1h_prev =
+        ema(close1h.slice(-101,-1),50)
+
+    const p15 = close15.at(-1)
+    const p1h = close1h.at(-1)
+
+    if(
+        !p15 ||
+        !p1h ||
+        !ema20_15 ||
+        !ema50_15 ||
+        !ema20_1h ||
+        !ema50_1h
+    ){
+        return "NEUTRAL"
+    }
+
+    // ================= TREND STRENGTH =================
+
+    const strength15 =
+        Math.abs(
+            ema20_15 - ema50_15
+        ) / p15
+
+    const strength1h =
+        Math.abs(
+            ema20_1h - ema50_1h
+        ) / p1h
+
+    // ================= SLOPE =================
+
+    const slope20_15 =
+        ema20_15_prev !== 0
+            ? (ema20_15 - ema20_15_prev)
+                / ema20_15_prev
+            : 0
+
+    const slope20_1h =
+        ema20_1h_prev !== 0
+            ? (ema20_1h - ema20_1h_prev)
+                / ema20_1h_prev
+            : 0
+
+    // ================= BTC BULL =================
+
+    const bull15 =
+        p15 > ema20_15 &&
+        ema20_15 > ema50_15 &&
+        slope20_15 > 0 &&
+        strength15 >= 0.0010
+
+    const bull1h =
+        p1h > ema20_1h &&
+        ema20_1h > ema50_1h &&
+        slope20_1h > 0 &&
+        ema50_1h >= ema50_1h_prev &&
+        strength1h >= 0.0010
+
+    // ================= BTC BEAR =================
+
+    const bear15 =
+        p15 < ema20_15 &&
+        ema20_15 < ema50_15 &&
+        slope20_15 < 0 &&
+        strength15 >= 0.0010
+
+    const bear1h =
+        p1h < ema20_1h &&
+        ema20_1h < ema50_1h &&
+        slope20_1h < 0 &&
+        ema50_1h <= ema50_1h_prev &&
+        strength1h >= 0.0010
+
+    // ================= FINAL REGIME =================
+
+    let regime = "NEUTRAL"
+
+    // BTC chỉ được BULL khi cả 15M + 1H cùng xác nhận
+    if(bull15 && bull1h){
+        regime = "BULL"
+    }
+
+    // BTC chỉ được BEAR khi cả 15M + 1H cùng xác nhận
+    else if(bear15 && bear1h){
+        regime = "BEAR"
+    }
+
+    BTC_REGIME_CACHE = regime
+    BTC_REGIME_CACHE_TIME = Date.now()
+
+    return regime
+}
+
+// Input: `best` is the core signal plus symbol:
+// const best = { ...signal, symbol }
+// Returns a DB-ready trade, or null when the signal is invalid.
+// Accepts the stable minimum core contract (side, price/entry, sl, tp),
+// carries additional core fields through unchanged, and normalizes DB fields.
+function buildTradeFromCoreSignal(best, btcRegime, riskBudget) {
+  const side = String(best?.side ?? best?.direction ?? '').toUpperCase();
   const entry = Number(best?.price ?? best?.entry);
-  const budget = Number(positionBudget);
-  if (!best?.symbol || !['LONG', 'SHORT'].includes(side) || !Number.isFinite(entry) || entry <= 0 || !Number.isFinite(budget) || budget <= 0 || best?.isFlip !== true) {
-    console.log(`❌ INVALID RANGE-FLIP SIGNAL ${best?.symbol || 'UNKNOWN'}`);
+  const sl = Number(best?.sl ?? best?.stopLoss);
+  const tp = Number(best?.tp ?? best?.takeProfit);
+  const priceRisk = Math.abs(entry - sl);
+  const budget = Number(riskBudget);
+  const rr = priceRisk > 0 ? Math.abs(tp - entry) / priceRisk : NaN;
+
+  if (
+    !best?.symbol ||
+    !['LONG', 'SHORT'].includes(side) ||
+    !Number.isFinite(entry) || entry <= 0 ||
+    !Number.isFinite(sl) || sl <= 0 ||
+    !Number.isFinite(tp) || tp <= 0 ||
+    !Number.isFinite(priceRisk) || priceRisk <= 0 ||
+    !Number.isFinite(budget) || budget <= 0 ||
+    !Number.isFinite(rr) || rr <= 0
+  ) {
+    console.log(`❌ INVALID CORE SIGNAL ${best?.symbol || 'UNKNOWN'}`);
     return null;
   }
+
+  if (
+    (side === 'LONG' && (sl >= entry || tp <= entry)) ||
+    (side === 'SHORT' && (sl <= entry || tp >= entry))
+  ) {
+    console.log(
+      `❌ INVALID TPSL DIRECTION ${best.symbol} ` +
+      `SIDE=${side} ENTRY=${entry} SL=${sl} TP=${tp}`
+    );
+    return null;
+  }
+
   const now = Date.now();
+  const sourceRisk = best?.risk && typeof best.risk === 'object' ? best.risk : {};
+  const indicators = best?.indicators && typeof best.indicators === 'object' ? best.indicators : {};
+  const riskDetail = best?.riskDetail && typeof best.riskDetail === 'object'
+    ? best.riskDetail
+    : sourceRisk;
+  const qualityScore = Number(best?.qualityScore ?? best?.score ?? best?.quality?.score ?? 0);
+
   return {
-    ...best, symbol: String(best.symbol), side, entry, price: entry,
-    setup: best.setup ?? 'RANGE_FILTER',
+    // Keep new core fields without requiring this mapper to be edited each time.
+    ...best,
+    symbol: String(best.symbol),
+    side,
+    entry,
+    price: entry,
+    sl,
+    tp,
+    setup: best.setup ?? 'CORE_SIGNAL',
+    pullbackType: best.pullbackType ?? null,
+    triggerType: best.triggerType ?? null,
     marketState: best.marketState ?? null,
     volatility: best.volatility ?? null,
-    qualityScore: Number(best.qualityScore ?? best.score ?? 0) || 0,
-    positionBudget: budget, quantity: 0, notional: 0,
-    waitingEntry: false, breakoutTriggered: false,
-    createdAt: Number(best.createdAt) || now, enteredAt: null,
-    openedAt: null, closedAt: null, updatedAt: now,
-    result: 'PENDING'
+    btcRegime: btcRegime ?? best.btcRegime ?? null,
+    qualityScore: Number.isFinite(qualityScore) ? qualityScore : 0,
+
+    // `risk` remains the monetary sizing budget expected by the execution code.
+    risk: budget,
+    initialRisk: priceRisk,
+    rr,
+    riskDetail: {
+      ...riskDetail,
+      coreRisk: sourceRisk,
+      risk: priceRisk,
+      initialRisk: priceRisk,
+      rr,
+      slDistance: priceRisk,
+      tpDistance: Math.abs(tp - entry),
+      riskPercent: entry > 0 ? priceRisk / entry : 0,
+      riskBudget: budget
+    },
+    indicators,
+    structure: best?.structure && typeof best.structure === 'object' ? best.structure : {},
+    context: best?.context && typeof best.context === 'object' ? best.context : {},
+    flags: best?.flags && typeof best.flags === 'object' ? best.flags : {},
+    debug: best?.debug && typeof best.debug === 'object' ? best.debug : {},
+    quantity: 0,
+    notional: 0,
+    finalRisk: 0,
+    waitingEntry: false,
+    breakoutTriggered: Boolean(best?.breakoutTriggered ?? best?.setup === 'BREAKOUT_RETEST'),
+    createdAt: Number(best?.createdAt) || now,
+    enteredAt: best?.enteredAt ?? null,
+    openedAt: best?.openedAt ?? null,
+    closedAt: best?.closedAt ?? null,
+    updatedAt: now,
+    result: best?.result ?? 'PENDING'
   };
 }
-async function alertRangeExitProblem(symbol,detail){
-    const now=Date.now();
-    if(now-(RANGE_EXIT_ALERT_AT[symbol]||0)<60000) return;
-    RANGE_EXIT_ALERT_AT[symbol]=now;
-    await sendTelegram(`🚨 RANGE EXIT PROBLEM ${symbol}\n${detail}\nBot sẽ tiếp tục thử lại; kiểm tra vị thế trên Binance ngay.`);
-}
-async function closeOpenPositionOnRangeFlip(flip){
-    const symbol=flip?.symbol;
-    if(!symbol||flip?.isFlip!==true) return {matched:false,closed:false};
-    // The independent position monitor may already be closing this confirmed flip.
-    // Tell scanner to consume the event rather than falling through to its own close path.
-    if(RANGE_EXIT_LOCK[symbol]) return {matched:true,closed:false,inProgress:true,reason:"EXIT_IN_PROGRESS"};
-    RANGE_EXIT_LOCK[symbol]=true;
-    try{
-        let openTrade=null;
-        try { openTrade=await trades.findOne({symbol,result:"PENDING"}); }
-        catch(e) { console.log(`⚠ EXIT DB LOOKUP FAIL ${symbol}: ${e.message}; checking exchange position anyway`); }
-        //POS_CACHE=null; POS_CACHE_TIME=0;
-        const positions=await getPositionsCached();
-        const livePos=(positions||[]).find(p=>p.symbol===symbol&&Math.abs(Number(p.positionAmt||0))>0);
-        if(!livePos){
-            // A scanner signal with no exchange position is an ENTRY candidate, not an exit failure.
-            // Return unmatched so the scanner keeps it in the new-entry flow.
-            return {matched:false,closed:false,reason:"NO_LIVE_POSITION"};
-        }
-        const liveSide=Number(livePos.positionAmt)>0?"LONG":"SHORT";
-        if(liveSide===flip.side) return {matched:false,closed:false,reason:"SAME_DIRECTION"};
-        if(openTrade){
-            const closeQuery=openTrade._id?{_id:openTrade._id,result:"PENDING"}:{symbol,result:"PENDING"};
-            try{
-                await trades.updateOne(closeQuery,{$set:{closeReason:"RANGE_FILTER_FLIP",closeFlipTime:Number(flip.flipTime),closeRequestedAt:Date.now()}});
-            }catch(e){ console.log(`⚠ EXIT TAG DB FAIL ${symbol}: ${e.message}; will still attempt verified close`); }
-        }
-        console.log(`🔻 RANGE FILTER EXIT ${symbol}: ${liveSide} -> ${flip.side}; close only, no reverse entry`);
-        const legacyOrdersCleared=await clearSymbolOrders(symbol);
-        if(!legacyOrdersCleared){ console.log(`⚠ ${symbol} legacy exit orders could not be cleared before close; prioritizing market close`); await alertRangeExitProblem(symbol,"Không hủy được lệnh thoát cũ trước khi đóng."); }
-        const closed=await closePosition(symbol,liveSide,Math.abs(Number(livePos.positionAmt)));
-        if(!closed){ await alertRangeExitProblem(symbol,"Lệnh đóng chưa xác minh được trên sàn."); return {matched:true,closed:false,reason:"CLOSE_NOT_VERIFIED"}; }
-        console.log(`✅ ${symbol} position closed; PnL will be reconciled and reported by trade monitor`);
-        return {matched:true,closed:true,trade:openTrade};
-    }catch(e){
-        console.log(`🚨 RANGE EXIT MONITOR ERROR ${symbol}: ${e?.message||e}`);
-        await alertRangeExitProblem(symbol,e?.message||"Monitor error");
-        return {matched:true,closed:false,reason:"MONITOR_ERROR"};
-    }finally{
-        delete RANGE_EXIT_LOCK[symbol];
-    }
-}
-// ============================================================
-// AUTO LOSS CUT
-// CLOSE POSITION WHEN BINANCE-STYLE ROI <= -30%
-// USDⓈ-M FUTURES / MARK PRICE
-// ============================================================
-const ENABLE_LOSS_CUT = false; // true = bật, false = tắt
 
-async function monitorLossCutOnce(positions){
-    if(!ENABLE_LOSS_CUT) return;
-
-    if(!Array.isArray(positions)) return;
-
-    for(const pos of positions){
-
-        const symbol = String(pos?.symbol || "");
-        const positionAmt = Number(pos?.positionAmt || 0);
-        const entryPrice = Number(pos?.entryPrice || 0);
-        const markPrice = Number(pos?.markPrice || 0);
-        const leverage = Number(pos?.leverage || 0);
-
-        // Không có vị thế
-        if(
-            !symbol ||
-            !Number.isFinite(positionAmt) ||
-            Math.abs(positionAmt) <= 0
-        ){
-            continue;
-        }
-
-        // Dữ liệu không đủ để tính ROI
-        if(
-            !Number.isFinite(entryPrice) ||
-            entryPrice <= 0 ||
-            !Number.isFinite(markPrice) ||
-            markPrice <= 0 ||
-            !Number.isFinite(leverage) ||
-            leverage <= 0
-        ){
-            console.log(
-                `⚠️ LOSS CUT SKIP ${symbol} | ` +
-                `invalid entry=${entryPrice} mark=${markPrice} leverage=${leverage}`
-            );
-            continue;
-        }
-
-        // LONG = +1
-        // SHORT = -1
-        const side = positionAmt > 0 ? 1 : -1;
-        /*
-         * Binance USDⓈ-M ROI theo Mark Price:
-         *
-         * ROI% =
-         * ((MarkPrice - EntryPrice) * Side)
-         * / MarkPrice
-         * * Leverage
-         * * 100
-         *
-         * Side:
-         * LONG  = +1
-         * SHORT = -1
-         */
-        const roiPercent =
-            (
-                ((markPrice - entryPrice) * side)
-                / markPrice
-            ) *
-            leverage *
-            100;
-
-        const liveSide =
-            positionAmt > 0
-                ? "LONG"
-                : "SHORT";
-        // ====================================================
-        // LOSS CUT: -30%
-        // ====================================================
-        if(roiPercent > -30){
-            continue;
-        }
-        console.log(
-            `🚨 AUTO LOSS CUT ${symbol} | ` +
-            `${liveSide} | ` +
-            `ROI=${roiPercent.toFixed(2)}% <= -30%`
-        );
-        try{
-            // Xóa các exit/order cũ trước
-            const cleared = await clearSymbolOrders(symbol);
-            if(!cleared){
-                console.log(
-                    `⚠️ LOSS CUT ${symbol}: ` +
-                    `legacy orders could not be cleared; ` +
-                    `still prioritizing market close`
-                );
-            }
-            // Đóng đúng chiều ngược lại
-            const closed = await closePosition(
-                symbol,
-                liveSide,
-                Math.abs(positionAmt)
-            );
-            // Bắt buộc bỏ cache để lần kiểm tra tiếp theo
-            // lấy lại vị thế thật từ Binance
-            //POS_CACHE = null;
-            //POS_CACHE_TIME = 0;
-            if(closed){
-
-                console.log(
-                    `✅ AUTO LOSS CUT CLOSED ${symbol} | ` +
-                    `${liveSide} | ` +
-                    `ROI=${roiPercent.toFixed(2)}%`
-                );
-
-            }else{
-
-                console.log(
-                    `🚨 AUTO LOSS CUT NOT VERIFIED ${symbol} | ` +
-                    `ROI=${roiPercent.toFixed(2)}%`
-                );
-
-                await alertRangeExitProblem(
-                    symbol,
-                    `Auto loss cut -30% chưa xác minh được vị thế đã đóng. ROI=${roiPercent.toFixed(2)}%`
-                );
-            }
-
-        }catch(e){
-
-            console.log(
-                `🚨 AUTO LOSS CUT ERROR ${symbol}:`,
-                e?.message || e
-            );
-
-            await alertRangeExitProblem(
-                symbol,
-                `Auto loss cut error: ${e?.message || e}`
-            );
-        }
-    }
-}
-async function monitorOpenRangeFlipsOnce(){
-    //POS_CACHE=null; POS_CACHE_TIME=0;
-    const positions=await getPositionsCached();
-    if(!Array.isArray(positions)) throw new Error("Binance positions response invalid");
-    await monitorLossCutOnce(positions);
-    const symbols=[...new Set([
-        ...activeTrades.filter(t=>t?.result==="PENDING").map(t=>t.symbol),
-        ...positions.filter(p=>Math.abs(Number(p.positionAmt||0))>0).map(p=>p.symbol)
-    ].filter(Boolean))];
-    for(let i=0;i<symbols.length;i+=5){
-        const batch=symbols.slice(i,i+5);
-        await Promise.all(batch.map(async symbol=>{
-            try{
-                const data15=await Promise.race([
-                    getData(symbol,"15m",RF_FETCH_COUNT),
-                    new Promise((_,reject)=>setTimeout(()=>reject(new Error("15m data timeout")),12000))
-                ]);
-                if(!data15) throw new Error("15m data empty");
-                RANGE_EXIT_DATA_FAILS[symbol]=0;
-                const candles=prepare(data15,RF_CANDLE_COUNT);
-                if(!candles) throw new Error("15m candles insufficient for Range Filter");
-                const rf=rangeFilter(candles,{
-                    filterType:"Type 1", movementSource:"Close",
-                    rangeSize:2.618, rangeScale:"Average Change", rangePeriod:14,
-                    smoothRange:true, smoothPeriod:27,
-                    averageFilterChanges:false, averageChanges:2
-                });
-                const i=candles.length-1;
-                const direction=rf.direction[i];
-                const indicatorSide=direction===1?"LONG":direction===-1?"SHORT":null;
-                if(!indicatorSide) return;
-                const livePos=positions.find(p=>p.symbol===symbol&&Math.abs(Number(p.positionAmt||0))>0);
-                if(!livePos) return;
-                const liveSide=Number(livePos.positionAmt)>0?"LONG":"SHORT";
-                if(liveSide!==indicatorSide){
-                    await closeOpenPositionOnRangeFlip({symbol,side:indicatorSide,isFlip:true,flipTime:candles[i].t});
-                }
-            }catch(e){
-                RANGE_EXIT_DATA_FAILS[symbol]=(RANGE_EXIT_DATA_FAILS[symbol]||0)+1;
-                console.log(`⚠ OPEN POSITION WATCH RETRY ${symbol} ${RANGE_EXIT_DATA_FAILS[symbol]}: ${e?.message||e}`);
-                if(RANGE_EXIT_DATA_FAILS[symbol]>=3) await alertRangeExitProblem(symbol,`Không đọc được nến Range Filter ${RANGE_EXIT_DATA_FAILS[symbol]} lần liên tiếp.`);
-            }
-        }));
-    }
-}
-async function rangeExitMonitorLoop(){
-    console.log("🟢 INDEPENDENT RANGE EXIT MONITOR STARTED (20s cycle)");
-    while(true){
-        try{ await monitorOpenRangeFlipsOnce(); }
-        catch(e){ console.log(`🚨 RANGE EXIT MONITOR CYCLE FAIL: ${e?.message||e}`); await alertRangeExitProblem("ALL OPEN POSITIONS",e?.message||"Binance position check failed"); }
-        await new Promise(r=>setTimeout(r,15000));
-    }
-}
 // ================= SCANNER ================
 async function scanner(){
     
@@ -4477,7 +3504,10 @@ async function scanner(){
         const cooldownLeft = NEXT_ENTRY_ALLOWED_AT - Date.now();
 
 if (cooldownLeft > 0) {
-  console.log(`⏳ ENTRY COOLDOWN: ${Math.ceil(cooldownLeft / 60000)} phút; still checking Range Filter flips`);
+  console.log(
+    `⏳ ENTRY COOLDOWN: còn ${Math.ceil(cooldownLeft / 60000)} phút`
+  );
+  return;
 }
 
         // ===== DB HEALTH =====
@@ -4487,6 +3517,10 @@ if (cooldownLeft > 0) {
         }
 
         console.log("🚀 SMART SCAN...")
+
+const btcRegime = await getBtcRegime()
+
+console.log(`₿ BTC REGIME: ${btcRegime}`)
 
 let now = Date.now()
 
@@ -4508,18 +3542,8 @@ let now = Date.now()
         "ATOMUSDT","NEARUSDT","FILUSDT","LTCUSDT",
         "AAVEUSDT","MKRUSDT","OPUSDT","IMXUSDT","RUNEUSDT"]
 
-        // Keep every open position in the scan universe, even if it dropped out of the top 80.
-        const trackedSymbols = activeTrades.filter(t=>t?.result==="PENDING").map(t=>t.symbol).filter(Boolean);
-        try {
-            //POS_CACHE=null; POS_CACHE_TIME=0;
-            const exchangePositions=await getPositionsCached();
-            for(const pos of exchangePositions||[]) if(pos?.symbol&&Math.abs(Number(pos.positionAmt||0))>0) trackedSymbols.push(pos.symbol);
-        } catch(e) {
-            console.log(`⚠ OPEN POSITION SYMBOL REFRESH FAIL: ${e.message}`);
-        }
-        symbols=[...new Set([...symbols,...trackedSymbols])];
         if(symbols && symbols.length > 0){
-            console.log(`✅ Using ${symbols.length} symbols (top list + open-position monitoring)`)
+            console.log(`✅ Using ${symbols.length} symbols`)
         }
 
         // ===== SCAN =====
@@ -4617,16 +3641,6 @@ let signals = results
     )
     .map(r => r.value)
 
-// Process confirmed flips for open positions before candidate ranking/entry filters.
-const justClosedOnFlip = new Set();
-for(const flip of signals){
-    const exitResult=await closeOpenPositionOnRangeFlip(flip);
-    if(exitResult?.matched||exitResult?.inProgress){
-        justClosedOnFlip.add(flip.symbol);
-        if(!exitResult.closed&&!exitResult.inProgress) console.log(`⚠ ${flip.symbol} exit pending retry: ${exitResult.reason||"unknown"}`);
-    }
-}
-signals=signals.filter(s=>!justClosedOnFlip.has(s.symbol));
 if(!signals || signals.length === 0){
     console.log("❌ No signal")
     return
@@ -4634,466 +3648,801 @@ if(!signals || signals.length === 0){
 
         // ===== BUILD CANDIDATES + AI =====
 let candidates = []
+let dbCache = {}
 
 for (let s of signals){
-// ============================================================
-// Scanner chỉ chọn signal có qualityScore cao nhất.
-// ============================================================
-const coreQuality = Number(
-    s.qualityScore ?? s.score ?? 0
-);
-// Loại signal quá yếu ngay tại scanner.
-const MIN_CORE_SCORE = 65;
-if (!Number.isFinite(coreQuality)) {
-    continue;
+
+    // ===== MAIN =====
+    let keyMain = `${s.setup}-${s.marketState}-${s.side}-${s.volatility}`
+
+    if(!dbCache[keyMain]){
+        dbCache[keyMain] = await getDBStats(
+            s.setup,
+            s.marketState,
+            s.side,
+            s.volatility
+        )
+    }
+
+    let dbMain = dbCache[keyMain]
+
+if(!dbMain){
+    console.log(
+        `⛔ DB unavailable - skip ${s.symbol}`
+    )
+    continue
 }
-if (coreQuality < MIN_CORE_SCORE) {
-    await saveRFSignalEvent({
-        ...s,
-        status: "BLOCKED_SCANNER",
-        rejectionReason: "QUALITY_SCORE_BELOW_MIN",
-        scannerScore: coreQuality,
-        minCoreScore: MIN_CORE_SCORE
-    });
-    continue;
+
+let aiMain = 0
+
+if(dbMain.total >= 30){
+
+    const edge =
+        dbMain.winrate - 0.50
+
+    const confidence =
+        Math.min(dbMain.total / 100, 1)
+
+    aiMain =
+        edge * 60 * confidence
 }
+
+// DB chỉ loại setup có lịch sử rất xấu
+// ===== DB EDGE — CHỈ LOG, KHÔNG BLOCK =====
+
+if(dbMain.total >= 30){
+
+    const wr = dbMain.winrate
+
+    if(wr < 0.42){
+
+        console.log(
+        `🚫 DB BAD EDGE: ${s.symbol} | ` +
+        `WR=${(dbMain.winrate * 100).toFixed(1)}% | ` +
+        `N=${dbMain.total}`
+    )
+    }
+}
+
+// CORE MỚI KHÔNG CÒN SCORE CŨ
+// Không dùng s.score nữa
+
+const coreQuality = Number(s.qualityScore ?? s.score ?? 0)
+const rfAdjustment = Number(s.rankAdjustment) || 0;
+const rankScore =
+  coreQuality +
+  rfAdjustment +
+  Math.max(-10, Math.min(10, aiMain));
 candidates.push({
     ...s,
-    qualityScore: coreQuality,
+    finalScore: aiMain,
+    rankScore,
     type: "MAIN"
-});
+})
 }
+
+// ================= BTC CONTEXT =================
+
+// Chỉ lưu BTC regime.
+// Không cộng/trừ score của CORE.
+
+candidates = candidates.map(c => ({
+    ...c,
+    btcRegime
+}))
+
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
             console.log("❌ No signal")
             return
         }
+
         // Rank all valid signals collected during this scan cycle.
 candidates.sort((a, b) =>
-    Number(b.qualityScore || 0) -
-    Number(a.qualityScore || 0)
-);
+    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0) ||
+    (Number(b.qualityScore ?? b.score) || 0) - (Number(a.qualityScore ?? a.score) || 0)
+)
+// ===== LỌC TẦNG 2 =====
+let filtered = candidates.filter(c => {
+
+    let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
+
+    // ❌ loại kèo quá xấu
+    if(rr < RR_THRESHOLD){
+
+    console.log(
+        `🚫 FILTER RR: ${c.symbol} | ` +
+        `RR=${safeFixed(rr, 2)} | ` +
+        `required=${RR_THRESHOLD}`
+    )
+
+    return false
+}
+
+return true
+})
+// ===== SORT LẠI =====
+filtered = filtered
+.sort((a,b)=>
+    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0) ||
+    (Number(b.qualityScore ?? b.score) || 0) - (Number(a.qualityScore ?? a.score) || 0)
+)
+
 // ===== UNIQUE COIN =====
 let unique = []
 let used = new Set()
-for(let c of candidates){
+
+for(let c of filtered){
     if(!used.has(c.symbol)){
         unique.push(c)
         used.add(c.symbol)
     }
 }
-let filtered = unique
+
+filtered = unique
+
 if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-filtered.sort((a, b) => {
-    const aOpen = activeTrades.some(
-        t => t.symbol === a.symbol && t.result === "PENDING"
-    ) ? 1 : 0;
-    const bOpen = activeTrades.some(
-        t => t.symbol === b.symbol && t.result === "PENDING"
-    ) ? 1 : 0;
-    return bOpen - aOpen ||
-        Number(b.qualityScore || 0) -
-        Number(a.qualityScore || 0);
-});
-const picks = filtered//.slice(0, 1);
-for (const best of picks) {
-  const existing = await trades.findOne({symbol:best.symbol,result:"PENDING"});
-  if(!existing){
-    const handledFlip=await trades.findOne({symbol:best.symbol,closeFlipTime:Number(best.flipTime)});
-    if(handledFlip){ console.log(`⏭ ${best.symbol} flip ${best.flipTime} already handled; waiting for a fresh signal`); continue; }
-  }
-  const replacingExisting = Boolean(existing);
-  let positions;
-  try { //POS_CACHE=null; POS_CACHE_TIME=0;
-     positions=await getPositionsCached(); }
-  catch(e){ console.log(`⚠ POSITION CHECK FAIL ${best.symbol}: ${e.message}`); continue; }
-  let realPos = positions.find(p => p.symbol===best.symbol && Math.abs(Number(p.positionAmt||0))>0);
-  if(existing){
-    if(!realPos){ console.log(`⏳ ${best.symbol} DB pending but no exchange position; wait reconciliation`); continue; }
-    const realSide=Number(realPos.positionAmt)>0?'LONG':'SHORT';
-    if(realSide===best.side){ console.log(`⏭ ${best.symbol} already ${realSide}; no duplicate`); continue; }
-    if(best.isFlip!==true){ console.log(`⛔ ${best.symbol} opposite side without a confirmed Range Filter flip`); continue; }
-    console.log(`🔁 RANGE FLIP ${best.symbol}: ${realSide} -> ${best.side}; clearing legacy exits and closing first`);
-    if(!await clearSymbolOrders(best.symbol)){ console.log(`🚨 REVERSAL ABORT ${best.symbol}: legacy exits could not be cleared`); continue; }
-    const closed=await closePosition(best.symbol,realSide,Math.abs(Number(realPos.positionAmt)));
-    if(!closed){ console.log(`🚨 REVERSAL ABORT ${best.symbol}: close not verified`); continue; }
-    const closeInfo=await getClosedTradeResult(existing);
-    const closedAt=Number(closeInfo?.closedAt)||Date.now();
-    const updateQuery=existing._id?{_id:existing._id}:{symbol:best.symbol,result:"PENDING"};
-    const updateSet={result:closeInfo?(closeInfo.pnl>0?"WIN":"LOSS"):"REVERSED",closedAt,closeReason:"RANGE_FILTER_FLIP",closeFlipTime:Number(best.flipTime)};
-    if(closeInfo){updateSet.pnl=closeInfo.pnl;updateSet.exitOrderId=closeInfo.exitOrderId;}
-    try { const dbUpdate=await trades.updateOne(updateQuery,{$set:updateSet}); if(existing._id && Number(dbUpdate?.matchedCount||0)<1){ console.log(`🚨 REVERSAL DB UPDATE MATCHED NO TRADE ${best.symbol}; opposite entry blocked`); continue; } }
-    catch(e){ console.log(`🚨 REVERSAL DB UPDATE FAIL ${best.symbol}: ${e.message}`); continue; }
-    if (closeInfo && rfSignalEvents) {
-    const oldSignalKey =
-        existing.rfSignalKey || existing.signalKey;
+let picks = filtered.slice(0, 8);
+for (let best of picks){
 
-    if (oldSignalKey) {
-        try {
-            await rfSignalEvents.updateOne(
-                { signalKey: oldSignalKey },
-                {
-                    $set: {
-                        status: "TRADE_CLOSED",
-                        actualResult:
-                            closeInfo.pnl > 0 ? "WIN" : "LOSS",
-                        actualPnl: Number(closeInfo.pnl),
-                        actualClosedAt: Number(closedAt),
-                        closeReason: "RANGE_FILTER_FLIP",
-                        updatedAt: Date.now()
-                    }
-                }
-            );
-        } catch (eventErr) {
-            console.error(
-                `🚨 RF REVERSAL EVENT UPDATE FAIL ${best.symbol}:`,
-                eventErr?.message || eventErr
-            );
-        }
+    //let realActive = activeTrades.filter(
+    //x =>
+        //x.result === "PENDING" &&
+       // !x.waitingEntry
+//).length
+let positions = []
+
+try{
+    positions = await getPositionsCached()
+}catch(e){
+    console.log("⚠ POSITION CACHE FAIL")
+}
+
+let realActive = positions.filter(p =>
+    Math.abs(parseFloat(p.positionAmt || "0")) > 0
+).length
+
+    let totalPending = 0
+
+try{
+    totalPending = await trades.countDocuments({
+        result:"PENDING"
+    })
+}catch(e){
+    console.log("⚠ COUNT PENDING FAIL")
+}
+
+    if(realActive >= TRADE_CONFIG.maxActivePositions){
+        console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`)
+        break
+    }
+
+    if(totalPending >= 100){
+        console.log(`⚠️ MAX TOTAL PENDING: ${totalPending}`)
+        break
+    }
+
+    // ===== BLOCK COIN =====
+    let existing = await trades.findOne({
+    symbol: best.symbol,
+    result: "PENDING"
+})
+
+if(existing){
+
+    // verify position thật
+    let positions =
+        await getPositionsCached()
+
+    let realPos = positions.find(p =>
+        p.symbol === best.symbol &&
+        Math.abs(parseFloat(p.positionAmt || "0")) > 0
+    )
+
+    if(!realPos){
+    console.log(
+        `⏳ ${best.symbol} đã đóng — chờ checkTrades chốt TP/SL`
+    )
+    continue
+}
+
+console.log(`⛔ ${best.symbol} đang có lệnh`)
+continue
+}
+
+    // ===== DB AI =====
+
+let dbAI =
+    await getDBStats(
+        best.setup,
+        best.marketState,
+        best.side,
+        best.volatility
+    )
+    if(!dbAI){
+    console.log(
+        `⛔ DB AI unavailable - skip ${best.symbol}`
+    )
+    continue
+}
+
+// ===== RR =====
+
+let rr =
+    best.side === "LONG"
+        ? (best.tp - best.price) /
+          (best.price - best.sl)
+        : (best.price - best.tp) /
+          (best.sl - best.price)
+
+let minRR =
+    best.marketState === "TREND_STRONG"
+        ? 1.20
+        : 1.15
+
+if(rr < minRR){
+    console.log(
+        `🚫 FILTER MIN RR: ${best.symbol} | ` +
+        `RR=${safeFixed(rr, 2)} | ` +
+        `required=${safeFixed(minRR, 2)} | ` +
+        `state=${best.marketState}`
+    )
+    continue
+}
+
+// ===== RISK MULTIPLIER =====
+
+let multiplier = 1
+
+if(dbAI.total >= 20){
+
+    let edge =
+        dbAI.winrate - 0.5
+
+    multiplier =
+        1 + edge * 2
+
+    if(multiplier > 1.25){
+        multiplier = 1.25
+    }
+
+    if(multiplier < 0.75){
+        multiplier = 0.75
     }
 }
-    activeTrades=activeTrades.filter(t=>!(t.symbol===best.symbol&&t.result==="PENDING"));
-    POS_CACHE=null;POS_CACHE_TIME=0;
-    try { positions=await getPositionsCached(); } catch(e){ console.log(`🚨 POST-CLOSE POSITION CHECK FAIL ${best.symbol}`); continue; }
-    realPos=positions.find(p=>p.symbol===best.symbol&&Math.abs(Number(p.positionAmt||0))>0);
-    if(realPos){ console.log(`🚨 ${best.symbol} still has a position after close; do not open opposite`); continue; }
-    console.log(`✅ ${best.symbol} closed on Range Filter flip; waiting for a fresh signal (no reverse entry)`);
-    continue;
-  } else if(realPos){
-    console.log(`⛔ ${best.symbol} exchange position exists without matching pending record; wait orphan recovery`);
-    continue;
-  }
-  if(cooldownLeft>0&&!replacingExisting){ console.log(`⏳ Skip new entry ${best.symbol} during cooldown`); continue; }
-  const realActive=positions.filter(p=>Math.abs(Number(p.positionAmt||0))>0).length;
-  if(!replacingExisting&&realActive>=TRADE_CONFIG.maxActivePositions){ console.log(`⚠️ MAX REAL ACTIVE: ${realActive}`); continue; }
-  let totalPending=0;
-  try { totalPending=await trades.countDocuments({result:"PENDING"}); } catch(e){ console.log("⚠ COUNT PENDING FAIL"); }
-  if(!replacingExisting&&totalPending>=100){ console.log(`⚠️ MAX TOTAL PENDING: ${totalPending}`); continue; }
-  console.log(`⚡ INSTANT ENTRY ${best.symbol}`);
-  // This strategy has no stop distance; size by the existing notional allocation cap.
-  // =====================================================
-// POSITION SIZE
-// CAPITAL ALLOCATION = SAME BASELINE SCANNER
-// NO TP/SL — THIS STRATEGY USES NOTIONAL SIZING
-// =====================================================
-const balance = ACCOUNT_BALANCE;
 
-const positionBudget =
-    balance * TRADE_CONFIG.maxPositionPercent;
+let balance =
+    ACCOUNT_BALANCE
 
+let riskPercent = TRADE_CONFIG.riskPerTrade
+
+let risk =
+    balance *
+    riskPercent *
+    multiplier
+
+// Không cho AI tăng risk quá mức
+risk = Math.min(
+    risk,
+    balance * TRADE_CONFIG.maxRiskPerTrade
+)
 console.log(
-    `🧮 CAPITAL CALC ${best.symbol} | ` +
-    `balance=${balance} | ` +
-    `maxPositionPercent=${TRADE_CONFIG.maxPositionPercent} | ` +
-    `positionBudget=${positionBudget}`
-);
+    `🧮 RISK CALC ${best.symbol} | ` +
+    `balance=${ACCOUNT_BALANCE} | ` +
+    `riskPercent=${TRADE_CONFIG.riskPerTrade} | ` +
+    `maxRisk=${TRADE_CONFIG.maxRiskPerTrade} | ` +
+    `multiplier=${multiplier} | ` +
+    `risk=${risk}`
+)
+if(risk <= 0){
+    console.log(
+        `🚫 FILTER RISK: ${best.symbol} | ` +
+        `risk=${safeFixed(risk)}`
+    )
+    continue
+}
+    let diff = Math.abs(best.price - best.sl)
+    if(!diff){
 
-const trade =
-    buildTradeFromCoreSignal(
-        best,
-        positionBudget
-    );
-    
+    console.log(
+        `🚫 FILTER SL DISTANCE: ${best.symbol} | ` +
+        `price=${safeFixed(best.price)} | sl=${safeFixed(best.sl)}`
+    )
+
+    continue
+}
+
+
+
+// Input: `best` is the core signal plus symbol:
+// const best = { ...signal, symbol }
+// Returns a DB-ready trade, or null when the signal is invalid.
+
+const trade = buildTradeFromCoreSignal(
+    best,
+    btcRegime,
+    risk
+)
 
 if(!trade){
+
     console.log(
-        `🚫 FILTER BUILD TRADE: ${best.symbol}`
-    );
-    continue;
-}
-trade.signalKey = best.signalKey;
-trade.rfSignalKey = best.signalKey;
-if(
-    !(balance > 0) ||
-    !(best.price > 0) ||
-    !Number.isFinite(balance) ||
-    !Number.isFinite(best.price)
-){
-    console.log(
-        `❌ INVALID BALANCE/PRICE ${best.symbol}`
-    );
-    continue;
+`🚫 FILTER BUILD TRADE: ${best.symbol} | ` +
+`side=${best.side} | ` +
+`setup=${best.setup} | ` +
+`quality=${best.qualityScore ?? 0} | ` +
+`db=${safeFixed(best.finalScore, 1)}`
+)
+
+    continue
 }
 
+    // ===== RAM CHECK =====
+    let isActive = activeTrades.some(x =>
+        x.symbol === best.symbol && x.result === "PENDING"
+    )
 
-// =====================================================
-// SYMBOL INFO
-// =====================================================
+    if(isActive){
+        continue
+    }
+    
+// ===== BREAKOUT = MARKET ENTRY =====
+{
+    console.log(`⚡ INSTANT ENTRY ${best.symbol}`)
 
-let info =
-    await getSymbolInfo(trade.symbol);
+    // ===== POSITION SIZE =====
+    let positionValue =
+        ACCOUNT_BALANCE * TRADE_CONFIG.maxPositionPercent
 
-if(!info || !info.filters){
+    let qtyBySize =
+        positionValue / best.price
+
+    // ===== RISK BASED QTY =====
+    let diff =
+        Math.abs(best.price - best.sl)
+
+    if(!diff){
+        continue
+    }
+
+    let qtyByRisk =
+        trade.risk / diff
+
+    // ===== FINAL QTY =====
+    let qty =
+        Math.min(
+            qtyBySize,
+            qtyByRisk
+        )
+
+    // Hard cap 3x account
+    let maxPositionValue =
+        ACCOUNT_BALANCE * 3
+
+    qty =
+        Math.min(
+            qty,
+            maxPositionValue / best.price
+        )
+
+    if(
+        !qty ||
+        qty <= 0 ||
+        !isFinite(qty)
+    ){
+        console.log("❌ QTY INVALID BEFORE SEND")
+        continue
+    }
+
+    let notional =
+        qty * best.price
+
+    // ===== SYMBOL INFO =====
+    let info =
+        await getSymbolInfo(trade.symbol)
+
+    if(!info || !info.filters){
 
     console.log(
         `🚫 SYMBOL INFO FAIL: ${best.symbol}`
-    );
+    )
 
-    continue;
+    continue
 }
 
-
-// =====================================================
-// BINANCE LOT SIZE
-// =====================================================
-
-let lotFilter =
+    let lotFilter =
     info.filters.find(
         f => f.filterType === "MARKET_LOT_SIZE"
     ) ||
     info.filters.find(
         f => f.filterType === "LOT_SIZE"
-    );
+    )
 
-
-// =====================================================
-// BINANCE NOTIONAL
-// =====================================================
-
-let minNotionalFilter =
+    let minNotionalFilter =
     info.filters.find(
         f => f.filterType === "NOTIONAL"
     ) ||
     info.filters.find(
         f => f.filterType === "MIN_NOTIONAL"
-    );
+    )
 
+    let stepSize =
+        parseFloat(
+            lotFilter?.stepSize || 0.001
+        )
 
-const stepSize =
-    parseFloat(
-        lotFilter?.stepSize || 0.001
-    );
+    let minQty =
+        parseFloat(
+            lotFilter?.minQty || 0
+        )
 
-const minQty =
-    parseFloat(
-        lotFilter?.minQty || 0
-    );
-
-const minNotional =
+    let minNotional =
     Number(
         minNotionalFilter?.minNotional ??
         minNotionalFilter?.notional ??
-        0
-    );
+        5
+    )
 
+    // ===== STEP 3: ROUND STEP =====
+    qty =
+        normalizeQtyFinal(
+            Math.floor(qty / stepSize) * stepSize,
+            stepSize
+        )
 
-if(
-    !(stepSize > 0) ||
-    !Number.isFinite(stepSize)
-){
+    // ===== STEP 4: CHECK MIN QTY =====
+    if(qty < minQty){
+        console.log(
+            `❌ MIN QTY FAIL ${best.symbol}`
+        )
+        continue
+    }
 
-    console.log(
-        `❌ INVALID STEP SIZE ${best.symbol}`
-    );
+    notional =
+        qty * best.price
 
-    continue;
-}
-// =====================================================
-// NORMAL SIZE
-// =====================================================
-let targetNotional =
-    positionBudget;
+    // ===== MIN NOTIONAL =====
+    if(notional < minNotional){
 
-// =====================================================
-// BUILD INITIAL QTY
-// =====================================================
-let qty =
-    targetNotional / best.price;
+        let requiredQty =
+            normalizeQtyFinal(
+                Math.ceil(
+                    (minNotional / best.price)
+                    / stepSize
+                ) * stepSize,
+                stepSize
+            )
 
-if(
-    !Number.isFinite(qty) ||
-    qty <= 0
-){
-    console.log(
-        `❌ QTY INVALID ${best.symbol} | ` +
-        `budget=${targetNotional} | ` +
-        `price=${best.price}`
-    );
-    continue;
-}
+        // Không ép qty nếu làm risk vượt quá mức cho phép
+        let requiredRisk =
+            requiredQty * diff
 
-qty = normalizeQtyFinal(
-    Math.floor(qty / stepSize) * stepSize,
-    stepSize
-);
+            let maxAllowedRisk =
+            trade.risk * 1.10
 
-notional =
-    qty * best.price;
+        if(requiredRisk > maxAllowedRisk){
 
-// =====================================================
-// FINAL MIN QTY CHECK
-// =====================================================
-if(
-    minQty > 0 &&
-    qty < minQty
-){
-    console.log(
-        `❌ MIN QTY FAIL ${best.symbol} | ` +
-        `qty=${qty} < minQty=${minQty} | ` +
-        `step=${stepSize}`
-    );
+            console.log(
+                `❌ MIN NOTIONAL EXCEEDS RISK ${best.symbol}`,
+                {
+                    requiredRisk,
+                    maxAllowedRisk,
+                    minNotional
+                }
+            )
 
-    continue;
-}
-// =====================================================
-// CHECK MIN NOTIONAL AGAIN
-// =====================================================
-if(
-    minNotional > 0 &&
-    notional < minNotional
-){
-    console.log(
-        `❌ MIN NOTIONAL FAIL ${best.symbol} | ` +
-        `notional=${notional.toFixed(6)} < ` +
-        `min=${minNotional} | ` +
-        `budget=${positionBudget.toFixed(6)}`
-    );
+            continue
+        }
 
-    continue;
-}
+        qty =
+            requiredQty
 
-// =====================================================
-// FINAL VALIDATION
-// =====================================================
+        notional =
+            qty * best.price
+    }
 
-if(
-    !Number.isFinite(qty) ||
-    !Number.isFinite(notional) ||
-    qty <= 0 ||
-    notional <= 0
-){
+    // ===== FINAL RISK =====
+    let finalRisk =
+        qty * diff
 
-    console.log(
-        `❌ FINAL POSITION SIZE INVALID ${best.symbol}`
-    );
+    if(
+        !isFinite(finalRisk) ||
+        finalRisk <= 0
+    ){
+        console.log(
+            `❌ FINAL RISK INVALID ${best.symbol}`
+        )
+        continue
+    }
 
-    continue;
-}
+    if(
+        finalRisk >
+trade.risk * 1.10
+    ){
+        console.log(
+            `❌ FINAL RISK TOO HIGH ${best.symbol}`
+        )
+        continue
+    }
 
+    // ===== FINAL POSITION VALUE =====
+    if(
+        notional >
+        maxPositionValue
+    ){
+        console.log(
+            `❌ MAX POSITION VALUE ${best.symbol}`
+        )
+        continue
+    }
 
-// =====================================================
-// LOG FINAL SIZE
-// =====================================================
+    // ===== FINAL CHECK =====
+    if(
+        notional < minNotional ||
+        !isFinite(notional) ||
+        !isFinite(qty) ||
+        qty <= 0
+    ){
+        console.log(
+            "❌ FINAL NOTIONAL FAIL:",
+            notional
+        )
+        continue
+    }
 
-console.log(
-    `💰 SIZE ${best.symbol} | ` +
-    `budget=${positionBudget.toFixed(4)} | ` +
-    `final=${notional.toFixed(4)} USDT | ` +
-    `qty=${qty} | ` +
-    `minQty=${minQty} | ` +
-    `minNotional=${minNotional}`
-);
+    if(!qty || qty <= 0 || !isFinite(qty)){
+        continue
+    }
+
+    if(!info || !info.filters){
+        continue
+    }
 
     // ===== OPENING LOCK =====
-    if(OPENING_POSITIONS[trade.symbol]){ console.log(`⛔ OPENING LOCK ${trade.symbol}`); continue; }
-    OPENING_POSITIONS[trade.symbol]=true;
+    if(OPENING_POSITIONS[trade.symbol]){
+        console.log(
+            `⛔ OPENING LOCK ${trade.symbol}`
+        )
+        continue
+    }
+
+    OPENING_POSITIONS[trade.symbol] = true
+
     try{
-      const order=await openPosition(trade.symbol,trade.side,qty);
-      POS_CACHE=null;POS_CACHE_TIME=0;
-      let realPosition=await waitPosition(trade.symbol);
-      if(!realPosition) realPosition=await hasPosition(trade.symbol);
-      if(!realPosition){ console.error(`❌ ENTRY NOT CONFIRMED ${trade.symbol}: ${order?.status||order?.reason||'no position'}`); continue; }
-      const realSide=Number(realPosition.positionAmt)>0?'LONG':'SHORT';
-      if(realSide!==trade.side){ console.error(`🚨 ENTRY SIDE MISMATCH ${trade.symbol}: wanted ${trade.side}, got ${realSide}`); continue; }
-      trade.entry=Number(realPosition.entryPrice)||best.price;
-      trade.price=trade.entry;
-      trade.quantity=Math.abs(Number(realPosition.positionAmt));
-      trade.notional=trade.quantity*trade.entry;
-      trade.enteredAt = Date.now();
-trade.openedAt = trade.enteredAt;
-trade.createdAt = trade.createdAt || trade.enteredAt;
-trade.updatedAt = trade.enteredAt;
-      NEXT_ENTRY_ALLOWED_AT=Date.now()+ENTRY_COOLDOWN_MS;
-      let dbSaved = false;
 
-try {
-    if (!await ensureDB()) {
-        throw new Error("MONGODB OFFLINE AFTER ENTRY");
+        let execution
+
+try{
+
+    execution =
+        await openPositionWithTPSL(
+            trade,
+            qty
+        )
+
+}catch(e){
+
+    console.error(
+        `❌ ENTRY EXCEPTION ${trade.symbol}:`,
+        e?.message || e
+    )
+
+    execution = {
+        ok:false,
+        error:e?.message || String(e)
+    }
+}
+
+if(!execution?.ok){
+
+    console.error(
+        `❌ ENTRY FAIL ${trade.symbol}:`,
+        execution?.error ||
+        execution?.message ||
+        "UNKNOWN"
+    )
+
+    // =====================================================
+    // CRITICAL RECOVERY:
+    // openPositionWithTPSL() có thể đã mở position
+    // nhưng fail ở TPSL / VERIFY sau đó.
+    // PHẢI kiểm tra Binance trước khi bỏ signal.
+    // =====================================================
+
+    let realPosition = null
+
+    try{
+
+        const positions =
+            await getPositionsCached(true)
+
+        realPosition =
+            positions?.find(
+                p =>
+                    p.symbol === trade.symbol &&
+                    Math.abs(
+                        Number(p.positionAmt || 0)
+                    ) > 0
+            )
+
+    }catch(e){
+
+        console.error(
+            `⚠️ POSITION RECOVERY ERROR ${trade.symbol}:`,
+            e?.message || e
+        )
     }
 
-    const insertResult = await trades.insertOne(trade);
+    if(realPosition){
 
-    if (!insertResult?.insertedId) {
-        throw new Error(`DB INSERT FAILED ${trade.symbol}`);
+        console.error(
+            `🚨 POSITION ALREADY OPEN ${trade.symbol} — RECOVERY`
+        )
+
+        console.error(
+            `SIDE=${trade.side}`,
+            `QTY=${realPosition.positionAmt}`,
+            `ENTRY=${realPosition.entryPrice}`
+        )
+
+        // KHÔNG continue ở đây nếu position thật đang tồn tại.
+        // Phải chuyển sang recovery TPSL / DB.
+    }else{
+
+        console.log(
+            `ℹ️ ${trade.symbol} confirmed no real position`
+        )
+
+        continue
+    }
+}
+
+trade.waitingEntry = false
+
+// ==================================================
+// BINANCE ENTRY ĐÃ THÀNH CÔNG
+// BẬT DYNAMIC TPSL NGAY LẬP TỨC
+// ==================================================
+NEXT_ENTRY_ALLOWED_AT = Date.now() + ENTRY_COOLDOWN_MS;
+TPSL_PHASE[trade.symbol] = "ACTIVE"
+
+console.log(
+    `🟢 TPSL ACTIVE ${trade.symbol} — BINANCE ENTRY CONFIRMED`
+)
+
+        trade.quantity =
+            qty
+
+        trade.notional =
+            notional
+
+        trade.finalRisk =
+            finalRisk
+
+        // ===== SAVE TRADE TO DB =====
+
+let insertResult = null
+
+try{
+
+    if(!await ensureDB()){
+        throw new Error(
+            "MONGODB OFFLINE AFTER ENTRY"
+        )
     }
 
-    trade._id = insertResult.insertedId;
-    trade.dbSaveFailed = false;
-    trade.dbRecoveryNeeded = false;
-    dbSaved = true;
+    // ===== FINAL TRADE STATE =====
 
-} catch (dbErr) {
+    trade.entry =
+        Number(trade.entry)
+
+    trade.sl =
+        Number(trade.sl)
+
+    trade.tp =
+        Number(trade.tp)
+
+    // ===== INITIAL RISK CỐ ĐỊNH =====
+
+    trade.initialRisk =
+    Number(execution.initialRisk)
+
+if(
+    !Number.isFinite(trade.initialRisk) ||
+    trade.initialRisk <= 0
+){
+    throw new Error(
+        `MISSING INITIAL RISK BEFORE DB INSERT ${trade.symbol}`
+    )
+}
+
+    // ===== FILLED TIME =====
+
+    trade.enteredAt =
+        Number(
+            trade.enteredAt ||
+            Date.now()
+        )
+
+    trade.openedAt =
+        trade.enteredAt
+
+    trade.updatedAt =
+        Date.now()
+
+    // ===== INSERT DB =====
+
+    insertResult =
+    await trades.insertOne(trade)
+
+if(
+    !insertResult ||
+    !insertResult.insertedId
+){
+    throw new Error(
+        `DB INSERT FAILED ${trade.symbol}`
+    )
+}
+
+trade._id =
+    insertResult.insertedId
+
+trade.dbSaveFailed = false
+trade.dbRecoveryNeeded = false
+
+activeTrades.push(trade)
+
+    console.log(
+        `💾 DB SAVED ${trade.symbol} ` +
+        `INITIAL_RISK=${trade.initialRisk} ` +
+        `ENTRY=${trade.entry} ` +
+        `SL=${trade.sl} ` +
+        `TP=${trade.tp}`
+    )
+
+    console.log(
+        `🟢 ACTIVE TRADE ADDED ${trade.symbol}`
+    )
+
+}catch(dbErr){
+
     console.error(
         `🚨 DB SAVE FAIL ${trade.symbol}:`,
         dbErr?.message || dbErr
-    );
+    )
 
-    trade.dbSaveFailed = true;
-    trade.dbRecoveryNeeded = true;
-}
+    const ramTrade = {
+        ...trade,
+        dbSaveFailed: true,
+        dbRecoveryNeeded: true
+    }
 
-// Chỉ thêm vào RAM một lần, không phụ thuộc việc ghi RF event thành công.
-activeTrades.push(trade);
+    TPSL_PHASE[trade.symbol] = "ACTIVE"
 
-if (dbSaved) {
+    activeTrades.push(ramTrade)
+
     console.log(
-        `💾 DB SAVED ${trade.symbol} ` +
-        `SIDE=${trade.side} ENTRY=${trade.entry} QTY=${trade.quantity}`
-    );
+        `🟢 ${trade.symbol} REMAINS ACTIVE FOR DYNAMIC TPSL`
+    )
 
-    try {
-        if (rfSignalEvents && trade.rfSignalKey) {
-            await rfSignalEvents.updateOne(
-                { signalKey: trade.rfSignalKey },
-                {
-                    $set: {
-                        status: "TRADE_OPENED",
-                        tradeId: String(trade._id),
-                        actualEntry: Number(trade.entry),
-                        actualQuantity: Number(trade.quantity),
-                        actualNotional: Number(trade.notional),
-                        openedAt: Number(trade.enteredAt),
-                        updatedAt: Date.now()
-                    }
-                }
-            );
-        }
-    } catch (eventErr) {
-        console.error(
-            `🚨 RF EVENT UPDATE FAIL ${trade.symbol}:`,
-            eventErr?.message || eventErr
-        );
-    }
-} else {
-    try {
-        await saveRFSignalEvent({
-            signalKey: trade.rfSignalKey,
-            symbol: trade.symbol,
-            side: trade.side,
-            status: "TRADE_OPENED_DB_SAVE_FAILED",
-            actualEntry: Number(trade.entry),
-            actualQuantity: Number(trade.quantity),
-            updatedAt: Date.now()
-        });
-    } catch (eventErr) {
-        console.error(
-            `🚨 RF EVENT SAVE FAIL ${trade.symbol}:`,
-            eventErr?.message || eventErr
-        );
-    }
+    break
 }
-        const msg=`🔥 RANGE
+        let msg =
+`🔥 BEST SIGNAL\n\n` +
+`📊 ${trade.symbol}\n` +
+`📈 ${trade.side}\n` +
+`🎯 Entry: ${trade.entry}\n` +
+`🟢 TP: ${trade.tp}\n` +
+`🔴 SL: ${trade.sl}\n` +
+`⚖️ RR: ${safeFixed(trade.rr, 2)}\n` +
+`⭐ Quality: ${safeFixed(trade.qualityScore, 2)}\n` +
+`🧠 DB Edge: ${safeFixed(best.finalScore, 1)}\n` +
+`💰 Risk: ${safeFixed(trade.risk, 4)}`
 
-📊 ${trade.symbol}
-📈 ${trade.side}
-⭐ Score: ${safeFixed(trade.qualityScore ?? best.qualityScore ?? 0, 1)}
-🎯 Entry: ${trade.entry}
-📦 Position: ${safeFixed(trade.notional,2)} USDT`;
-
-await sendTelegram(msg);
+        await sendTelegram(msg)
 
     }catch(err){
 
@@ -5108,14 +4457,13 @@ await sendTelegram(msg);
             trade.symbol
         ]
     }
+}
 
 
 
     console.log(
-    `✅ ADD: ${best.symbol} | ` +
-    `QUALITY=${safeFixed(best.qualityScore, 1)} | ` +
-    `SIDE=${best.side}`
-);
+    `✅ ADD: ${best.symbol} | DB Edge: ${safeFixed(best.finalScore, 1)}`
+)
 
     // One successfully opened coin per scan cycle; existing duplicate/opening
     // guards above remain the final authority for this symbol.
@@ -5159,7 +4507,7 @@ async function checkTrades(){
             try{
 
                 let data = await Promise.race([
-    getData(t.symbol,"5m",2),
+    getData(t.symbol,"15m",2),
     new Promise(resolve =>
         setTimeout(()=>resolve(null),10000)
     )
@@ -5219,13 +4567,14 @@ if(!realPos){
         }
     )
     delete DATA_FAILS[t.symbol]
+    delete TPSL_PHASE[t.symbol]
 
     activeTrades.splice(i,1)
 
     continue
 }
 
-// Position remains open; the scanner closes it on a confirmed Range Filter flip.
+// còn position -> watchdog xử lý TPSL
 continue
 
 }else{
@@ -5244,7 +4593,7 @@ if(!t.enteredAt){
 let stillOpen = null
 let verifyOK = false
 
-for(let retry = 0; retry < 3; retry++){
+for(let retry = 0; retry < 5; retry++){
 
     try{
 
@@ -5272,13 +4621,13 @@ for(let retry = 0; retry < 3; retry++){
         }
 
         console.log(
-            `⚠️ VERIFY POSITION ${t.symbol} ${retry + 1}/3`
+            `⚠️ VERIFY POSITION ${t.symbol} ${retry + 1}/5`
         )
 
     }catch(e){
 
         console.log(
-            `❌ VERIFY API FAIL ${t.symbol} ${retry + 1}/3:`,
+            `❌ VERIFY API FAIL ${t.symbol} ${retry + 1}/5:`,
             e?.message || e
         )
 
@@ -5308,6 +4657,7 @@ if(!stillOpen){
     if(closed){
 
         delete CLOSED_RESULT_FAILS[t.symbol]
+        delete TPSL_PHASE[t.symbol]
 
         const isWin = closed.pnl > 0
 
@@ -5341,28 +4691,6 @@ await trades.updateOne(
         }
     }
 )
-if (rfSignalEvents && (t.rfSignalKey || t.signalKey)) {
-    try {
-        await rfSignalEvents.updateOne(
-            { signalKey: t.rfSignalKey || t.signalKey },
-            {
-                $set: {
-                    status: "TRADE_CLOSED",
-                    actualResult: isWin ? "WIN" : "LOSS",
-                    actualPnl: Number(closed.pnl),
-                    actualClosedAt: Number(closed.closedAt),
-                    closeReason: t.closeReason || "POSITION_CLOSED",
-                    updatedAt: Date.now()
-                }
-            }
-        );
-    } catch (eventErr) {
-        console.error(
-            `🚨 RF EVENT CLOSE UPDATE FAIL ${t.symbol}:`,
-            eventErr?.message || eventErr
-        );
-    }
-}
 
         const latestBalance = await updateBalance()
 
@@ -5384,7 +4712,7 @@ PnL: ${closed.pnl.toFixed(4)}
         }
 
         delete DATA_FAILS[t.symbol]
-
+        delete TPSL_PHASE[t.symbol]
         activeTrades.splice(i,1)
 
         continue
@@ -5397,13 +4725,13 @@ PnL: ${closed.pnl.toFixed(4)}
 
     console.log(
         `⏳ CLOSED RESULT NOT FOUND ${t.symbol} ` +
-        `${CLOSED_RESULT_FAILS[t.symbol]}/10`
+        `${CLOSED_RESULT_FAILS[t.symbol]}/3`
     )
 
     // Cho Binance/API thêm thời gian
-        if(CLOSED_RESULT_FAILS[t.symbol] < 3){
-            continue
-        }
+    if(CLOSED_RESULT_FAILS[t.symbol] < 3){
+        continue
+    }
 
     // ===== ORPHAN =====
 
@@ -5411,50 +4739,21 @@ PnL: ${closed.pnl.toFixed(4)}
         `🧹 CLEAR ORPHAN TRADE ${t.symbol}`
     )
 
-    const unresolvedQuery=t._id?{_id:t._id,result:"PENDING"}:{symbol:t.symbol,createdAt:t.createdAt,result:"PENDING"};
-    const unresolvedAt = Date.now();
-
-await trades.updateOne(
-    unresolvedQuery,
-    {
-        $set: {
-            result: "CLOSED_UNRESOLVED",
-            closedAt: unresolvedAt,
-            debugReason:
-                "NO_POSITION_AFTER_VERIFY_AND_NO_CLOSED_RESULT"
-        }
-    }
-);
-
-if (rfSignalEvents && (t.rfSignalKey || t.signalKey)) {
-    try {
-        await rfSignalEvents.updateOne(
-            { signalKey: t.rfSignalKey || t.signalKey },
-            {
-                $set: {
-                    status: "TRADE_CLOSED_UNRESOLVED",
-                    actualResult: "UNKNOWN",
-                    actualClosedAt: unresolvedAt,
-                    closeReason:
-                        "NO_POSITION_AFTER_VERIFY_AND_NO_CLOSED_RESULT",
-                    updatedAt: Date.now()
-                }
+    await trades.updateOne(
+        { _id:t._id },
+        {
+            $set:{
+                result:"CLOSED_UNRESOLVED",
+                closedAt:Date.now(),
+                debugReason:
+                    "NO_POSITION_AFTER_VERIFY_AND_NO_CLOSED_RESULT"
             }
-        );
-    } catch (eventErr) {
-        console.error(
-            `RF EVENT UNRESOLVED UPDATE FAIL ${t.symbol}:`,
-            eventErr?.message || eventErr
-        );
-    }
-}
-
-    await sendTelegram2(
-        `⚠️ ${t.symbol} vị thế đã đóng .`
+        }
     )
 
     delete CLOSED_RESULT_FAILS[t.symbol]
     delete DATA_FAILS[t.symbol]
+    delete TPSL_PHASE[t.symbol]
 
     activeTrades.splice(i,1)
 
@@ -5695,6 +4994,20 @@ async function recoverOrphanPositions(){
 
             if(dbTrade){
 
+    const recoveredInitialRisk =
+        Number(dbTrade.initialRisk)
+
+    if(
+        !Number.isFinite(recoveredInitialRisk) ||
+        recoveredInitialRisk <= 0
+    ){
+        console.log(
+            `⚠️ RECOVERY SKIP — MISSING INITIAL RISK ${symbol}`
+        )
+
+        continue
+    }
+
     const exists =
         activeTrades.some(
             t =>
@@ -5709,8 +5022,11 @@ async function recoverOrphanPositions(){
         )
     }
 
+    TPSL_PHASE[symbol] =
+        "ACTIVE"
+
     console.log(
-        `♻️ RECOVER DB TRADE ${symbol} → ACTIVE `
+        `♻️ RECOVER DB TRADE ${symbol} → TPSL ACTIVE`
     )
 
     continue
@@ -5799,6 +5115,7 @@ async function recoverOrphanPositions(){
                 setup: "ORPHAN_RECOVERY",
                 marketState: "RECOVERY",
                 volatility: "UNKNOWN",
+                btcRegime: "UNKNOWN",
 
                 quantity:
                     Math.abs(positionAmt),
@@ -5850,8 +5167,11 @@ if(existingIndex !== -1){
     // Đã có trade trong RAM.
     // Không tạo thêm trade thứ 2.
 
+    TPSL_PHASE[symbol] =
+        "ACTIVE"
+
     console.log(
-        `♻️ ORPHAN ${symbol} ALREADY ACTIVE`
+        `♻️ ORPHAN ${symbol} ALREADY ACTIVE → SKIP DUPLICATE`
     )
 
     continue
@@ -5866,8 +5186,11 @@ activeTrades.push(
 )
 
 // ==========================================
-// Position remains active until a confirmed Range Filter flip.
+// DYNAMIC TPSL BẬT
 // ==========================================
+
+TPSL_PHASE[symbol] =
+    "ACTIVE"
 
 console.log(
     `🟢 ORPHAN RECOVERED ${symbol} ` +
@@ -5909,7 +5232,8 @@ console.log(
                 )
 
                 // KHÔNG xoá RAM
-                // Keep the recovered live position tracked in RAM.
+                // KHÔNG tắt TPSL
+                // Dynamic vẫn phải chạy
             }
         }
 
@@ -5949,15 +5273,6 @@ while(!dbOK){
         })
         db = client.db("trading")
         trades = db.collection("trades")
-        rfSignalEvents = db.collection("rf_signal_events");
-        await rfSignalEvents.createIndex(
-    { signalKey: 1 },
-    { unique: true }
-);
-
-await rfSignalEvents.createIndex(
-    { status: 1, symbol: 1, flipTime: 1 }
-);
         // TEST DB THỰC SỰ ĐỌC ĐƯỢC
         await trades.findOne(
             {},
@@ -6049,6 +5364,25 @@ console.log(
         console.log(
             "✅ DEAD LOCK CLEARED"
         )
+        // ==================================================
+        // 8. EXPIRE PENDING QUÁ 24H
+        // ==================================================
+        await trades.updateMany(
+            {
+                result: "PENDING",
+                createdAt: {
+                    $lt:
+                        Date.now() -
+                        24 * 60 * 60 * 1000
+                }
+            },
+            {
+                $set: {
+                    result: "EXPIRED"
+                }
+            }
+        )
+        // ==================================================
 // 9. LOAD PENDING TRADES TỪ DB
 // ==================================================
 
@@ -6056,6 +5390,21 @@ activeTrades =
     await trades.find({
         result: "PENDING"
     }).toArray()
+
+// ===== RESTORE TPSL PHASE =====
+
+for(const trade of activeTrades){
+
+    if(
+        !trade?.symbol ||
+        trade.result !== "PENDING"
+    ){
+        continue
+    }
+
+    TPSL_PHASE[trade.symbol] =
+        "ACTIVE"
+}
 
 console.log(
     `♻️ Load lại ${activeTrades.length} lệnh`
@@ -6072,10 +5421,21 @@ setInterval(
 )
 
 console.log(
-    `♻️ RECOVERY: ${activeTrades.length} ACTIVE`
+    `♻️ AFTER ORPHAN RECOVERY: ${activeTrades.length} ACTIVE`
 )
 
+// ==================================================
+// 9.2 START DYNAMIC TPSL
+// ==================================================
 
+console.log(
+    "🟢 DYNAMIC TPSL LOOP STARTED"
+)
+
+setInterval(
+    runDynamicTPSL,
+    10000
+)
         // ==================================================
         // 10. LOAD BINANCE SYMBOLS
         // ==================================================
@@ -6083,15 +5443,7 @@ console.log(
         console.log(
             "🟢 FUTURES SYMBOLS READY"
         )
-        // Remove legacy TP/SL orders left by the old bot version.
-        for(const trade of activeTrades){
-            if(trade?.symbol&&trade.result==="PENDING"){
-                const cleared=await clearSymbolOrders(trade.symbol);
-                if(!cleared) throw new Error(`Không xóa được lệnh thoát cũ của ${trade.symbol}`);
-            }
-        }
         // ==================================================
-        rangeExitMonitorLoop()
         // 11. CHECK TRADE LOOP
         // ==================================================
         let TELEGRAM_RUNNING = false
@@ -6107,7 +5459,7 @@ console.log(
                 try{
                     // Telegram command
                     await checkCommand()
-                    // Reconcile exchange positions with MongoDB.
+                    // TP / SL / position watchdog
                     await checkTrades()
                 }catch(e){
                     console.error(
@@ -6434,6 +5786,47 @@ async function syncActiveTrades(){
         activeTrades =
             [...merged.values()]
 
+        // ==================================================
+        // 6. REBUILD TPSL PHASE
+        // ==================================================
+
+        const activeSymbols =
+            new Set()
+
+        for(const trade of activeTrades){
+
+            if(
+                trade?.symbol &&
+                trade.result === "PENDING"
+            ){
+
+                activeSymbols.add(
+                    trade.symbol
+                )
+
+                TPSL_PHASE[trade.symbol] =
+                    "ACTIVE"
+            }
+        }
+
+        // ==================================================
+        // 7. XÓA PHASE KHÔNG CÒN POSITION
+        // ==================================================
+
+        for(
+            const symbol
+            of Object.keys(TPSL_PHASE)
+        ){
+
+            if(
+                !activeSymbols.has(symbol)
+            ){
+
+                delete TPSL_PHASE[symbol]
+
+            }
+        }
+
         console.log(
             `♻️ SYNC ACTIVE: ${activeTrades.length}`
         )
@@ -6449,10 +5842,157 @@ async function syncActiveTrades(){
     }
 }
 
+let DYNAMIC_TPSL_RUNNING = false
+const ENABLE_DYNAMIC_TPSL= true
+async function runDynamicTPSL(){
+    if(!ENABLE_DYNAMIC_TPSL)return
+
+    if(DYNAMIC_TPSL_RUNNING){
+        return
+    }
+
+    DYNAMIC_TPSL_RUNNING = true
+
+    try{
+
+        if(
+            !Array.isArray(activeTrades) ||
+            activeTrades.length === 0
+        ){
+            return
+        }
+
+        // ==================================================
+        // LẤY POSITION THẬT 1 LẦN / DYNAMIC CYCLE
+        // ==================================================
+
+        POS_CACHE = null
+        POS_CACHE_TIME = 0
+
+        let positions
+
+        try{
+
+            positions =
+                await getPositionsCached()
+
+        }catch(e){
+
+            console.log(
+                "❌ DYNAMIC POSITION CHECK:",
+                e?.message || e
+            )
+
+            return
+        }
+
+        const positionMap =
+            new Map()
+
+        for(const pos of positions){
+
+            const amount =
+                Number(
+                    pos?.positionAmt || 0
+                )
+
+            if(
+                pos?.symbol &&
+                Number.isFinite(amount) &&
+                Math.abs(amount) > 0
+            ){
+
+                positionMap.set(
+                    pos.symbol,
+                    pos
+                )
+            }
+        }
+
+        // ==================================================
+        // CHỈ DYNAMIC CHO POSITION THẬT
+        // ==================================================
+
+        for(const trade of [...activeTrades]){
+
+            if(
+                !trade ||
+                !trade.symbol ||
+                trade.result !== "PENDING"
+            ){
+                continue
+            }
+
+            const symbol =
+                trade.symbol
+
+            if(
+                TPSL_PHASE[symbol] !== "ACTIVE"
+            ){
+                continue
+            }
+
+            if(
+                TPSL_PENDING[symbol]
+            ){
+                continue
+            }
+
+            // ==============================================
+            // BINANCE KHÔNG CÒN POSITION
+            // ==============================================
+
+            if(
+                !positionMap.has(symbol)
+            ){
+
+                console.log(
+                    `⛔ DYNAMIC SKIP ${symbol} → NO BINANCE POSITION`
+                )
+
+                delete TPSL_PHASE[symbol]
+
+                continue
+            }
+
+            // ==============================================
+            // DYNAMIC
+            // ==============================================
+
+            try{
+
+                await manageDynamicTPSL(
+                    trade
+                )
+
+            }catch(e){
+
+                console.log(
+                    `❌ RUN DYNAMIC ${symbol}:`,
+                    e?.message || e
+                )
+            }
+        }
+
+    }catch(e){
+
+        console.log(
+            `❌ DYNAMIC LOOP ERROR:`,
+            e?.message || e
+        )
+
+    }finally{
+
+        DYNAMIC_TPSL_RUNNING = false
+    }
+}
 setInterval(syncActiveTrades, 3600000)
 function cleanup(){
     try{
-        if(fs.existsSync(PID_FILE)){
+        if(
+            fs.existsSync(PID_FILE) &&
+            fs.readFileSync(PID_FILE, "utf8").trim() === String(process.pid)
+        ){
             fs.unlinkSync(PID_FILE)
         }
     }catch(e){}
