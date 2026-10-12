@@ -9,9 +9,9 @@ const TPSL_CLOSING = {}
 const DYNAMIC_LAST_UPDATE = {}
 const DYNAMIC_PHASE = {}
 const TRADE_CONFIG = {
-    riskPerTrade: 0.01,      
-    maxRiskPerTrade: 0.01,    
-    maxPositionPercent: 1.5,  
+    riskPerTrade: 0.1,      
+    maxRiskPerTrade: 0.1,    
+    maxPositionPercent: 5.5,  
     maxActivePositions: 20      
 }
 let SYNCING_TIME = false
