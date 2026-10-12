@@ -11,7 +11,7 @@ const DYNAMIC_PHASE = {}
 const TRADE_CONFIG = {
     riskPerTrade: 0.1,      
     maxRiskPerTrade: 0.1,    
-    maxPositionPercent: 5.5,  
+    maxPositionPercent: 2.5,  
     maxActivePositions: 20      
 }
 let SYNCING_TIME = false
@@ -417,6 +417,8 @@ const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
 const AI_CHAT_ID = process.env.AI_CHAT_ID
 
 const RR_THRESHOLD = 1.20 // 1.3 hoặc 1.4 nếu muốn 
+// Provisional quality gate: reject weak composite ranks before choosing the top signals.
+const MIN_RANK_SCORE = 60
 let ACCOUNT_BALANCE = 0
 // const MIN_VOL_24H = 15000000
 
@@ -437,8 +439,6 @@ let exchangeInfoCache = null
 let validFuturesSymbols = new Set()
 let TELEGRAM_LOCK = 0
 let DATA_FAILS = {}
-let BTC_REGIME_CACHE = null
-let BTC_REGIME_CACHE_TIME = 0
 
 async function updateBalance(){
 
@@ -3082,8 +3082,6 @@ async function coreLogic(data15, symbol = null) {
 
   const targetR = 1.6;
   const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
-  const rank = scoreRF15Signal(data15, side);
-  const score = clamp(Math.round(70 + rank.adjustment), 0, 100);
   const volRatio = range / price;
 
   return {
@@ -3093,17 +3091,20 @@ async function coreLogic(data15, symbol = null) {
     triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
     marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
     volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
-    qualityScore: score, score,
+    qualityScore: 0, score: 0,
     risk: { risk, initialRisk: risk, rr: targetR, targetR },
-    rankAdjustment: rank.adjustment,
     filterMove: move,
     filterRange: range
   };
 }
 
-function scoreRF15Signal(data15, side) {
+function scoreRF15Signal(data15, side, context = {}) {
+  const invalid = {
+    score: 0, adjustment: -50, freshTurn: false,
+    rankMetrics: {}
+  };
   const candles = prepare(data15, 600);
-  if (!candles) return { adjustment: -100, early: false };
+  if (!candles || !['LONG', 'SHORT'].includes(side)) return invalid;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
     rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
@@ -3111,42 +3112,178 @@ function scoreRF15Signal(data15, side) {
     averageFilterChanges: false, averageChanges: 2
   });
   const i = candles.length - 1;
-  if (i < 3) return { adjustment: -100, early: false };
+  if (i < 40) return invalid;
+  const targetDir = side === 'LONG' ? 1 : -1;
 
-  // Rank higher when the latest DW turn just began; lower as the slope ages.
-  let runBars = 0;
-  for (let j = i; j > 0; j--) {
-    const a = rf.filter[j - 1], b = rf.filter[j];
-    if (!finite(a) || !finite(b)) break;
-    const d = b - a;
-    if (side === 'LONG' ? d > 0 : d < 0) runBars++;
-    else break;
+  // A candidate must be the current closed-bar RF flip in its proposed direction.
+  const freshTurn = side === 'LONG' ? rf.buy[i] : rf.sell[i];
+  if (!freshTurn) return invalid;
+
+  // ATR(14) on closed 15m candles; used only to normalize distances across coins.
+  const trueRanges = [];
+  for (let j = Math.max(1, i - 13); j <= i; j++) {
+    const prevClose = candles[j - 1].c;
+    trueRanges.push(Math.max(
+      candles[j].h - candles[j].l,
+      Math.abs(candles[j].h - prevClose),
+      Math.abs(candles[j].l - prevClose)
+    ));
   }
-  const recent = side === 'LONG' ? rf.buy[i] : rf.sell[i];
+  const atr15 = trueRanges.reduce((sum, value) => sum + value, 0) / trueRanges.length;
+  const rfRange = Number(rf.range[i]);
+  if (!(atr15 > 0) || !(rfRange > 0)) return invalid;
+
+  // Higher-timeframe RF regime. Missing 4h data earns neutral points, not a false alignment.
+  let htfDirection = 0;
+  const candles4h = prepare(context.data4h, 100);
+  if (candles4h) {
+    const rf4h = rangeFilter(candles4h, {
+      filterType: 'Type 1', movementSource: 'Close',
+      rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
+      smoothRange: true, smoothPeriod: 27,
+      averageFilterChanges: false, averageChanges: 2
+    });
+    htfDirection = Number(rf4h.direction.at(-1)) || 0;
+  }
+  const htfTrendScore = htfDirection === targetDir ? 20 : htfDirection === 0 ? 8 : 0;
+
+  // Pullback-resumption: measure the just-ended countertrend RF leg and its depth.
+  let pullbackBars = 0;
+  for (let j = i - 1; j >= 0 && rf.direction[j] === -targetDir; j--) pullbackBars++;
+  let pullbackDepthAtr = 0;
+  const pullbackStart = i - pullbackBars;
+  if (pullbackBars > 0 && pullbackStart >= 2) {
+    const prior = candles.slice(Math.max(0, pullbackStart - 16), pullbackStart);
+    const counter = candles.slice(pullbackStart, i);
+    if (prior.length && counter.length) {
+      const anchor = side === 'LONG'
+        ? Math.max(...prior.map(c => c.h))
+        : Math.min(...prior.map(c => c.l));
+      const counterExtreme = side === 'LONG'
+        ? Math.min(...counter.map(c => c.l))
+        : Math.max(...counter.map(c => c.h));
+      pullbackDepthAtr = Math.max(0, side === 'LONG'
+        ? (anchor - counterExtreme) / atr15
+        : (counterExtreme - anchor) / atr15);
+    }
+  }
+  const durationQuality = clamp(pullbackBars / 6, 0, 1);
+  const depthPresence = clamp(pullbackDepthAtr / 0.75, 0, 1);
+  const depthPenalty = 1 - clamp(Math.max(0, pullbackDepthAtr - 1.5) / 2.5, 0, 1);
+  const pullbackQuality = pullbackBars > 0
+    ? 15 * (0.5 * durationQuality + 0.5 * depthPresence * depthPenalty)
+    : 0;
+
+  // Signed path efficiency over the last eight closed 15m bars.
   let path = 0;
-  const lookback = 8;
-  for (let j = Math.max(1, i - lookback + 1); j <= i; j++) {
-    path += Math.abs(candles[j].c - candles[j - 1].c);
-  }
-  const net = candles[i].c - candles[Math.max(0, i - lookback)].c;
-  const aligned = side === 'LONG' ? net > 0 : net < 0;
-  const efficiency = path > 0 ? Math.abs(net) / path : 0;
+  for (let j = i - 7; j <= i; j++) path += Math.abs(candles[j].c - candles[j - 1].c);
+  const net = candles[i].c - candles[i - 8].c;
+  const signedNet = side === 'LONG' ? net : -net;
+  const directionalEfficiency = path > 0 ? clamp(signedNet / path, 0, 1) : 0;
+  const pathScore = 15 * directionalEfficiency;
 
-  const anchor = Math.max(0, i - 3);
-  const oldFilter = rf.filter[anchor], oldRange = rf.range[anchor];
-  const currentRange = rf.range[i], price = candles[i].c;
-  let extension = 0;
-  if ([oldFilter, oldRange, currentRange, price].every(finite) && oldRange > 0 && currentRange > 0) {
+  // RF turn strength is the step beyond the previous filter threshold, normalized by RF range.
+  const turnOvershoot = side === 'LONG'
+    ? (rf.filter[i] - rf.filter[i - 1]) / rfRange
+    : (rf.filter[i - 1] - rf.filter[i]) / rfRange;
+  if (!Number.isFinite(turnOvershoot) || turnOvershoot < 0) return invalid;
+  const turnScore = 10 * clamp(turnOvershoot, 0, 1);
+
+  // Penalize choppy RF state: count direction changes over the last 32 closed bars.
+  let flipCount = 0;
+  for (let j = Math.max(1, i - 31); j <= i; j++) {
+    if (rf.direction[j] !== rf.direction[j - 1]) flipCount++;
+  }
+  const chopScore = 10 * (1 - clamp(Math.max(0, flipCount - 1) / 5, 0, 1));
+
+  // Signal candle should close with its body near the trade-direction extreme.
+  const candle = candles[i];
+  const candleRange = candle.h - candle.l;
+  let candleScore = 0;
+  if (candleRange > 0) {
+    const closeLocation = side === 'LONG'
+      ? (candle.c - candle.l) / candleRange
+      : (candle.h - candle.c) / candleRange;
+    const directionalBody = side === 'LONG'
+      ? (candle.c - candle.o) / candleRange
+      : (candle.o - candle.c) / candleRange;
+    candleScore = 8 * (0.5 * clamp(closeLocation, 0, 1) + 0.5 * clamp((directionalBody + 1) / 2, 0, 1));
+  }
+
+  // Participation confirmation from signal-bar volume vs the prior 20 completed bars.
+  const priorVolumes = candles.slice(i - 20, i).map(c => c.v).filter(Number.isFinite);
+  const avgVolume = priorVolumes.length
+    ? priorVolumes.reduce((sum, value) => sum + value, 0) / priorVolumes.length
+    : 0;
+  const volumeRatio = avgVolume > 0 ? candle.v / avgVolume : 1;
+  const volumeScore = 5 * clamp(volumeRatio / 1.5, 0, 1);
+
+  // Avoid chasing a move already far beyond the RF edge from three bars earlier.
+  const anchorIndex = Math.max(0, i - 3);
+  const oldFilter = Number(rf.filter[anchorIndex]);
+  const oldRange = Number(rf.range[anchorIndex]);
+  let extensionUnits = 0;
+  if (Number.isFinite(oldFilter) && oldRange > 0) {
     const oldEdge = side === 'LONG' ? oldFilter + oldRange : oldFilter - oldRange;
-    extension = side === 'LONG' ? (price - oldEdge) / currentRange : (oldEdge - price) / currentRange;
+    extensionUnits = side === 'LONG'
+      ? (candle.c - oldEdge) / rfRange
+      : (oldEdge - candle.c) / rfRange;
   }
-  extension = Math.max(0, extension);
-  const early = recent && runBars <= 2;
-  const freshness = early ? 12 - runBars * 2 : -Math.min(20, Math.max(0, runBars - 2) * 4);
-  const adjustment = efficiency * 8 + (aligned ? 4 : -6) + freshness - Math.min(20, extension * 5);
-  return { adjustment, efficiency, alignedMove: aligned, extensionUnits: extension, runBars, early };
-}
+  extensionUnits = Math.max(0, Number.isFinite(extensionUnits) ? extensionUnits : 0);
+  const antiChaseScore = 5 * (1 - clamp(extensionUnits / 4, 0, 1));
 
+  // Target feasibility: TP distance in ATRs plus clearance to confirmed swing obstacles.
+  const entry = Number(context.entry);
+  const sl = Number(context.sl);
+  const tp = Number(context.tp);
+  let targetDistance = NaN;
+  let targetAtrScore = 3;
+  let obstacleClearanceScore = 3;
+  if ([entry, sl, tp].every(Number.isFinite) && entry > 0 && sl > 0 && tp > 0) {
+    const validDirection = side === 'LONG' ? sl < entry && tp > entry : sl > entry && tp < entry;
+    if (!validDirection) return invalid;
+    targetDistance = Math.abs(tp - entry);
+    const targetAtr = targetDistance / atr15;
+    targetAtrScore = 6 * (1 - clamp((targetAtr - 1) / 3, 0, 1));
+
+    let nearestObstacle = Infinity;
+    for (let j = Math.max(2, i - 47); j <= i - 2; j++) {
+      const isSwingHigh = candles[j].h >= candles[j - 1].h && candles[j].h >= candles[j - 2].h &&
+        candles[j].h > candles[j + 1].h && candles[j].h > candles[j + 2].h;
+      const isSwingLow = candles[j].l <= candles[j - 1].l && candles[j].l <= candles[j - 2].l &&
+        candles[j].l < candles[j + 1].l && candles[j].l < candles[j + 2].l;
+      const level = side === 'LONG' && isSwingHigh ? candles[j].h
+        : side === 'SHORT' && isSwingLow ? candles[j].l : NaN;
+      const between = Number.isFinite(level) && (side === 'LONG'
+        ? level > entry && level < tp
+        : level < entry && level > tp);
+      if (between) nearestObstacle = Math.min(nearestObstacle, Math.abs(level - entry));
+    }
+    const clearance = Number.isFinite(nearestObstacle)
+      ? nearestObstacle / targetDistance
+      : 1;
+    obstacleClearanceScore = 6 * clamp(clearance, 0, 1);
+  }
+  const targetPathScore = targetAtrScore + obstacleClearanceScore;
+
+  // Provisional heuristic weights, not fitted win probabilities; validate walk-forward.
+  const score = clamp(Math.round(
+    htfTrendScore + pullbackQuality + pathScore + turnScore + chopScore +
+    candleScore + volumeScore + antiChaseScore + targetPathScore
+  ), 0, 100);
+  const rankMetrics = {
+    htfTrendScore, htfDirection,
+    pullbackQuality, pullbackBars, pullbackDepthAtr,
+    pathScore, directionalEfficiency,
+    turnScore, turnOvershoot,
+    chopScore, flipCount,
+    candleScore, volumeScore, volumeRatio,
+    antiChaseScore, extensionUnits,
+    targetPathScore, targetDistanceAtr: Number.isFinite(targetDistance) ? targetDistance / atr15 : null,
+    obstacleClearanceScore
+  };
+  return { score, adjustment: score - 50, freshTurn: true, early: true, rankMetrics };
+}
 // ================= SCAN =================
 async function scan(symbol){
 
@@ -3186,7 +3323,20 @@ async function scan(symbol){
         if(!r || !r.side){
             return null
         }
-        const rfRank = scoreRF15Signal(data15, r.side);
+        // Fetch 4h context only after a valid 15m RF turn exists.
+        let data4h = null;
+        try {
+            data4h = await getData(symbol, "4h", 301);
+        } catch (contextErr) {
+            // Keep the valid 15m signal rankable with neutral HTF points if 4h fetch fails.
+            console.warn(`⚠️ 4H RANK CONTEXT UNAVAILABLE ${symbol}:`, contextErr?.message || contextErr);
+        }
+        const rfRank = scoreRF15Signal(data15, r.side, {
+            data4h,
+            entry: r.price,
+            sl: r.sl,
+            tp: r.tp
+        });
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
@@ -3195,18 +3345,22 @@ async function scan(symbol){
             `🟢 SIGNAL: ${symbol} | ` +
             `SIDE=${r.side} | ` +
             `SETUP=${r.setup || "N/A"} | ` +
-            `QUALITY=${r.qualityScore ?? "N/A"}`
+            `QUALITY=${rfRank.score} | ` +
+            `RF_RANK=${rfRank.score} ` +
+            `(HTF=${safeFixed(rfRank.rankMetrics.htfTrendScore, 1)}, ` +
+            `PB=${safeFixed(rfRank.rankMetrics.pullbackQuality, 1)}, ` +
+            `CHOP=${safeFixed(rfRank.rankMetrics.chopScore, 1)}, ` +
+            `PATH=${safeFixed(rfRank.rankMetrics.pathScore, 1)}, ` +
+            `TP_PATH=${safeFixed(rfRank.rankMetrics.targetPathScore, 1)})`
         )
 
         return {
             symbol,
             ...r,
-            rankAdjustment: rfRank.adjustment,
-rankMetrics: {
-  efficiency: rfRank.efficiency,
-  alignedMove: rfRank.alignedMove,
-  extensionUnits: rfRank.extensionUnits
-}
+            qualityScore: rfRank.score,
+            score: rfRank.score,
+            rankScore: rfRank.score,
+            rankMetrics: rfRank.rankMetrics
         }
 
     }catch(e){
@@ -3233,171 +3387,12 @@ function safeFixed(value, digits = 2){
 
     return n.toFixed(digits)
 }
-// ================= BTC REGIME =================
-async function getBtcRegime() {
-
-    // Cache 2 phút
-    if(
-        BTC_REGIME_CACHE &&
-        Date.now() - BTC_REGIME_CACHE_TIME < 120000
-    ){
-        return BTC_REGIME_CACHE
-    }
-
-    const raw15 = await getData(
-        "BTCUSDT",
-        "15m",
-        120
-    )
-
-    const raw1h = await getData(
-        "BTCUSDT",
-        "1h",
-        120
-    )
-
-    if(!raw15 || !raw1h){
-        return "NEUTRAL"
-    }
-
-    // Chỉ dùng nến đã đóng
-    const data15 = raw15.slice(0, -1)
-    const data1h = raw1h.slice(0, -1)
-
-    if(
-        data15.length < 60 ||
-        data1h.length < 60
-    ){
-        return "NEUTRAL"
-    }
-
-    const close15 =
-        data15.map(x => Number(x[4]))
-
-    const close1h =
-        data1h.map(x => Number(x[4]))
-
-    // ================= 15M =================
-
-    const ema20_15 =
-        ema(close15.slice(-60),20)
-
-    const ema50_15 =
-        ema(close15.slice(-100),50)
-
-    const ema20_15_prev =
-        ema(close15.slice(-61,-1),20)
-
-    // ================= 1H =================
-
-    const ema20_1h =
-        ema(close1h.slice(-60),20)
-
-    const ema50_1h =
-        ema(close1h.slice(-100),50)
-
-    const ema20_1h_prev =
-        ema(close1h.slice(-61,-1),20)
-
-    const ema50_1h_prev =
-        ema(close1h.slice(-101,-1),50)
-
-    const p15 = close15.at(-1)
-    const p1h = close1h.at(-1)
-
-    if(
-        !p15 ||
-        !p1h ||
-        !ema20_15 ||
-        !ema50_15 ||
-        !ema20_1h ||
-        !ema50_1h
-    ){
-        return "NEUTRAL"
-    }
-
-    // ================= TREND STRENGTH =================
-
-    const strength15 =
-        Math.abs(
-            ema20_15 - ema50_15
-        ) / p15
-
-    const strength1h =
-        Math.abs(
-            ema20_1h - ema50_1h
-        ) / p1h
-
-    // ================= SLOPE =================
-
-    const slope20_15 =
-        ema20_15_prev !== 0
-            ? (ema20_15 - ema20_15_prev)
-                / ema20_15_prev
-            : 0
-
-    const slope20_1h =
-        ema20_1h_prev !== 0
-            ? (ema20_1h - ema20_1h_prev)
-                / ema20_1h_prev
-            : 0
-
-    // ================= BTC BULL =================
-
-    const bull15 =
-        p15 > ema20_15 &&
-        ema20_15 > ema50_15 &&
-        slope20_15 > 0 &&
-        strength15 >= 0.0010
-
-    const bull1h =
-        p1h > ema20_1h &&
-        ema20_1h > ema50_1h &&
-        slope20_1h > 0 &&
-        ema50_1h >= ema50_1h_prev &&
-        strength1h >= 0.0010
-
-    // ================= BTC BEAR =================
-
-    const bear15 =
-        p15 < ema20_15 &&
-        ema20_15 < ema50_15 &&
-        slope20_15 < 0 &&
-        strength15 >= 0.0010
-
-    const bear1h =
-        p1h < ema20_1h &&
-        ema20_1h < ema50_1h &&
-        slope20_1h < 0 &&
-        ema50_1h <= ema50_1h_prev &&
-        strength1h >= 0.0010
-
-    // ================= FINAL REGIME =================
-
-    let regime = "NEUTRAL"
-
-    // BTC chỉ được BULL khi cả 15M + 1H cùng xác nhận
-    if(bull15 && bull1h){
-        regime = "BULL"
-    }
-
-    // BTC chỉ được BEAR khi cả 15M + 1H cùng xác nhận
-    else if(bear15 && bear1h){
-        regime = "BEAR"
-    }
-
-    BTC_REGIME_CACHE = regime
-    BTC_REGIME_CACHE_TIME = Date.now()
-
-    return regime
-}
-
 // Input: `best` is the core signal plus symbol:
 // const best = { ...signal, symbol }
 // Returns a DB-ready trade, or null when the signal is invalid.
 // Accepts the stable minimum core contract (side, price/entry, sl, tp),
 // carries additional core fields through unchanged, and normalizes DB fields.
-function buildTradeFromCoreSignal(best, btcRegime, riskBudget) {
+function buildTradeFromCoreSignal(best, riskBudget) {
   const side = String(best?.side ?? best?.direction ?? '').toUpperCase();
   const entry = Number(best?.price ?? best?.entry);
   const sl = Number(best?.sl ?? best?.stopLoss);
@@ -3453,7 +3448,6 @@ function buildTradeFromCoreSignal(best, btcRegime, riskBudget) {
     triggerType: best.triggerType ?? null,
     marketState: best.marketState ?? null,
     volatility: best.volatility ?? null,
-    btcRegime: btcRegime ?? best.btcRegime ?? null,
     qualityScore: Number.isFinite(qualityScore) ? qualityScore : 0,
 
     // `risk` remains the monetary sizing budget expected by the execution code.
@@ -3517,10 +3511,6 @@ if (cooldownLeft > 0) {
         }
 
         console.log("🚀 SMART SCAN...")
-
-const btcRegime = await getBtcRegime()
-
-console.log(`₿ BTC REGIME: ${btcRegime}`)
 
 let now = Date.now()
 
@@ -3666,40 +3656,26 @@ for (let s of signals){
 
     let dbMain = dbCache[keyMain]
 
-if(!dbMain){
-    console.log(
-        `⛔ DB unavailable - skip ${s.symbol}`
-    )
-    continue
-}
-
-let aiMain = 0
-
-if(dbMain.total >= 30){
-
-    const edge =
-        dbMain.winrate - 0.50
-
-    const confidence =
-        Math.min(dbMain.total / 100, 1)
-
-    aiMain =
-        edge * 60 * confidence
+// DB statistics are metadata only. They do not affect coin ranking.
+const dbStats = dbMain || { total: 0, winrate: 0.5 };
+let aiMain = 0;
+if (dbStats.total >= 30 && Number.isFinite(dbStats.winrate)) {
+  aiMain = (dbStats.winrate - 0.50) * 60 * Math.min(dbStats.total / 100, 1);
 }
 
 // DB chỉ loại setup có lịch sử rất xấu
 // ===== DB EDGE — CHỈ LOG, KHÔNG BLOCK =====
 
-if(dbMain.total >= 30){
+if(dbStats.total >= 30){
 
-    const wr = dbMain.winrate
+    const wr = dbStats.winrate
 
     if(wr < 0.42){
 
         console.log(
         `🚫 DB BAD EDGE: ${s.symbol} | ` +
-        `WR=${(dbMain.winrate * 100).toFixed(1)}% | ` +
-        `N=${dbMain.total}`
+        `WR=${(dbStats.winrate * 100).toFixed(1)}% | ` +
+        `N=${dbStats.total}`
     )
     }
 }
@@ -3707,12 +3683,7 @@ if(dbMain.total >= 30){
 // CORE MỚI KHÔNG CÒN SCORE CŨ
 // Không dùng s.score nữa
 
-const coreQuality = Number(s.qualityScore ?? s.score ?? 0)
-const rfAdjustment = Number(s.rankAdjustment) || 0;
-const rankScore =
-  coreQuality +
-  rfAdjustment +
-  Math.max(-10, Math.min(10, aiMain));
+const rankScore = Number(s.rankScore ?? s.qualityScore ?? s.score ?? 0);
 candidates.push({
     ...s,
     finalScore: aiMain,
@@ -3720,16 +3691,6 @@ candidates.push({
     type: "MAIN"
 })
 }
-
-// ================= BTC CONTEXT =================
-
-// Chỉ lưu BTC regime.
-// Không cộng/trừ score của CORE.
-
-candidates = candidates.map(c => ({
-    ...c,
-    btcRegime
-}))
 
         // ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
@@ -3739,11 +3700,20 @@ candidates = candidates.map(c => ({
 
         // Rank all valid signals collected during this scan cycle.
 candidates.sort((a, b) =>
-    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0) ||
-    (Number(b.qualityScore ?? b.score) || 0) - (Number(a.qualityScore ?? a.score) || 0)
+    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0)
 )
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
+
+    const rankScore = Number(c.rankScore)
+    if (!Number.isFinite(rankScore) || rankScore < MIN_RANK_SCORE) {
+        console.log(
+            `🚫 FILTER LOW RANK: ${c.symbol} | ` +
+            `score=${Number.isFinite(rankScore) ? rankScore : "N/A"} | ` +
+            `required=${MIN_RANK_SCORE}`
+        )
+        return false
+    }
 
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
@@ -3764,8 +3734,7 @@ return true
 // ===== SORT LẠI =====
 filtered = filtered
 .sort((a,b)=>
-    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0) ||
-    (Number(b.qualityScore ?? b.score) || 0) - (Number(a.qualityScore ?? a.score) || 0)
+    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0)
 )
 
 // ===== UNIQUE COIN =====
@@ -3785,7 +3754,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 8);
+let picks = filtered.slice(0, 2);
 for (let best of picks){
 
     //let realActive = activeTrades.filter(
@@ -3963,7 +3932,6 @@ if(risk <= 0){
 
 const trade = buildTradeFromCoreSignal(
     best,
-    btcRegime,
     risk
 )
 
@@ -5115,7 +5083,6 @@ async function recoverOrphanPositions(){
                 setup: "ORPHAN_RECOVERY",
                 marketState: "RECOVERY",
                 volatility: "UNKNOWN",
-                btcRegime: "UNKNOWN",
 
                 quantity:
                     Math.abs(positionAmt),
