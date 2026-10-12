@@ -3754,14 +3754,9 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 2);
+let picks = filtered.slice(0, 1);
 for (let best of picks){
 
-    //let realActive = activeTrades.filter(
-    //x =>
-        //x.result === "PENDING" &&
-       // !x.waitingEntry
-//).length
 let positions = []
 
 try{
