@@ -1,4 +1,7 @@
 let DB_READY = false
+let STOP_NEW_ENTRIES = false
+let signalClaims = null
+let ORPHAN_RECOVERY_RUNNING = false
 const OPEN_POSITION_LOCK = {}
 const TPSL_LOCK = {}
 const TPSL_PHASE = {}
@@ -19,8 +22,17 @@ let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
 const OPENING_POSITIONS = {}
 const fs = require("fs")
+const path = require("path")
+const os = require("os")
+const crypto = require("crypto")
 
-const PID_FILE = "./bot.pid"
+// Use a machine-local lock keyed to this script, independent of the launch
+// directory and outside OneDrive sync.
+const PID_LOCK_KEY = crypto.createHash("sha256")
+    .update(path.resolve(__filename))
+    .digest("hex")
+    .slice(0, 16)
+const PID_FILE = path.join(os.tmpdir(), `tradebot-${PID_LOCK_KEY}.pid`)
 
 function pidIsAlive(pid){
     if(!Number.isSafeInteger(pid) || pid <= 0) return false
@@ -69,11 +81,15 @@ function acquirePidLock(){
 acquirePidLock()
 //
 process.on("unhandledRejection", err => {
+    STOP_NEW_ENTRIES = true
     console.log("UNHANDLED:", err)
+    console.log("⛔ New entries paused after unhandled rejection; position management remains active")
 })
 
 process.on("uncaughtException", err => {
     console.log("UNCAUGHT:", err)
+    cleanup()
+    process.exit(1)
 })
 const https = require("https")
 
@@ -161,7 +177,13 @@ async function getPositionsCached(){
 }
 async function safeFetch(url, options = {}, retry = 3){
 
-    for(let i = 0; i < retry; i++){
+    // Automatically retry reads only. Repeating a timed-out order POST can
+    // submit the same market action twice because the first response was lost.
+    const method = String(options.method || "GET").toUpperCase()
+    const maxAttempts = method === "GET" ? retry : 1
+    const logUrl = String(url).replace(/([?&]signature=)[^&]*/i, "$1[redacted]")
+
+    for(let i = 0; i < maxAttempts; i++){
 
         try{
 
@@ -211,13 +233,13 @@ async function safeFetch(url, options = {}, retry = 3){
 
             if(!url.includes("telegram.org")){
                 console.log(
-                    `❌ FETCH FAIL: ${url}`,
+                    `❌ FETCH FAIL: ${logUrl}`,
                     e?.message || e
                 )
             }
         }
 
-        if(i < retry - 1){
+        if(i < maxAttempts - 1){
             await new Promise(r =>
                 setTimeout(r, 1000)
             )
@@ -287,16 +309,23 @@ async function syncTime(){
 
         const start = Date.now()
 
-        let res = await fetch(
-            "https://fapi.binance.com/fapi/v1/time"
-        )
-
-        if(!res){
-            TIME_SYNCED = false
-            return
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 10000)
+        let res
+        let data
+        try{
+            res = await fetch(
+                "https://fapi.binance.com/fapi/v1/time",
+                { signal: controller.signal, agent }
+            )
+            if(!res.ok) throw new Error(`TIME HTTP ${res.status}`)
+            data = await res.json()
+        }finally{
+            clearTimeout(timeout)
         }
-
-        let data = await res.json()
+        if(!Number.isFinite(Number(data?.serverTime))){
+            throw new Error("BINANCE SERVER TIME RESPONSE INVALID")
+        }
 
         const end = Date.now()
 
@@ -372,7 +401,6 @@ const binance = Binance({
     apiSecret: process.env.BINANCE_SECRET,
     recvWindow: 60000
 })
-const crypto = require("crypto")
 
 async function getBalance(){
     try{
@@ -434,6 +462,7 @@ const ENTRY_COOLDOWN_MS = 8 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
+let syncingActiveTrades = false
 let activeTrades = []
 let exchangeInfoCache = null
 let validFuturesSymbols = new Set()
@@ -756,23 +785,19 @@ async function cancelAlgoTPSL(symbol){
 }
 async function hasPosition(symbol){
 
-    try{
-
-        let positions =
-            await getPositionsCached()
-
-        return positions.find(
-            p =>
-                p.symbol === symbol &&
-                Math.abs(Number(p.positionAmt)) > 0
-        )
-
-    }catch(e){
-
-        return null
+    // A failed Binance request must never look like a confirmed flat position.
+    const positions = await getPositionsCached()
+    if(!Array.isArray(positions)){
+        throw new Error("BINANCE POSITION RESPONSE INVALID")
     }
+
+    return positions.find(
+        p =>
+            p.symbol === symbol &&
+            Math.abs(Number(p.positionAmt)) > 0
+    ) || null
 }
-async function openPosition(symbol, side, qty){
+async function openPosition(symbol, side, qty, signalKey){
 
     if(!symbol){
         console.log("❌ OPEN NO SYMBOL")
@@ -812,25 +837,6 @@ async function openPosition(symbol, side, qty){
                 position: existingPos
             }
         }
-        // =========================================
-// CLEAR STALE ORDERS / ALGO TPSL
-// =========================================
-
-const cleared =
-    await cancelAllOrders(symbol)
-
-if(!cleared){
-
-    console.log(
-        `⛔ SKIP OPEN ${symbol}: OLD ORDERS NOT CLEARED`
-    )
-
-    return {
-        skipped: true,
-        reason: "OLD_ORDERS_NOT_CLEARED"
-    }
-}
-
         // =========================================
         // CHECK OPEN ORDERS
         // =========================================
@@ -875,6 +881,17 @@ if(!cleared){
             return {
                 skipped: true,
                 reason: "MARKET_ORDER_EXISTS"
+            }
+        }
+
+        // Clear stale protective/limit orders only after confirming there is
+        // no in-flight market order whose partial fill could open a position.
+        const cleared = await cancelAllOrders(symbol)
+        if(!cleared){
+            console.log(`⛔ SKIP OPEN ${symbol}: OLD ORDERS NOT CLEARED`)
+            return {
+                skipped: true,
+                reason: "OLD_ORDERS_NOT_CLEARED"
             }
         }
 
@@ -936,11 +953,15 @@ if(!cleared){
         const timestamp =
             getTimestamp()
 
+        const clientOrderId =
+            `bot_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`
+
         const query =
             `symbol=${symbol}` +
             `&side=${side === "LONG" ? "BUY" : "SELL"}` +
             `&type=MARKET` +
             `&quantity=${qty}` +
+            `&newClientOrderId=${clientOrderId}` +
             `&timestamp=${timestamp}` +
             `&recvWindow=10000`
 
@@ -952,6 +973,16 @@ if(!cleared){
                 )
                 .update(query)
                 .digest("hex")
+
+        // Record the point of no return before sending the MARKET request.
+        const claimUpdate = await signalClaims.updateOne(
+            { signalKey, state: "CLAIMED" },
+            { $set: { state: "ORDER_SUBMITTING", orderClientId: clientOrderId, updatedAt: new Date() } }
+        )
+        if(claimUpdate.matchedCount !== 1){
+            console.log(`⛔ SIGNAL CLAIM LOST BEFORE ORDER ${symbol}`)
+            return null
+        }
 
         const url =
             `${baseUrl}${path}?${query}&signature=${signature}`
@@ -965,10 +996,44 @@ if(!cleared){
                         "X-MBX-APIKEY":
                             process.env.BINANCE_KEY
                     }
-                }
+                },
+                1
             )
 
-        if(!res || !res.ok){
+        let data = null
+
+        if(!res){
+
+            // Resolve an ambiguous network outcome by querying the exact
+            // client order ID; never blindly resubmit the market order.
+            for(let attempt = 0; attempt < 6; attempt++){
+                try{
+                    data = await binance.futuresGetOrder({
+                        symbol,
+                        origClientOrderId: clientOrderId,
+                        recvWindow: 60000
+                    })
+                    if(data) break
+                }catch(queryError){
+                    await checkTimeError(queryError)
+                }
+                await new Promise(r => setTimeout(r, 1000))
+            }
+
+            if(!data){
+                POS_CACHE = null
+                POS_CACHE_TIME = 0
+                const recoveredPosition = await waitPosition(symbol)
+                const recoveredAmount = Number(recoveredPosition?.positionAmt || 0)
+                const expectedSide = side === "LONG" ? recoveredAmount > 0 : recoveredAmount < 0
+                if(recoveredPosition && expectedSide){
+                    data = { status: "FILLED", recovered: true }
+                }else{
+                    console.log(`❌ ORDER OUTCOME UNKNOWN ${symbol} CID=${clientOrderId}`)
+                    return null
+                }
+            }
+        }else if(!res.ok){
 
             console.log(
                 `❌ ORDER HTTP FAIL ${symbol}`,
@@ -976,10 +1041,9 @@ if(!cleared){
             )
 
             return null
+        }else{
+            data = await res.json()
         }
-
-        let data =
-            await res.json()
 
         if(
             data.code === -1021 ||
@@ -1125,88 +1189,50 @@ async function placeTPSLWithRetry(
     type,
     stopPrice
 ){
+    const closeSide = side === "LONG" ? "SELL" : "BUY"
+    const clientAlgoId = `bot_${type.toLowerCase()}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`
+    const baseUrl = "https://fapi.binance.com"
 
-    const closeSide =
-        side === "LONG"
-            ? "SELL"
-            : "BUY"
-
-    for(
-        let attempt = 1;
-        attempt <= 4;
-        attempt++
-    ){
-
-        try{
-
-            const result =
-                await binance.futuresOrder({
-
-                    symbol,
-                    side: closeSide,
-                    type,
-                    stopPrice,
-                    closePosition: true,
-                    workingType: "MARK_PRICE",
-                    recvWindow: 60000
-
-                })
-
-            if(
-                result &&
-                (
-                    result.algoId ||
-                    result.orderId
-                )
-            ){
-
-                return result
-            }
-
-        }catch(e){
-
-            await checkTimeError(e)
-
-            const msg =
-                String(
-                    e?.message ||
-                    e?.body ||
-                    e
-                )
-
-            const conflict =
-                msg.includes(
-                    "open stop or take profit order"
-                ) ||
-                msg.includes(
-                    "GTE and closePosition"
-                )
-
-            console.log(
-                `⚠️ TPSL ${type} RETRY ` +
-                `${symbol} ` +
-                `ATTEMPT=${attempt}/4: ` +
-                msg
-            )
-
-            if(!conflict){
-
-                throw e
-            }
-
-            if(attempt < 4){
-
-                await new Promise(r =>
-                    setTimeout(
-                        r,
-                        1000 * attempt
-                    )
-                )
-            }
-        }
+    const signedRequest = async (path, method, params) => {
+        const query = new URLSearchParams({
+            ...params,
+            recvWindow: "60000",
+            timestamp: String(getTimestamp())
+        }).toString()
+        const signature = crypto.createHmac("sha256", process.env.BINANCE_SECRET).update(query).digest("hex")
+        const url = `${baseUrl}${path}?${query}&signature=${signature}`
+        const res = await safeFetch(url, {
+            method,
+            headers: { "X-MBX-APIKEY": process.env.BINANCE_KEY }
+        }, 1)
+        if(!res) return null
+        return res.json()
     }
 
-    return null
+    try{
+        const result = await signedRequest("/fapi/v1/algoOrder", "POST", {
+            algoType: "CONDITIONAL",
+            symbol,
+            side: closeSide,
+            type,
+            triggerPrice: String(stopPrice),
+            closePosition: "true",
+            workingType: "MARK_PRICE",
+            clientAlgoId
+        })
+        if(result?.algoId) return result
+
+        // POST may have reached Binance even if its response was lost. Query by
+        // the unique client id; never blindly repeat a protection order.
+        await new Promise(r => setTimeout(r, 800))
+        const found = await signedRequest("/fapi/v1/algoOrder", "GET", { symbol, clientAlgoId })
+        if(found?.algoId) return found
+        throw new Error(`Algo order not confirmed (clientAlgoId=${clientAlgoId})`)
+    }catch(e){
+        await checkTimeError(e)
+        console.log(`❌ TPSL ${type} FAILED ${symbol}:`, e?.message || e)
+        throw e
+    }
 }
 async function setDynamicTPSL(trade){
 
@@ -1992,7 +2018,8 @@ async function openPositionWithTPSL(trade, qty){
         await openPosition(
             symbol,
             trade.side,
-            qty
+            qty,
+            `${symbol}:${Number(trade.signalAt)}`
         )
 
     if(!order){
@@ -3086,6 +3113,7 @@ async function coreLogic(data15, symbol = null) {
 
   return {
     side, symbol, price, sl, tp,
+    signalAt: candles[i].t,
     setup: 'RANGE_FILTER',
     pullbackType: 'NONE',
     triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
@@ -3486,6 +3514,11 @@ function buildTradeFromCoreSignal(best, riskBudget) {
 
 // ================= SCANNER ================
 async function scanner(){
+
+    if(STOP_NEW_ENTRIES){
+        console.log("⛔ SCAN PAUSED: runtime error requires restart")
+        return
+    }
     
     if(isScanning){
         console.log("⛔ Skip scan trùng")
@@ -4176,6 +4209,38 @@ trade.risk * 1.10
 
     try{
 
+        // Persistently consume this closed-candle signal before sending an order.
+        // This prevents a fast exit or process restart from reusing the same turn.
+        if(!signalClaims || !Number.isFinite(Number(trade.signalAt))){
+            console.log(`⛔ SIGNAL CLAIM UNAVAILABLE ${trade.symbol}`)
+            continue
+        }
+
+        const signalKey = `${trade.symbol}:${Number(trade.signalAt)}`
+        try{
+            await signalClaims.insertOne({
+                signalKey,
+                symbol: trade.symbol,
+                signalAt: Number(trade.signalAt),
+                side: trade.side,
+                plannedEntry: Number(trade.entry),
+                plannedSL: Number(trade.sl),
+                plannedTP: Number(trade.tp),
+                initialRisk: Number(trade.initialRisk),
+                riskBudget: Number(trade.risk),
+                targetR: Number(trade.riskDetail?.targetR || 1.6),
+                state: "CLAIMED",
+                createdAt: new Date()
+            })
+        }catch(claimError){
+            if(claimError?.code === 11000){
+                console.log(`⏭️ SIGNAL ALREADY USED ${trade.symbol} ${trade.signalAt}`)
+                continue
+            }
+            console.log(`⛔ SIGNAL CLAIM FAILED ${trade.symbol}: ${claimError?.message || claimError}`)
+            continue
+        }
+
         let execution
 
 try{
@@ -4251,12 +4316,81 @@ if(!execution?.ok){
             `ENTRY=${realPosition.entryPrice}`
         )
 
-        // KHÔNG continue ở đây nếu position thật đang tồn tại.
-        // Phải chuyển sang recovery TPSL / DB.
+        // Recover real exchange state before registering this as a live trade.
+        const recoveredEntry = Number(realPosition.entryPrice)
+        const recoveredRisk = Number(
+            trade.initialRisk ||
+            trade.riskDetail?.initialRisk ||
+            Math.abs(Number(trade.price) - Number(trade.sl))
+        )
+        const targetR = Number(trade.riskDetail?.targetR || 1.6)
+        if(
+            !Number.isFinite(recoveredEntry) || recoveredEntry <= 0 ||
+            !Number.isFinite(recoveredRisk) || recoveredRisk <= 0 ||
+            !Number.isFinite(targetR) || targetR <= 0
+        ){
+            console.error(`🚨 CANNOT RECOVER RISK ${trade.symbol}; attempting emergency close`)
+            const emergencyClosed = await closePosition(
+                trade.symbol,
+                trade.side,
+                Math.abs(Number(realPosition.positionAmt))
+            )
+            if(!emergencyClosed){
+                await sendTelegram2(`🚨 EMERGENCY: ${trade.symbol} is still open; entry and TPSL recovery failed. Check Binance now.`)
+                trade.emergencyProtectionNeeded = true
+                execution = { ok: true, initialRisk: recoveredRisk, protectionPending: true }
+            }else{
+                await signalClaims.updateOne(
+                    { signalKey },
+                    { $set: { state: "CLOSED_AFTER_FAILURE", updatedAt: new Date() } }
+                )
+                continue
+            }
+        }else{
+            trade.entry = recoveredEntry
+            trade.initialRisk = recoveredRisk
+            trade.sl = trade.side === "LONG"
+                ? recoveredEntry - recoveredRisk
+                : recoveredEntry + recoveredRisk
+            trade.tp = trade.side === "LONG"
+                ? recoveredEntry + recoveredRisk * targetR
+                : recoveredEntry - recoveredRisk * targetR
+
+            const recoveredTPSL = await setInitialTPSL(trade)
+            if(recoveredTPSL?.ok){
+                trade.sl = Number(recoveredTPSL.sl)
+                trade.tp = Number(recoveredTPSL.tp)
+                execution = { ok: true, initialRisk: Math.abs(trade.entry - trade.sl), recovered: true }
+                trade.emergencyProtectionNeeded = false
+                console.log(`🛡 RECOVERED TPSL ${trade.symbol} SL=${trade.sl} TP=${trade.tp}`)
+            }else{
+                console.error(`🚨 TPSL RECOVERY FAILED ${trade.symbol}; attempting emergency close`)
+                const emergencyClosed = await closePosition(
+                    trade.symbol,
+                    trade.side,
+                    Math.abs(Number(realPosition.positionAmt))
+                )
+                if(emergencyClosed){
+                    await signalClaims.updateOne(
+                        { signalKey },
+                        { $set: { state: "CLOSED_AFTER_FAILURE", updatedAt: new Date() } }
+                    )
+                    continue
+                }
+                trade.emergencyProtectionNeeded = true
+                execution = { ok: true, initialRisk: recoveredRisk, protectionPending: true }
+                await sendTelegram2(`🚨 EMERGENCY: ${trade.symbol} remains open and TPSL could not be confirmed. The bot will retry protection; check Binance now.`)
+            }
+        }
     }else{
 
         console.log(
             `ℹ️ ${trade.symbol} confirmed no real position`
+        )
+
+        await signalClaims.updateOne(
+            { signalKey },
+            { $set: { state: "NO_POSITION", updatedAt: new Date() } }
         )
 
         continue
@@ -4270,7 +4404,25 @@ trade.waitingEntry = false
 // BẬT DYNAMIC TPSL NGAY LẬP TỨC
 // ==================================================
 NEXT_ENTRY_ALLOWED_AT = Date.now() + ENTRY_COOLDOWN_MS;
-TPSL_PHASE[trade.symbol] = "ACTIVE"
+TPSL_PHASE[trade.symbol] = trade.emergencyProtectionNeeded
+    ? "NEEDS_PROTECTION"
+    : "ACTIVE"
+
+try{
+    await signalClaims.updateOne(
+        { signalKey },
+        { $set: {
+            state: trade.emergencyProtectionNeeded ? "NEEDS_PROTECTION" : "OPEN_UNRECORDED",
+            entry: Number(trade.entry),
+            sl: Number(trade.sl),
+            tp: Number(trade.tp),
+            initialRisk: Number(execution.initialRisk),
+            updatedAt: new Date()
+        } }
+    )
+}catch(claimUpdateError){
+    console.error(`⚠️ SIGNAL CLAIM UPDATE FAILED ${trade.symbol}:`, claimUpdateError?.message || claimUpdateError)
+}
 
 console.log(
     `🟢 TPSL ACTIVE ${trade.symbol} — BINANCE ENTRY CONFIRMED`
@@ -4355,6 +4507,10 @@ trade._id =
 
 trade.dbSaveFailed = false
 trade.dbRecoveryNeeded = false
+await signalClaims.updateOne(
+    { signalKey },
+    { $set: { state: "TRADE_SAVED", updatedAt: new Date() } }
+)
 
 activeTrades.push(trade)
 
@@ -4383,7 +4539,9 @@ activeTrades.push(trade)
         dbRecoveryNeeded: true
     }
 
-    TPSL_PHASE[trade.symbol] = "ACTIVE"
+    TPSL_PHASE[trade.symbol] = trade.emergencyProtectionNeeded
+        ? "NEEDS_PROTECTION"
+        : "ACTIVE"
 
     activeTrades.push(ramTrade)
 
@@ -4889,6 +5047,9 @@ async function closePosition(symbol, side, qty){
 }
 async function recoverOrphanPositions(){
 
+    if(ORPHAN_RECOVERY_RUNNING) return
+    ORPHAN_RECOVERY_RUNNING = true
+
     try{
 
         let positions = []
@@ -4985,8 +5146,9 @@ async function recoverOrphanPositions(){
         )
     }
 
-    TPSL_PHASE[symbol] =
-        "ACTIVE"
+    TPSL_PHASE[symbol] = dbTrade.emergencyProtectionNeeded
+        ? "NEEDS_PROTECTION"
+        : "ACTIVE"
 
     console.log(
         `♻️ RECOVER DB TRADE ${symbol} → TPSL ACTIVE`
@@ -5023,6 +5185,32 @@ async function recoverOrphanPositions(){
 
                 continue
             }
+
+            let signalClaim = null
+            try{
+                signalClaim = await signalClaims.findOne(
+                    {
+                        symbol,
+                        side,
+                        state: { $in: ["ORDER_SUBMITTING", "OPEN_UNRECORDED", "NEEDS_PROTECTION"] }
+                    },
+                    { sort: { createdAt: -1 } }
+                )
+            }catch(claimLookupError){
+                console.log(`⚠️ ORPHAN SIGNAL LOOKUP FAIL ${symbol}:`, claimLookupError?.message || claimLookupError)
+            }
+
+            const claimedRisk = Number(
+                signalClaim?.initialRisk ||
+                Math.abs(Number(signalClaim?.plannedEntry) - Number(signalClaim?.plannedSL))
+            )
+            const claimedTargetR = Number(
+                signalClaim?.targetR ||
+                (Math.abs(Number(signalClaim?.plannedTP) - Number(signalClaim?.plannedEntry)) / claimedRisk)
+            )
+            const hasRecoverableRisk =
+                Number.isFinite(claimedRisk) && claimedRisk > 0 &&
+                Number.isFinite(claimedTargetR) && claimedTargetR > 0
 
             // ==========================================
             // LẤY MARK PRICE
@@ -5066,11 +5254,16 @@ async function recoverOrphanPositions(){
 
                 entry,
 
-                tp: null,
-                sl: null,
+                tp: hasRecoverableRisk
+                    ? (side === "LONG" ? entry + claimedRisk * claimedTargetR : entry - claimedRisk * claimedTargetR)
+                    : null,
+                sl: hasRecoverableRisk
+                    ? (side === "LONG" ? entry - claimedRisk : entry + claimedRisk)
+                    : null,
 
-                risk: 0,
-                rr: 0,
+                risk: Number(signalClaim?.riskBudget || 0),
+                rr: hasRecoverableRisk ? claimedTargetR : 0,
+                initialRisk: hasRecoverableRisk ? claimedRisk : null,
 
                 score: 0,
                 finalScore: 0,
@@ -5106,6 +5299,7 @@ async function recoverOrphanPositions(){
                 dbRecoveryNeeded:true,
 
                 recoveredFromBinance:true,
+                emergencyProtectionNeeded: hasRecoverableRisk,
 
                 recoveredAt:
                     Date.now(),
@@ -5129,8 +5323,37 @@ if(existingIndex !== -1){
     // Đã có trade trong RAM.
     // Không tạo thêm trade thứ 2.
 
-    TPSL_PHASE[symbol] =
-        "ACTIVE"
+    TPSL_PHASE[symbol] = orphanTrade.emergencyProtectionNeeded
+        ? "NEEDS_PROTECTION"
+        : "ORPHAN_UNPROTECTED"
+
+    if(orphanTrade.emergencyProtectionNeeded){
+        const protection = await setInitialTPSL(orphanTrade)
+        if(protection?.ok){
+            orphanTrade.sl = Number(protection.sl)
+            orphanTrade.tp = Number(protection.tp)
+            orphanTrade.initialRisk = Math.abs(entry - orphanTrade.sl)
+            orphanTrade.emergencyProtectionNeeded = false
+            TPSL_PHASE[symbol] = "ACTIVE"
+            if(signalClaim?.signalKey){
+                await signalClaims.updateOne(
+                    { signalKey: signalClaim.signalKey },
+                    { $set: {
+                        state: "OPEN_UNRECORDED",
+                        entry,
+                        sl: orphanTrade.sl,
+                        tp: orphanTrade.tp,
+                        initialRisk: orphanTrade.initialRisk,
+                        updatedAt: new Date()
+                    } }
+                )
+            }
+        }else{
+            console.error(`🚨 ORPHAN TPSL NOT CONFIRMED ${symbol}; emergency close retries enabled`)
+        }
+    }else{
+        await sendTelegram2(`🚨 UNRECOGNIZED OPEN POSITION ${symbol} ${side}. No saved signal risk was found; bot cannot safely invent SL/TP. Please protect or close it in Binance.`)
+    }
 
     console.log(
         `♻️ ORPHAN ${symbol} ALREADY ACTIVE → SKIP DUPLICATE`
@@ -5182,6 +5405,13 @@ console.log(
                 orphanTrade.dbRecoveryNeeded =
                     false
 
+                if(signalClaim?.signalKey){
+                    await signalClaims.updateOne(
+                        { signalKey: signalClaim.signalKey },
+                        { $set: { state: "TRADE_SAVED", updatedAt: new Date() } }
+                    )
+                }
+
                 console.log(
                     `💾 ORPHAN RECOVERY SAVED ${symbol}`
                 )
@@ -5205,6 +5435,8 @@ console.log(
             "❌ ORPHAN RECOVERY ERROR:",
             e?.message || e
         )
+    }finally{
+        ORPHAN_RECOVERY_RUNNING = false
     }
 }
 //////////////
@@ -5215,6 +5447,9 @@ async function start(){
         // ==================================================
         if(!process.env.MONGO_URI){
             throw new Error("❌ Thiếu MONGO_URI")
+        }
+        if(!process.env.BINANCE_KEY || !process.env.BINANCE_SECRET){
+            throw new Error("❌ Thiếu BINANCE_KEY hoặc BINANCE_SECRET")
         }
         console.log("🚀 START BOT...")
         // ==================================================
@@ -5235,6 +5470,32 @@ while(!dbOK){
         })
         db = client.db("trading")
         trades = db.collection("trades")
+        await trades.createIndex(
+            { symbol: 1, result: 1 },
+            { name: "trades_symbol_result" }
+        )
+        await trades.createIndex(
+            { result: 1, setup: 1, marketState: 1, side: 1, volatility: 1, createdAt: -1 },
+            { name: "trades_stats_recent" }
+        )
+        await trades.createIndex(
+            { result: 1, createdAt: -1 },
+            { name: "trades_result_recent" }
+        )
+        signalClaims = db.collection("trade_signal_claims")
+        await signalClaims.createIndex(
+            { signalKey: 1 },
+            { unique: true, name: "uniq_trade_signal_key" }
+        )
+        // Signal keys remain durable so a long-lived or recovered position
+        // never loses its deduplication/risk metadata to a TTL expiry.
+        try{
+            await signalClaims.dropIndex("expire_trade_signal_claims_90d")
+        }catch(indexError){
+            if(indexError?.codeName !== "IndexNotFound" && indexError?.code !== 27){
+                throw indexError
+            }
+        }
         // TEST DB THỰC SỰ ĐỌC ĐƯỢC
         await trades.findOne(
             {},
@@ -5271,15 +5532,18 @@ console.log(
         // =================================================
         // 4. SYNC BINANCE TIME
         // ==================================================
-        await syncTime()
-        while(!TIME_SYNCED){
-            console.log(
-                "⏳ Waiting time sync..."
-            )
-            await new Promise(r =>
-                setTimeout(r, 1000)
-            )
+        for(let attempt = 1; attempt <= 10 && !TIME_SYNCED; attempt++){
+            await syncTime()
+            if(!TIME_SYNCED){
+                console.log(`⏳ Waiting time sync ${attempt}/10`)
+                await new Promise(r => setTimeout(r, 2000))
+            }
         }
+        if(!TIME_SYNCED){
+            throw new Error("BINANCE TIME SYNC FAILED; refusing to start order loops")
+        }
+        await requireOneWayPositionMode()
+        console.log("✅ BINANCE POSITION MODE: ONE-WAY")
         setInterval(
             syncTime,
             60000
@@ -5326,24 +5590,8 @@ console.log(
         console.log(
             "✅ DEAD LOCK CLEARED"
         )
-        // ==================================================
-        // 8. EXPIRE PENDING QUÁ 24H
-        // ==================================================
-        await trades.updateMany(
-            {
-                result: "PENDING",
-                createdAt: {
-                    $lt:
-                        Date.now() -
-                        24 * 60 * 60 * 1000
-                }
-            },
-            {
-                $set: {
-                    result: "EXPIRED"
-                }
-            }
-        )
+        // Never expire a PENDING trade just because it is old: live positions
+        // can legitimately remain open beyond 24 hours.
         // ==================================================
 // 9. LOAD PENDING TRADES TỪ DB
 // ==================================================
@@ -5364,8 +5612,9 @@ for(const trade of activeTrades){
         continue
     }
 
-    TPSL_PHASE[trade.symbol] =
-        "ACTIVE"
+    TPSL_PHASE[trade.symbol] = trade.emergencyProtectionNeeded
+        ? "NEEDS_PROTECTION"
+        : "ACTIVE"
 }
 
 console.log(
@@ -5509,10 +5758,11 @@ async function getDBStats(setup, market, side, volatility){
 
         // ===== lấy dữ liệu db =====
         let totalDB = await col.countDocuments({
-            result: { $ne: "PENDING" }
+            result: { $in: ["WIN", "LOSS"] }
         })
 
         let minSample = Math.min(Math.max(10, Math.floor(totalDB * 0.1)), 50)
+        const sampleLimit = 2000
 
         // ===== QUERY CHÍNH =====
         let data = await col.find({
@@ -5520,7 +5770,7 @@ async function getDBStats(setup, market, side, volatility){
     marketState: market,
     side,
     result: { $in:["WIN","LOSS"] }
-}).toArray()
+}).sort({ createdAt: -1 }).limit(sampleLimit).toArray()
 
         // ===== FILTER VOL =====
         let filtered = data.filter(t => !t.volatility || t.volatility === volatility)
@@ -5535,7 +5785,7 @@ async function getDBStats(setup, market, side, volatility){
         setup,
         side,
         result: { $in:["WIN","LOSS"] }
-    }).toArray()
+    }).sort({ createdAt: -1 }).limit(sampleLimit).toArray()
 }
 
         // ===== FALLBACK 2 =====
@@ -5543,7 +5793,7 @@ async function getDBStats(setup, market, side, volatility){
             data = await col.find({
                 side,
                 result: { $in:["WIN","LOSS"] }
-            }).toArray()
+            }).sort({ createdAt: -1 }).limit(sampleLimit).toArray()
         }
 
         // ===== FINAL =====
@@ -5613,6 +5863,9 @@ async function getDBStats(setup, market, side, volatility){
 start()
 
 async function syncActiveTrades(){
+
+    if(syncingActiveTrades) return
+    syncingActiveTrades = true
 
     try{
 
@@ -5685,7 +5938,8 @@ async function syncActiveTrades(){
         }
 
         // ==================================================
-        // 3. CHỈ GIỮ DB TRADE CÓ POSITION THẬT
+        // 3. GIỮ MỌI PENDING TRADE TỪ DB ĐỂ checkTrades CÓ THỂ
+        //    GHI NHẬN PNL KHI VỊ THẾ VỪA ĐÓNG TRƯỚC LẦN SYNC.
         // ==================================================
 
         const merged =
@@ -5700,17 +5954,9 @@ async function syncActiveTrades(){
                 continue
             }
 
-            if(
-                positionMap.has(
-                    trade.symbol
-                )
-            ){
-
-                merged.set(
-                    trade.symbol,
-                    trade
-                )
-            }
+            // Binance flat may mean TP/SL just filled; do not discard this
+            // record before checkTrades reconciles its realized PnL.
+            if(!merged.has(trade.symbol)) merged.set(trade.symbol, trade)
 
         }
 
@@ -5766,8 +6012,9 @@ async function syncActiveTrades(){
                     trade.symbol
                 )
 
-                TPSL_PHASE[trade.symbol] =
-                    "ACTIVE"
+                TPSL_PHASE[trade.symbol] = trade.emergencyProtectionNeeded
+                    ? "NEEDS_PROTECTION"
+                    : "ACTIVE"
             }
         }
 
@@ -5801,6 +6048,8 @@ async function syncActiveTrades(){
             "❌ SYNC ACTIVE ERROR:",
             e?.message || e
         )
+    }finally{
+        syncingActiveTrades = false
     }
 }
 
@@ -5888,9 +6137,8 @@ async function runDynamicTPSL(){
             const symbol =
                 trade.symbol
 
-            if(
-                TPSL_PHASE[symbol] !== "ACTIVE"
-            ){
+            const phase = TPSL_PHASE[symbol]
+            if(phase !== "ACTIVE" && phase !== "NEEDS_PROTECTION"){
                 continue
             }
 
@@ -5914,6 +6162,46 @@ async function runDynamicTPSL(){
 
                 delete TPSL_PHASE[symbol]
 
+                continue
+            }
+
+            if(phase === "NEEDS_PROTECTION"){
+                TPSL_PENDING[symbol] = true
+                try{
+                    const protection = await setInitialTPSL(trade)
+                    if(protection?.ok){
+                        trade.sl = Number(protection.sl)
+                        trade.tp = Number(protection.tp)
+                        trade.initialRisk = Math.abs(Number(trade.entry) - trade.sl)
+                        trade.emergencyProtectionNeeded = false
+                        TPSL_PHASE[symbol] = "ACTIVE"
+                        await trades.updateOne(
+                            { symbol, result: "PENDING" },
+                            { $set: {
+                                sl: trade.sl,
+                                tp: trade.tp,
+                                initialRisk: trade.initialRisk,
+                                emergencyProtectionNeeded: false,
+                                updatedAt: Date.now()
+                            } }
+                        )
+                        console.log(`🛡 EMERGENCY TPSL RECOVERED ${symbol}`)
+                    }else{
+                        console.log(`🚨 PROTECTION STILL MISSING ${symbol}; retrying emergency close`)
+                        const pos = positionMap.get(symbol)
+                        const qty = Math.abs(Number(pos?.positionAmt || 0))
+                        if(qty > 0){
+                            const closed = await closePosition(symbol, trade.side, qty)
+                            if(!closed){
+                                console.log(`🚨 EMERGENCY CLOSE STILL FAILING ${symbol}`)
+                            }
+                        }
+                    }
+                }catch(protectionError){
+                    console.log(`🚨 EMERGENCY PROTECTION ERROR ${symbol}:`, protectionError?.message || protectionError)
+                }finally{
+                    delete TPSL_PENDING[symbol]
+                }
                 continue
             }
 
