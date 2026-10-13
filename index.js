@@ -382,6 +382,31 @@ function getTimestamp(){
         : Date.now()
     return Math.floor(ts)
 }
+async function requireOneWayPositionMode(){
+    const params = new URLSearchParams({
+        recvWindow: "10000",
+        timestamp: String(getTimestamp())
+    }).toString()
+    const signature = crypto
+        .createHmac("sha256", process.env.BINANCE_SECRET)
+        .update(params)
+        .digest("hex")
+    const url = `https://fapi.binance.com/fapi/v1/positionSide/dual?${params}&signature=${signature}`
+    const res = await safeFetch(url, {
+        method: "GET",
+        headers: { "X-MBX-APIKEY": process.env.BINANCE_KEY }
+    }, 1)
+    if(!res) throw new Error("Cannot verify Binance position mode; refusing to start")
+
+    const data = await res.json()
+    if(typeof data?.dualSidePosition !== "boolean"){
+        throw new Error("Binance returned an invalid position-mode response")
+    }
+    if(data.dualSidePosition){
+        throw new Error("Binance is in Hedge Mode; this bot requires One-way Mode")
+    }
+    return true
+}
 //////////////
 require("dotenv").config()
 const { MongoClient } = require("mongodb")
