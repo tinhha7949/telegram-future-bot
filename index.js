@@ -1215,7 +1215,12 @@ async function placeTPSLWithRetry(
     stopPrice
 ){
     const closeSide = side === "LONG" ? "SELL" : "BUY"
-    const clientAlgoId = `bot_${type.toLowerCase()}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`
+    // Binance requires clientAlgoId to be shorter than 36 characters.
+    // Compact format: bot marker + order kind + base36 time + 12 hex chars.
+    const clientAlgoId = `b${type === "STOP_MARKET" ? "s" : "t"}${Date.now().toString(36)}${crypto.randomBytes(6).toString("hex")}`
+    if(clientAlgoId.length >= 36){
+        throw new Error(`Generated clientAlgoId exceeds Binance limit (${clientAlgoId.length})`)
+    }
     const baseUrl = "https://fapi.binance.com"
 
     const signedRequest = async (path, method, params) => {
@@ -2192,7 +2197,7 @@ async function openPositionWithTPSL(trade, qty){
                     e.message
                 )
 
-                return false
+                return { ok: false, error: "INITIAL_POSITION_VERIFY_FAILED", positionMayBeOpen: true }
             }
 
             // Position đã biến mất → không close nữa
@@ -2202,7 +2207,7 @@ async function openPositionWithTPSL(trade, qty){
                     `ℹ️ POSITION ALREADY CLOSED ${trade.symbol}`
                 )
 
-                return false
+                return { ok: false, error: "POSITION_ALREADY_CLOSED_AFTER_TPSL_FAILURE", positionOpen: false }
             }
 
             // Position còn nhưng initial TPSL thất bại
@@ -2249,7 +2254,13 @@ async function openPositionWithTPSL(trade, qty){
                 )
             }
 
-            return false
+            return {
+                ok: false,
+                error: closed
+                    ? "INITIAL_TPSL_FAILED_POSITION_CLOSED"
+                    : "INITIAL_TPSL_FAILED_CLOSE_FAILED_POSITION_MAY_BE_OPEN",
+                positionOpen: !closed
+            }
         }
 
         // =========================================
@@ -5143,18 +5154,35 @@ async function recoverOrphanPositions(){
 
             if(dbTrade){
 
-    const recoveredInitialRisk =
-        Number(dbTrade.initialRisk)
+    const storedInitialRisk = Number(
+        dbTrade.initialRisk ||
+        dbTrade.riskDetail?.initialRisk ||
+        dbTrade.riskDetail?.risk ||
+        Math.abs(Number(dbTrade.entry) - Number(dbTrade.sl))
+    )
 
     if(
-        !Number.isFinite(recoveredInitialRisk) ||
-        recoveredInitialRisk <= 0
+        !Number.isFinite(storedInitialRisk) ||
+        storedInitialRisk <= 0
     ){
         console.log(
             `⚠️ RECOVERY SKIP — MISSING INITIAL RISK ${symbol}`
         )
 
         continue
+    }
+
+    // Repair older pending rows when the entry and stop are present.
+    if(Number(dbTrade.initialRisk) !== storedInitialRisk){
+        dbTrade.initialRisk = storedInitialRisk
+        try{
+            await trades.updateOne(
+                { _id: dbTrade._id, result: "PENDING" },
+                { $set: { initialRisk: storedInitialRisk, updatedAt: Date.now() } }
+            )
+        }catch(riskRepairError){
+            console.log(`⚠️ RECOVERY RISK SAVE FAIL ${symbol}:`, riskRepairError?.message || riskRepairError)
+        }
     }
 
     const exists =
