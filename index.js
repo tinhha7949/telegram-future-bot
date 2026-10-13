@@ -2862,7 +2862,7 @@ async function loadValidFuturesSymbols(){
         console.log("❌ LOAD FUTURES SYMBOL:", e.message)
     }
 }
-// ============================================================ // RANGE FILTER CORE // // Single entry indicator: TradingView Range Filter [DW] // Chart settings: Type 1 / Close / 2.618 Average Change / period 14 / smoothing 27 / 15m // Stop: opposite Range Filter envelope // Target: 1.5R // Other timeframes remain in function signature for compatibility. // ============================================================
+// ============================================================ // RANGE FILTER CORE // // Entry direction and rank use closed 1h candles. Initial TP/SL and dynamic management retain the existing 15m/5m logic. // Range Filter [DW]: Type 1 / Close / 2.618 Average Change / period 14 / smoothing 27. Initial target: 1.6R. // ============================================================
 const finite = Number.isFinite;
 // ============================================================ // BASIC // ============================================================
 function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
@@ -3092,10 +3092,10 @@ function rangeFilter(candles, options = {}) {
 
   return { filter, upperBand, lowerBand, direction, upward, downward, signal, buy, sell, range };
 }
-async function coreLogic(data15, symbol = null) {
-  // Match the Range Filter [DW] settings shown on the user's 15m chart:
+async function coreLogic1h(data1h, symbol = null) {
+  // The 1h Range Filter alone decides the entry direction and signal candle.
   // Type 1, Close, 2.618 Average Change, period 14, smooth range 27.
-  const candles = prepare(data15, 1300);
+  const candles = prepare(data1h, 1300);
   if (!candles) return null;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -3122,8 +3122,37 @@ async function coreLogic(data15, symbol = null) {
   const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
   if (move <= 0) return null;
 
-  // Stop outside recent 15m structure with an ATR buffer, never closer than RF.
-  // Exclude the signal candle so its range does not distort the swing level.
+  const volRatio = range / price;
+
+  return {
+    side, symbol, price,
+    signalAt: candles[i].t,
+    setup: 'RANGE_FILTER',
+    pullbackType: 'NONE',
+    triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
+    marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
+    volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
+    qualityScore: 0, score: 0,
+    filterMove: move,
+    filterRange: range
+  };
+}
+
+function calculateTPSLFrom15m(data15, side, symbol) {
+  const candles = prepare(data15, 1300);
+  if (!candles || !['LONG', 'SHORT'].includes(side)) return null;
+  const rf = rangeFilter(candles, {
+    filterType: 'Type 1', movementSource: 'Close',
+    rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
+    smoothRange: true, smoothPeriod: 27,
+    averageFilterChanges: false, averageChanges: 2
+  });
+  const i = candles.length - 1;
+  const price = candles[i].c;
+  const range = Number(rf.range[i]);
+  if (!(price > 0) || !(range > 0)) return null;
+
+  // Keep the existing 15m RF/ATR/swing-stop math and 1.6R target.
   const trValues = [];
   for (let j = Math.max(1, i - 14); j < i; j++) {
     const prevClose = candles[j - 1].c;
@@ -3146,28 +3175,20 @@ async function coreLogic(data15, symbol = null) {
   const targetR = 1.6;
   const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
   const volRatio = range / price;
-
   return {
-    side, symbol, price, sl, tp,
-    signalAt: candles[i].t,
-    setup: 'RANGE_FILTER',
-    pullbackType: 'NONE',
-    triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
-    marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
-    volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
-    qualityScore: 0, score: 0,
+    symbol, side, price, sl, tp,
+    initialRisk: risk,
     risk: { risk, initialRisk: risk, rr: targetR, targetR },
-    filterMove: move,
-    filterRange: range
+    volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH'
   };
 }
 
-function scoreRF15Signal(data15, side, context = {}) {
+function scoreRF1hSignal(data1h, side, context = {}) {
   const invalid = {
     score: 0, adjustment: -50, freshTurn: false,
     rankMetrics: {}
   };
-  const candles = prepare(data15, 600);
+  const candles = prepare(data1h, 600);
   if (!candles || !['LONG', 'SHORT'].includes(side)) return invalid;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -3183,7 +3204,7 @@ function scoreRF15Signal(data15, side, context = {}) {
   const freshTurn = side === 'LONG' ? rf.buy[i] : rf.sell[i];
   if (!freshTurn) return invalid;
 
-  // ATR(14) on closed 15m candles; used only to normalize distances across coins.
+  // ATR(14) on closed 1h candles; used only to normalize distances across coins.
   const trueRanges = [];
   for (let j = Math.max(1, i - 13); j <= i; j++) {
     const prevClose = candles[j - 1].c;
@@ -3193,23 +3214,9 @@ function scoreRF15Signal(data15, side, context = {}) {
       Math.abs(candles[j].l - prevClose)
     ));
   }
-  const atr15 = trueRanges.reduce((sum, value) => sum + value, 0) / trueRanges.length;
+  const atr1h = trueRanges.reduce((sum, value) => sum + value, 0) / trueRanges.length;
   const rfRange = Number(rf.range[i]);
-  if (!(atr15 > 0) || !(rfRange > 0)) return invalid;
-
-  // Higher-timeframe RF regime. Missing 4h data earns neutral points, not a false alignment.
-  let htfDirection = 0;
-  const candles4h = prepare(context.data4h, 100);
-  if (candles4h) {
-    const rf4h = rangeFilter(candles4h, {
-      filterType: 'Type 1', movementSource: 'Close',
-      rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
-      smoothRange: true, smoothPeriod: 27,
-      averageFilterChanges: false, averageChanges: 2
-    });
-    htfDirection = Number(rf4h.direction.at(-1)) || 0;
-  }
-  const htfTrendScore = htfDirection === targetDir ? 20 : htfDirection === 0 ? 8 : 0;
+  if (!(atr1h > 0) || !(rfRange > 0)) return invalid;
 
   // Pullback-resumption: measure the just-ended countertrend RF leg and its depth.
   let pullbackBars = 0;
@@ -3227,8 +3234,8 @@ function scoreRF15Signal(data15, side, context = {}) {
         ? Math.min(...counter.map(c => c.l))
         : Math.max(...counter.map(c => c.h));
       pullbackDepthAtr = Math.max(0, side === 'LONG'
-        ? (anchor - counterExtreme) / atr15
-        : (counterExtreme - anchor) / atr15);
+        ? (anchor - counterExtreme) / atr1h
+        : (counterExtreme - anchor) / atr1h);
     }
   }
   const durationQuality = clamp(pullbackBars / 6, 0, 1);
@@ -3238,7 +3245,7 @@ function scoreRF15Signal(data15, side, context = {}) {
     ? 15 * (0.5 * durationQuality + 0.5 * depthPresence * depthPenalty)
     : 0;
 
-  // Signed path efficiency over the last eight closed 15m bars.
+  // Signed path efficiency over the last eight closed 1h bars.
   let path = 0;
   for (let j = i - 7; j <= i; j++) path += Math.abs(candles[j].c - candles[j - 1].c);
   const net = candles[i].c - candles[i - 8].c;
@@ -3307,7 +3314,7 @@ function scoreRF15Signal(data15, side, context = {}) {
     const validDirection = side === 'LONG' ? sl < entry && tp > entry : sl > entry && tp < entry;
     if (!validDirection) return invalid;
     targetDistance = Math.abs(tp - entry);
-    const targetAtr = targetDistance / atr15;
+    const targetAtr = targetDistance / atr1h;
     targetAtrScore = 6 * (1 - clamp((targetAtr - 1) / 3, 0, 1));
 
     let nearestObstacle = Infinity;
@@ -3331,19 +3338,19 @@ function scoreRF15Signal(data15, side, context = {}) {
   const targetPathScore = targetAtrScore + obstacleClearanceScore;
 
   // Provisional heuristic weights, not fitted win probabilities; validate walk-forward.
-  const score = clamp(Math.round(
-    htfTrendScore + pullbackQuality + pathScore + turnScore + chopScore +
-    candleScore + volumeScore + antiChaseScore + targetPathScore
-  ), 0, 100);
+  const rawScore = pullbackQuality + pathScore + turnScore + chopScore +
+    candleScore + volumeScore + antiChaseScore + targetPathScore;
+  // Remove up to 20 points from 4h alignment, then normalize the remaining
+  // 80-point rubric so the existing minimum score of 60 remains comparable.
+  const score = clamp(Math.round(rawScore * 100 / 80), 0, 100);
   const rankMetrics = {
-    htfTrendScore, htfDirection,
     pullbackQuality, pullbackBars, pullbackDepthAtr,
     pathScore, directionalEfficiency,
     turnScore, turnOvershoot,
     chopScore, flipCount,
     candleScore, volumeScore, volumeRatio,
     antiChaseScore, extensionUnits,
-    targetPathScore, targetDistanceAtr: Number.isFinite(targetDistance) ? targetDistance / atr15 : null,
+    targetPathScore, targetDistanceAtr: Number.isFinite(targetDistance) ? targetDistance / atr1h : null,
     obstacleClearanceScore
   };
   return { score, adjustment: score - 50, freshTurn: true, early: true, rankMetrics };
@@ -3356,7 +3363,7 @@ async function scan(symbol){
         // ==================================================
         // 1. LOAD MARKET DATA
         // ==================================================
-        const data15 = await getData(symbol, "15m", 1301)
+        const data1h = await getData(symbol, "1h", 1301)
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
@@ -3365,7 +3372,7 @@ async function scan(symbol){
 
         try{
 
-            r = await coreLogic(data15, symbol)
+            r = await coreLogic1h(data1h, symbol)
 
         }catch(coreErr){
 
@@ -3387,16 +3394,23 @@ async function scan(symbol){
         if(!r || !r.side){
             return null
         }
-        // Fetch 4h context only after a valid 15m RF turn exists.
-        let data4h = null;
-        try {
-            data4h = await getData(symbol, "4h", 301);
-        } catch (contextErr) {
-            // Keep the valid 15m signal rankable with neutral HTF points if 4h fetch fails.
-            console.warn(`⚠️ 4H RANK CONTEXT UNAVAILABLE ${symbol}:`, contextErr?.message || contextErr);
+        // Keep the existing 15m RF/structure stop and 1.6R target math.
+        // 15m is used only to calculate TPSL, never to confirm entry direction.
+        const data15 = await getData(symbol, "15m", 1301)
+        const tpsl15m = calculateTPSLFrom15m(data15, r.side, symbol)
+        if(!tpsl15m){
+            console.log(`⏭️ SKIP ${symbol}: 15m TPSL inputs unavailable/invalid`)
+            return null
         }
-        const rfRank = scoreRF15Signal(data15, r.side, {
-            data4h,
+        r = {
+            ...r,
+            price: tpsl15m.price,
+            sl: tpsl15m.sl,
+            tp: tpsl15m.tp,
+            initialRisk: tpsl15m.initialRisk,
+            risk: tpsl15m.risk
+        }
+        const rfRank = scoreRF1hSignal(data1h, r.side, {
             entry: r.price,
             sl: r.sl,
             tp: r.tp
@@ -3411,8 +3425,7 @@ async function scan(symbol){
             `SETUP=${r.setup || "N/A"} | ` +
             `QUALITY=${rfRank.score} | ` +
             `RF_RANK=${rfRank.score} ` +
-            `(HTF=${safeFixed(rfRank.rankMetrics.htfTrendScore, 1)}, ` +
-            `PB=${safeFixed(rfRank.rankMetrics.pullbackQuality, 1)}, ` +
+            `(PB=${safeFixed(rfRank.rankMetrics.pullbackQuality, 1)}, ` +
             `CHOP=${safeFixed(rfRank.rankMetrics.chopScore, 1)}, ` +
             `PATH=${safeFixed(rfRank.rankMetrics.pathScore, 1)}, ` +
             `TP_PATH=${safeFixed(rfRank.rankMetrics.targetPathScore, 1)})`
