@@ -3839,8 +3839,8 @@ best.sl = best.side === "LONG"
     ? best.price - riskDistance
     : best.price + riskDistance;
 best.tp = best.side === "LONG"
-    ? best.price + riskDistance * 1.3
-    : best.price - riskDistance * 1.3;
+    ? best.price + riskDistance * 1.1
+    : best.price - riskDistance * 1.1;
 
 best.setup = "RF_COUNTER";
 best.marketState = "RF_COUNTER";
