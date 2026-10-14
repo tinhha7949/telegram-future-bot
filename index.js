@@ -3823,7 +3823,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 1);
+let picks = filtered.slice(0, 3);
 for (let best of picks){
 // Thử vào lệnh ngược hướng RF
 const rfSide = best.side;
