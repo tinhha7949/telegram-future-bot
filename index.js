@@ -3935,8 +3935,8 @@ let rr =
 
 let minRR =
     best.marketState === "TREND_STRONG"
-        ? 1.20
-        : 1.15
+        ? 1.0
+        : 0.8
 
 if(rr < minRR){
     console.log(
