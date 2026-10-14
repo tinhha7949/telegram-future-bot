@@ -470,8 +470,7 @@ const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
 const AI_CHAT_ID = process.env.AI_CHAT_ID
 
 const RR_THRESHOLD = 1.20 // 1.3 hoặc 1.4 nếu muốn 
-// Composite rank score combines the 1h setup with independent market context.
-// 60/100 is the minimum composite setup score, not a win-probability threshold.
+// Provisional quality gate: reject weak composite ranks before choosing the top signals.
 const MIN_RANK_SCORE = 60
 let ACCOUNT_BALANCE = 0
 // const MIN_VOL_24H = 15000000
@@ -2863,7 +2862,7 @@ async function loadValidFuturesSymbols(){
         console.log("❌ LOAD FUTURES SYMBOL:", e.message)
     }
 }
-// ============================================================ // RANGE FILTER CORE // // Entry direction and rank use closed 1h candles. Initial TP/SL and dynamic management retain the existing 15m/5m logic. // Range Filter [DW]: Type 1 / Close / 2.618 Average Change / period 14 / smoothing 27. Initial target: 1.6R. // ============================================================
+// ============================================================ // RANGE FILTER CORE // // Single entry indicator: TradingView Range Filter [DW] // Chart settings: Type 1 / Close / 2.618 Average Change / period 14 / smoothing 27 / 15m // Stop: opposite Range Filter envelope // Target: 1.5R // Other timeframes remain in function signature for compatibility. // ============================================================
 const finite = Number.isFinite;
 // ============================================================ // BASIC // ============================================================
 function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
@@ -2871,20 +2870,41 @@ function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 function normalizeCandle(x) {
 if (Array.isArray(x)) {
 return {
-  t: Number(x[0]), o: Number(x[1]), h: Number(x[2]),
-  l: Number(x[3]), c: Number(x[4]), v: Number(x[5] ?? 0),
-  qv: Number(x[7] ?? 0), takerBuyQuote: Number(x[10] ?? 0)
+  t: Number(x[0]),
+  o: Number(x[1]),
+  h: Number(x[2]),
+  l: Number(x[3]),
+  c: Number(x[4]),
+  v: Number(x[5] ?? 0)
 };
 }
-return {
-  t: Number(x.t ?? x.time ?? x.timestamp ?? 0),
-  o: Number(x.o ?? x.open), h: Number(x.h ?? x.high),
-  l: Number(x.l ?? x.low), c: Number(x.c ?? x.close),
-  v: Number(x.v ?? x.volume ?? 0),
-  qv: Number(x.qv ?? x.quoteVolume ?? x.quoteAssetVolume ?? 0),
-  takerBuyQuote: Number(x.takerBuyQuote ?? x.takerBuyQuoteVolume ?? 0)
-};
-}
+return { t: Number( x.t ?? x.time ?? x.timestamp ?? 0 ),
+o: Number(
+  x.o ??
+  x.open
+),
+
+h: Number(
+  x.h ??
+  x.high
+),
+
+l: Number(
+  x.l ??
+  x.low
+),
+
+c: Number(
+  x.c ??
+  x.close
+),
+
+v: Number(
+  x.v ??
+  x.volume ??
+  0
+)
+}; }
 // ============================================================ // PREPARE // ONLY CLOSED CANDLES // ============================================================
 function prepare(data, minLength) {
 if (!Array.isArray(data)) { return null; }
@@ -3072,10 +3092,10 @@ function rangeFilter(candles, options = {}) {
 
   return { filter, upperBand, lowerBand, direction, upward, downward, signal, buy, sell, range };
 }
-async function coreLogic1h(data1h, symbol = null) {
-  // The 1h Range Filter alone decides the entry direction and signal candle.
+async function coreLogic(data15, symbol = null) {
+  // Match the Range Filter [DW] settings shown on the user's 15m chart:
   // Type 1, Close, 2.618 Average Change, period 14, smooth range 27.
-  const candles = prepare(data1h, 1300);
+  const candles = prepare(data15, 1300);
   if (!candles) return null;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -3102,37 +3122,8 @@ async function coreLogic1h(data1h, symbol = null) {
   const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
   if (move <= 0) return null;
 
-  const volRatio = range / price;
-
-  return {
-    side, symbol, price,
-    signalAt: candles[i].t,
-    setup: 'RANGE_FILTER',
-    pullbackType: 'NONE',
-    triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
-    marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
-    volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
-    qualityScore: 0, score: 0,
-    filterMove: move,
-    filterRange: range
-  };
-}
-
-function calculateTPSLFrom15m(data15, side, symbol) {
-  const candles = prepare(data15, 1300);
-  if (!candles || !['LONG', 'SHORT'].includes(side)) return null;
-  const rf = rangeFilter(candles, {
-    filterType: 'Type 1', movementSource: 'Close',
-    rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
-    smoothRange: true, smoothPeriod: 27,
-    averageFilterChanges: false, averageChanges: 2
-  });
-  const i = candles.length - 1;
-  const price = candles[i].c;
-  const range = Number(rf.range[i]);
-  if (!(price > 0) || !(range > 0)) return null;
-
-  // Keep the existing 15m RF/ATR/swing-stop math and 1.6R target.
+  // Stop outside recent 15m structure with an ATR buffer, never closer than RF.
+  // Exclude the signal candle so its range does not distort the swing level.
   const trValues = [];
   for (let j = Math.max(1, i - 14); j < i; j++) {
     const prevClose = candles[j - 1].c;
@@ -3155,20 +3146,28 @@ function calculateTPSLFrom15m(data15, side, symbol) {
   const targetR = 1.6;
   const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
   const volRatio = range / price;
+
   return {
-    symbol, side, price, sl, tp,
-    initialRisk: risk,
+    side, symbol, price, sl, tp,
+    signalAt: candles[i].t,
+    setup: 'RANGE_FILTER',
+    pullbackType: 'NONE',
+    triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
+    marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
+    volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
+    qualityScore: 0, score: 0,
     risk: { risk, initialRisk: risk, rr: targetR, targetR },
-    volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH'
+    filterMove: move,
+    filterRange: range
   };
 }
 
-function scoreRF1hSignal(data1h, side, context = {}) {
+function scoreRF15Signal(data15, side, context = {}) {
   const invalid = {
     score: 0, adjustment: -50, freshTurn: false,
     rankMetrics: {}
   };
-  const candles = prepare(data1h, 600);
+  const candles = prepare(data15, 600);
   if (!candles || !['LONG', 'SHORT'].includes(side)) return invalid;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -3184,7 +3183,7 @@ function scoreRF1hSignal(data1h, side, context = {}) {
   const freshTurn = side === 'LONG' ? rf.buy[i] : rf.sell[i];
   if (!freshTurn) return invalid;
 
-  // ATR(14) on closed 1h candles; used only to normalize distances across coins.
+  // ATR(14) on closed 15m candles; used only to normalize distances across coins.
   const trueRanges = [];
   for (let j = Math.max(1, i - 13); j <= i; j++) {
     const prevClose = candles[j - 1].c;
@@ -3194,9 +3193,23 @@ function scoreRF1hSignal(data1h, side, context = {}) {
       Math.abs(candles[j].l - prevClose)
     ));
   }
-  const atr1h = trueRanges.reduce((sum, value) => sum + value, 0) / trueRanges.length;
+  const atr15 = trueRanges.reduce((sum, value) => sum + value, 0) / trueRanges.length;
   const rfRange = Number(rf.range[i]);
-  if (!(atr1h > 0) || !(rfRange > 0)) return invalid;
+  if (!(atr15 > 0) || !(rfRange > 0)) return invalid;
+
+  // Higher-timeframe RF regime. Missing 4h data earns neutral points, not a false alignment.
+  let htfDirection = 0;
+  const candles4h = prepare(context.data4h, 100);
+  if (candles4h) {
+    const rf4h = rangeFilter(candles4h, {
+      filterType: 'Type 1', movementSource: 'Close',
+      rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
+      smoothRange: true, smoothPeriod: 27,
+      averageFilterChanges: false, averageChanges: 2
+    });
+    htfDirection = Number(rf4h.direction.at(-1)) || 0;
+  }
+  const htfTrendScore = htfDirection === targetDir ? 20 : htfDirection === 0 ? 8 : 0;
 
   // Pullback-resumption: measure the just-ended countertrend RF leg and its depth.
   let pullbackBars = 0;
@@ -3214,8 +3227,8 @@ function scoreRF1hSignal(data1h, side, context = {}) {
         ? Math.min(...counter.map(c => c.l))
         : Math.max(...counter.map(c => c.h));
       pullbackDepthAtr = Math.max(0, side === 'LONG'
-        ? (anchor - counterExtreme) / atr1h
-        : (counterExtreme - anchor) / atr1h);
+        ? (anchor - counterExtreme) / atr15
+        : (counterExtreme - anchor) / atr15);
     }
   }
   const durationQuality = clamp(pullbackBars / 6, 0, 1);
@@ -3225,7 +3238,7 @@ function scoreRF1hSignal(data1h, side, context = {}) {
     ? 15 * (0.5 * durationQuality + 0.5 * depthPresence * depthPenalty)
     : 0;
 
-  // Signed path efficiency over the last eight closed 1h bars.
+  // Signed path efficiency over the last eight closed 15m bars.
   let path = 0;
   for (let j = i - 7; j <= i; j++) path += Math.abs(candles[j].c - candles[j - 1].c);
   const net = candles[i].c - candles[i - 8].c;
@@ -3261,19 +3274,14 @@ function scoreRF1hSignal(data1h, side, context = {}) {
     candleScore = 8 * (0.5 * clamp(closeLocation, 0, 1) + 0.5 * clamp((directionalBody + 1) / 2, 0, 1));
   }
 
-  // Use Binance quote volume (USDT) and taker-buy quote flow, not base units.
-  const priorQuoteVolumes = candles.slice(i - 20, i)
-    .map(c => c.qv).filter(v => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
-  const medianQuoteVolume = priorQuoteVolumes.length
-    ? priorQuoteVolumes[Math.floor(priorQuoteVolumes.length / 2)] : 0;
-  const volumeRatio = medianQuoteVolume > 0 && candle.qv > 0
-    ? candle.qv / medianQuoteVolume : 1;
-  const participationScore = 3 * clamp(volumeRatio / 1.5, 0, 1);
-  const takerBuyShare = candle.qv > 0 && Number.isFinite(candle.takerBuyQuote)
-    ? clamp(candle.takerBuyQuote / candle.qv, 0, 1) : 0.5;
-  const takerImbalance = 2 * takerBuyShare - 1;
-  const directionalFlowScore = 2 * clamp(0.5 + targetDir * takerImbalance / 2, 0, 1);
-  const volumeScore = participationScore + directionalFlowScore;
+  // Participation confirmation from signal-bar volume vs the prior 20 completed bars.
+  const priorVolumes = candles.slice(i - 20, i).map(c => c.v).filter(Number.isFinite);
+  const avgVolume = priorVolumes.length
+    ? priorVolumes.reduce((sum, value) => sum + value, 0) / priorVolumes.length
+    : 0;
+  const volumeRatio = avgVolume > 0 ? candle.v / avgVolume : 1;
+  const volumeScore = 5 * clamp(volumeRatio / 1.5, 0, 1);
+
   // Avoid chasing a move already far beyond the RF edge from three bars earlier.
   const anchorIndex = Math.max(0, i - 3);
   const oldFilter = Number(rf.filter[anchorIndex]);
@@ -3299,7 +3307,7 @@ function scoreRF1hSignal(data1h, side, context = {}) {
     const validDirection = side === 'LONG' ? sl < entry && tp > entry : sl > entry && tp < entry;
     if (!validDirection) return invalid;
     targetDistance = Math.abs(tp - entry);
-    const targetAtr = targetDistance / atr1h;
+    const targetAtr = targetDistance / atr15;
     targetAtrScore = 6 * (1 - clamp((targetAtr - 1) / 3, 0, 1));
 
     let nearestObstacle = Infinity;
@@ -3322,112 +3330,33 @@ function scoreRF1hSignal(data1h, side, context = {}) {
   }
   const targetPathScore = targetAtrScore + obstacleClearanceScore;
 
-  const fourHourBuckets = new Map();
-  const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
-  for (const c of candles) {
-    if (!Number.isFinite(c.t) || c.t <= 0) continue;
-    const bucketTime = Math.floor(c.t / FOUR_HOURS_MS) * FOUR_HOURS_MS;
-    if (!fourHourBuckets.has(bucketTime)) fourHourBuckets.set(bucketTime, []);
-    fourHourBuckets.get(bucketTime).push(c);
-  }
-  const candles4h = [...fourHourBuckets.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .filter(([bucketTime, bars]) => bars.length === 4 &&
-      bars.every((bar, index) => bar.t === bucketTime + index * 60 * 60 * 1000))
-    .map(([bucketTime, bars]) => ({ t: bucketTime,
-      h: Math.max(...bars.map(bar => bar.h)),
-      l: Math.min(...bars.map(bar => bar.l)), c: bars[3].c }));
-
-  let trend4hScore = 5;
-  let trend4hAlignment = 0.5;
-  let trend4hPricePosition = 0.5;
-  let atr4h = NaN;
-  if (candles4h.length >= 55) {
-    const closes4h = candles4h.map(bar => bar.c);
-    const ema20 = ema(closes4h, 20);
-    const ema50 = ema(closes4h, 50);
-    const last4h = candles4h.at(-1);
-    const trueRanges4h = [];
-    for (let j = Math.max(1, candles4h.length - 14); j < candles4h.length; j++) {
-      const previousClose = candles4h[j - 1].c;
-      trueRanges4h.push(Math.max(candles4h[j].h - candles4h[j].l,
-        Math.abs(candles4h[j].h - previousClose),
-        Math.abs(candles4h[j].l - previousClose)));
-    }
-    atr4h = trueRanges4h.reduce((sum, value) => sum + value, 0) / trueRanges4h.length;
-    if (atr4h > 0 && Number.isFinite(ema20) && Number.isFinite(ema50)) {
-      const signedEmaSpread = targetDir * (ema20 - ema50) / atr4h;
-      const signedPricePosition = targetDir * (last4h.c - ema20) / atr4h;
-      trend4hAlignment = clamp(0.5 + signedEmaSpread, 0, 1);
-      trend4hPricePosition = clamp(0.5 + signedPricePosition / 1.5, 0, 1);
-      trend4hScore = 10 * (0.65 * trend4hAlignment + 0.35 * trend4hPricePosition);
-    }
-  }
-
-  // Relative strength against BTC over 24h and 72h, volatility-normalized.
-  // This favors coins outperforming BTC for longs and underperforming for shorts.
-  let relativeStrengthScore = 5;
-  let relativeStrength24hZ = 0;
-  let relativeStrength72hZ = 0;
-  const btcCandles = prepare(context.benchmarkData1h, 600);
-  if (btcCandles) {
-    const btcByTime = new Map(btcCandles.map((bar, index) => [bar.t, index]));
-    const scoreRelativeWindow = hours => {
-      if (i < hours) return null;
-      let relativeMove = 0;
-      let relativeVariance = 0;
-      let matched = 0;
-      for (let j = i - hours + 1; j <= i; j++) {
-        const btcNow = btcByTime.get(candles[j].t);
-        const btcPrev = btcByTime.get(candles[j - 1].t);
-        if (btcNow === undefined || btcPrev === undefined) continue;
-        const coinReturn = Math.log(candles[j].c / candles[j - 1].c);
-        const btcReturn = Math.log(btcCandles[btcNow].c / btcCandles[btcPrev].c);
-        const spreadReturn = coinReturn - btcReturn;
-        relativeMove += spreadReturn;
-        relativeVariance += spreadReturn * spreadReturn;
-        matched++;
-      }
-      if (matched < hours * 0.9 || relativeVariance <= 0) return null;
-      return targetDir * relativeMove / Math.sqrt(relativeVariance);
-    };
-    const z24 = scoreRelativeWindow(24);
-    const z72 = scoreRelativeWindow(72);
-    if (Number.isFinite(z24)) relativeStrength24hZ = z24;
-    if (Number.isFinite(z72)) relativeStrength72hZ = z72;
-    const score24 = Number.isFinite(z24) ? clamp(0.5 + z24 / 4, 0, 1) : 0.5;
-    const score72 = Number.isFinite(z72) ? clamp(0.5 + z72 / 4, 0, 1) : 0.5;
-    relativeStrengthScore = 10 * (0.65 * score24 + 0.35 * score72);
-  }
-  // Setup ranking score, not a fitted win probability.
-  const rawScore = pullbackQuality + pathScore + turnScore + chopScore +
-    candleScore + volumeScore + antiChaseScore + targetPathScore;
-  const score = clamp(Math.round(rawScore + trend4hScore + relativeStrengthScore), 0, 100);
+  // Provisional heuristic weights, not fitted win probabilities; validate walk-forward.
+  const score = clamp(Math.round(
+    htfTrendScore + pullbackQuality + pathScore + turnScore + chopScore +
+    candleScore + volumeScore + antiChaseScore + targetPathScore
+  ), 0, 100);
   const rankMetrics = {
+    htfTrendScore, htfDirection,
     pullbackQuality, pullbackBars, pullbackDepthAtr,
     pathScore, directionalEfficiency,
     turnScore, turnOvershoot,
     chopScore, flipCount,
     candleScore, volumeScore, volumeRatio,
     antiChaseScore, extensionUnits,
-    targetPathScore, targetDistanceAtr: Number.isFinite(targetDistance) ? targetDistance / atr1h : null,
-    obstacleClearanceScore,
-    trend4hScore, trend4hAlignment, trend4hPricePosition,
-    relativeStrengthScore, relativeStrength24hZ, relativeStrength72hZ,
-    participationScore, directionalFlowScore, takerImbalance,
-    atr4h: Number.isFinite(atr4h) ? atr4h : null
+    targetPathScore, targetDistanceAtr: Number.isFinite(targetDistance) ? targetDistance / atr15 : null,
+    obstacleClearanceScore
   };
   return { score, adjustment: score - 50, freshTurn: true, early: true, rankMetrics };
 }
 // ================= SCAN =================
-async function scan(symbol, benchmarkData1h = null){
+async function scan(symbol){
 
     try{
 
         // ==================================================
         // 1. LOAD MARKET DATA
         // ==================================================
-        const data1h = await getData(symbol, "1h", 1301)
+        const data15 = await getData(symbol, "15m", 1301)
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
@@ -3436,7 +3365,7 @@ async function scan(symbol, benchmarkData1h = null){
 
         try{
 
-            r = await coreLogic1h(data1h, symbol)
+            r = await coreLogic(data15, symbol)
 
         }catch(coreErr){
 
@@ -3458,27 +3387,19 @@ async function scan(symbol, benchmarkData1h = null){
         if(!r || !r.side){
             return null
         }
-        // Keep the existing 15m RF/structure stop and 1.6R target math.
-        // 15m is used only to calculate TPSL, never to confirm entry direction.
-        const data15 = await getData(symbol, "15m", 1301)
-        const tpsl15m = calculateTPSLFrom15m(data15, r.side, symbol)
-        if(!tpsl15m){
-            console.log(`⏭️ SKIP ${symbol}: 15m TPSL inputs unavailable/invalid`)
-            return null
+        // Fetch 4h context only after a valid 15m RF turn exists.
+        let data4h = null;
+        try {
+            data4h = await getData(symbol, "4h", 301);
+        } catch (contextErr) {
+            // Keep the valid 15m signal rankable with neutral HTF points if 4h fetch fails.
+            console.warn(`⚠️ 4H RANK CONTEXT UNAVAILABLE ${symbol}:`, contextErr?.message || contextErr);
         }
-        r = {
-            ...r,
-            price: tpsl15m.price,
-            sl: tpsl15m.sl,
-            tp: tpsl15m.tp,
-            initialRisk: tpsl15m.initialRisk,
-            risk: tpsl15m.risk
-        }
-        const rfRank = scoreRF1hSignal(data1h, r.side, {
+        const rfRank = scoreRF15Signal(data15, r.side, {
+            data4h,
             entry: r.price,
             sl: r.sl,
-            tp: r.tp,
-            benchmarkData1h
+            tp: r.tp
         });
         // ==================================================
         // 5. SIGNAL FOUND
@@ -3490,13 +3411,11 @@ async function scan(symbol, benchmarkData1h = null){
             `SETUP=${r.setup || "N/A"} | ` +
             `QUALITY=${rfRank.score} | ` +
             `RF_RANK=${rfRank.score} ` +
-            `(PB=${safeFixed(rfRank.rankMetrics.pullbackQuality, 1)}, ` +
+            `(HTF=${safeFixed(rfRank.rankMetrics.htfTrendScore, 1)}, ` +
+            `PB=${safeFixed(rfRank.rankMetrics.pullbackQuality, 1)}, ` +
             `CHOP=${safeFixed(rfRank.rankMetrics.chopScore, 1)}, ` +
             `PATH=${safeFixed(rfRank.rankMetrics.pathScore, 1)}, ` +
-            `TP_PATH=${safeFixed(rfRank.rankMetrics.targetPathScore, 1)}, ` +
-             `4H=${safeFixed(rfRank.rankMetrics.trend4hScore, 1)}, ` +
-             `RS_BTC=${safeFixed(rfRank.rankMetrics.relativeStrengthScore, 1)}, ` +
-             `FLOW=${safeFixed(rfRank.rankMetrics.directionalFlowScore, 1)})`
+            `TP_PATH=${safeFixed(rfRank.rankMetrics.targetPathScore, 1)})`
         )
 
         return {
@@ -3687,8 +3606,6 @@ let now = Date.now()
         }
 
         // ===== SCAN =====
-let benchmarkData1h = await getData("BTCUSDT", "1h", 1301)
-
 let results = []
 
 for(let i=0; i<symbols.length; i+=10){
@@ -3722,7 +3639,7 @@ let result
 try{
 
     result = await Promise.race([
-        scan(s, benchmarkData1h),
+        scan(s),
         timeoutPromise
     ])
 
@@ -3908,7 +3825,25 @@ if(filtered.length === 0){
 }
 let picks = filtered.slice(0, 1);
 for (let best of picks){
+// Thử vào lệnh ngược hướng RF
+const rfSide = best.side;
+const riskDistance = Math.abs(best.price - best.sl);
+if (!(riskDistance > 0)) continue;
 
+best.side = rfSide === "LONG" ? "SHORT" : "LONG";
+best.sl = best.side === "LONG"
+    ? best.price - riskDistance
+    : best.price + riskDistance;
+best.tp = best.side === "LONG"
+    ? best.price + riskDistance * 1.3
+    : best.price - riskDistance * 1.3;
+
+best.setup = "RF_COUNTER";
+best.marketState = "RF_COUNTER";
+best.triggerType = "INVERTED_RF";
+console.log(
+    `🔁 RF COUNTER ${best.symbol} | RF=${rfSide} | TRADE=${best.side}`
+);
 let positions = []
 
 try{
