@@ -469,7 +469,7 @@ const CHAT_ID = process.env.CHAT_ID
 const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
 const AI_CHAT_ID = process.env.AI_CHAT_ID
 
-const RR_THRESHOLD = 1.20 // 1.3 hoặc 1.4 nếu muốn 
+const RR_THRESHOLD = 1.0 // 1.3 hoặc 1.4 nếu muốn 
 // Provisional quality gate: reject weak composite ranks before choosing the top signals.
 const MIN_RANK_SCORE = 30
 let ACCOUNT_BALANCE = 0
