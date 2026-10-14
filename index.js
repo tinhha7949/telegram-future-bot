@@ -2813,7 +2813,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 150)
+        .slice(0, 80)
         .map(candidate => candidate.symbol);
 
       console.log(
