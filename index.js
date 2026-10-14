@@ -470,7 +470,8 @@ const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
 const AI_CHAT_ID = process.env.AI_CHAT_ID
 
 const RR_THRESHOLD = 1.20 // 1.3 hoặc 1.4 nếu muốn 
-// Provisional quality gate: reject weak composite ranks before choosing the top signals.
+// Composite rank score combines the 1h setup with independent market context.
+// 60/100 is the minimum composite setup score, not a win-probability threshold.
 const MIN_RANK_SCORE = 60
 let ACCOUNT_BALANCE = 0
 // const MIN_VOL_24H = 15000000
@@ -2870,41 +2871,20 @@ function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 function normalizeCandle(x) {
 if (Array.isArray(x)) {
 return {
-  t: Number(x[0]),
-  o: Number(x[1]),
-  h: Number(x[2]),
-  l: Number(x[3]),
-  c: Number(x[4]),
-  v: Number(x[5] ?? 0)
+  t: Number(x[0]), o: Number(x[1]), h: Number(x[2]),
+  l: Number(x[3]), c: Number(x[4]), v: Number(x[5] ?? 0),
+  qv: Number(x[7] ?? 0), takerBuyQuote: Number(x[10] ?? 0)
 };
 }
-return { t: Number( x.t ?? x.time ?? x.timestamp ?? 0 ),
-o: Number(
-  x.o ??
-  x.open
-),
-
-h: Number(
-  x.h ??
-  x.high
-),
-
-l: Number(
-  x.l ??
-  x.low
-),
-
-c: Number(
-  x.c ??
-  x.close
-),
-
-v: Number(
-  x.v ??
-  x.volume ??
-  0
-)
-}; }
+return {
+  t: Number(x.t ?? x.time ?? x.timestamp ?? 0),
+  o: Number(x.o ?? x.open), h: Number(x.h ?? x.high),
+  l: Number(x.l ?? x.low), c: Number(x.c ?? x.close),
+  v: Number(x.v ?? x.volume ?? 0),
+  qv: Number(x.qv ?? x.quoteVolume ?? x.quoteAssetVolume ?? 0),
+  takerBuyQuote: Number(x.takerBuyQuote ?? x.takerBuyQuoteVolume ?? 0)
+};
+}
 // ============================================================ // PREPARE // ONLY CLOSED CANDLES // ============================================================
 function prepare(data, minLength) {
 if (!Array.isArray(data)) { return null; }
@@ -3281,14 +3261,19 @@ function scoreRF1hSignal(data1h, side, context = {}) {
     candleScore = 8 * (0.5 * clamp(closeLocation, 0, 1) + 0.5 * clamp((directionalBody + 1) / 2, 0, 1));
   }
 
-  // Participation confirmation from signal-bar volume vs the prior 20 completed bars.
-  const priorVolumes = candles.slice(i - 20, i).map(c => c.v).filter(Number.isFinite);
-  const avgVolume = priorVolumes.length
-    ? priorVolumes.reduce((sum, value) => sum + value, 0) / priorVolumes.length
-    : 0;
-  const volumeRatio = avgVolume > 0 ? candle.v / avgVolume : 1;
-  const volumeScore = 5 * clamp(volumeRatio / 1.5, 0, 1);
-
+  // Use Binance quote volume (USDT) and taker-buy quote flow, not base units.
+  const priorQuoteVolumes = candles.slice(i - 20, i)
+    .map(c => c.qv).filter(v => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+  const medianQuoteVolume = priorQuoteVolumes.length
+    ? priorQuoteVolumes[Math.floor(priorQuoteVolumes.length / 2)] : 0;
+  const volumeRatio = medianQuoteVolume > 0 && candle.qv > 0
+    ? candle.qv / medianQuoteVolume : 1;
+  const participationScore = 3 * clamp(volumeRatio / 1.5, 0, 1);
+  const takerBuyShare = candle.qv > 0 && Number.isFinite(candle.takerBuyQuote)
+    ? clamp(candle.takerBuyQuote / candle.qv, 0, 1) : 0.5;
+  const takerImbalance = 2 * takerBuyShare - 1;
+  const directionalFlowScore = 2 * clamp(0.5 + targetDir * takerImbalance / 2, 0, 1);
+  const volumeScore = participationScore + directionalFlowScore;
   // Avoid chasing a move already far beyond the RF edge from three bars earlier.
   const anchorIndex = Math.max(0, i - 3);
   const oldFilter = Number(rf.filter[anchorIndex]);
@@ -3337,12 +3322,87 @@ function scoreRF1hSignal(data1h, side, context = {}) {
   }
   const targetPathScore = targetAtrScore + obstacleClearanceScore;
 
-  // Provisional heuristic weights, not fitted win probabilities; validate walk-forward.
+  const fourHourBuckets = new Map();
+  const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
+  for (const c of candles) {
+    if (!Number.isFinite(c.t) || c.t <= 0) continue;
+    const bucketTime = Math.floor(c.t / FOUR_HOURS_MS) * FOUR_HOURS_MS;
+    if (!fourHourBuckets.has(bucketTime)) fourHourBuckets.set(bucketTime, []);
+    fourHourBuckets.get(bucketTime).push(c);
+  }
+  const candles4h = [...fourHourBuckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .filter(([bucketTime, bars]) => bars.length === 4 &&
+      bars.every((bar, index) => bar.t === bucketTime + index * 60 * 60 * 1000))
+    .map(([bucketTime, bars]) => ({ t: bucketTime,
+      h: Math.max(...bars.map(bar => bar.h)),
+      l: Math.min(...bars.map(bar => bar.l)), c: bars[3].c }));
+
+  let trend4hScore = 5;
+  let trend4hAlignment = 0.5;
+  let trend4hPricePosition = 0.5;
+  let atr4h = NaN;
+  if (candles4h.length >= 55) {
+    const closes4h = candles4h.map(bar => bar.c);
+    const ema20 = ema(closes4h, 20);
+    const ema50 = ema(closes4h, 50);
+    const last4h = candles4h.at(-1);
+    const trueRanges4h = [];
+    for (let j = Math.max(1, candles4h.length - 14); j < candles4h.length; j++) {
+      const previousClose = candles4h[j - 1].c;
+      trueRanges4h.push(Math.max(candles4h[j].h - candles4h[j].l,
+        Math.abs(candles4h[j].h - previousClose),
+        Math.abs(candles4h[j].l - previousClose)));
+    }
+    atr4h = trueRanges4h.reduce((sum, value) => sum + value, 0) / trueRanges4h.length;
+    if (atr4h > 0 && Number.isFinite(ema20) && Number.isFinite(ema50)) {
+      const signedEmaSpread = targetDir * (ema20 - ema50) / atr4h;
+      const signedPricePosition = targetDir * (last4h.c - ema20) / atr4h;
+      trend4hAlignment = clamp(0.5 + signedEmaSpread, 0, 1);
+      trend4hPricePosition = clamp(0.5 + signedPricePosition / 1.5, 0, 1);
+      trend4hScore = 10 * (0.65 * trend4hAlignment + 0.35 * trend4hPricePosition);
+    }
+  }
+
+  // Relative strength against BTC over 24h and 72h, volatility-normalized.
+  // This favors coins outperforming BTC for longs and underperforming for shorts.
+  let relativeStrengthScore = 5;
+  let relativeStrength24hZ = 0;
+  let relativeStrength72hZ = 0;
+  const btcCandles = prepare(context.benchmarkData1h, 600);
+  if (btcCandles) {
+    const btcByTime = new Map(btcCandles.map((bar, index) => [bar.t, index]));
+    const scoreRelativeWindow = hours => {
+      if (i < hours) return null;
+      let relativeMove = 0;
+      let relativeVariance = 0;
+      let matched = 0;
+      for (let j = i - hours + 1; j <= i; j++) {
+        const btcNow = btcByTime.get(candles[j].t);
+        const btcPrev = btcByTime.get(candles[j - 1].t);
+        if (btcNow === undefined || btcPrev === undefined) continue;
+        const coinReturn = Math.log(candles[j].c / candles[j - 1].c);
+        const btcReturn = Math.log(btcCandles[btcNow].c / btcCandles[btcPrev].c);
+        const spreadReturn = coinReturn - btcReturn;
+        relativeMove += spreadReturn;
+        relativeVariance += spreadReturn * spreadReturn;
+        matched++;
+      }
+      if (matched < hours * 0.9 || relativeVariance <= 0) return null;
+      return targetDir * relativeMove / Math.sqrt(relativeVariance);
+    };
+    const z24 = scoreRelativeWindow(24);
+    const z72 = scoreRelativeWindow(72);
+    if (Number.isFinite(z24)) relativeStrength24hZ = z24;
+    if (Number.isFinite(z72)) relativeStrength72hZ = z72;
+    const score24 = Number.isFinite(z24) ? clamp(0.5 + z24 / 4, 0, 1) : 0.5;
+    const score72 = Number.isFinite(z72) ? clamp(0.5 + z72 / 4, 0, 1) : 0.5;
+    relativeStrengthScore = 10 * (0.65 * score24 + 0.35 * score72);
+  }
+  // Setup ranking score, not a fitted win probability.
   const rawScore = pullbackQuality + pathScore + turnScore + chopScore +
     candleScore + volumeScore + antiChaseScore + targetPathScore;
-  // Remove up to 20 points from 4h alignment, then normalize the remaining
-  // 80-point rubric so the existing minimum score of 60 remains comparable.
-  const score = clamp(Math.round(rawScore * 100 / 80), 0, 100);
+  const score = clamp(Math.round(rawScore + trend4hScore + relativeStrengthScore), 0, 100);
   const rankMetrics = {
     pullbackQuality, pullbackBars, pullbackDepthAtr,
     pathScore, directionalEfficiency,
@@ -3351,12 +3411,16 @@ function scoreRF1hSignal(data1h, side, context = {}) {
     candleScore, volumeScore, volumeRatio,
     antiChaseScore, extensionUnits,
     targetPathScore, targetDistanceAtr: Number.isFinite(targetDistance) ? targetDistance / atr1h : null,
-    obstacleClearanceScore
+    obstacleClearanceScore,
+    trend4hScore, trend4hAlignment, trend4hPricePosition,
+    relativeStrengthScore, relativeStrength24hZ, relativeStrength72hZ,
+    participationScore, directionalFlowScore, takerImbalance,
+    atr4h: Number.isFinite(atr4h) ? atr4h : null
   };
   return { score, adjustment: score - 50, freshTurn: true, early: true, rankMetrics };
 }
 // ================= SCAN =================
-async function scan(symbol){
+async function scan(symbol, benchmarkData1h = null){
 
     try{
 
@@ -3413,7 +3477,8 @@ async function scan(symbol){
         const rfRank = scoreRF1hSignal(data1h, r.side, {
             entry: r.price,
             sl: r.sl,
-            tp: r.tp
+            tp: r.tp,
+            benchmarkData1h
         });
         // ==================================================
         // 5. SIGNAL FOUND
@@ -3428,7 +3493,10 @@ async function scan(symbol){
             `(PB=${safeFixed(rfRank.rankMetrics.pullbackQuality, 1)}, ` +
             `CHOP=${safeFixed(rfRank.rankMetrics.chopScore, 1)}, ` +
             `PATH=${safeFixed(rfRank.rankMetrics.pathScore, 1)}, ` +
-            `TP_PATH=${safeFixed(rfRank.rankMetrics.targetPathScore, 1)})`
+            `TP_PATH=${safeFixed(rfRank.rankMetrics.targetPathScore, 1)}, ` +
+             `4H=${safeFixed(rfRank.rankMetrics.trend4hScore, 1)}, ` +
+             `RS_BTC=${safeFixed(rfRank.rankMetrics.relativeStrengthScore, 1)}, ` +
+             `FLOW=${safeFixed(rfRank.rankMetrics.directionalFlowScore, 1)})`
         )
 
         return {
@@ -3619,6 +3687,8 @@ let now = Date.now()
         }
 
         // ===== SCAN =====
+let benchmarkData1h = await getData("BTCUSDT", "1h", 1301)
+
 let results = []
 
 for(let i=0; i<symbols.length; i+=10){
@@ -3652,7 +3722,7 @@ let result
 try{
 
     result = await Promise.race([
-        scan(s),
+        scan(s, benchmarkData1h),
         timeoutPromise
     ])
 
