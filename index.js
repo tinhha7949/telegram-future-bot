@@ -2813,7 +2813,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 80)
+        .slice(0, 150)
         .map(candidate => candidate.symbol);
 
       console.log(
@@ -3095,7 +3095,7 @@ function rangeFilter(candles, options = {}) {
 async function coreLogic(data15, symbol = null) {
   // Match the Range Filter [DW] settings shown on the user's 15m chart:
   // Type 1, Close, 2.618 Average Change, period 14, smooth range 27.
-  const candles = prepare(data15, 1300);
+  const candles = prepare(data15, 600);
   if (!candles) return null;
   const rf = rangeFilter(candles, {
     filterType: 'Type 1', movementSource: 'Close',
@@ -3143,7 +3143,7 @@ async function coreLogic(data15, symbol = null) {
   const risk = Math.abs(price - sl);
   if (!finite(risk) || risk <= 0 || (side === 'LONG' ? sl >= price : sl <= price)) return null;
 
-  const targetR = 1.6;
+  const targetR = 1.0;
   const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
   const volRatio = range / price;
 
@@ -3356,7 +3356,7 @@ async function scan(symbol){
         // ==================================================
         // 1. LOAD MARKET DATA
         // ==================================================
-        const data15 = await getData(symbol, "15m", 1301)
+        const data15 = await getData(symbol, "15m", 601)
         // ==================================================
         // 3. CORE LOGIC
         // ==================================================
@@ -3388,13 +3388,13 @@ async function scan(symbol){
             return null
         }
         // Fetch 4h context only after a valid 15m RF turn exists.
-        let data4h = null;
-        try {
-            data4h = await getData(symbol, "4h", 301);
-        } catch (contextErr) {
+        //let data4h = null;
+        //try {
+           // data4h = await getData(symbol, "4h", 301);
+       // } catch (contextErr) {
             // Keep the valid 15m signal rankable with neutral HTF points if 4h fetch fails.
-            console.warn(`⚠️ 4H RANK CONTEXT UNAVAILABLE ${symbol}:`, contextErr?.message || contextErr);
-        }
+           // console.warn(`⚠️ 4H RANK CONTEXT UNAVAILABLE ${symbol}:`, contextErr?.message || contextErr);
+        //}
         //const rfRank = scoreRF15Signal(data15, r.side, {
             //data4h,
             //entry: r.price,
@@ -3839,8 +3839,8 @@ best.sl = best.side === "LONG"
     ? best.price - riskDistance
     : best.price + riskDistance;
 best.tp = best.side === "LONG"
-    ? best.price + riskDistance * 1.1
-    : best.price - riskDistance * 1.1;
+    ? best.price + riskDistance * 1.0
+    : best.price - riskDistance * 1.0;
 
 best.setup = "RF_COUNTER";
 best.marketState = "RF_COUNTER";
@@ -5557,20 +5557,30 @@ while(!dbOK){
             { result: 1, createdAt: -1 },
             { name: "trades_result_recent" }
         )
-        signalClaims = db.collection("trade_signal_claims")
-        await signalClaims.createIndex(
-            { signalKey: 1 },
-            { unique: true, name: "uniq_trade_signal_key" }
-        )
-        // Signal keys remain durable so a long-lived or recovered position
-        // never loses its deduplication/risk metadata to a TTL expiry.
-        try{
-            await signalClaims.dropIndex("expire_trade_signal_claims_90d")
-        }catch(indexError){
-            if(indexError?.codeName !== "IndexNotFound" && indexError?.code !== 27){
-                throw indexError
-            }
-        }
+        signalClaims = db.collection("trade_signal_claims");
+
+await signalClaims.createIndex(
+    { signalKey: 1 },
+    { unique: true, name: "uniq_trade_signal_key" }
+);
+
+// Xóa TTL 90 ngày cũ nếu còn tồn tại
+try {
+    await signalClaims.dropIndex("expire_trade_signal_claims_90d");
+} catch (indexError) {
+    if (indexError?.codeName !== "IndexNotFound" && indexError?.code !== 27) {
+        throw indexError;
+    }
+}
+
+// Tự xóa bản ghi sau 10 ngày tính từ createdAt
+await signalClaims.createIndex(
+    { createdAt: 1 },
+    {
+        expireAfterSeconds: 10 * 24 * 60 * 60,
+        name: "expire_trade_signal_claims_10d"
+    }
+);
         // TEST DB THỰC SỰ ĐỌC ĐƯỢC
         await trades.findOne(
             {},
