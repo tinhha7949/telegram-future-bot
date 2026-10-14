@@ -12,9 +12,9 @@ const TPSL_CLOSING = {}
 const DYNAMIC_LAST_UPDATE = {}
 const DYNAMIC_PHASE = {}
 const TRADE_CONFIG = {
-    riskPerTrade: 0.1,      
-    maxRiskPerTrade: 0.1,    
-    maxPositionPercent: 1.5,  
+    riskPerTrade: 0.05,      
+    maxRiskPerTrade: 0.05,    
+    maxPositionPercent: 1.0,  
     maxActivePositions: 20      
 }
 let SYNCING_TIME = false
@@ -3150,7 +3150,7 @@ async function coreLogic(data15, symbol = null) {
   const risk = Math.abs(price - sl);
   if (!finite(risk) || risk <= 0 || (side === 'LONG' ? sl >= price : sl <= price)) return null;
 
-  const targetR = 1.0;
+  const targetR = 1.3;
   const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
   const volRatio = range / price;
 
@@ -3838,7 +3838,7 @@ let picks = filtered//.slice(0, 1);
 for (let best of picks){
 // Thử vào lệnh ngược hướng RF
 const rfSide = best.side;
-const riskDistance = Math.abs(best.price - best.sl) * 0.8
+const riskDistance = Math.abs(best.price - best.sl) * 0.35
 if (!(riskDistance > 0)) continue;
 
 best.side = rfSide === "LONG" ? "SHORT" : "LONG";
@@ -3846,8 +3846,8 @@ best.sl = best.side === "LONG"
     ? best.price - riskDistance
     : best.price + riskDistance;
 best.tp = best.side === "LONG"
-    ? best.price + riskDistance * 1.05
-    : best.price - riskDistance * 1.05;
+    ? best.price + riskDistance * 1.1
+    : best.price - riskDistance * 1.1;
 
 best.setup = "RF_COUNTER";
 best.marketState = "RF_COUNTER";
