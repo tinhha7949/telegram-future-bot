@@ -3395,12 +3395,16 @@ async function scan(symbol){
             // Keep the valid 15m signal rankable with neutral HTF points if 4h fetch fails.
             console.warn(`⚠️ 4H RANK CONTEXT UNAVAILABLE ${symbol}:`, contextErr?.message || contextErr);
         }
-        const rfRank = scoreRF15Signal(data15, r.side, {
-            data4h,
-            entry: r.price,
-            sl: r.sl,
-            tp: r.tp
-        });
+        //const rfRank = scoreRF15Signal(data15, r.side, {
+            //data4h,
+            //entry: r.price,
+            //sl: r.sl,
+            //tp: r.tp
+        //});
+        const rfRank = {
+    score: 0,
+    rankMetrics: {}
+};
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
@@ -3774,15 +3778,15 @@ candidates.sort((a, b) =>
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
 
-    const rankScore = Number(c.rankScore)
-    if (!Number.isFinite(rankScore) || rankScore < MIN_RANK_SCORE) {
-        console.log(
-            `🚫 FILTER LOW RANK: ${c.symbol} | ` +
-            `score=${Number.isFinite(rankScore) ? rankScore : "N/A"} | ` +
-            `required=${MIN_RANK_SCORE}`
-        )
-        return false
-    }
+    //const rankScore = Number(c.rankScore)
+    //if (!Number.isFinite(rankScore) || rankScore < MIN_RANK_SCORE) {
+       // console.log(
+           // `🚫 FILTER LOW RANK: ${c.symbol} | ` +
+            //`score=${Number.isFinite(rankScore) ? rankScore : "N/A"} | ` +
+            //`required=${MIN_RANK_SCORE}`
+        //)
+       // return false
+    //}
 
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
@@ -3823,7 +3827,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 3);
+let picks = filtered//.slice(0, 1);
 for (let best of picks){
 // Thử vào lệnh ngược hướng RF
 const rfSide = best.side;
