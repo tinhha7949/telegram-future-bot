@@ -471,7 +471,7 @@ const AI_CHAT_ID = process.env.AI_CHAT_ID
 
 const RR_THRESHOLD = 1.0 // 1.3 hoặc 1.4 nếu muốn 
 // Provisional quality gate: reject weak composite ranks before choosing the top signals.
-const MIN_RANK_SCORE = 30
+const MIN_RANK_SCORE = 60
 let ACCOUNT_BALANCE = 0
 // const MIN_VOL_24H = 15000000
 
@@ -3169,191 +3169,217 @@ async function coreLogic(data15, symbol = null) {
   };
 }
 
-function scoreRF15Signal(data15, side, context = {}) {
-  const invalid = {
-    score: 0, adjustment: -50, freshTurn: false,
-    rankMetrics: {}
-  };
-  const candles = prepare(data15, 600);
-  if (!candles || !['LONG', 'SHORT'].includes(side)) return invalid;
-  const rf = rangeFilter(candles, {
-    filterType: 'Type 1', movementSource: 'Close',
-    rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
-    smoothRange: true, smoothPeriod: 27,
-    averageFilterChanges: false, averageChanges: 2
-  });
-  const i = candles.length - 1;
-  if (i < 40) return invalid;
-  const targetDir = side === 'LONG' ? 1 : -1;
+function scoreRF15Signal(data15, side) {
+  const candles = prepare(data15, 80);
+  const targetDir = side === "LONG" ? 1 : side === "SHORT" ? -1 : 0;
 
-  // A candidate must be the current closed-bar RF flip in its proposed direction.
-  const freshTurn = side === 'LONG' ? rf.buy[i] : rf.sell[i];
-  if (!freshTurn) return invalid;
-
-  // ATR(14) on closed 15m candles; used only to normalize distances across coins.
-  const trueRanges = [];
-  for (let j = Math.max(1, i - 13); j <= i; j++) {
-    const prevClose = candles[j - 1].c;
-    trueRanges.push(Math.max(
-      candles[j].h - candles[j].l,
-      Math.abs(candles[j].h - prevClose),
-      Math.abs(candles[j].l - prevClose)
-    ));
+  if (!candles || !targetDir) {
+    return { adjustment: -100, score: 0, early: false };
   }
-  const atr15 = trueRanges.reduce((sum, value) => sum + value, 0) / trueRanges.length;
-  const rfRange = Number(rf.range[i]);
-  if (!(atr15 > 0) || !(rfRange > 0)) return invalid;
 
-  // Higher-timeframe RF regime. Missing 4h data earns neutral points, not a false alignment.
-  let htfDirection = 0;
-  const candles4h = prepare(context.data4h, 100);
-  if (candles4h) {
-    const rf4h = rangeFilter(candles4h, {
-      filterType: 'Type 1', movementSource: 'Close',
-      rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
-      smoothRange: true, smoothPeriod: 27,
-      averageFilterChanges: false, averageChanges: 2
-    });
-    htfDirection = Number(rf4h.direction.at(-1)) || 0;
-  }
-  const htfTrendScore = htfDirection === targetDir ? 20 : htfDirection === 0 ? 8 : 0;
+  const n = candles.length;
+  if (n < 30) return { adjustment: -100, score: 0, early: false };
+  const tr = new Array(n).fill(NaN);
+  const atr14 = new Array(n).fill(NaN);
 
-  // Pullback-resumption: measure the just-ended countertrend RF leg and its depth.
-  let pullbackBars = 0;
-  for (let j = i - 1; j >= 0 && rf.direction[j] === -targetDir; j--) pullbackBars++;
-  let pullbackDepthAtr = 0;
-  const pullbackStart = i - pullbackBars;
-  if (pullbackBars > 0 && pullbackStart >= 2) {
-    const prior = candles.slice(Math.max(0, pullbackStart - 16), pullbackStart);
-    const counter = candles.slice(pullbackStart, i);
-    if (prior.length && counter.length) {
-      const anchor = side === 'LONG'
-        ? Math.max(...prior.map(c => c.h))
-        : Math.min(...prior.map(c => c.l));
-      const counterExtreme = side === 'LONG'
-        ? Math.min(...counter.map(c => c.l))
-        : Math.max(...counter.map(c => c.h));
-      pullbackDepthAtr = Math.max(0, side === 'LONG'
-        ? (anchor - counterExtreme) / atr15
-        : (counterExtreme - anchor) / atr15);
+  // True range và ATR14.
+  for (let i = 1; i < n; i++) {
+    const c = candles[i];
+    const previousClose = candles[i - 1].c;
+
+    tr[i] = Math.max(
+      c.h - c.l,
+      Math.abs(c.h - previousClose),
+      Math.abs(c.l - previousClose)
+    );
+
+    const start = Math.max(1, i - 13);
+    const values = tr.slice(start, i + 1).filter(Number.isFinite);
+
+    if (values.length >= 8) {
+      atr14[i] = values.reduce((sum, value) => sum + value, 0) / values.length;
     }
   }
-  const durationQuality = clamp(pullbackBars / 6, 0, 1);
-  const depthPresence = clamp(pullbackDepthAtr / 0.75, 0, 1);
-  const depthPenalty = 1 - clamp(Math.max(0, pullbackDepthAtr - 1.5) / 2.5, 0, 1);
-  const pullbackQuality = pullbackBars > 0
-    ? 15 * (0.5 * durationQuality + 0.5 * depthPresence * depthPenalty)
-    : 0;
 
-  // Signed path efficiency over the last eight closed 15m bars.
+  let energy = 0;
+  let e0 = 0;
+  let halfLife = 10;
+  let age = 0;
+  let impulseDir = 0;
+  let impulsePrice = NaN;
+  let divergenceAge = 999;
+  let latestDivergence = false;
+
+  const lastImpulseByDir = {
+    1: null,
+    "-1": null
+  };
+
+  for (let i = 1; i < n; i++) {
+    divergenceAge++;
+
+    if (impulseDir && e0 > 0) {
+      age++;
+      energy = e0 * Math.exp(-Math.LN2 * age / halfLife);
+    }
+
+    const c = candles[i];
+    const atr = atr14[i];
+
+    if (!(atr > 0)) continue;
+
+    const body = Math.abs(c.c - c.o);
+    const candleRange = c.h - c.l;
+    const bodyRatio = candleRange > 0 ? body / candleRange : 0;
+    const bodyATR = body / atr;
+    const rangeATR = candleRange / atr;
+
+    const volumeValues = candles
+      .slice(Math.max(0, i - 20), i)
+      .map(x => Number(x.v))
+      .filter(x => Number.isFinite(x) && x > 0);
+
+    const volumeNow = Number(c.v);
+    const volumeAvg = volumeValues.length
+      ? volumeValues.reduce((sum, value) => sum + value, 0) / volumeValues.length
+      : 0;
+
+    const volumeRatio =
+      volumeAvg > 0 && Number.isFinite(volumeNow)
+        ? volumeNow / volumeAvg
+        : 1;
+
+    const volumeBoost = Math.max(0.75, Math.min(1.5, volumeRatio));
+
+    const velocityStart = Math.max(0, i - 3);
+    const velocityATR =
+      Math.abs(c.c - candles[velocityStart].c) / atr;
+
+    // Xung lực: thân nến, biên độ, tỷ lệ thân/range và vận tốc.
+    const isImpulse =
+      bodyATR >= 0.9 &&
+      rangeATR >= 0.9 &&
+      bodyRatio >= 0.45;
+
+    if (!isImpulse) continue;
+
+    const newDir = c.c > c.o ? 1 : -1;
+    const rawE0 = Math.min(
+      5,
+      (bodyATR * 0.7 + velocityATR * 0.3) * volumeBoost
+    );
+
+    if (!(rawE0 > 0)) continue;
+
+    const priorImpulse = lastImpulseByDir[newDir];
+    const recent = candles.slice(Math.max(0, i - 12), i);
+
+    const madeNewExtreme = priorImpulse
+      ? newDir === 1
+        ? c.h > priorImpulse.price
+        : c.l < priorImpulse.price
+      : false;
+
+    latestDivergence =
+      !!priorImpulse &&
+      madeNewExtreme &&
+      rawE0 < priorImpulse.e0 * 0.75;
+
+    if (latestDivergence) divergenceAge = 0;
+
+    lastImpulseByDir[newDir] = {
+      price: newDir === 1 ? c.h : c.l,
+      e0: rawE0
+    };
+
+    const currentRatio = e0 > 0 ? energy / e0 : 0;
+
+    // Xung lực cùng hướng còn sống sẽ bổ sung năng lượng; ngược hướng thì mở chu kỳ mới.
+    if (newDir === impulseDir && currentRatio > 0.08) {
+      energy = Math.min(5, energy + rawE0 * 0.5);
+      e0 = energy;
+    } else {
+      impulseDir = newDir;
+      energy = rawE0;
+      e0 = rawE0;
+      impulsePrice = c.c;
+    }
+
+    age = 0;
+    halfLife = Math.max(8, Math.min(18, 8 + e0 * 2));
+  }
+
+  const currentATR = atr14[n - 1];
+  const currentPrice = candles[n - 1].c;
+  const energyRatio = e0 > 0 ? Math.max(0, energy / e0) : 0;
+
+  const aligned = impulseDir === targetDir;
+  const exhausted = age >= 3 && energyRatio <= 0.08;
+  const early = aligned && age <= 2 && energyRatio >= 0.55;
+
   let path = 0;
-  for (let j = i - 7; j <= i; j++) path += Math.abs(candles[j].c - candles[j - 1].c);
-  const net = candles[i].c - candles[i - 8].c;
-  const signedNet = side === 'LONG' ? net : -net;
-  const directionalEfficiency = path > 0 ? clamp(signedNet / path, 0, 1) : 0;
-  const pathScore = 15 * directionalEfficiency;
+  const lookback = Math.min(8, n - 1);
 
-  // RF turn strength is the step beyond the previous filter threshold, normalized by RF range.
-  const turnOvershoot = side === 'LONG'
-    ? (rf.filter[i] - rf.filter[i - 1]) / rfRange
-    : (rf.filter[i - 1] - rf.filter[i]) / rfRange;
-  if (!Number.isFinite(turnOvershoot) || turnOvershoot < 0) return invalid;
-  const turnScore = 10 * clamp(turnOvershoot, 0, 1);
-
-  // Penalize choppy RF state: count direction changes over the last 32 closed bars.
-  let flipCount = 0;
-  for (let j = Math.max(1, i - 31); j <= i; j++) {
-    if (rf.direction[j] !== rf.direction[j - 1]) flipCount++;
-  }
-  const chopScore = 10 * (1 - clamp(Math.max(0, flipCount - 1) / 5, 0, 1));
-
-  // Signal candle should close with its body near the trade-direction extreme.
-  const candle = candles[i];
-  const candleRange = candle.h - candle.l;
-  let candleScore = 0;
-  if (candleRange > 0) {
-    const closeLocation = side === 'LONG'
-      ? (candle.c - candle.l) / candleRange
-      : (candle.h - candle.c) / candleRange;
-    const directionalBody = side === 'LONG'
-      ? (candle.c - candle.o) / candleRange
-      : (candle.o - candle.c) / candleRange;
-    candleScore = 8 * (0.5 * clamp(closeLocation, 0, 1) + 0.5 * clamp((directionalBody + 1) / 2, 0, 1));
+  for (let i = n - lookback; i < n; i++) {
+    path += Math.abs(candles[i].c - candles[i - 1].c);
   }
 
-  // Participation confirmation from signal-bar volume vs the prior 20 completed bars.
-  const priorVolumes = candles.slice(i - 20, i).map(c => c.v).filter(Number.isFinite);
-  const avgVolume = priorVolumes.length
-    ? priorVolumes.reduce((sum, value) => sum + value, 0) / priorVolumes.length
-    : 0;
-  const volumeRatio = avgVolume > 0 ? candle.v / avgVolume : 1;
-  const volumeScore = 5 * clamp(volumeRatio / 1.5, 0, 1);
+  const netMove = currentPrice - candles[n - 1 - lookback].c;
+  const alignedMove = targetDir === 1 ? netMove > 0 : netMove < 0;
+  const efficiency = path > 0 ? Math.abs(netMove) / path : 0;
 
-  // Avoid chasing a move already far beyond the RF edge from three bars earlier.
-  const anchorIndex = Math.max(0, i - 3);
-  const oldFilter = Number(rf.filter[anchorIndex]);
-  const oldRange = Number(rf.range[anchorIndex]);
-  let extensionUnits = 0;
-  if (Number.isFinite(oldFilter) && oldRange > 0) {
-    const oldEdge = side === 'LONG' ? oldFilter + oldRange : oldFilter - oldRange;
-    extensionUnits = side === 'LONG'
-      ? (candle.c - oldEdge) / rfRange
-      : (oldEdge - candle.c) / rfRange;
+  const extensionUnits =
+    aligned && Number.isFinite(impulsePrice) && currentATR > 0
+      ? Math.max(0, targetDir * (currentPrice - impulsePrice) / currentATR)
+      : 0;
+
+  let adjustment = 0;
+
+  if (aligned) {
+    if (energyRatio >= 0.70) adjustment += 12;
+    else if (energyRatio >= 0.45) adjustment += 8;
+    else if (energyRatio >= 0.20) adjustment += 3;
+    else adjustment -= 4;
+  } else {
+    adjustment -= impulseDir === 0 ? 4 : 10;
   }
-  extensionUnits = Math.max(0, Number.isFinite(extensionUnits) ? extensionUnits : 0);
-  const antiChaseScore = 5 * (1 - clamp(extensionUnits / 4, 0, 1));
 
-  // Target feasibility: TP distance in ATRs plus clearance to confirmed swing obstacles.
-  const entry = Number(context.entry);
-  const sl = Number(context.sl);
-  const tp = Number(context.tp);
-  let targetDistance = NaN;
-  let targetAtrScore = 3;
-  let obstacleClearanceScore = 3;
-  if ([entry, sl, tp].every(Number.isFinite) && entry > 0 && sl > 0 && tp > 0) {
-    const validDirection = side === 'LONG' ? sl < entry && tp > entry : sl > entry && tp < entry;
-    if (!validDirection) return invalid;
-    targetDistance = Math.abs(tp - entry);
-    const targetAtr = targetDistance / atr15;
-    targetAtrScore = 6 * (1 - clamp((targetAtr - 1) / 3, 0, 1));
+  if (early) adjustment += 5;
+  if (alignedMove) adjustment += 3;
+  else adjustment -= 3;
 
-    let nearestObstacle = Infinity;
-    for (let j = Math.max(2, i - 47); j <= i - 2; j++) {
-      const isSwingHigh = candles[j].h >= candles[j - 1].h && candles[j].h >= candles[j - 2].h &&
-        candles[j].h > candles[j + 1].h && candles[j].h > candles[j + 2].h;
-      const isSwingLow = candles[j].l <= candles[j - 1].l && candles[j].l <= candles[j - 2].l &&
-        candles[j].l < candles[j + 1].l && candles[j].l < candles[j + 2].l;
-      const level = side === 'LONG' && isSwingHigh ? candles[j].h
-        : side === 'SHORT' && isSwingLow ? candles[j].l : NaN;
-      const between = Number.isFinite(level) && (side === 'LONG'
-        ? level > entry && level < tp
-        : level < entry && level > tp);
-      if (between) nearestObstacle = Math.min(nearestObstacle, Math.abs(level - entry));
-    }
-    const clearance = Number.isFinite(nearestObstacle)
-      ? nearestObstacle / targetDistance
-      : 1;
-    obstacleClearanceScore = 6 * clamp(clearance, 0, 1);
-  }
-  const targetPathScore = targetAtrScore + obstacleClearanceScore;
+  adjustment += Math.min(4, efficiency * 4);
 
-  // Provisional heuristic weights, not fitted win probabilities; validate walk-forward.
-  const score = clamp(Math.round(
-    htfTrendScore + pullbackQuality + pathScore + turnScore + chopScore +
-    candleScore + volumeScore + antiChaseScore + targetPathScore
-  ), 0, 100);
-  const rankMetrics = {
-    htfTrendScore, htfDirection,
-    pullbackQuality, pullbackBars, pullbackDepthAtr,
-    pathScore, directionalEfficiency,
-    turnScore, turnOvershoot,
-    chopScore, flipCount,
-    candleScore, volumeScore, volumeRatio,
-    antiChaseScore, extensionUnits,
-    targetPathScore, targetDistanceAtr: Number.isFinite(targetDistance) ? targetDistance / atr15 : null,
-    obstacleClearanceScore
+  if (exhausted) adjustment -= 10;
+  if (divergenceAge <= 4 && impulseDir === targetDir) adjustment -= 8;
+
+  adjustment = Math.max(-30, Math.min(20, Math.round(adjustment)));
+
+  let phase = "DEPLETED";
+  if (energyRatio > 0.70) phase = "CHARGED";
+  else if (energyRatio > 0.45) phase = "ACTIVE";
+  else if (energyRatio > 0.20) phase = "DECAYING";
+  else if (energyRatio > 0.08) phase = "FADING";
+  
+  const score = Math.max(0, Math.min(100, 50 + adjustment));
+
+  return {
+    adjustment,
+    early,
+    efficiency,
+    alignedMove,
+    extensionUnits,
+    runBars: age,
+    energy,
+    energyRatio,
+    e0,
+    halfLife,
+    score,
+    phase,
+    impulseSide: impulseDir === 1 ? "BULL" : impulseDir === -1 ? "BEAR" : "FLAT",
+    exhausted,
+    divergence: divergenceAge <= 4
   };
-  return { score, adjustment: score - 50, freshTurn: true, early: true, rankMetrics };
 }
 // ================= SCAN =================
 async function scan(symbol){
@@ -3394,40 +3420,30 @@ async function scan(symbol){
         if(!r || !r.side){
             return null
         }
-        // Fetch 4h context only after a valid 15m RF turn exists.
-        //let data4h = null;
-        //try {
-           // data4h = await getData(symbol, "4h", 301);
-       // } catch (contextErr) {
-            // Keep the valid 15m signal rankable with neutral HTF points if 4h fetch fails.
-           // console.warn(`⚠️ 4H RANK CONTEXT UNAVAILABLE ${symbol}:`, contextErr?.message || contextErr);
-        //}
-        //const rfRank = scoreRF15Signal(data15, r.side, {
-            //data4h,
-            //entry: r.price,
-            //sl: r.sl,
-            //tp: r.tp
-        //});
-        const rfRank = {
-    score: 0,
-    rankMetrics: {}
-};
+        const rfRank = scoreRF15Signal(data15, r.side, {
+            data15,
+            entry: r.price,
+            sl: r.sl,
+            tp: r.tp
+        });
+        //const rfRank = {
+    //score: 0,
+    //rankMetrics: {}
+//};
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
 
         console.log(
-            `🟢 SIGNAL: ${symbol} | ` +
-            `SIDE=${r.side} | ` +
-            `SETUP=${r.setup || "N/A"} | ` +
-            `QUALITY=${rfRank.score} | ` +
-            `RF_RANK=${rfRank.score} ` +
-            `(HTF=${safeFixed(rfRank.rankMetrics.htfTrendScore, 1)}, ` +
-            `PB=${safeFixed(rfRank.rankMetrics.pullbackQuality, 1)}, ` +
-            `CHOP=${safeFixed(rfRank.rankMetrics.chopScore, 1)}, ` +
-            `PATH=${safeFixed(rfRank.rankMetrics.pathScore, 1)}, ` +
-            `TP_PATH=${safeFixed(rfRank.rankMetrics.targetPathScore, 1)})`
-        )
+    `🟢 SIGNAL: ${symbol} | ` +
+    `SIDE=${r.side} | ` +
+    `QUALITY=${rfRank.score} | ` +
+    `ADJ=${rfRank.adjustment} | ` +
+    `IMPULSE=${rfRank.impulseSide} | ` +
+    `PHASE=${rfRank.phase} | ` +
+    `ENERGY=${safeFixed(rfRank.energyRatio * 100, 1)}% | ` +
+    `EARLY=${rfRank.early}`
+);
 
         return {
             symbol,
@@ -3435,7 +3451,7 @@ async function scan(symbol){
             qualityScore: rfRank.score,
             score: rfRank.score,
             rankScore: rfRank.score,
-            rankMetrics: rfRank.rankMetrics
+            rankMetrics: rfRank
         }
 
     }catch(e){
@@ -3770,15 +3786,15 @@ candidates.sort((a, b) =>
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
 
-    //const rankScore = Number(c.rankScore)
-    //if (!Number.isFinite(rankScore) || rankScore < MIN_RANK_SCORE) {
-       // console.log(
-           // `🚫 FILTER LOW RANK: ${c.symbol} | ` +
-            //`score=${Number.isFinite(rankScore) ? rankScore : "N/A"} | ` +
-            //`required=${MIN_RANK_SCORE}`
-        //)
-       // return false
-    //}
+    const rankScore = Number(c.rankScore)
+    if (!Number.isFinite(rankScore) || rankScore < MIN_RANK_SCORE) {
+        console.log(
+            `🚫 FILTER LOW RANK: ${c.symbol} | ` +
+            `score=${Number.isFinite(rankScore) ? rankScore : "N/A"} | ` +
+            `required=${MIN_RANK_SCORE}`
+        )
+        return false
+    }
 
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
@@ -3819,7 +3835,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered//.slice(0, 1);
+let picks = filtered.slice(0, 1);
 for (let best of picks){
 // Thử vào lệnh ngược hướng RF
 const rfSide = best.side;
