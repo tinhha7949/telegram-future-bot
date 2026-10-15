@@ -3462,11 +3462,7 @@ function safeFixed(value, digits = 2){
 
     return n.toFixed(digits)
 }
-// Input: `best` is the core signal plus symbol:
-// const best = { ...signal, symbol }
-// Returns a DB-ready trade, or null when the signal is invalid.
-// Accepts the stable minimum core contract (side, price/entry, sl, tp),
-// carries additional core fields through unchanged, and normalizes DB fields.
+
 function buildTradeFromCoreSignal(best, riskBudget) {
   const side = String(best?.side ?? best?.direction ?? '').toUpperCase();
   const entry = Number(best?.price ?? best?.entry);
@@ -3503,7 +3499,6 @@ function buildTradeFromCoreSignal(best, riskBudget) {
 
   const now = Date.now();
   const sourceRisk = best?.risk && typeof best.risk === 'object' ? best.risk : {};
-  const indicators = best?.indicators && typeof best.indicators === 'object' ? best.indicators : {};
   const riskDetail = best?.riskDetail && typeof best.riskDetail === 'object'
     ? best.riskDetail
     : sourceRisk;
@@ -3540,16 +3535,6 @@ function buildTradeFromCoreSignal(best, riskBudget) {
       riskPercent: entry > 0 ? priceRisk / entry : 0,
       riskBudget: budget
     },
-    indicators,
-    structure: best?.structure && typeof best.structure === 'object' ? best.structure : {},
-    context: best?.context && typeof best.context === 'object' ? best.context : {},
-    flags: best?.flags && typeof best.flags === 'object' ? best.flags : {},
-    debug: best?.debug && typeof best.debug === 'object' ? best.debug : {},
-    quantity: 0,
-    notional: 0,
-    finalRisk: 0,
-    waitingEntry: false,
-    breakoutTriggered: Boolean(best?.breakoutTriggered ?? best?.setup === 'BREAKOUT_RETEST'),
     createdAt: Number(best?.createdAt) || now,
     enteredAt: best?.enteredAt ?? null,
     openedAt: best?.openedAt ?? null,
