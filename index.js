@@ -3150,7 +3150,7 @@ async function coreLogic(data15, symbol = null) {
   const risk = Math.abs(price - sl);
   if (!finite(risk) || risk <= 0 || (side === 'LONG' ? sl >= price : sl <= price)) return null;
 
-  const targetR = 1.3;
+  const targetR = 1.6;
   const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
   const volRatio = range / price;
 
