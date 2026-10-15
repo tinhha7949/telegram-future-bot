@@ -2402,7 +2402,7 @@ async function manageDynamicTPSL(trade) {
     }
     const originalSL = side === 'LONG' ? entry - initialRisk : entry + initialRisk;
     const R = (side === 'LONG' ? current - entry : entry - current) / initialRisk;
-    if (!Number.isFinite(R) || R < 0.25) return;
+    if (!Number.isFinite(R) || R < 0.3) return;
 
     // Wilder ATR(22) from completed 15m candles, matching Chandelier Exit math.
     const calcWilderATR = (candles, length) => {
@@ -2432,9 +2432,9 @@ async function manageDynamicTPSL(trade) {
     //const floorR = R >= 0.8 ? 0.3 : -0.5;
     const floorR =
     R >= 0.9 ? 0.5 :
-    R >= 0.7 ? 0.3 :
-    R >= 0.5 ? 0.1 :
-    -0.5;
+    R >= 0.7 ? 0.2 :
+    R >= 0.5 ? -0.9 :
+    -0.4;
 
     if (R >= 0.7) phase = 2;
     if (R >= 0.9) phase = 3;
@@ -3139,11 +3139,11 @@ async function coreLogic(data15, symbol = null) {
   }
   if (trValues.length < 10) return null;
   const atr14 = trValues.reduce((sum, value) => sum + value, 0) / trValues.length;
-  const swingCandles = candles.slice(Math.max(0, i - 22), i);
+  const swingCandles = candles.slice(Math.max(0, i - 24), i);
   if (!(atr14 > 0) || swingCandles.length < 10) return null;
   const swingStop = side === 'LONG'
-    ? Math.min(...swingCandles.map(c => c.l)) - atr14 * 0.23
-    : Math.max(...swingCandles.map(c => c.h)) + atr14 * 0.23;
+    ? Math.min(...swingCandles.map(c => c.l)) - atr14 * 0.25
+    : Math.max(...swingCandles.map(c => c.h)) + atr14 * 0.25;
   const sl = side === 'LONG'
     ? Math.min(rf.lowerBand[i], swingStop)
     : Math.max(rf.upperBand[i], swingStop);
@@ -3838,7 +3838,7 @@ let picks = filtered//.slice(0, 1);
 for (let best of picks){
 // Thử vào lệnh ngược hướng RF
 const rfSide = best.side;
-const riskDistance = Math.abs(best.price - best.sl) * 0.3
+const riskDistance = Math.abs(best.price - best.sl) * 0.25
 if (!(riskDistance > 0)) continue;
 
 best.side = rfSide === "LONG" ? "SHORT" : "LONG";
@@ -3846,8 +3846,8 @@ best.sl = best.side === "LONG"
     ? best.price - riskDistance
     : best.price + riskDistance;
 best.tp = best.side === "LONG"
-    ? best.price + riskDistance * 1.15
-    : best.price - riskDistance * 1.15;
+    ? best.price + riskDistance * 1.2
+    : best.price - riskDistance * 1.2;
 
 best.setup = "RF_COUNTER";
 best.marketState = "RF_COUNTER";
