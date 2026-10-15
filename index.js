@@ -483,7 +483,7 @@ let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
 let NEXT_ENTRY_ALLOWED_AT = 0;
-const ENTRY_COOLDOWN_MS = 8 * 60 * 1000;
+const ENTRY_COOLDOWN_MS = 15 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
