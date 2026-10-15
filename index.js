@@ -3171,18 +3171,40 @@ async function coreLogic(data15, symbol = null) {
 
 function scoreRF15Signal(data15, side) {
   const candles = prepare(data15, 80);
-  const targetDir = side === "LONG" ? 1 : side === "SHORT" ? -1 : 0;
+  const targetDir =
+    side === "LONG" ? 1 :
+    side === "SHORT" ? -1 : 0;
 
-  if (!candles || !targetDir) {
-    return { adjustment: -100, score: 0, early: false };
+  const invalid = {
+    score: 0,
+    adjustment: -40,
+    early: false,
+    efficiency: 0,
+    alignedMove: false,
+    extensionUnits: 0,
+    runBars: 0,
+    energy: 0,
+    energyRatio: 0,
+    e0: 0,
+    halfLife: 0,
+    phase: "DEPLETED",
+    impulseSide: "FLAT",
+    exhausted: false,
+    divergence: false
+  };
+
+  if (!candles || !targetDir || candles.length < 30) {
+    return invalid;
   }
 
+  const clamp = (value, min, max) =>
+    Math.max(min, Math.min(max, value));
+
   const n = candles.length;
-  if (n < 30) return { adjustment: -100, score: 0, early: false };
   const tr = new Array(n).fill(NaN);
   const atr14 = new Array(n).fill(NaN);
 
-  // True range và ATR14.
+  // Tính ATR14.
   for (let i = 1; i < n; i++) {
     const c = candles[i];
     const previousClose = candles[i - 1].c;
@@ -3197,7 +3219,8 @@ function scoreRF15Signal(data15, side) {
     const values = tr.slice(start, i + 1).filter(Number.isFinite);
 
     if (values.length >= 8) {
-      atr14[i] = values.reduce((sum, value) => sum + value, 0) / values.length;
+      atr14[i] =
+        values.reduce((sum, value) => sum + value, 0) / values.length;
     }
   }
 
@@ -3208,7 +3231,10 @@ function scoreRF15Signal(data15, side) {
   let impulseDir = 0;
   let impulsePrice = NaN;
   let divergenceAge = 999;
-  let latestDivergence = false;
+
+  // Lưu sức mạnh của xung lực gần nhất để chấm điểm liên tục.
+  let lastBodyATR = 0;
+  let lastVolumeRatio = 1;
 
   const lastImpulseByDir = {
     1: null,
@@ -3241,7 +3267,8 @@ function scoreRF15Signal(data15, side) {
 
     const volumeNow = Number(c.v);
     const volumeAvg = volumeValues.length
-      ? volumeValues.reduce((sum, value) => sum + value, 0) / volumeValues.length
+      ? volumeValues.reduce((sum, value) => sum + value, 0) /
+        volumeValues.length
       : 0;
 
     const volumeRatio =
@@ -3249,13 +3276,13 @@ function scoreRF15Signal(data15, side) {
         ? volumeNow / volumeAvg
         : 1;
 
-    const volumeBoost = Math.max(0.75, Math.min(1.5, volumeRatio));
+    const volumeBoost = clamp(volumeRatio, 0.75, 1.5);
 
     const velocityStart = Math.max(0, i - 3);
     const velocityATR =
       Math.abs(c.c - candles[velocityStart].c) / atr;
 
-    // Xung lực: thân nến, biên độ, tỷ lệ thân/range và vận tốc.
+    // Chỉ ghi nhận nến có thân, biên độ và tỷ lệ thân/range đủ lớn.
     const isImpulse =
       bodyATR >= 0.9 &&
       rangeATR >= 0.9 &&
@@ -3271,8 +3298,10 @@ function scoreRF15Signal(data15, side) {
 
     if (!(rawE0 > 0)) continue;
 
+    lastBodyATR = bodyATR;
+    lastVolumeRatio = volumeRatio;
+
     const priorImpulse = lastImpulseByDir[newDir];
-    const recent = candles.slice(Math.max(0, i - 12), i);
 
     const madeNewExtreme = priorImpulse
       ? newDir === 1
@@ -3280,12 +3309,12 @@ function scoreRF15Signal(data15, side) {
         : c.l < priorImpulse.price
       : false;
 
-    latestDivergence =
+    const isDivergence =
       !!priorImpulse &&
       madeNewExtreme &&
       rawE0 < priorImpulse.e0 * 0.75;
 
-    if (latestDivergence) divergenceAge = 0;
+    if (isDivergence) divergenceAge = 0;
 
     lastImpulseByDir[newDir] = {
       price: newDir === 1 ? c.h : c.l,
@@ -3294,7 +3323,6 @@ function scoreRF15Signal(data15, side) {
 
     const currentRatio = e0 > 0 ? energy / e0 : 0;
 
-    // Xung lực cùng hướng còn sống sẽ bổ sung năng lượng; ngược hướng thì mở chu kỳ mới.
     if (newDir === impulseDir && currentRatio > 0.08) {
       energy = Math.min(5, energy + rawE0 * 0.5);
       e0 = energy;
@@ -3306,17 +3334,19 @@ function scoreRF15Signal(data15, side) {
     }
 
     age = 0;
-    halfLife = Math.max(8, Math.min(18, 8 + e0 * 2));
+    halfLife = clamp(8 + e0 * 2, 8, 18);
   }
 
   const currentATR = atr14[n - 1];
   const currentPrice = candles[n - 1].c;
-  const energyRatio = e0 > 0 ? Math.max(0, energy / e0) : 0;
+  const energyRatio = e0 > 0 ? clamp(energy / e0, 0, 1) : 0;
 
   const aligned = impulseDir === targetDir;
   const exhausted = age >= 3 && energyRatio <= 0.08;
   const early = aligned && age <= 2 && energyRatio >= 0.55;
+  const divergence = divergenceAge <= 4 && aligned;
 
+  // Hướng và hiệu quả chuyển động trong 8 nến gần nhất.
   let path = 0;
   const lookback = Math.min(8, n - 1);
 
@@ -3325,46 +3355,58 @@ function scoreRF15Signal(data15, side) {
   }
 
   const netMove = currentPrice - candles[n - 1 - lookback].c;
-  const alignedMove = targetDir === 1 ? netMove > 0 : netMove < 0;
-  const efficiency = path > 0 ? Math.abs(netMove) / path : 0;
+  const alignedMove = targetDir * netMove > 0;
+  const efficiency = path > 0 ? clamp(Math.abs(netMove) / path, 0, 1) : 0;
 
+  // Độ xa giá đã chạy tính từ điểm bắt đầu xung lực, theo ATR.
   const extensionUnits =
     aligned && Number.isFinite(impulsePrice) && currentATR > 0
       ? Math.max(0, targetDir * (currentPrice - impulsePrice) / currentATR)
       : 0;
 
-  let adjustment = 0;
+  // Điểm nền thấp hơn để 60 thực sự cần có bằng chứng thuận chiều.
+  let score = 40;
 
   if (aligned) {
-    if (energyRatio >= 0.70) adjustment += 12;
-    else if (energyRatio >= 0.45) adjustment += 8;
-    else if (energyRatio >= 0.20) adjustment += 3;
-    else adjustment -= 4;
+    // Cùng hướng và còn năng lượng: tối đa +15.
+    score += 5 + energyRatio * 10;
+
+    // Thân nến: tăng điểm dần từ 0.9 ATR tới 2.5 ATR, tối đa +8.
+    score += clamp((lastBodyATR - 0.9) / (2.5 - 0.9), 0, 1) * 8;
+
+    // Volume: tăng điểm dần từ 0.8x tới 2.0x trung bình, tối đa +5.
+    score += clamp((lastVolumeRatio - 0.8) / (2.0 - 0.8), 0, 1) * 5;
+
+    // Điểm giảm dần theo tuổi xung lực; tối đa +6.
+    score += Math.max(0, 6 - age * 1.5);
   } else {
-    adjustment -= impulseDir === 0 ? 4 : 10;
+    // Không có xung lực hoặc xung lực ngược hướng core.
+    score -= impulseDir === 0 ? 8 : 14;
   }
 
-  if (early) adjustment += 5;
-  if (alignedMove) adjustment += 3;
-  else adjustment -= 3;
+  // Đường giá cùng hướng được cộng; đi ngược hướng bị trừ.
+  score += alignedMove ? 5 : -7;
 
-  adjustment += Math.min(4, efficiency * 4);
+  // Đường giá càng hiệu quả, cộng càng nhiều; tối đa +8.
+  score += efficiency * 8;
 
-  if (exhausted) adjustment -= 10;
-  if (divergenceAge <= 4 && impulseDir === targetDir) adjustment -= 8;
+  // Trừ điểm khi giá đã chạy quá xa khỏi điểm khởi phát xung lực.
+  //score -= clamp((extensionUnits - 1) * 4, 0, 15);
 
-  adjustment = Math.max(-30, Math.min(20, Math.round(adjustment)));
+  if (exhausted) score -= 10;
+  if (divergence) score -= 8;
+
+  score = Math.round(clamp(score, 0, 100));
 
   let phase = "DEPLETED";
   if (energyRatio > 0.70) phase = "CHARGED";
   else if (energyRatio > 0.45) phase = "ACTIVE";
   else if (energyRatio > 0.20) phase = "DECAYING";
   else if (energyRatio > 0.08) phase = "FADING";
-  
-  const score = Math.max(0, Math.min(100, 50 + adjustment));
 
   return {
-    adjustment,
+    score,
+    adjustment: score - 40,
     early,
     efficiency,
     alignedMove,
@@ -3374,11 +3416,14 @@ function scoreRF15Signal(data15, side) {
     energyRatio,
     e0,
     halfLife,
-    score,
     phase,
-    impulseSide: impulseDir === 1 ? "BULL" : impulseDir === -1 ? "BEAR" : "FLAT",
+    impulseSide:
+      impulseDir === 1 ? "BULL" :
+      impulseDir === -1 ? "BEAR" : "FLAT",
+    bodyATR: lastBodyATR,
+    volumeRatio: lastVolumeRatio,
     exhausted,
-    divergence: divergenceAge <= 4
+    divergence
   };
 }
 // ================= SCAN =================
