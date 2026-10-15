@@ -483,7 +483,7 @@ let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
 let NEXT_ENTRY_ALLOWED_AT = 0;
-const ENTRY_COOLDOWN_MS = 15 * 60 * 1000;
+const ENTRY_COOLDOWN_MS = 8 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
@@ -3369,7 +3369,7 @@ function scoreRF15Signal(data15, side) {
 
   if (aligned) {
     // Cùng hướng và còn năng lượng: tối đa +15.
-    score += 5 + energyRatio * 10;
+    score -= 5 + energyRatio * 10;
 
     // Thân nến: tăng điểm dần từ 0.9 ATR tới 2.5 ATR, tối đa +8.
     score += clamp((lastBodyATR - 0.9) / (2.5 - 0.9), 0, 1) * 8;
