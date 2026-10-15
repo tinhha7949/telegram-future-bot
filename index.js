@@ -2402,7 +2402,7 @@ async function manageDynamicTPSL(trade) {
     }
     const originalSL = side === 'LONG' ? entry - initialRisk : entry + initialRisk;
     const R = (side === 'LONG' ? current - entry : entry - current) / initialRisk;
-    if (!Number.isFinite(R) || R < 0.3) return;
+    if (!Number.isFinite(R) || R < 0.25) return;
 
     // Wilder ATR(22) from completed 15m candles, matching Chandelier Exit math.
     const calcWilderATR = (candles, length) => {
@@ -2431,9 +2431,9 @@ async function manageDynamicTPSL(trade) {
     //const floorR = R >= 3.0 ? 1.50 : R >= 2.0 ? 0.75 : 0.30;
     //const floorR = R >= 0.8 ? 0.3 : -0.5;
     const floorR =
-    R >= 1.0 ? 0.5 :
-    R >= 0.8 ? 0.3 :
-    R >= 0.6 ? 0.1 :
+    R >= 0.9 ? 0.5 :
+    R >= 0.7 ? 0.3 :
+    R >= 0.5 ? 0.1 :
     -0.5;
 
     if (R >= 0.7) phase = 2;
