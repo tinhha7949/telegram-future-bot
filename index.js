@@ -2402,7 +2402,7 @@ async function manageDynamicTPSL(trade) {
     }
     const originalSL = side === 'LONG' ? entry - initialRisk : entry + initialRisk;
     const R = (side === 'LONG' ? current - entry : entry - current) / initialRisk;
-    if (!Number.isFinite(R) || R < 0.6) return;
+    if (!Number.isFinite(R) || R < 0.5) return;
 
     // Wilder ATR(22) from completed 15m candles, matching Chandelier Exit math.
     const calcWilderATR = (candles, length) => {
@@ -2431,12 +2431,12 @@ async function manageDynamicTPSL(trade) {
     //const floorR = R >= 3.0 ? 1.50 : R >= 2.0 ? 0.75 : 0.30;
     //const floorR = R >= 0.8 ? 0.3 : -0.5;
     const floorR =
-    R >= 1.4 ? 0.8 :
-    R >= 1.0 ? 0.4 :
+    R >= 0.8 ? 0.3 :
+    //R >= 1.0 ? 0.4 :
     //R >= 0.8 ? -0.9 :
     -0.5;
 
-    if (R >= 1.0) phase = 2;
+    if (R >= 0.8) phase = 2;
     if (R >= 1.4) phase = 3;
     const floor = side === 'LONG'
       ? entry + initialRisk * floorR
@@ -3823,22 +3823,38 @@ let picks = filtered//.slice(0, 1);
 for (let best of picks){
 // Thử vào lệnh ngược hướng RF
 const rfSide = best.side;
-const riskDistance = Math.abs(best.price - best.sl) * 0.3
-if (!(riskDistance > 0)) continue;
+const entry = Number(best.price);
+const coreSL = Number(best.sl);
+
+if (
+    !Number.isFinite(entry) ||
+    !Number.isFinite(coreSL) ||
+    entry <= 0 ||
+    coreSL <= 0
+) continue;
+
+const baseDistance = Math.abs(entry - coreSL);
+if (!(baseDistance > 0)) continue;
 
 best.side = rfSide === "LONG" ? "SHORT" : "LONG";
-best.sl = best.side === "LONG"
-    ? best.price - riskDistance
-    : best.price + riskDistance;
+
+const tpDistance = baseDistance * 1.2; // TP xa hơn 20%
+const slDistance = baseDistance * 0.6; // SL gần entry hơn
+
 best.tp = best.side === "LONG"
-    ? best.price + riskDistance * 1.6
-    : best.price - riskDistance * 1.6;
+    ? entry + tpDistance
+    : entry - tpDistance;
+
+best.sl = best.side === "LONG"
+    ? entry - slDistance
+    : entry + slDistance;
 
 best.setup = "RF_COUNTER";
 best.marketState = "RF_COUNTER";
 best.triggerType = "INVERTED_RF";
+
 console.log(
-    `🔁 RF COUNTER ${best.symbol} | RF=${rfSide} | TRADE=${best.side}`
+    `🔁 RF COUNTER ${best.symbol} | RF=${rfSide} | TRADE=${best.side} | SL=${best.sl} | TP=${best.tp}`
 );
 let positions = []
 
