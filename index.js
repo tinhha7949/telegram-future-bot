@@ -2402,7 +2402,7 @@ async function manageDynamicTPSL(trade) {
     }
     const originalSL = side === 'LONG' ? entry - initialRisk : entry + initialRisk;
     const R = (side === 'LONG' ? current - entry : entry - current) / initialRisk;
-    if (!Number.isFinite(R) || R < 0.3) return;
+    if (!Number.isFinite(R) || R < 0.6) return;
 
     // Wilder ATR(22) from completed 15m candles, matching Chandelier Exit math.
     const calcWilderATR = (candles, length) => {
@@ -2431,13 +2431,13 @@ async function manageDynamicTPSL(trade) {
     //const floorR = R >= 3.0 ? 1.50 : R >= 2.0 ? 0.75 : 0.30;
     //const floorR = R >= 0.8 ? 0.3 : -0.5;
     const floorR =
-    R >= 0.9 ? 0.5 :
-    R >= 0.7 ? 0.2 :
-    R >= 0.5 ? -0.9 :
-    -0.4;
+    R >= 1.4 ? 0.8 :
+    R >= 1.0 ? 0.4 :
+    //R >= 0.8 ? -0.9 :
+    -0.5;
 
-    if (R >= 0.7) phase = 2;
-    if (R >= 0.9) phase = 3;
+    if (R >= 1.0) phase = 2;
+    if (R >= 1.4) phase = 3;
     const floor = side === 'LONG'
       ? entry + initialRisk * floorR
       : entry - initialRisk * floorR;
@@ -2446,7 +2446,7 @@ async function manageDynamicTPSL(trade) {
 
     // After a strong extension (+2.5R), trail with the 15m Chandelier Exit.
     // The stop can tighten only; it never moves back toward the original risk.
-    if (R >= 0.7 && closed15.length >= 22) {
+    if (R >= 1.0 && closed15.length >= 22) {
       const lookbackHigh = Math.max(...h15.slice(-22));
       const lookbackLow = Math.min(...l15.slice(-22));
       const chandelier = side === 'LONG'
@@ -2489,7 +2489,7 @@ async function manageDynamicTPSL(trade) {
     const enoughRoom = side === 'LONG'
       ? extendedTP >= oldTP + Math.max(atr15, initialRisk * 0.50)
       : extendedTP <= oldTP - Math.max(atr15, initialRisk * 0.50);
-    if (R >= 0.7 && nearTP && enoughRoom &&
+    if (R >= 1.0 && nearTP && enoughRoom &&
         ((side === 'LONG' && momentumLong) || (side === 'SHORT' && momentumShort))) {
       newTP = extendedTP;
     }
@@ -3838,7 +3838,7 @@ let picks = filtered//.slice(0, 1);
 for (let best of picks){
 // Thử vào lệnh ngược hướng RF
 const rfSide = best.side;
-const riskDistance = Math.abs(best.price - best.sl) * 0.25
+const riskDistance = Math.abs(best.price - best.sl) * 0.3
 if (!(riskDistance > 0)) continue;
 
 best.side = rfSide === "LONG" ? "SHORT" : "LONG";
@@ -3846,8 +3846,8 @@ best.sl = best.side === "LONG"
     ? best.price - riskDistance
     : best.price + riskDistance;
 best.tp = best.side === "LONG"
-    ? best.price + riskDistance * 1.2
-    : best.price - riskDistance * 1.2;
+    ? best.price + riskDistance * 1.6
+    : best.price - riskDistance * 1.6;
 
 best.setup = "RF_COUNTER";
 best.marketState = "RF_COUNTER";
