@@ -1,3 +1,7 @@
+require("dotenv").config()
+
+const { TRADE_CONFIG, MAX_BEST_SIGNALS } = require("./ai-trading/trading-config")
+
 let DB_READY = false
 let STOP_NEW_ENTRIES = false
 let signalClaims = null
@@ -11,14 +15,6 @@ const TPSL_PENDING = {}
 const TPSL_CLOSING = {}
 const DYNAMIC_LAST_UPDATE = {}
 const DYNAMIC_PHASE = {}
-const MIN_CORE_SCORE = 60
-const MAX_BEST_SIGNALS = 1
-const TRADE_CONFIG = {
-    riskPerTrade: 0.01,
-    maxRiskPerTrade: 0.01,
-    maxPositionPercent: 0.5,
-    maxActivePositions: 3
-}
 let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0
@@ -411,7 +407,6 @@ async function requireOneWayPositionMode(){
     return true
 }
 //////////////
-require("dotenv").config()
 const { MongoClient } = require("mongodb")
 const client = new MongoClient(process.env.MONGO_URI, {
     connectTimeoutMS: 10000,
@@ -3703,62 +3698,14 @@ if(!signals || signals.length === 0){
 }
 
         // ===== BUILD CANDIDATES + AI =====
-let candidates = []
-let dbCache = {}
-
-for (let s of signals){
-
-    // ===== MAIN =====
-    let keyMain = `${s.setup}-${s.marketState}-${s.side}-${s.volatility}`
-
-    if(!dbCache[keyMain]){
-        dbCache[keyMain] = await getDBStats(
-            s.setup,
-            s.marketState,
-            s.side,
-            s.volatility
-        )
-    }
-
-    let dbMain = dbCache[keyMain]
-
-// DB statistics are metadata only. They do not affect coin ranking.
-const dbStats = dbMain || { total: 0, winrate: 0.5 };
-let aiMain = 0;
-if (dbStats.total >= 30 && Number.isFinite(dbStats.winrate)) {
-  aiMain = (dbStats.winrate - 0.50) * 60 * Math.min(dbStats.total / 100, 1);
-}
-
-// DB chỉ loại setup có lịch sử rất xấu
-// ===== DB EDGE — CHỈ LOG, KHÔNG BLOCK =====
-
-if(dbStats.total >= 30){
-
-    const wr = dbStats.winrate
-
-    if(wr < 0.42){
-
-        console.log(
-        `🚫 DB BAD EDGE: ${s.symbol} | ` +
-        `WR=${(dbStats.winrate * 100).toFixed(1)}% | ` +
-        `N=${dbStats.total}`
-    )
-    }
-}
-
-// CORE MỚI KHÔNG CÒN SCORE CŨ
-// Không dùng s.score nữa
-
-const rankScore = Number(s.rankScore ?? s.qualityScore ?? s.score ?? 0);
-candidates.push({
+// Nine-AI owns signal ranking. Historical DB scores cannot reorder its decisions.
+let candidates = signals.map(s => ({
     ...s,
-    finalScore: aiMain,
-    rankScore,
-    type: "MAIN"
-})
-}
+    rankScore: Number(s.rankScore ?? s.confidence ?? 0),
+    type: "NINE_AI"
+}))
 
-        // ===== NO CANDIDATE =====
+// ===== NO CANDIDATE =====
         if(!candidates || candidates.length === 0){
             console.log("❌ No signal")
             return
@@ -3788,10 +3735,9 @@ let filtered = candidates.filter(c => {
         (side === "LONG" ? sl < entry && tp > entry :
          side === "SHORT" ? sl > entry && tp < entry : false);
 
-    if (!geometryValid || !Number.isFinite(rr) || rr < RR_THRESHOLD) {
+    if (!geometryValid || !Number.isFinite(rr) || rr <= 0) {
         console.log(
-            `🚫 FILTER NINE-AI GEOMETRY: ${c.symbol} | ` +
-            `side=${side} | RR=${safeFixed(rr, 2)} | required=${RR_THRESHOLD}`
+            `🚫 FILTER NINE-AI GEOMETRY: ${c.symbol} | side=${side} | RR=${safeFixed(rr, 2)}`
         );
         return false;
     }
@@ -3908,83 +3854,11 @@ console.log(`⛔ ${best.symbol} đang có lệnh`)
 continue
 }
 
-    // ===== DB AI =====
-
-let dbAI =
-    await getDBStats(
-        best.setup,
-        best.marketState,
-        best.side,
-        best.volatility
-    )
-    if(!dbAI && best.setup !== "NINE_AI_15M"){
-    console.log(
-        `⛔ DB AI unavailable - skip ${best.symbol}`
-    )
-    continue
-}
-if (!dbAI) dbAI = { total: 0, winrate: 0.5 };
-
-// ===== RR =====
-
-let rr =
-    best.side === "LONG"
-        ? (best.tp - best.price) /
-          (best.price - best.sl)
-        : (best.price - best.tp) /
-          (best.sl - best.price)
-
-let minRR =
-    best.marketState === "TREND_STRONG"
-        ? 1.0
-        : 0.8
-
-if(rr < minRR){
-    console.log(
-        `🚫 FILTER MIN RR: ${best.symbol} | ` +
-        `RR=${safeFixed(rr, 2)} | ` +
-        `required=${safeFixed(minRR, 2)} | ` +
-        `state=${best.marketState}`
-    )
-    continue
-}
-
-// ===== RISK MULTIPLIER =====
-
-let multiplier = 1
-
-if(dbAI.total >= 20){
-
-    let edge =
-        dbAI.winrate - 0.5
-
-    multiplier =
-        1 + edge * 2
-
-    if(multiplier > 1.25){
-        multiplier = 1.25
-    }
-
-    if(multiplier < 0.75){
-        multiplier = 0.75
-    }
-}
-
-let balance =
-    ACCOUNT_BALANCE
-
+    // Nine-AI owns the strategy. Size only from explicit operator risk limits.
+let balance = ACCOUNT_BALANCE
 let riskPercent = TRADE_CONFIG.riskPerTrade
+let risk = balance * riskPercent
 
-let risk =
-    balance *
-    riskPercent *
-    multiplier
-
-// Không cho AI tăng risk quá mức
-risk = Math.min(
-    risk,
-    balance * TRADE_CONFIG.maxRiskPerTrade
-)
 console.log(
     `🧮 RISK CALC ${best.symbol} | ` +
     `balance=${ACCOUNT_BALANCE} | ` +
@@ -4075,7 +3949,7 @@ if(!trade){
 
     // Hard cap 3x account
     let maxPositionValue =
-        ACCOUNT_BALANCE * 3
+        ACCOUNT_BALANCE * TRADE_CONFIG.maxPositionPercent
 
     qty =
         Math.min(
