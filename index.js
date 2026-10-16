@@ -3900,8 +3900,8 @@ if (!(baseDistance > 0)) continue;
 if (best.rankDirectionMode === "COUNTER_CORE") {
     best.side = coreSide === "LONG" ? "SHORT" : "LONG";
 
-    const tpDistance = baseDistance * 1.0;
-    const slDistance = baseDistance * 0.6;
+    const tpDistance = baseDistance * 0.9;
+    const slDistance = baseDistance * 0.9;
 
     best.tp = best.side === "LONG"
         ? entry + tpDistance
@@ -3919,7 +3919,12 @@ if (best.rankDirectionMode === "COUNTER_CORE") {
         `🔁 RF COUNTER ${best.symbol} | score=${best.rankScore} | CORE=${coreSide} | TRADE=${best.side} | SL=${best.sl} | TP=${best.tp}`
     );
 } else {
+    const tpDistance = baseDistance * 0.9;
     const slDistance = baseDistance * 0.6;
+    
+    best.tp = best.side === "LONG"
+        ? entry + tpDistance
+        : entry - tpDistance;
 
     best.sl = coreSide === "LONG"
         ? entry - slDistance
