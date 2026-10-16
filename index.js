@@ -3513,10 +3513,9 @@ continue
     const risk = balance * riskPercent;
 console.log(
     `🧮 RISK CALC ${best.symbol} | ` +
-    `balance=${ACCOUNT_BALANCE} | ` +
-    `riskPercent=${TRADE_CONFIG.riskPerTrade} | ` +
+    `balance=${balance} | ` +
+    `riskPercent=${riskPercent} | ` +
     `maxRisk=${TRADE_CONFIG.maxRiskPerTrade} | ` +
-    `multiplier=${multiplier} | ` +
     `risk=${risk}`
 )
 if(risk <= 0){
