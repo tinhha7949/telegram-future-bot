@@ -22,5 +22,8 @@ assert.equal(result.roles[8].name, "Risk Manager AI");
 if (result.side) {
   assert.ok(result.sl > 0 && result.tp > 0 && result.price > 0);
   assert.ok(result.rr >= 1.7);
+  assert.equal(result.authorizedForExecution, true);
+} else {
+  assert.equal(result.authorizedForExecution, undefined);
 }
-console.log("PASS: nine roles, closed-candle filter, deterministic analysis, and trade geometry");
+console.log("PASS: nine roles, closed-candle filter, execution authorization, deterministic analysis, and trade geometry");

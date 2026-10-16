@@ -191,7 +191,11 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     rankMetrics: { score: confidence, adjustment: 0, phase: f.trend,
       impulseSide: side, energyRatio: f.volumeRatio, early: false,
       roles: roleResults, features: summarize(f) },
-    roles: roleResults, candles: candles.length, authorizedForExecution: false
+    roles: roleResults, candles: candles.length,
+    // A non-WAIT decision that passed all nine-role checks is the only
+    // signal the scanner may consider; deterministic execution risk guards
+    // and position limits still have final veto authority.
+    authorizedForExecution: true
   };
 }
 
