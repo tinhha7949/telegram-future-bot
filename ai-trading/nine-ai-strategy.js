@@ -16,7 +16,7 @@ const ROLE_NAMES = [
   "Bull AI",
   "Bear AI",
   "Contrarian AI",
-  "Analyst/Auditor AI",
+  "Analyst AI",
   "Decision AI",
   "Risk Manager AI"
 ];
