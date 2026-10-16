@@ -3444,7 +3444,7 @@ async function scan(symbol){
             symbol,
             setup: "NINE_AI_15M",
             triggerType: "NINE_AI_CONSENSUS",
-            rankDirectionMode: "FOLLOW_CORE",
+            rankDirectionMode: "NINE_AI_PRIMARY",
             rankScore: Number(decision.rankScore || decision.confidence),
             qualityScore: Number(decision.qualityScore || decision.confidence)
         };
@@ -3804,7 +3804,7 @@ filtered = filtered.sort((a, b) =>
     Number(b.rankScore) - Number(a.rankScore)
 )
 
-// // ===== UNIQUE COIN =====
+// ===== UNIQUE COIN =====
 let unique = []
 let used = new Set()
 
