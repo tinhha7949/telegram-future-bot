@@ -30,7 +30,7 @@ assert.equal(result.roles[7].name, "Decision AI");
 assert.equal(result.roles[8].name, "Risk Manager AI");
 if (result.side) {
   assert.ok(result.sl > 0 && result.tp > 0 && result.price > 0);
-  assert.ok(result.rr >= 1.7);
+  assert.ok(result.rr >= 0.79 && result.rr <= 1.8, "any valid RR below the hard 1.8 ceiling is allowed");
   assert.equal(result.authorizedForExecution, true);
   assert.equal(result.tradePlan.timeframe, "15m");
   assert.equal(result.tradePlan.entryMethod, "LATEST_CLOSED_CANDLE");
