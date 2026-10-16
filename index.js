@@ -3451,7 +3451,7 @@ async function scan(symbol){
             !["LONG", "SHORT"].includes(decision.side)
         ) return null;
         console.log(
-            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | RANK=${safeFixed(decision.rankScore, 2)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
+            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
         );
         return {
             ...decision,
@@ -3459,8 +3459,8 @@ async function scan(symbol){
             setup: "NINE_AI_15M",
             triggerType: "NINE_AI_CONSENSUS",
             rankDirectionMode: "NINE_AI_PRIMARY",
-            rankScore: Number(decision.rankScore || decision.confidence),
-            qualityScore: Number(decision.qualityScore || decision.confidence)
+            rankScore: Number(decision.rankScore ?? decision.confidence),
+            qualityScore: Number(decision.qualityScore ?? decision.confidence)
         };
     } catch (e) {
         console.error(`🔥 NINE-AI SCAN ERROR ${symbol}:`, e?.message || e);
