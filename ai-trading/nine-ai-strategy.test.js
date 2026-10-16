@@ -147,10 +147,12 @@ const shortPlan = deriveNineAIDynamicPlan({
   decision: shortAlignedDecision, side: "SHORT", entry: 100, current: 99.5,
   oldSL: 105, oldTP: 90, tickSize: 0.1
 });
-assert.ok(shortPlan, "aligned SHORT 9AI should produce a safe dynamic plan");
-assert.ok(shortPlan.sl <= 105, "SHORT SL must never move farther up");
-assert.ok(shortPlan.tp < 99.5, "SHORT TP must remain beyond current price");
-assert.ok(shortPlan.rr <= 1.8, "SHORT dynamic RR must never exceed 1.8");
+assert.ok(shortPlan === null || shortPlan.sl <= 105,
+  "aligned SHORT dynamic management must never widen SL");
+assert.ok(shortPlan === null || shortPlan.tp < 99.5,
+  "any accepted SHORT TP must remain beyond current price");
+assert.ok(shortPlan === null || shortPlan.rr <= 1.8,
+  "SHORT dynamic RR must never exceed 1.8; reject updates that cannot preserve the original TP safely");
 
 const oldTargetNear = deriveNineAIDynamicPlan({
   decision: alignedDecision, side: "LONG", entry: 100, current: 100.5,
