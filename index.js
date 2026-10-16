@@ -13,12 +13,25 @@ const DYNAMIC_LAST_UPDATE = {}
 const DYNAMIC_PHASE = {}
 const MIN_CORE_SCORE = 60
 const MAX_BEST_SIGNALS = 1
-const TRADE_CONFIG = {
-    riskPerTrade: 0.01,
-    maxRiskPerTrade: 0.01,
-    maxPositionPercent: 0.5,
-    maxActivePositions: 3
+function envNumber(name, fallback, min, max) {
+    const raw = process.env[name];
+    if (raw == null || String(raw).trim() === "") return fallback;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+        console.warn(`⚠️ Invalid ${name}; using default ${fallback}`);
+        return fallback;
+    }
+    return Math.max(min, Math.min(max, value));
 }
+
+// User-adjustable execution limits. The 9-AI strategy owns trade direction
+// and its entry/SL/TP plan; these settings only bound exposure.
+const TRADE_CONFIG = Object.freeze({
+    riskPerTrade: envNumber("RISK_PER_TRADE", 0.01, 0.0001, 0.10),
+    maxRiskPerTrade: envNumber("MAX_RISK_PER_TRADE", 0.01, 0.0001, 0.10),
+    maxPositionPercent: envNumber("MAX_POSITION_PERCENT", 0.5, 0.01, 1),
+    maxActivePositions: Math.round(envNumber("MAX_ACTIVE_POSITIONS", 3, 1, 50))
+})
 let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
 let serverTimeOffset = 0

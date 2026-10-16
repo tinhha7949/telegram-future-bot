@@ -77,10 +77,13 @@ function buildFeatures(candles) {
   const prior20 = candles.slice(-21, -1);
   const high20 = Math.max(...prior20.map(c => c.h));
   const low20 = Math.min(...prior20.map(c => c.l));
+  const structure = candles.slice(-9);
+  const swingHigh = Math.max(...structure.map(c => c.h));
+  const swingLow = Math.min(...structure.map(c => c.l));
   const atrPct = last.c > 0 ? atr / last.c : 0;
   return {
     last, e9, e21, e50, rsi: rs, atr, atrPct, mom4, mom12,
-    volumeRatio, high20, low20,
+    volumeRatio, high20, low20, swingHigh, swingLow,
     trend: e9 > e21 && e21 > e50 ? "UP" : e9 < e21 && e21 < e50 ? "DOWN" : "RANGE",
     extensionAtr: atr > 0 ? (last.c - e21) / atr : 0,
     valid: [e9, e21, e50, rs, atr, high20, low20].every(Number.isFinite) && atr > 0
@@ -171,8 +174,15 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   if (!riskAllowed) return { ...abstain, reason: riskReasons.join(",") || "NO_CONSENSUS",
     roles: roleResults, candles: candles.length, features: summarize(f) };
 
+  // Nine-AI owns the complete trade plan. Entry uses the latest CLOSED 15m
+  // candle; SL combines ATR volatility with recent market structure; TP is
+  // derived from the resulting risk distance. No legacy scanner rewrites it.
   const entry = f.last.c;
-  const stopDistance = Math.max(f.atr * 1.5, entry * 0.001);
+  const minimumStop = Math.max(f.atr * 1.5, entry * 0.001);
+  const structureStop = side === "LONG"
+    ? entry - f.swingLow + f.atr * 0.2
+    : f.swingHigh - entry + f.atr * 0.2;
+  const stopDistance = Math.max(minimumStop, structureStop);
   const targetDistance = stopDistance * 1.8;
   const sl = side === "LONG" ? entry - stopDistance : entry + stopDistance;
   const tp = side === "LONG" ? entry + targetDistance : entry - targetDistance;
@@ -183,7 +193,16 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   }
 
   return {
-    symbol, side, action: side, confidence, price: entry, sl, tp, rr,
+    symbol, side, action: side, confidence, price: entry, entry, sl, tp, rr,
+    tradePlan: {
+      timeframe: "15m",
+      entryMethod: "LATEST_CLOSED_CANDLE",
+      stopMethod: "ATR_AND_RECENT_STRUCTURE",
+      targetMethod: "RISK_MULTIPLE",
+      stopDistance,
+      targetDistance,
+      riskReward: rr
+    },
     signalAt: f.last.closeTime, setup: "NINE_AI_15M",
     marketState: f.trend === "RANGE" ? "RANGE" : "TREND_STRONG",
     volatility: f.atrPct > 0.015 ? "HIGH" : f.atrPct < 0.004 ? "LOW" : "NORMAL",
@@ -203,7 +222,7 @@ function summarize(f) {
   return { close: f.last.c, ema9: f.e9, ema21: f.e21, ema50: f.e50,
     rsi14: f.rsi, atr14: f.atr, atrPercent: f.atrPct, momentum4: f.mom4,
     momentum12: f.mom12, volumeRatio: f.volumeRatio, trend: f.trend,
-    extensionAtr: f.extensionAtr };
+    extensionAtr: f.extensionAtr, swingHigh: f.swingHigh, swingLow: f.swingLow };
 }
 
 module.exports = { ROLE_NAMES, parseClosedCandles, buildFeatures, analyzeNineAI };
