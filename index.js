@@ -3876,7 +3876,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 1);
+let picks = filtered//.slice(0, 1);
 for (let best of picks){
 // Thử vào lệnh ngược hướng RF
 const rfSide = best.side;
@@ -3895,7 +3895,7 @@ if (!(baseDistance > 0)) continue;
 
 best.side = rfSide === "LONG" ? "SHORT" : "LONG";
 
-const tpDistance = baseDistance * 1.2; // TP xa hơn 20%
+const tpDistance = baseDistance * 1.0; // TP xa hơn 20%
 const slDistance = baseDistance * 0.6; // SL gần entry hơn
 
 best.tp = best.side === "LONG"
