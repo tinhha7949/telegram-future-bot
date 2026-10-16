@@ -2271,19 +2271,30 @@ async function openPositionWithTPSL(trade, qty){
         return false
     }
 
-    trade.entry =
-        realEntry
+    // Preserve the Nine-AI plan's original reward/risk ratio after fill.
+    // The execution fill may differ from the signal entry, but a generic 1.6R
+    // default must never overwrite the TP selected by Nine-AI.
+    const plannedEntry = Number(trade.entry ?? trade.price)
+    const plannedSL = Number(trade.sl)
+    const plannedTP = Number(trade.tp)
+    const plannedRisk = Math.abs(plannedEntry - plannedSL)
+    const plannedReward = Math.abs(plannedTP - plannedEntry)
+    const plannedRR = plannedRisk > 0 ? plannedReward / plannedRisk : NaN
 
-    const targetR = Number(trade.risk?.targetR || trade.riskDetail?.targetR || 1.6)
-    trade.tp = trade.side === "LONG"
-        ? realEntry + Math.abs(realEntry - Number(trade.sl)) * targetR
-        : realEntry - Math.abs(realEntry - Number(trade.sl)) * targetR
-
-    trade.initialRisk =
-        Math.abs(
-            realEntry -
-            Number(trade.sl)
+    if (!Number.isFinite(plannedRR) || plannedRR <= 0 || plannedRR > MAX_NINE_AI_RR + 1e-9) {
+        console.log(
+            `❌ INVALID ORIGINAL NINE-AI RR ${symbol} ENTRY=${plannedEntry} SL=${plannedSL} TP=${plannedTP} RR=${plannedRR}`
         )
+        return false
+    }
+
+    trade.entry = realEntry
+    trade.initialRisk = Math.abs(realEntry - plannedSL)
+
+    const targetDistance = trade.initialRisk * plannedRR
+    trade.tp = trade.side === "LONG"
+        ? realEntry + targetDistance
+        : realEntry - targetDistance
 
     if(
         !Number.isFinite(trade.initialRisk) ||
@@ -2596,6 +2607,20 @@ async function manageDynamicTPSL(trade) {
       } else {
         console.log(`🚨 NINE-AI EXIT NOT CONFIRMED ${symbol}; protective orders retained`);
       }
+      return;
+    }
+
+    // Keep the confirmed entry TPSL untouched until the market has moved
+    // favorably by at least 0.5R. Trigger monitoring above still runs every
+    // cycle, and a decisive opposite signal above can still exit immediately.
+    const initialRisk = Number(trade.initialRisk) || Math.abs(entry - oldSL);
+    const favorableMove = side === "LONG" ? current - entry : entry - current;
+    const favorableR = initialRisk > 0 ? favorableMove / initialRisk : 0;
+    const minimumFavorableR = 0.5;
+    if (favorableR < minimumFavorableR) {
+      console.log(
+        `🧠 NINE-AI TPSL HOLD ${symbol} | favorable=${favorableR.toFixed(2)}R < ${minimumFavorableR}R | initial SL/TP retained`
+      );
       return;
     }
 
