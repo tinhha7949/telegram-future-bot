@@ -7,13 +7,13 @@ function makeCollection() {
   let nextId = 1;
   return {
     async createIndex() {},
-    async findOne(query) { return docs.get(query._id) || null; },
+    async findOne(query) { return docs.get(String(query._id)) || null; },
     async updateOne(query, update, options = {}) {
-      const old = docs.get(query._id);
+      const old = docs.get(String(query._id));
       if (!old && !options.upsert) return { matchedCount: 0 };
       const next = { ...(old || {}), ...(update.$set || {}) };
       if (!old) Object.assign(next, update.$setOnInsert || {});
-      docs.set(query._id, next);
+      docs.set(String(query._id), next);
       return { matchedCount: old ? 1 : 0, upsertedCount: old ? 0 : 1 };
     },
     async insertOne(doc) {
@@ -55,7 +55,7 @@ function makeCollection() {
     tradeId: "closed-24", features, side: "LONG", realizedR: 1, closed: true
   });
   assert.equal(duplicate.reason, "DUPLICATE_TRADE");
-  assert.throws(() => learner.learnClosedTrade({
+  await assert.rejects(() => learner.learnClosedTrade({
     tradeId: "open", features, side: "LONG", realizedR: 1, closed: false
   }), /CLOSED_TRADE_LABEL_REQUIRED/);
   assert.equal(learner.read().samples, 25);
