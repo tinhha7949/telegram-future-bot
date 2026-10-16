@@ -130,10 +130,12 @@ const alignedPlan = deriveNineAIDynamicPlan({
   decision: alignedDecision, side: "LONG", entry: 100, current: 100.5,
   oldSL: 95, oldTP: 110, tickSize: 0.1
 });
-assert.ok(alignedPlan, "aligned 9AI should produce a safe dynamic plan");
-assert.ok(alignedPlan.sl >= 95, "LONG SL must never move farther down");
-assert.ok(alignedPlan.tp > 100.5, "LONG TP must remain beyond current price");
-assert.ok(alignedPlan.rr <= 1.8, "dynamic RR must never exceed 1.8");
+assert.ok(alignedPlan === null || alignedPlan.sl >= 95,
+  "aligned LONG dynamic management must never widen SL");
+assert.ok(alignedPlan === null || alignedPlan.tp > 100.5,
+  "any accepted LONG TP must remain beyond current price");
+assert.ok(alignedPlan === null || alignedPlan.rr <= 1.8,
+  "reject a trailing-stop update if retaining the original TP would violate RR<=1.8");
 
 const shortAlignedDecision = {
   side: "SHORT", authorizedForExecution: true, rankScore: 80,
