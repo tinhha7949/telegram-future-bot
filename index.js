@@ -3431,7 +3431,11 @@ async function scan(symbol){
         const data15 = await getData(symbol, "15m", 601);
         if (!Array.isArray(data15)) return null;
         const decision = analyzeNineAI(data15, symbol);
-        if (!decision || !["LONG", "SHORT"].includes(decision.side)) return null;
+        if (
+            !decision ||
+            decision.authorizedForExecution !== true ||
+            !["LONG", "SHORT"].includes(decision.side)
+        ) return null;
         console.log(
             `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
         );
@@ -3762,48 +3766,45 @@ candidates.push({
 
         // Rank all valid signals collected during this scan cycle.
 candidates.sort((a, b) =>
-    Math.abs(Number(a.rankScore) - MIN_CORE_SCORE) -
-    Math.abs(Number(b.rankScore) - MIN_CORE_SCORE)
+    Number(b.rankScore) - Number(a.rankScore)
 )
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
-
-    const rankScore = Number(c.rankScore)
+    const rankScore = Number(c.rankScore);
     if (!Number.isFinite(rankScore)) {
-        console.log(`🚫 FILTER INVALID RANK: ${c.symbol}`)
-        return false
+        console.log(`🚫 FILTER INVALID NINE-AI CONFIDENCE: ${c.symbol}`);
+        return false;
     }
 
-    
-const followsCore = rankScore >= MIN_CORE_SCORE
+    // NINE-AI owns direction and its ATR-derived SL/TP. Scanner validates
+    // trade geometry but never infers a counter/follow direction.
+    const entry = Number(c.price);
+    const sl = Number(c.sl);
+    const tp = Number(c.tp);
+    const side = String(c.side || "").toUpperCase();
+    const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
+    const geometryValid = Number.isFinite(entry) && entry > 0 &&
+        Number.isFinite(sl) && sl > 0 && Number.isFinite(tp) && tp > 0 &&
+        (side === "LONG" ? sl < entry && tp > entry :
+         side === "SHORT" ? sl > entry && tp < entry : false);
 
-c.rankDirectionMode = followsCore
-    ? "FOLLOW_CORE"
-    : "COUNTER_CORE"
+    if (!geometryValid || !Number.isFinite(rr) || rr < RR_THRESHOLD) {
+        console.log(
+            `🚫 FILTER NINE-AI GEOMETRY: ${c.symbol} | ` +
+            `side=${side} | RR=${safeFixed(rr, 2)} | required=${RR_THRESHOLD}`
+        );
+        return false;
+    }
 
-    let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
-
-    // ❌ loại kèo quá xấu
-    if(rr < RR_THRESHOLD){
-
-    console.log(
-        `🚫 FILTER RR: ${c.symbol} | ` +
-        `RR=${safeFixed(rr, 2)} | ` +
-        `required=${RR_THRESHOLD}`
-    )
-
-    return false
-}
-
-return true
+    c.rankDirectionMode = "NINE_AI_PRIMARY";
+    return true;
 })
 // ===== SORT LẠI =====
 filtered = filtered.sort((a, b) =>
-    Math.abs(Number(a.rankScore) - MIN_CORE_SCORE) -
-    Math.abs(Number(b.rankScore) - MIN_CORE_SCORE)
+    Number(b.rankScore) - Number(a.rankScore)
 )
 
-// ===== UNIQUE COIN =====
+// // ===== UNIQUE COIN =====
 let unique = []
 let used = new Set()
 
@@ -3822,64 +3823,31 @@ if(filtered.length === 0){
 }
 let picks = filtered.slice(0, MAX_BEST_SIGNALS);
 for (let best of picks){
-const coreSide = best.side;
 const entry = Number(best.price);
 const coreSL = Number(best.sl);
+const coreTP = Number(best.tp);
+const side = String(best.side || "").toUpperCase();
 
 if (
-    !Number.isFinite(entry) ||
-    !Number.isFinite(coreSL) ||
-    entry <= 0 ||
-    coreSL <= 0
-) continue;
-
-const baseDistance = Math.abs(entry - coreSL);
-if (!(baseDistance > 0)) continue;
-
-if (best.setup === "NINE_AI_15M") {
-    // Preserve the ensemble's ATR-derived SL/TP and its >=1.7R geometry.
-    best.triggerType = "NINE_AI_CONSENSUS";
-} else if (best.rankDirectionMode === "COUNTER_CORE") {
-    best.side = coreSide === "LONG" ? "SHORT" : "LONG";
-
-    const tpDistance = baseDistance * 0.9;
-    const slDistance = baseDistance * 0.6;
-
-    best.tp = best.side === "LONG"
-        ? entry + tpDistance
-        : entry - tpDistance;
-
-    best.sl = best.side === "LONG"
-        ? entry - slDistance
-        : entry + slDistance;
-
-    best.setup = "RF_COUNTER";
-    best.marketState = "RF_COUNTER";
-    best.triggerType = "INVERTED_RF";
-
-    console.log(
-        `🔁 RF COUNTER ${best.symbol} | score=${best.rankScore} | CORE=${coreSide} | TRADE=${best.side} | SL=${best.sl} | TP=${best.tp}`
-    );
-} else {
-    const tpDistance = baseDistance * 0.9;
-    const slDistance = baseDistance * 0.6;
-
-    best.tp = best.side === "LONG"
-        ? entry + tpDistance
-        : entry - tpDistance;
-
-    best.sl = coreSide === "LONG"
-        ? entry - slDistance
-        : entry + slDistance;
-
-    best.setup = "RF_FOLLOW";
-    best.marketState = "RF_FOLLOW";
-    best.triggerType = "FOLLOW_RF";
-
-    console.log(
-        `➡️ RF FOLLOW ${best.symbol} | score=${best.rankScore} | SIDE=${best.side} | SL=${best.sl} | TP=${best.tp}`
-    );
+    !Number.isFinite(entry) || entry <= 0 ||
+    !Number.isFinite(coreSL) || coreSL <= 0 ||
+    !Number.isFinite(coreTP) || coreTP <= 0 ||
+    !["LONG", "SHORT"].includes(side) ||
+    (side === "LONG" && !(coreSL < entry && coreTP > entry)) ||
+    (side === "SHORT" && !(coreSL > entry && coreTP < entry))
+) {
+    console.log(`🚫 NINE-AI INVALID GEOMETRY: ${best.symbol}`);
+    continue;
 }
+
+// No legacy RF counter/follow branch. Keep the approved nine-AI
+// direction and ATR-derived SL/TP; downstream risk/position caps remain.
+best.side = side;
+best.triggerType = "NINE_AI_CONSENSUS";
+best.rankDirectionMode = "NINE_AI_PRIMARY";
+console.log(
+    `🧠 NINE-AI PRIMARY ${best.symbol} | SIDE=${best.side} | CONF=${best.confidence} | SL=${best.sl} | TP=${best.tp}`
+);
 let positions = []
 
 try{
