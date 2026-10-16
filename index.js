@@ -2419,6 +2419,31 @@ async function manageDynamicTPSL(trade) {
     const R = (side === 'LONG' ? current - entry : entry - current) / initialRisk;
     if (!Number.isFinite(R) || R < 0.5) return;
 
+    // Re-run the same nine-AI brain on the latest closed 15m candles while
+    // managing a live position. A weak/no signal never triggers a market close.
+    const liveDecision = analyzeNineAI(data15, symbol);
+    const aiSide = ["LONG", "SHORT"].includes(liveDecision?.side) ? liveDecision.side : null;
+    const aiScore = Number(liveDecision?.rankScore ?? liveDecision?.confidence ?? 0);
+    const aiAuthorized = liveDecision?.authorizedForExecution === true;
+    const aiSupports = aiAuthorized && aiSide === side && aiScore >= 65;
+    const aiStronglyOpposes = aiAuthorized && aiSide && aiSide !== side && aiScore >= 72;
+
+    // Close early only after a valid, high-scoring opposite 9AI setup appears
+    // and the open position has at least +0.5R unrealized profit.
+    if (aiStronglyOpposes && R >= 0.5) {
+      console.log(
+        `🧠 NINE-AI EARLY EXIT ${symbol} | held=${side} | new=${aiSide} | rank=${aiScore.toFixed(2)} | R=${R.toFixed(2)}`
+      );
+      const closed = await closePosition(symbol, side, Math.abs(Number(pos.positionAmt || 0)));
+      if (closed) {
+        await cancelAllOrders(symbol);
+        console.log(`✅ NINE-AI EARLY EXIT CONFIRMED ${symbol}`);
+      } else {
+        console.log(`🚨 NINE-AI EARLY EXIT NOT CONFIRMED ${symbol}; protective orders retained/reconciled`);
+      }
+      return;
+    }
+
     // Wilder ATR(22) from completed 15m candles, matching Chandelier Exit math.
     const calcWilderATR = (candles, length) => {
       const tr = [];
@@ -2445,11 +2470,16 @@ async function manageDynamicTPSL(trade) {
     // Protect gains in stages while leaving the position room to trend.
     //const floorR = R >= 3.0 ? 1.50 : R >= 2.0 ? 0.75 : 0.30;
     //const floorR = R >= 0.8 ? 0.3 : -0.5;
-    const floorR =
-    R >= 0.8 ? 0.3 :
-    //R >= 1.0 ? 0.4 :
-    //R >= 0.8 ? -0.9 :
-    -0.5;
+    let floorR =
+      R >= 0.8 ? 0.3 : -0.5;
+
+    // 9AI may tighten protection based on current setup quality, never loosen it.
+    if (R >= 0.5 && (!aiSupports || aiScore < 60)) {
+      floorR = Math.max(floorR, 0.05);
+    }
+    if (R >= 1.2 && aiSupports && aiScore >= 80) {
+      floorR = Math.max(floorR, 0.5);
+    }
 
     if (R >= 0.8) phase = 2;
     if (R >= 1.4) phase = 3;
@@ -2501,10 +2531,11 @@ async function manageDynamicTPSL(trade) {
       : current > oldTP && current - oldTP <= Math.max(atr5 * 0.60, initialRisk * 0.30);
     const obstacle = side === 'LONG' ? nearestAbove(allHighs, oldTP) : nearestBelow(allLows, oldTP);
     const extendedTP = side === 'LONG' ? Number(obstacle) - buffer * 0.20 : Number(obstacle) + buffer * 0.20;
+    const rrExtensionFloor = initialRisk * (aiScore >= 85 ? 0.75 : aiScore >= 75 ? 0.60 : 0.50);
     const enoughRoom = side === 'LONG'
-      ? extendedTP >= oldTP + Math.max(atr15, initialRisk * 0.50)
-      : extendedTP <= oldTP - Math.max(atr15, initialRisk * 0.50);
-    if (R >= 1.0 && nearTP && enoughRoom &&
+      ? extendedTP >= oldTP + Math.max(atr15, rrExtensionFloor)
+      : extendedTP <= oldTP - Math.max(atr15, rrExtensionFloor);
+    if (R >= 1.0 && nearTP && enoughRoom && aiSupports &&
         ((side === 'LONG' && momentumLong) || (side === 'SHORT' && momentumShort))) {
       newTP = extendedTP;
     }
@@ -2556,15 +2587,26 @@ async function manageDynamicTPSL(trade) {
       return;
     }
 
+    const currentRR = Math.abs(finalTP - entry) / Math.max(Math.abs(entry - finalSL), Number.EPSILON);
     trade.sl = finalSL;
     trade.tp = finalTP;
+    trade.rr = currentRR;
     DYNAMIC_LAST_UPDATE[symbol] = Date.now();
     DYNAMIC_PHASE[symbol] = phase;
     await trades.updateOne(
       { symbol, result: 'PENDING' },
-      { $set: { sl: finalSL, tp: finalTP, initialRisk, dynamicPhase: phase, dynamicUpdatedAt: Date.now(), updatedAt: Date.now() } }
+      { $set: {
+        sl: finalSL, tp: finalTP, rr: currentRR, currentRR,
+        initialRisk, dynamicPhase: phase, dynamicUpdatedAt: Date.now(),
+        nineAiManagement: { side: aiSide, rankScore: aiScore, supportsPosition: aiSupports, evaluatedAt: Date.now() },
+        updatedAt: Date.now()
+      } }
     );
-    console.log(`🎯 DYNAMIC ${symbol} ${side} R=${R.toFixed(2)} PHASE=${phase} SL ${oldSL}->${finalSL} TP=${finalTP}`);
+    console.log(
+      `🎯 DYNAMIC ${symbol} ${side} R=${R.toFixed(2)} PHASE=${phase} ` +
+      `AI=${aiSide || "WAIT"}/${aiScore.toFixed(2)} SL ${oldSL}->${finalSL} ` +
+      `TP=${finalTP} CURRENT_RR=${currentRR.toFixed(2)}`
+    );
   } catch (e) {
     await checkTimeError(e);
     console.log(`❌ MANAGE DYNAMIC TPSL ERROR ${trade?.symbol || 'UNKNOWN'}: ${e.message}`);
