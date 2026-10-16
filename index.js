@@ -11,7 +11,7 @@ const TPSL_PENDING = {}
 const TPSL_CLOSING = {}
 const DYNAMIC_LAST_UPDATE = {}
 const DYNAMIC_PHASE = {}
-const MIN_RANK_SCORE = 40
+const MIN_CORE_SCORE = 60
 const TRADE_CONFIG = {
     riskPerTrade: 0.05,      
     maxRiskPerTrade: 0.05,    
@@ -3149,7 +3149,7 @@ async function coreLogic(data15, symbol = null) {
   const risk = Math.abs(price - sl);
   if (!finite(risk) || risk <= 0 || (side === 'LONG' ? sl >= price : sl <= price)) return null;
 
-  const targetR = 1.6;
+  const targetR = 1.0;
   const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
   const volRatio = range / price;
 
@@ -3461,16 +3461,16 @@ async function scan(symbol){
         if(!r || !r.side){
             return null
         }
-        //const rfRank = scoreRF15Signal(data15, {
-           // data15,
-            //entry: r.price,
-            //sl: r.sl,
-            //tp: r.tp
-        //});
-        const rfRank = {
-    score: 0,
-    rankMetrics: {}
-};
+        const rfRank = scoreRF15Signal(data15, {
+            data15,
+            entry: r.price,
+            sl: r.sl,
+            tp: r.tp
+        });
+        //const rfRank = {
+    //score: 0,
+    //rankMetrics: {}
+//};
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
@@ -3822,20 +3822,24 @@ candidates.push({
 
         // Rank all valid signals collected during this scan cycle.
 candidates.sort((a, b) =>
-    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0)
+    Math.abs(Number(a.rankScore) - MIN_CORE_SCORE) -
+    Math.abs(Number(b.rankScore) - MIN_CORE_SCORE)
 )
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
 
-    //const rankScore = Number(c.rankScore)
-    //if (!Number.isFinite(rankScore) || rankScore < MIN_RANK_SCORE) {
-        //console.log(
-        //    `🚫 FILTER LOW RANK: ${c.symbol} | ` +
-           // `score=${Number.isFinite(rankScore) ? rankScore : "N/A"} | ` +
-           // `required=${MIN_RANK_SCORE}`
-        //)
-        //return false
-    //}
+    const rankScore = Number(c.rankScore)
+    if (!Number.isFinite(rankScore)) {
+        console.log(`🚫 FILTER INVALID RANK: ${c.symbol}`)
+        return false
+    }
+
+    
+const followsCore = rankScore >= MIN_CORE_SCORE
+
+c.rankDirectionMode = followsCore
+    ? "FOLLOW_CORE"
+    : "COUNTER_CORE"
 
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
@@ -3854,9 +3858,9 @@ let filtered = candidates.filter(c => {
 return true
 })
 // ===== SORT LẠI =====
-filtered = filtered
-.sort((a,b)=>
-    (Number(b.rankScore) || 0) - (Number(a.rankScore) || 0)
+filtered = filtered.sort((a, b) =>
+    Math.abs(Number(a.rankScore) - MIN_CORE_SCORE) -
+    Math.abs(Number(b.rankScore) - MIN_CORE_SCORE)
 )
 
 // ===== UNIQUE COIN =====
@@ -3876,10 +3880,9 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered//.slice(0, 1);
+let picks = filtered.slice(0, 1);
 for (let best of picks){
-// Thử vào lệnh ngược hướng RF
-const rfSide = best.side;
+const coreSide = best.side;
 const entry = Number(best.price);
 const coreSL = Number(best.sl);
 
@@ -3893,26 +3896,42 @@ if (
 const baseDistance = Math.abs(entry - coreSL);
 if (!(baseDistance > 0)) continue;
 
-best.side = rfSide === "LONG" ? "SHORT" : "LONG";
+if (best.rankDirectionMode === "COUNTER_CORE") {
+    best.side = coreSide === "LONG" ? "SHORT" : "LONG";
 
-const tpDistance = baseDistance * 1.0; // TP xa hơn 20%
-const slDistance = baseDistance * 0.6; // SL gần entry hơn
+    const tpDistance = baseDistance * 1.0;
+    const slDistance = baseDistance * 0.6;
 
-best.tp = best.side === "LONG"
-    ? entry + tpDistance
-    : entry - tpDistance;
+    best.tp = best.side === "LONG"
+        ? entry + tpDistance
+        : entry - tpDistance;
 
-best.sl = best.side === "LONG"
-    ? entry - slDistance
-    : entry + slDistance;
+    best.sl = best.side === "LONG"
+        ? entry - slDistance
+        : entry + slDistance;
 
-best.setup = "RF_COUNTER";
-best.marketState = "RF_COUNTER";
-best.triggerType = "INVERTED_RF";
+    best.setup = "RF_COUNTER";
+    best.marketState = "RF_COUNTER";
+    best.triggerType = "INVERTED_RF";
 
-console.log(
-    `🔁 RF COUNTER ${best.symbol} | RF=${rfSide} | TRADE=${best.side} | SL=${best.sl} | TP=${best.tp}`
-);
+    console.log(
+        `🔁 RF COUNTER ${best.symbol} | score=${best.rankScore} | CORE=${coreSide} | TRADE=${best.side} | SL=${best.sl} | TP=${best.tp}`
+    );
+} else {
+    const slDistance = baseDistance * 0.6;
+
+    best.sl = coreSide === "LONG"
+        ? entry - slDistance
+        : entry + slDistance;
+
+    best.setup = "RF_FOLLOW";
+    best.marketState = "RF_FOLLOW";
+    best.triggerType = "FOLLOW_RF";
+
+    console.log(
+        `➡️ RF FOLLOW ${best.symbol} | score=${best.rankScore} | SIDE=${best.side} | SL=${best.sl} | TP=${best.tp}`
+    );
+}
 let positions = []
 
 try{
@@ -4682,8 +4701,8 @@ activeTrades.push(trade)
 `🟢 TP: ${trade.tp}\n` +
 `🔴 SL: ${trade.sl}\n` +
 `⚖️ RR: ${safeFixed(trade.rr, 2)}\n` +
-`⭐ Quality: ${safeFixed(trade.qualityScore, 2)}\n` +
-`🧠 DB Edge: ${safeFixed(best.finalScore, 1)}\n` +
+`🧭 Mode: ${best.rankDirectionMode === "COUNTER_CORE" ? "🔁 NGƯỢC CORE" : "➡️ THUẬN CORE"}\n` +
+`🧠 Score: ${safeFixed(best.rankScore, 1)}\n` +
 `💰 Risk: ${safeFixed(trade.risk, 4)}`
 
         await sendTelegram(msg)
