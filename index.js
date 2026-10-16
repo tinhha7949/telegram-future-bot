@@ -15,8 +15,6 @@ const DYNAMIC_PHASE = {}
 const MIN_NOTIONAL_RISK_COOLDOWN = new Map()
 const MIN_NOTIONAL_RISK_COOLDOWN_MS = 15 * 60 * 1000
 const MAX_CANDIDATE_ATTEMPTS_PER_SCAN = 10
-const MIN_CORE_SCORE = 60
-const MAX_BEST_SIGNALS = 1
 function envNumber(name, fallback, min, max) {
     const raw = process.env[name];
     if (raw == null || String(raw).trim() === "") return fallback;
@@ -3315,7 +3313,6 @@ if(!signals || signals.length === 0){
 
         // ===== BUILD CANDIDATES + AI =====
 let candidates = []
-let dbCache = {}
 
 for (let s of signals){
 
@@ -3392,8 +3389,7 @@ for(let c of filtered){
 
 filtered = unique
 
-// Diagnostic shortlist only: this is recalculated on every scan cycle.
-// The bot still executes at most MAX_BEST_SIGNALS candidates, currently 1.
+// Diagnostic shortlist only; execution attempts remain bounded by the risk and exchange guards.
 if(filtered.length > 0){
     const shortlist = filtered.slice(0, 5).map(c =>
         `${c.symbol}(RANK=${safeFixed(c.rankScore, 2)},CONF=${safeFixed(c.confidence, 1)},VOTES=${c.rankMetrics?.directionalVotes || 0}-${c.rankMetrics?.opposingVotes || 0})`
@@ -3554,7 +3550,7 @@ if(!trade){
 `side=${best.side} | ` +
 `setup=${best.setup} | ` +
 `quality=${best.qualityScore ?? 0} | ` +
-`db=${safeFixed(best.finalScore, 1)}`
+`rank=${safeFixed(best.finalScore, 1)}`
 )
 
     continue
@@ -4147,7 +4143,7 @@ activeTrades.push(trade)
 `🟢 TP: ${trade.tp}\n` +
 `🔴 SL: ${trade.sl}\n` +
 `⚖️ RR: ${safeFixed(trade.rr, 2)}\n` +
-`🧭 Mode: ${best.rankDirectionMode === "COUNTER_CORE" ? "🔁 " : "➡️ "}\n` +
+`🧭 Mode: NINE_AI_PRIMARY\n` +
 `🧠 Score: ${safeFixed(best.rankScore, 1)}\n` +
 `💰 Risk: ${safeFixed(trade.risk, 4)}`
 
@@ -4171,7 +4167,7 @@ activeTrades.push(trade)
 
 
     console.log(
-    `✅ ADD: ${best.symbol} | DB Edge: ${safeFixed(best.finalScore, 1)}`
+    `✅ ADD: ${best.symbol} | NINE-AI Rank: ${safeFixed(best.finalScore, 1)}`
 )
 
     // One successfully opened coin per scan cycle; existing duplicate/opening
