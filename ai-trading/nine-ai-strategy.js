@@ -483,6 +483,24 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
 }
 
 const MAX_NINE_AI_RR = 1.8;
+const MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE = 0.5;
+const NINE_AI_STRONG_OPPOSITE_EXIT_SCORE = 72;
+
+function shouldNineAIExitPosition(decision, heldSide) {
+  if (!decision || decision.authorizedForExecution !== true || !["LONG", "SHORT"].includes(heldSide)) return false;
+  const side = decision.side;
+  const score = Number(decision?.rankMetrics?.roleScore ?? decision?.rankScore ?? decision?.confidence ?? 0);
+  return ["LONG", "SHORT"].includes(side) && side !== heldSide && Number.isFinite(score) && score >= NINE_AI_STRONG_OPPOSITE_EXIT_SCORE;
+}
+
+function canNineAIDynamicallyAdjust({ side, entry, current, initialRisk }) {
+  if (!["LONG", "SHORT"].includes(side)) return false;
+  const values = [entry, current, initialRisk].map(Number);
+  if (values.some(value => !Number.isFinite(value) || value <= 0)) return false;
+  const [e, c, risk] = values;
+  const favorableMove = side === "LONG" ? c - e : e - c;
+  return favorableMove / risk >= MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE;
+}
 
 function deriveNineAIDynamicPlan({
   decision, side, entry, current, oldSL, oldTP, tickSize
@@ -621,5 +639,6 @@ function compareNineAICandidates(a, b) {
 module.exports = {
   ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore,
-  analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, MAX_NINE_AI_RR
+  analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan,
+  shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR, MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE
 };
