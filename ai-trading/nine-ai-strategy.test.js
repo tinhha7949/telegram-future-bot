@@ -23,6 +23,10 @@ if (result.side) {
   assert.ok(result.sl > 0 && result.tp > 0 && result.price > 0);
   assert.ok(result.rr >= 1.7);
   assert.equal(result.authorizedForExecution, true);
+  assert.equal(result.tradePlan.timeframe, "15m");
+  assert.equal(result.tradePlan.entryMethod, "LATEST_CLOSED_CANDLE");
+  assert.equal(result.tradePlan.stopMethod, "ATR_AND_RECENT_STRUCTURE");
+  assert.equal(result.entry, result.price);
 } else {
   assert.equal(result.authorizedForExecution, undefined);
 }
