@@ -11,7 +11,7 @@ const TPSL_PENDING = {}
 const TPSL_CLOSING = {}
 const DYNAMIC_LAST_UPDATE = {}
 const DYNAMIC_PHASE = {}
-const MIN_RANK_SCORE = 45
+const MIN_RANK_SCORE = 40
 const TRADE_CONFIG = {
     riskPerTrade: 0.05,      
     maxRiskPerTrade: 0.05,    
