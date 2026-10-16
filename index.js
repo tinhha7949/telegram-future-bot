@@ -42,6 +42,7 @@ const os = require("os")
 const crypto = require("crypto")
 const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, MAX_NINE_AI_RR } = require("./ai-trading/nine-ai-strategy")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
+const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -4863,6 +4864,27 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
     } catch (learningError) {
         console.error(`⚠️ NINE-AI MEMORY UPDATE FAILED ${t.symbol}:`, learningError?.message || learningError);
     }
+
+    // Every independent model learns separately from this confirmed closed trade.
+    try {
+        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
+            const independentLearning = await nineAiIndependentModels.learnClosedTrade({
+                tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
+                features: t.nineAiLearningFeatures,
+                side: t.side,
+                realizedR: closed.pnl / riskBudget,
+                closed: true,
+                closedAt: closed.closedAt
+            });
+            if (independentLearning.updated) {
+                console.log(`🧠 NINE INDEPENDENT ML MODELS UPDATED: ${independentLearning.updatedModels}/9 ${t.symbol}`);
+            }
+        }
+    } catch (independentLearningError) {
+        console.error(`⚠️ NINE INDEPENDENT ML UPDATE FAILED ${t.symbol}:`,
+            independentLearningError?.message || independentLearningError);
+    }
 }
 
         const latestBalance = await updateBalance()
@@ -5576,9 +5598,17 @@ await signalClaims.createIndex(
     }
 );
 
-// Load the compact model from MongoDB before starting scan loops.
+// Load all learning state before scan loops. Each of the nine models owns
+// separate MongoDB state/outcome collections; no paid API is used.
 const learningStatus = await nineAiLearningMemory.initialize(db);
-console.log(`🧠 NINE-AI MONGODB MEMORY READY: samples=${learningStatus.samples} trained=${learningStatus.trained}`);
+console.log(`🧠 NINE-AI LEGACY MEMORY READY: samples=${learningStatus.samples} trained=${learningStatus.trained}`);
+const independentModelStatus = await nineAiIndependentModels.initialize(
+    db, db.collection("nine_ai_learning_outcomes")
+);
+console.log(`🧠 NINE INDEPENDENT ML MODELS READY: migratedTrades=${independentModelStatus.migratedLegacyTrades} allTrained=${independentModelStatus.allTrained}`);
+for (const model of nineAiIndependentModels.status()) {
+    console.log(`🧠 MODEL ${model.role}: samples=${model.samples} trained=${model.trained} accuracy=${model.evaluation.accuracy ?? "N/A"} brier=${model.evaluation.brierScore ?? "N/A"}`);
+}
 
         // TEST DB THỰC SỰ ĐỌC ĐƯỢC
         await trades.findOne(
