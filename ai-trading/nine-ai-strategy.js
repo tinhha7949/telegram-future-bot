@@ -521,8 +521,10 @@ function deriveNineAIDynamicPlan({
   if (side === "LONG" && sl >= current - tickSize) sl = oldSL;
   if (side === "SHORT" && sl <= current + tickSize) sl = oldSL;
 
-  // 9AI conviction selects the target RR. A strong opposite signal pulls the
-  // target inward; an aligned strong consensus may extend it, never beyond 1.8.
+  // The original TP is the confirmed plan. Dynamic management may extend
+  // it when aligned evidence supports a farther target, but must never pull
+  // it inward merely because a later score is weaker. Opposite signals are
+  // handled by the live-position exit policy in index.js.
   let desiredRR = supports
     ? clamp(0.8 + score / 100 * 1.1, 0.8, MAX_NINE_AI_RR)
     : clamp(0.8 + (100 - score) / 100 * 0.35, 0.8, 1.15);
@@ -546,9 +548,15 @@ function deriveNineAIDynamicPlan({
   const targetPrice = side === "LONG"
     ? entry + riskDistance * desiredRR
     : entry - riskDistance * desiredRR;
-  let tp = side === "LONG"
+  const proposedTP = side === "LONG"
     ? Math.min(targetPrice, rrCapPrice)
     : Math.max(targetPrice, rrCapPrice);
+  // Never reduce the original reward target. If the old target now conflicts
+  // with live geometry or the 1.8R cap, reject this update instead of pulling
+  // TP close to the market.
+  let tp = side === "LONG"
+    ? Math.max(oldTP, proposedTP)
+    : Math.min(oldTP, proposedTP);
 
   // TP is allowed to move closer or farther, but it must remain on the
   // profitable side of the live market and RR must never exceed 1.8.
