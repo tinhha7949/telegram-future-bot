@@ -217,7 +217,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     signalAt: f.last.closeTime, setup: "NINE_AI_15M",
     marketState: f.trend === "RANGE" ? "RANGE" : "TREND_STRONG",
     volatility: f.atrPct > 0.015 ? "HIGH" : f.atrPct < 0.004 ? "LOW" : "NORMAL",
-    qualityScore: confidence, score: confidence, rankScore: Math.max(60, confidence),
+    qualityScore: confidence, score: confidence, rankScore: confidence,
     rankMetrics: { score: confidence, adjustment: 0, phase: f.trend,
       impulseSide: side, energyRatio: f.volumeRatio, early: false,
       roles: roleResults, features: summarize(f) },
