@@ -2614,9 +2614,9 @@ async function manageDynamicTPSL(trade) {
     const favorableMove = side === "LONG" ? current - entry : entry - current;
     const favorableR = initialRisk > 0 ? favorableMove / initialRisk : 0;
     if (!canNineAIDynamicallyAdjust({ side, entry, current, initialRisk })) {
-      console.log(
-        `🧠 NINE-AI TPSL HOLD ${symbol} | favorable=${favorableR.toFixed(2)}R below Nine-AI adjustment threshold | initial SL/TP retained`
-      );
+      // Intentionally quiet: keep the confirmed exchange SL/TP until the
+      // Nine-AI favorable-move threshold is met. Strong opposite Nine-AI
+      // exits are evaluated above this gate and remain available below 0.5R.
       return;
     }
 
