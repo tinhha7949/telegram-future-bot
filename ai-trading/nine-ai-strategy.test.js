@@ -36,8 +36,10 @@ if (result.side) {
   assert.equal(result.tradePlan.stopMethod, "ATR_AND_RECENT_STRUCTURE");
   assert.equal(result.entry, result.price);
   assert.equal(result.rankMetrics.roleContributions.length, 9);
-  assert.equal(result.rankMetrics.roleScore, result.rankMetrics.roleContributions
-    .reduce((sum, role) => sum + role.weightedContribution, 0));
+  const contributionSum = result.rankMetrics.roleContributions
+    .reduce((sum, role) => sum + role.weightedContribution, 0);
+  assert.ok(Math.abs(result.rankMetrics.roleScore - contributionSum) < 0.1,
+    "rounded per-role contributions should reconcile to the weighted role score");
   assert.ok(result.rankScore >= 0 && result.rankScore <= 100);
   assert.ok(result.rankMetrics.contrarian.reason);
 } else {
