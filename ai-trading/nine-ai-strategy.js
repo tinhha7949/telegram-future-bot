@@ -551,7 +551,7 @@ function deriveNineAIDynamicPlan({
     : Math.max(targetPrice, rrCapPrice);
 
   // TP is allowed to move closer or farther, but it must remain on the
-  // profitable side of the live market and RR must never exceed 1.9.
+  // profitable side of the live market and RR must never exceed 1.8.
   if (side === "LONG" && tp <= current + tickSize) {
     const safeTP = Math.min(rrCapPrice, current + tickSize * 2);
     if (safeTP <= current + tickSize || safeTP <= entry) return null;
