@@ -40,7 +40,7 @@ const fs = require("fs")
 const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
-const { analyzeNineAI, compareNineAICandidates } = require("./ai-trading/nine-ai-strategy")
+const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, MAX_NINE_AI_RR } = require("./ai-trading/nine-ai-strategy")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 
 // Use a machine-local lock keyed to this script, independent of the launch
@@ -1538,6 +1538,12 @@ if(positionSide === "LONG"){
     }
 }
 
+        const proposedRR = Math.abs(tp - entry) / Math.max(Math.abs(entry - sl), Number.EPSILON);
+        if (!Number.isFinite(proposedRR) || proposedRR > MAX_NINE_AI_RR + 1e-9) {
+            console.log(`⛔ DYNAMIC RR CAP ${symbol} RR=${proposedRR} MAX=${MAX_NINE_AI_RR}`);
+            return false;
+        }
+
         // =================================================
         // 7. VERIFY POSITION STILL EXISTS BEFORE CHANGE
         // =================================================
@@ -1926,8 +1932,14 @@ async function setInitialTPSL(trade){
             }
         }
 
+        const initialRR = Math.abs(tp - entry) / Math.max(Math.abs(entry - sl), Number.EPSILON);
+        if (!Number.isFinite(initialRR) || initialRR > MAX_NINE_AI_RR + 1e-9) {
+            console.log(`⛔ INITIAL RR CAP ${symbol} RR=${initialRR} MAX=${MAX_NINE_AI_RR}`);
+            return false;
+        }
+
         // =========================================
-        // GIỐNG CORE CŨ
+        // INITIAL 9AI TPSL, RR HARD-CAPPED AT 1.9
         // =========================================
 
         const cancelled =
@@ -2364,15 +2376,11 @@ async function openPositionWithTPSL(trade, qty){
     }
 }
 async function manageDynamicTPSL(trade) {
+  const symbol = String(trade?.symbol || "");
   try {
-    if (!trade?.symbol || !trade?.side) return;
-    const symbol = trade.symbol;
+    if (!symbol || !["LONG", "SHORT"].includes(String(trade?.side || "").toUpperCase())) return;
     const side = String(trade.side).toUpperCase();
-    if (side !== 'LONG' && side !== 'SHORT') return;
     if (TPSL_CLOSING[symbol] || TPSL_PENDING[symbol]) return;
-
-    const enteredAt = Number(trade.enteredAt || trade.openedAt || trade.createdAt);
-    if (!Number.isFinite(enteredAt) || enteredAt <= 0 || Date.now() - enteredAt < 90000) return;
     TPSL_PENDING[symbol] = true;
 
     const pos = await hasPosition(symbol);
@@ -2383,235 +2391,117 @@ async function manageDynamicTPSL(trade) {
     }
 
     const [data5, data15] = await Promise.all([
-      getData(symbol, '5m', 100),
-      getData(symbol, '15m', 100)
+      getData(symbol, "5m", 100),
+      getData(symbol, "15m", 100)
     ]);
     if (!Array.isArray(data5) || !Array.isArray(data15)) return;
-    const closed5 = data5.slice(0, -1);
-    const closed15 = data15.slice(0, -1);
-    if (closed5.length < 60 || closed15.length < 30) return;
 
-    const h5 = closed5.map(x => Number(x[2]));
-    const l5 = closed5.map(x => Number(x[3]));
-    const c5 = closed5.map(x => Number(x[4]));
-    const h15 = closed15.map(x => Number(x[2]));
-    const l15 = closed15.map(x => Number(x[3]));
-    const c15 = closed15.map(x => Number(x[4]));
-    if ([h5, l5, c5, h15, l15, c15].flat().some(x => !Number.isFinite(x))) return;
-
-    const current = Number(pos.markPrice || trade.markPrice || trade.entry);
     const entry = Number(pos.entryPrice || trade.entry || trade.price);
+    const current = Number(pos.markPrice || trade.markPrice || entry);
     const oldSL = Number(trade.sl);
     const oldTP = Number(trade.tp);
-    if (!(current > 0 && entry > 0 && oldSL > 0 && oldTP > 0)) return;
-
-    // The initial R is fixed from the original core stop, not the trailed stop.
-    let initialRisk = Number(trade.initialRisk || trade.riskDetail?.initialRisk);
-    if (!(initialRisk > 0)) {
-      initialRisk = Math.abs(entry - oldSL);
-      if (!(initialRisk > 0)) return;
-      await trades.updateOne(
-        { symbol, result: 'PENDING' },
-        { $set: { initialRisk, updatedAt: Date.now() } }
-      );
-    }
-    const originalSL = side === 'LONG' ? entry - initialRisk : entry + initialRisk;
-    const R = (side === 'LONG' ? current - entry : entry - current) / initialRisk;
-    if (!Number.isFinite(R) || R < 0.5) return;
-
-    // Re-run the same nine-AI brain on the latest closed 15m candles while
-    // managing a live position. A weak/no signal never triggers a market close.
-    const liveDecision = analyzeNineAI(data15, symbol);
-    const aiSide = ["LONG", "SHORT"].includes(liveDecision?.side) ? liveDecision.side : null;
-    const aiScore = Number(liveDecision?.rankScore ?? liveDecision?.confidence ?? 0);
-    const aiAuthorized = liveDecision?.authorizedForExecution === true;
-    const aiSupports = aiAuthorized && aiSide === side && aiScore >= 65;
-    const aiStronglyOpposes = aiAuthorized && aiSide && aiSide !== side && aiScore >= 72;
-
-    // Close early only after a valid, high-scoring opposite 9AI setup appears
-    // and the open position has at least +0.5R unrealized profit.
-    if (aiStronglyOpposes && R >= 0.5) {
-      console.log(
-        `🧠 NINE-AI EARLY EXIT ${symbol} | held=${side} | new=${aiSide} | rank=${aiScore.toFixed(2)} | R=${R.toFixed(2)}`
-      );
-      const closed = await closePosition(symbol, side, Math.abs(Number(pos.positionAmt || 0)));
-      if (closed) {
-        await cancelAllOrders(symbol);
-        console.log(`✅ NINE-AI EARLY EXIT CONFIRMED ${symbol}`);
-      } else {
-        console.log(`🚨 NINE-AI EARLY EXIT NOT CONFIRMED ${symbol}; protective orders retained/reconciled`);
-      }
-      return;
-    }
-
-    // Wilder ATR(22) from completed 15m candles, matching Chandelier Exit math.
-    const calcWilderATR = (candles, length) => {
-      const tr = [];
-      for (let i = 1; i < candles.length; i++) {
-        const high = Number(candles[i][2]);
-        const low = Number(candles[i][3]);
-        const prevClose = Number(candles[i - 1][4]);
-        tr.push(Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose)));
-      }
-      if (tr.length < length) return NaN;
-      let value = tr.slice(0, length).reduce((a, b) => a + b, 0) / length;
-      for (let i = length; i < tr.length; i++) value = ((value * (length - 1)) + tr[i]) / length;
-      return value;
-    };
-    const atr5 = calcWilderATR(closed5.slice(-40), 14);
-    const atr15 = calcWilderATR(closed15.slice(-50), 22);
-    if (!(atr5 > 0 && atr15 > 0)) return;
-    const buffer = Math.max(atr5 * 0.20, atr15 * 0.10, current * 0.00025);
-
-    let newSL = oldSL;
-    let newTP = oldTP;
-    let phase = 1;
-
-    // Protect gains in stages while leaving the position room to trend.
-    //const floorR = R >= 3.0 ? 1.50 : R >= 2.0 ? 0.75 : 0.30;
-    //const floorR = R >= 0.8 ? 0.3 : -0.5;
-    let floorR =
-      R >= 0.8 ? 0.3 : -0.5;
-
-    // 9AI may tighten protection based on current setup quality, never loosen it.
-    if (R >= 0.5 && (!aiSupports || aiScore < 60)) {
-      floorR = Math.max(floorR, 0.05);
-    }
-    if (R >= 1.2 && aiSupports && aiScore >= 80) {
-      floorR = Math.max(floorR, 0.5);
-    }
-
-    if (R >= 0.8) phase = 2;
-    if (R >= 1.4) phase = 3;
-    const floor = side === 'LONG'
-      ? entry + initialRisk * floorR
-      : entry - initialRisk * floorR;
-    if (side === 'LONG' && floor > newSL && floor < current) newSL = floor;
-    if (side === 'SHORT' && floor < newSL && floor > current) newSL = floor;
-
-    // After a strong extension (+2.5R), trail with the 15m Chandelier Exit.
-    // The stop can tighten only; it never moves back toward the original risk.
-    if (R >= 1.0 && closed15.length >= 22) {
-      const lookbackHigh = Math.max(...h15.slice(-22));
-      const lookbackLow = Math.min(...l15.slice(-22));
-      const chandelier = side === 'LONG'
-        ? lookbackHigh - atr15 * 3
-        : lookbackLow + atr15 * 3;
-      if (Number.isFinite(chandelier)) {
-        if (side === 'LONG' && chandelier > newSL && chandelier < current) newSL = chandelier;
-        if (side === 'SHORT' && chandelier < newSL && chandelier > current) newSL = chandelier;
-      }
-    }
-
-    // Extend the original core TP only when both 5m and 15m momentum continue
-    // and the candles show room beyond the existing target.
-    const emaCalc = (values, length) => {
-      if (values.length < length) return NaN;
-      const alpha = 2 / (length + 1);
-      let value = values[0];
-      for (let i = 1; i < values.length; i++) value = alpha * values[i] + (1 - alpha) * value;
-      return value;
-    };
-    const e9_5 = emaCalc(c5.slice(-30), 9);
-    const e20_5 = emaCalc(c5.slice(-40), 20);
-    const e9_15 = emaCalc(c15.slice(-30), 9);
-    const e20_15 = emaCalc(c15.slice(-40), 20);
-    const v5 = closed5.map(x => Number(x[5]));
-    const avgV = v5.slice(-21, -1).reduce((a, b) => a + b, 0) / Math.max(1, v5.slice(-21, -1).length);
-    const volRatio = avgV > 0 ? v5.at(-1) / avgV : 0;
-    const momentumLong = e9_5 > e20_5 && e9_15 > e20_15 && c5.at(-1) >= c5.at(-2) && c15.at(-1) >= c15.at(-2) && volRatio >= 0.80;
-    const momentumShort = e9_5 < e20_5 && e9_15 < e20_15 && c5.at(-1) <= c5.at(-2) && c15.at(-1) <= c15.at(-2) && volRatio >= 0.80;
-
-    const nearestAbove = (values, value) => values.filter(x => Number.isFinite(x) && x > value).sort((a, b) => a - b)[0];
-    const nearestBelow = (values, value) => values.filter(x => Number.isFinite(x) && x < value).sort((a, b) => b - a)[0];
-    const allHighs = h5.slice(-48, -1).concat(h15.slice(-48, -1));
-    const allLows = l5.slice(-48, -1).concat(l15.slice(-48, -1));
-    const nearTP = side === 'LONG'
-      ? current < oldTP && oldTP - current <= Math.max(atr5 * 0.60, initialRisk * 0.30)
-      : current > oldTP && current - oldTP <= Math.max(atr5 * 0.60, initialRisk * 0.30);
-    const obstacle = side === 'LONG' ? nearestAbove(allHighs, oldTP) : nearestBelow(allLows, oldTP);
-    const extendedTP = side === 'LONG' ? Number(obstacle) - buffer * 0.20 : Number(obstacle) + buffer * 0.20;
-    const rrExtensionFloor = initialRisk * (aiScore >= 85 ? 0.75 : aiScore >= 75 ? 0.60 : 0.50);
-    const enoughRoom = side === 'LONG'
-      ? extendedTP >= oldTP + Math.max(atr15, rrExtensionFloor)
-      : extendedTP <= oldTP - Math.max(atr15, rrExtensionFloor);
-    if (R >= 1.0 && nearTP && enoughRoom && aiSupports &&
-        ((side === 'LONG' && momentumLong) || (side === 'SHORT' && momentumShort))) {
-      newTP = extendedTP;
-    }
-
-    // Invariants: never widen the initial/current stop or pull TP closer.
-    if (side === 'LONG') {
-      if (newSL < originalSL || newSL < oldSL || newSL >= current) newSL = oldSL;
-      if (newTP < oldTP) newTP = oldTP;
-    } else {
-      if (newSL > originalSL || newSL > oldSL || newSL <= current) newSL = oldSL;
-      if (newTP > oldTP) newTP = oldTP;
-    }
+    const amount = Math.abs(Number(pos.positionAmt || 0));
+    if (!(entry > 0 && current > 0 && oldSL > 0 && oldTP > 0 && amount > 0)) return;
 
     const info = await getSymbolInfo(symbol);
-    const tickSize = Number(info?.filters?.find(f => f.filterType === 'PRICE_FILTER')?.tickSize);
+    const tickSize = Number(info?.filters?.find(f => f.filterType === "PRICE_FILTER")?.tickSize);
     if (!(tickSize > 0)) return;
-    const precision = Math.max(0, String(tickSize).split('.')[1]?.length || 0);
-    // Round a protective stop toward a tighter valid tick; round target outward.
-    newSL = side === 'LONG'
-      ? Math.ceil(newSL / tickSize) * tickSize
-      : Math.floor(newSL / tickSize) * tickSize;
-    newTP = side === 'LONG'
-      ? Math.floor(newTP / tickSize) * tickSize
-      : Math.ceil(newTP / tickSize) * tickSize;
-    newSL = Number(newSL.toFixed(precision));
-    newTP = Number(newTP.toFixed(precision));
 
-    if (side === 'LONG' && newSL < oldSL) newSL = oldSL;
-    if (side === 'SHORT' && newSL > oldSL) newSL = oldSL;
-    if ((side === 'LONG' && newSL >= current) || (side === 'SHORT' && newSL <= current)) newSL = oldSL;
-    if (side === 'LONG' && newTP < oldTP) newTP = oldTP;
-    if (side === 'SHORT' && newTP > oldTP) newTP = oldTP;
+    // Re-evaluate the nine-role ensemble every management cycle. Its weighted
+    // decision owns target RR and proposed protection; this function only
+    // validates exchange geometry and the immutable no-widen-SL invariant.
+    const liveDecision = analyzeNineAI(data15, symbol);
+    const plan = deriveNineAIDynamicPlan({
+      decision: liveDecision, side, entry, current, oldSL, oldTP, tickSize
+    });
 
-    const minimumChange = Math.max(entry * 0.00005, atr15 * 0.03);
-    if (Math.abs(newSL - oldSL) < minimumChange && Math.abs(newTP - oldTP) < minimumChange) return;
+    const aiSide = ["LONG", "SHORT"].includes(liveDecision?.side) ? liveDecision.side : null;
+    const aiScore = Number(liveDecision?.rankMetrics?.roleScore ?? liveDecision?.rankScore ?? liveDecision?.confidence ?? 0);
+    const aiOpposes = liveDecision?.authorizedForExecution === true &&
+      aiSide && aiSide !== side && aiScore >= 72;
 
-    const updateTrade = { ...trade, symbol, side, entry, sl: newSL, tp: newTP, initialRisk, previousSL: oldSL };
+    // A decisive opposite nine-AI signal is allowed to exit the live position.
+    // closePosition verifies the actual Binance position after the reduce-only order.
+    if (aiOpposes) {
+      console.log(`🧠 NINE-AI EXIT ${symbol} | held=${side} | new=${aiSide} | roleScore=${aiScore.toFixed(2)}`);
+      const closed = await closePosition(symbol, side, amount);
+      if (closed) {
+        const flat = !(await hasPosition(symbol));
+        if (flat) {
+          const cancelled = await cancelAllOrders(symbol);
+          if (cancelled) console.log(`✅ NINE-AI EXIT VERIFIED ${symbol}`);
+          else console.log(`⚠️ NINE-AI EXIT FLAT BUT ORDER CLEANUP NEEDS RECONCILIATION ${symbol}`);
+        } else {
+          console.log(`🚨 NINE-AI EXIT NOT FLAT AFTER CLOSE ${symbol}; protective orders retained`);
+        }
+      } else {
+        console.log(`🚨 NINE-AI EXIT NOT CONFIRMED ${symbol}; protective orders retained`);
+      }
+      return;
+    }
+
+    if (!plan) {
+      console.log(`🧠 NINE-AI TPSL HOLD ${symbol} | side=${aiSide || "WAIT"} | score=${aiScore.toFixed(2)} | no safe RR<=${MAX_NINE_AI_RR} plan`);
+      return;
+    }
+
+    const minimumChange = Math.max(entry * 0.00002, tickSize * 2);
+    if (Math.abs(plan.sl - oldSL) < minimumChange && Math.abs(plan.tp - oldTP) < minimumChange) return;
+
+    const previousSL = oldSL;
+    const updateTrade = {
+      ...trade, symbol, side, entry, sl: plan.sl, tp: plan.tp,
+      previousSL, currentRR: plan.rr, initialRisk: Number(trade.initialRisk) || Math.abs(entry - oldSL)
+    };
     const result = await setDynamicTPSL(updateTrade);
     if (!result?.ok) {
-      console.log(`⚠️ DYNAMIC TPSL FAILED ${symbol}`);
-      return;
-    }
-    const finalSL = Number(result.sl), finalTP = Number(result.tp);
-    if (!(finalSL > 0 && finalTP > 0)) return;
-    const invalidLong = side === 'LONG' && (finalSL < oldSL || finalSL >= current || finalTP < oldTP);
-    const invalidShort = side === 'SHORT' && (finalSL > oldSL || finalSL <= current || finalTP > oldTP);
-    if (invalidLong || invalidShort) {
-      console.log(`🚨 REJECT INVALID DYNAMIC RESULT ${symbol}`);
+      console.log(`⚠️ NINE-AI TPSL UPDATE REJECTED ${symbol}`);
       return;
     }
 
-    const currentRR = Math.abs(finalTP - entry) / Math.max(Math.abs(entry - finalSL), Number.EPSILON);
+    const finalSL = Number(result.sl);
+    const finalTP = Number(result.tp);
+    const finalRR = Math.abs(finalTP - entry) / Math.max(Math.abs(entry - finalSL), Number.EPSILON);
+    const invalidLong = side === "LONG" &&
+      (finalSL < oldSL || finalSL >= current || finalTP <= current || finalTP <= entry);
+    const invalidShort = side === "SHORT" &&
+      (finalSL > oldSL || finalSL <= current || finalTP >= current || finalTP >= entry);
+    if (invalidLong || invalidShort || !Number.isFinite(finalRR) || finalRR > MAX_NINE_AI_RR + 1e-9) {
+      console.log(`🚨 REJECT NINE-AI TPSL INVARIANT ${symbol} | SL=${finalSL} TP=${finalTP} RR=${finalRR}`);
+      return;
+    }
+
+    const now = Date.now();
     trade.sl = finalSL;
     trade.tp = finalTP;
-    trade.rr = currentRR;
-    DYNAMIC_LAST_UPDATE[symbol] = Date.now();
-    DYNAMIC_PHASE[symbol] = phase;
+    trade.rr = finalRR;
+    DYNAMIC_LAST_UPDATE[symbol] = now;
+    DYNAMIC_PHASE[symbol] = plan.action;
     await trades.updateOne(
-      { symbol, result: 'PENDING' },
+      { symbol, result: "PENDING" },
       { $set: {
-        sl: finalSL, tp: finalTP, rr: currentRR, currentRR,
-        initialRisk, dynamicPhase: phase, dynamicUpdatedAt: Date.now(),
-        nineAiManagement: { side: aiSide, rankScore: aiScore, supportsPosition: aiSupports, evaluatedAt: Date.now() },
-        updatedAt: Date.now()
+        sl: finalSL, tp: finalTP, rr: finalRR, currentRR: finalRR,
+        initialRisk: updateTrade.initialRisk,
+        dynamicPhase: plan.action,
+        dynamicUpdatedAt: now,
+        nineAiManagement: {
+          side: aiSide, roleScore: aiScore, supportsPosition: plan.supports,
+          stronglyOpposes: plan.stronglyOpposes, desiredRR: plan.desiredRR,
+          reason: plan.reason, evaluatedAt: now
+        },
+        updatedAt: now
       } }
     );
     console.log(
-      `🎯 DYNAMIC ${symbol} ${side} R=${R.toFixed(2)} PHASE=${phase} ` +
-      `AI=${aiSide || "WAIT"}/${aiScore.toFixed(2)} SL ${oldSL}->${finalSL} ` +
-      `TP=${finalTP} CURRENT_RR=${currentRR.toFixed(2)}`
+      `🧠 NINE-AI TPSL ${symbol} ${side} ` +
+      `AI=${aiSide || "WAIT"}/${aiScore.toFixed(2)} ` +
+      `SL ${oldSL}->${finalSL} TP ${oldTP}->${finalTP} RR=${finalRR.toFixed(2)}`
     );
   } catch (e) {
     await checkTimeError(e);
-    console.log(`❌ MANAGE DYNAMIC TPSL ERROR ${trade?.symbol || 'UNKNOWN'}: ${e.message}`);
+    console.log(`❌ NINE-AI MANAGE TPSL ERROR ${symbol || "UNKNOWN"}: ${e.message}`);
   } finally {
-    if (trade?.symbol) delete TPSL_PENDING[trade.symbol];
+    if (symbol) delete TPSL_PENDING[symbol];
   }
 }
 async function cancelAllOrders(symbol){
@@ -3853,10 +3743,10 @@ let filtered = candidates.filter(c => {
         (side === "LONG" ? sl < entry && tp > entry :
          side === "SHORT" ? sl > entry && tp < entry : false);
 
-    if (!geometryValid || !Number.isFinite(rr) || rr < RR_THRESHOLD) {
+    if (!geometryValid || !Number.isFinite(rr) || rr < 0.79 || rr > MAX_NINE_AI_RR + 1e-9) {
         console.log(
             `🚫 FILTER NINE-AI GEOMETRY: ${c.symbol} | ` +
-            `side=${side} | RR=${safeFixed(rr, 2)} | required=${RR_THRESHOLD}`
+            `side=${side} | RR=${safeFixed(rr, 2)} | allowed=0.80-${MAX_NINE_AI_RR}`
         );
         return false;
     }
@@ -4006,19 +3896,12 @@ let rr =
         : (best.price - best.tp) /
           (best.sl - best.price)
 
-let minRR =
-    best.marketState === "TREND_STRONG"
-        ? 1.0
-        : 0.8
-
-if(rr < minRR){
+if (!Number.isFinite(rr) || rr < 0.79 || rr > MAX_NINE_AI_RR + 1e-9) {
     console.log(
-        `🚫 FILTER MIN RR: ${best.symbol} | ` +
-        `RR=${safeFixed(rr, 2)} | ` +
-        `required=${safeFixed(minRR, 2)} | ` +
-        `state=${best.marketState}`
-    )
-    continue
+        `🚫 FILTER NINE-AI RR: ${best.symbol} | ` +
+        `RR=${safeFixed(rr, 2)} | allowed=0.80-${MAX_NINE_AI_RR}`
+    );
+    continue;
 }
 
 // ===== RISK MULTIPLIER =====
