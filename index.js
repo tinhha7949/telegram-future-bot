@@ -1561,6 +1561,54 @@ if(positionSide==="LONG"){
             return true;
         };
 
+        const recoverAfterSLFailure = async (stage) => {
+            const state = await readLiveTriggerState();
+            if(await handleReachedTrigger(state, stage, true)) return;
+
+            const emergencySL = Number.isFinite(previousSL) && previousSL > 0 ? previousSL : sl;
+            const emergencyTP = Number.isFinite(previousTP) && previousTP > 0 ? previousTP : tp;
+            let slRestored = false;
+            try{
+                await placeTPSLWithRetry(symbol, positionSide, "STOP_MARKET", emergencySL);
+                slRestored = true;
+                console.log(`🛡 ${stage} ${symbol}: prior SL restored at ${emergencySL}`);
+            }catch(e){
+                console.log(`🚨 ${stage} ${symbol}: PRIOR SL RESTORE FAILED: ${e?.message || e}`);
+            }
+
+            if(!slRestored){
+                console.log(`🚨 ${stage} ${symbol}: no confirmed SL after replacement failure, forcing market close`);
+                const amount = Math.abs(Number(state.pos?.positionAmt || 0));
+                const closed = amount > 0 && await closePosition(symbol, positionSide, amount);
+                if(closed && !(await hasPosition(symbol))){
+                    await cancelAllOrders(symbol);
+                    console.log(`✅ ${stage} ${symbol}: closed because protection could not be restored`);
+                    return;
+                }
+                console.log(`🚨 CRITICAL ${stage} ${symbol}: could not confirm close or restore SL, immediate manual intervention required`);
+                return;
+            }
+
+            try{
+                await placeTPSLWithRetry(symbol, positionSide, "TAKE_PROFIT_MARKET", emergencyTP);
+                console.log(`🎯 ${stage} ${symbol}: prior TP restored at ${emergencyTP}`);
+            }catch(e){
+                console.log(`⚠️ ${stage} ${symbol}: prior TP restore failed: ${e?.message || e}; SL remains armed`);
+            }
+        };
+
+        const recoverAfterTPFailure = async (stage) => {
+            const state = await readLiveTriggerState();
+            if(await handleReachedTrigger(state, stage, true)) return;
+            const emergencyTP = Number.isFinite(previousTP) && previousTP > 0 ? previousTP : tp;
+            try{
+                await placeTPSLWithRetry(symbol, positionSide, "TAKE_PROFIT_MARKET", emergencyTP);
+                console.log(`🎯 ${stage} ${symbol}: prior TP restored at ${emergencyTP}`);
+            }catch(e){
+                console.log(`⚠️ ${stage} ${symbol}: prior TP restore failed: ${e?.message || e}; active SL retained`);
+            }
+        };
+
         // =================================================
         // 6. HARD VALIDATION
         // =================================================
@@ -1691,7 +1739,7 @@ try{
         `❌ DYNAMIC SL SET FAIL ${symbol}:`,
         e?.message || e
     )
-
+    await recoverAfterSLFailure("DYNAMIC SL RECOVERY");
     return false
 }
 
@@ -1707,7 +1755,7 @@ if(
         `❌ SL INVALID RESPONSE ${symbol}:`,
         JSON.stringify(slRes)
     )
-
+    await recoverAfterSLFailure("DYNAMIC SL INVALID RESPONSE");
     return false
 }
 
@@ -1748,7 +1796,7 @@ try{
         `❌ DYNAMIC TP SET FAIL ${symbol}:`,
         e?.message || e
     )
-
+    await recoverAfterTPFailure("DYNAMIC TP RECOVERY");
     return false
 }
 
@@ -1764,7 +1812,7 @@ if(
         `❌ TP INVALID RESPONSE ${symbol}:`,
         JSON.stringify(tpRes)
     )
-
+    await recoverAfterTPFailure("DYNAMIC TP INVALID RESPONSE");
     return false
 }
 
