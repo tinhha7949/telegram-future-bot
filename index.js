@@ -11,6 +11,9 @@ const TPSL_PENDING = {}
 const TPSL_CLOSING = {}
 const DYNAMIC_LAST_UPDATE = {}
 const DYNAMIC_PHASE = {}
+const MIN_NOTIONAL_RISK_COOLDOWN = new Map()
+const MIN_NOTIONAL_RISK_COOLDOWN_MS = 15 * 60 * 1000
+const MAX_CANDIDATE_ATTEMPTS_PER_SCAN = 10
 const MIN_CORE_SCORE = 60
 const MAX_BEST_SIGNALS = 1
 function envNumber(name, fallback, min, max) {
@@ -43,6 +46,7 @@ const crypto = require("crypto")
 const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, MAX_NINE_AI_RR } = require("./ai-trading/nine-ai-strategy")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
+const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -1850,7 +1854,7 @@ async function setInitialTPSL(trade){
                     rawSL / tickSize
                 ) * tickSize
 
-            // Round TP inward so exchange tick rounding cannot push RR above 1.9.
+            // Round TP inward so exchange tick rounding cannot push RR above 1.8.
             tp =
                 Math.floor(
                     rawTP / tickSize
@@ -1940,7 +1944,7 @@ async function setInitialTPSL(trade){
         }
 
         // =========================================
-        // INITIAL 9AI TPSL, RR HARD-CAPPED AT 1.9
+        // INITIAL 9AI TPSL, RR HARD-CAPPED AT 1.8
         // =========================================
 
         const cancelled =
@@ -3740,6 +3744,9 @@ candidates.push({
 candidates.sort(compareNineAICandidates)
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
+    const cooldownUntil = MIN_NOTIONAL_RISK_COOLDOWN.get(c.symbol) || 0;
+    if (cooldownUntil > Date.now()) return false;
+    if (cooldownUntil) MIN_NOTIONAL_RISK_COOLDOWN.delete(c.symbol);
     const rankScore = Number(c.rankScore);
     if (!Number.isFinite(rankScore)) {
         console.log(`🚫 FILTER INVALID NINE-AI CONFIDENCE: ${c.symbol}`);
@@ -3798,7 +3805,9 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, MAX_BEST_SIGNALS);
+// Try several ranked candidates so one coin that cannot meet exchange minimums
+// without exceeding risk does not block every other tradable candidate.
+let picks = filtered.slice(0, MAX_CANDIDATE_ATTEMPTS_PER_SCAN);
 for (let best of picks){
 const entry = Number(best.price);
 const coreSL = Number(best.sl);
@@ -4145,17 +4154,26 @@ if(!trade){
         let requiredRisk =
             requiredQty * diff
 
-            let maxAllowedRisk =
-            trade.risk * 1.10
+            const sizing = assessMinNotionalRisk({
+            minNotional, price: best.price, stopDistance: diff,
+            stepSize, maxRisk: trade.risk
+        });
+        requiredQty = normalizeQtyFinal(sizing.requiredQty, stepSize);
+        requiredRisk = requiredQty * diff;
+        const maxAllowedRisk = trade.risk;
 
-        if(requiredRisk > maxAllowedRisk){
+        if(!sizing.feasible || !isRiskWithinBudget(requiredRisk, maxAllowedRisk)){
 
+            MIN_NOTIONAL_RISK_COOLDOWN.set(
+                best.symbol, Date.now() + MIN_NOTIONAL_RISK_COOLDOWN_MS
+            );
             console.log(
-                `❌ MIN NOTIONAL EXCEEDS RISK ${best.symbol}`,
+                `⏭️ SKIP ${best.symbol}: exchange min notional cannot fit risk budget; cooldown=15m`,
                 {
                     requiredRisk,
                     maxAllowedRisk,
-                    minNotional
+                    minNotional,
+                    estimatedNotional: requiredQty * best.price
                 }
             )
 
@@ -4183,10 +4201,7 @@ if(!trade){
         continue
     }
 
-    if(
-        finalRisk >
-trade.risk * 1.10
-    ){
+    if(!isRiskWithinBudget(finalRisk, trade.risk)){
         console.log(
             `❌ FINAL RISK TOO HIGH ${best.symbol}`
         )
