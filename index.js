@@ -3901,7 +3901,7 @@ if (best.rankDirectionMode === "COUNTER_CORE") {
     best.side = coreSide === "LONG" ? "SHORT" : "LONG";
 
     const tpDistance = baseDistance * 0.9;
-    const slDistance = baseDistance * 0.9;
+    const slDistance = baseDistance * 0.6;
 
     best.tp = best.side === "LONG"
         ? entry + tpDistance
@@ -3921,7 +3921,7 @@ if (best.rankDirectionMode === "COUNTER_CORE") {
 } else {
     const tpDistance = baseDistance * 0.9;
     const slDistance = baseDistance * 0.6;
-    
+
     best.tp = best.side === "LONG"
         ? entry + tpDistance
         : entry - tpDistance;
