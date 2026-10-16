@@ -169,6 +169,12 @@ function detectContrarianSignal(candles, f) {
   };
 }
 
+function isContrarianConflict(side, contrarian) {
+  return Boolean(["LONG", "SHORT"].includes(side) &&
+    ["LONG", "SHORT"].includes(contrarian?.side) &&
+    contrarian.side !== side && Number(contrarian.strength) >= 60);
+}
+
 function calculateWeightedRoleScore(roleResults, side) {
   if (!Array.isArray(roleResults) || !["LONG", "SHORT"].includes(side)) return 0;
   let weightedTotal = 0;
@@ -285,7 +291,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   // A confirmed trap opposing the proposed entry is a hard safety veto, not
   // merely a small score penalty. If consensus aligns with the reversal side,
   // the trap supports that trade instead.
-  if (side && contraSide && contraSide !== side && contrarian.strength >= 60) {
+  if (isContrarianConflict(side, contrarian)) {
     riskReasons.push("CONTRARIAN_TRAP_OPPOSES_SIGNAL");
   }
   const riskAllowed = Boolean(side) && riskReasons.length === 0;
@@ -425,6 +431,6 @@ function compareNineAICandidates(a, b) {
 
 module.exports = {
   ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures,
-  detectContrarianSignal, calculateWeightedRoleScore,
+  detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore,
   analyzeNineAI, compareNineAICandidates
 };
