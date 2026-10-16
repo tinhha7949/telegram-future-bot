@@ -47,6 +47,7 @@ const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, MAX_NIN
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
+const { reachedProtectionTrigger } = require("./ai-trading/tpsl-safety")
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -1483,13 +1484,82 @@ if(positionSide==="LONG"){
                 )
             )
 
-            const previousSL=Number(trade.previousSL)
+            const previousSL = Number(trade.previousSL);
+        const previousTP = Number(trade.previousTP);
 
-if(Number.isFinite(previousSL)&&previousSL>0){
-    if(positionSide==="LONG"&&sl<previousSL)sl=previousSL
-    if(positionSide==="SHORT"&&sl>previousSL)sl=previousSL
-    sl=Number(sl.toFixed(Math.max(0,String(tickSize).split(".")[1]?.length||0)))
-}
+        if(Number.isFinite(previousSL) && previousSL > 0){
+            if(positionSide === "LONG" && sl < previousSL) sl = previousSL;
+            if(positionSide === "SHORT" && sl > previousSL) sl = previousSL;
+            sl = Number(sl.toFixed(Math.max(0, String(tickSize).split(".")[1]?.length || 0)));
+        }
+
+        // Re-read Binance mark price before touching live protection. If either
+        // the existing or proposed trigger was already reached, do not cancel
+        // the old protection and move the target away from a hit.
+        const readLiveTriggerState = async () => {
+            POS_CACHE = null;
+            POS_CACHE_TIME = 0;
+            const positions = await getPositionsCached();
+            const livePos = positions.find(p =>
+                p?.symbol === symbol &&
+                Math.abs(Number(p.positionAmt || 0)) > 0
+            );
+            if(!livePos) return { flat: true };
+            const liveSide = Number(livePos.positionAmt) > 0 ? "LONG" : "SHORT";
+            if(liveSide !== positionSide) return { flat: false, mismatch: true, pos: livePos };
+            const livePrice = Number(livePos.markPrice || livePos.entryPrice);
+            const trigger = reachedProtectionTrigger({
+                side: positionSide,
+                price: livePrice,
+                stopPrices: [previousSL, sl],
+                targetPrices: [previousTP, tp]
+            });
+            return { flat: false, pos: livePos, price: livePrice, trigger };
+        };
+
+        const handleReachedTrigger = async (state, stage, protectionAlreadyCancelled) => {
+            if(state.flat){
+                await cancelAllOrders(symbol);
+                console.log(`ℹ️ ${stage} ${symbol}: position already flat; stale orders cleaned`);
+                return true;
+            }
+            if(state.mismatch){
+                console.log(`🚨 ${stage} ${symbol}: live position side changed; refusing TPSL replacement`);
+                return true;
+            }
+            if(!state.trigger?.reached) return false;
+
+            console.log(`🚨 ${stage} ${symbol}: ${state.trigger.reason} at mark=${state.price}; closing now instead of replacing TPSL`);
+            const liveAmount = Math.abs(Number(state.pos.positionAmt || 0));
+            const closeResult = await closePosition(symbol, positionSide, liveAmount);
+            const flat = closeResult && !(await hasPosition(symbol));
+            if(flat){
+                const cleaned = await cancelAllOrders(symbol);
+                console.log(cleaned
+                    ? `✅ ${stage} ${symbol}: trigger exit verified, orders cleaned`
+                    : `⚠️ ${stage} ${symbol}: position closed but order cleanup needs reconciliation`);
+                return true;
+            }
+
+            console.log(`🚨 ${stage} ${symbol}: market close not verified; ${protectionAlreadyCancelled ? "attempting to restore prior protection" : "existing protection left untouched"}`);
+            if(protectionAlreadyCancelled){
+                const emergencySL = Number.isFinite(previousSL) && previousSL > 0 ? previousSL : sl;
+                const emergencyTP = Number.isFinite(previousTP) && previousTP > 0 ? previousTP : tp;
+                try{
+                    await placeTPSLWithRetry(symbol, positionSide, "STOP_MARKET", emergencySL);
+                    console.log(`🛡 ${stage} ${symbol}: emergency SL re-armed at ${emergencySL}`);
+                }catch(e){
+                    console.log(`🚨 ${stage} ${symbol}: EMERGENCY SL RESTORE FAILED: ${e?.message || e}`);
+                }
+                try{
+                    await placeTPSLWithRetry(symbol, positionSide, "TAKE_PROFIT_MARKET", emergencyTP);
+                    console.log(`🎯 ${stage} ${symbol}: prior TP re-armed at ${emergencyTP}`);
+                }catch(e){
+                    console.log(`⚠️ ${stage} ${symbol}: prior TP restore failed: ${e?.message || e}`);
+                }
+            }
+            return true;
+        };
 
         // =================================================
         // 6. HARD VALIDATION
@@ -1555,16 +1625,16 @@ if(positionSide === "LONG"){
         POS_CACHE = null
         POS_CACHE_TIME = 0
 
-        const verifyBefore =
-            await hasPosition(symbol)
+        const triggerBeforeCancel = await readLiveTriggerState();
+        if(await handleReachedTrigger(triggerBeforeCancel, "DYNAMIC PRE-CANCEL", false)){
+            return false;
+        }
 
+        const verifyBefore = await hasPosition(symbol);
         if(!verifyBefore){
-
-            console.log(
-                `⚠️ POSITION DISAPPEARED BEFORE DYNAMIC ${symbol}`
-            )
-
-            return false
+            console.log(`⚠️ POSITION DISAPPEARED BEFORE DYNAMIC ${symbol}`);
+            await cancelAllOrders(symbol);
+            return false;
         }
 
         // =================================================
@@ -1582,9 +1652,15 @@ if(positionSide === "LONG"){
 
             return false
         }
-        await new Promise(r =>
-    setTimeout(r, 1000)
-)
+        await new Promise(r => setTimeout(r, 150));
+
+        // Cancellation creates a brief exchange-side gap. Re-check mark price
+        // immediately and close on a crossed SL/TP instead of installing a new
+        // farther TP after the previous target has already been reached.
+        const triggerAfterCancel = await readLiveTriggerState();
+        if(await handleReachedTrigger(triggerAfterCancel, "DYNAMIC POST-CANCEL", true)){
+            return false;
+        }
 
         // =================================================
         // 9. SET SL
@@ -1642,6 +1718,12 @@ const slOrderId =
 console.log(
     `🛡 DYNAMIC SL SET ${symbol}: ${sl}`
 )
+
+        const triggerBeforeTP = await readLiveTriggerState();
+        if(await handleReachedTrigger(triggerBeforeTP, "DYNAMIC PRE-TP", true)){
+            return false;
+        }
+
         // =================================================
         // 10. SET TP
         // =================================================
@@ -2470,7 +2552,8 @@ async function manageDynamicTPSL(trade) {
     const previousSL = oldSL;
     const updateTrade = {
       ...trade, symbol, side, entry, sl: plan.sl, tp: plan.tp,
-      previousSL, currentRR: plan.rr, initialRisk: Number(trade.initialRisk) || Math.abs(entry - oldSL)
+      previousSL, previousTP: oldTP, currentRR: plan.rr,
+      initialRisk: Number(trade.initialRisk) || Math.abs(entry - oldSL)
     };
     const result = await setDynamicTPSL(updateTrade);
     if (!result?.ok) {
