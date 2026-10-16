@@ -1,39 +1,31 @@
 "use strict";
 
-// Dependency-free online logistic learner. All model state stays on this VPS.
-// Only confirmed, closed trades may update weights; no hosted AI/API is used.
-const fs = require("fs");
-const path = require("path");
-const DEFAULT_FILE = path.join(
-  process.env.NINE_AI_DATA_DIR || path.join(__dirname, "..", "data"),
-  "nine-ai-learning.json"
-);
+// MongoDB-backed online learner. RAM holds only the compact model currently
+// needed for prediction; decisions/outcomes and model state persist in MongoDB.
+// No local JSON state file and no hosted AI/API are used.
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+let stateCollection = null;
+let outcomesCollection = null;
+let stateCache = fresh();
 
 function fresh() {
-  return { version: 1, samples: 0, weights: [0, 0.35, 0.25, 0.15, 0.1, -0.1], bias: 0, recent: [], updatedAt: null };
+  return {
+    _id: "main",
+    version: 1,
+    samples: 0,
+    weights: [0, 0.35, 0.25, 0.15, 0.1, -0.1],
+    bias: 0,
+    recent: [],
+    updatedAt: null
+  };
 }
 
-function read(file = DEFAULT_FILE) {
-  try {
-    const state = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (
-      state.version === 1 &&
-      Number.isInteger(state.samples) && state.samples >= 0 &&
-      Array.isArray(state.weights) && state.weights.length === 6 &&
-      state.weights.every(Number.isFinite) &&
-      Number.isFinite(state.bias) &&
-      Array.isArray(state.recent)
-    ) return state;
-  } catch (_) {}
-  return fresh();
-}
-
-function writeAtomic(state, file = DEFAULT_FILE) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = file + "." + process.pid + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
-  fs.renameSync(tmp, file);
+function validState(state) {
+  return Boolean(state && state.version === 1 &&
+    Number.isInteger(state.samples) && state.samples >= 0 &&
+    Array.isArray(state.weights) && state.weights.length === 6 &&
+    state.weights.every(Number.isFinite) &&
+    Number.isFinite(state.bias) && Array.isArray(state.recent));
 }
 
 function vector(features) {
@@ -48,36 +40,40 @@ function vector(features) {
   ];
 }
 
-function predict(features, state = read()) {
+function predict(features, state = stateCache) {
+  const model = validState(state) ? state : fresh();
   const x = vector(features);
-  const z = clamp(x.reduce((sum, value, i) => sum + value * state.weights[i], state.bias), -12, 12);
+  const z = clamp(x.reduce((sum, value, i) => sum + value * model.weights[i], model.bias), -12, 12);
   const pLong = 1 / (1 + Math.exp(-z));
   return {
     pLong,
-    samples: state.samples,
-    trained: state.samples >= 20,
-    side: state.samples < 20 ? null : pLong >= 0.58 ? "LONG" : pLong <= 0.42 ? "SHORT" : null
+    samples: model.samples,
+    trained: model.samples >= 20,
+    side: model.samples < 20 ? null : pLong >= 0.58 ? "LONG" : pLong <= 0.42 ? "SHORT" : null
   };
 }
 
-// One SGD update per closed trade. realizedR = realized PnL / budgeted monetary risk.
-// An open, unresolved, malformed, or already-trained trade is never used twice.
-function learnClosedTrade({ tradeId, features, side, realizedR, closed }, file = DEFAULT_FILE) {
-  if (
-    !closed || !tradeId || !features || !["LONG", "SHORT"].includes(side) ||
-    !Number.isFinite(Number(realizedR)) || !Number.isFinite(Number(realizedR))
-  ) throw new Error("CLOSED_TRADE_LABEL_REQUIRED");
+function read() {
+  return stateCache;
+}
 
-  const state = read(file);
-  const id = String(tradeId);
-  if (state.recent.some(item => item.tradeId === id && Number.isFinite(item.realizedR))) {
-    return { updated: false, reason: "DUPLICATE_TRADE", samples: state.samples };
-  }
+async function persistState(state) {
+  if (!stateCollection) throw new Error("NINE_AI_MONGODB_NOT_INITIALIZED");
+  const { _id, ...fields } = state;
+  await stateCollection.updateOne(
+    { _id: "main" },
+    { $set: fields, $setOnInsert: { _id: "main" } },
+    { upsert: true }
+  );
+  stateCache = state;
+}
 
-  const x = vector(features);
-  const reward = clamp(Number(realizedR), -5, 5);
-  const sideLabel = side === "LONG" ? 1 : 0;
-  // Positive PnL reinforces the traded direction; negative PnL reinforces its opposite.
+async function applyOutcome(outcome) {
+  if (outcome.applied) return false;
+  const state = { ...stateCache, weights: [...stateCache.weights], recent: [...stateCache.recent] };
+  const x = vector(outcome.features);
+  const reward = clamp(Number(outcome.realizedR), -5, 5);
+  const sideLabel = outcome.side === "LONG" ? 1 : 0;
   const label = reward > 0 ? sideLabel : reward < 0 ? 1 - sideLabel : 0.5;
   const z = clamp(x.reduce((sum, value, i) => sum + value * state.weights[i], state.bias), -12, 12);
   const p = 1 / (1 + Math.exp(-z));
@@ -89,38 +85,71 @@ function learnClosedTrade({ tradeId, features, side, realizedR, closed }, file =
   }
   state.bias = clamp(state.bias + learningRate * error, -4, 4);
   state.samples++;
-  state.recent = state.recent.filter(item => item.tradeId !== id);
   state.recent.push({
-    type: "outcome",
-    tradeId: id,
+    tradeId: String(outcome.tradeId),
     realizedR: reward,
-    side,
-    closedAt: Date.now()
+    side: outcome.side,
+    closedAt: Number(outcome.closedAt || Date.now())
   });
-  state.recent = state.recent.slice(-500);
+  state.recent = state.recent.slice(-100);
   state.updatedAt = new Date().toISOString();
-  writeAtomic(state, file);
-  return { updated: true, samples: state.samples };
+
+  await persistState(state);
+  await outcomesCollection.updateOne(
+    { _id: outcome._id, applied: { $ne: true } },
+    { $set: { applied: true, appliedAt: new Date() } }
+  );
+  return true;
 }
 
-function rememberDecision(entry, file = DEFAULT_FILE) {
-  if (!entry || !entry.id || !entry.features || !["LONG", "SHORT", "WAIT"].includes(entry.action)) {
-    throw new Error("INVALID_DECISION_MEMORY");
+async function initialize(db) {
+  if (!db || typeof db.collection !== "function") {
+    throw new Error("NINE_AI_MONGODB_REQUIRED");
   }
-  const state = read(file);
-  const id = String(entry.id);
-  if (state.recent.some(item => item.tradeId === id && item.pendingOutcome)) return state.recent.length;
-  state.recent.push({
-    type: "decision",
-    tradeId: id,
-    action: entry.action,
-    features: entry.features,
-    rememberedAt: Date.now(),
-    pendingOutcome: true
-  });
-  state.recent = state.recent.slice(-500);
-  writeAtomic(state, file);
-  return state.recent.length;
+  stateCollection = db.collection("nine_ai_learning_state");
+  outcomesCollection = db.collection("nine_ai_learning_outcomes");
+  await outcomesCollection.createIndex({ tradeId: 1 }, { unique: true, name: "uniq_nine_ai_trade_outcome" });
+
+  const stored = await stateCollection.findOne({ _id: "main" });
+  stateCache = validState(stored) ? stored : fresh();
+  if (!stored || !validState(stored)) await persistState(stateCache);
+
+  // Recover outcomes recorded before a process interruption but not yet applied.
+  const pending = await outcomesCollection.find({ applied: { $ne: true } }).sort({ closedAt: 1 }).toArray();
+  for (const outcome of pending) await applyOutcome(outcome);
+  return { samples: stateCache.samples, trained: stateCache.samples >= 20 };
 }
 
-module.exports = { DEFAULT_FILE, fresh, read, writeAtomic, vector, predict, learnClosedTrade, rememberDecision };
+// Train only from confirmed closed trades. Unique MongoDB tradeId prevents
+// duplicate learning; unapplied events are replayed safely after a restart.
+async function learnClosedTrade({ tradeId, features, side, realizedR, closed }) {
+  if (!stateCollection || !outcomesCollection) throw new Error("NINE_AI_MONGODB_NOT_INITIALIZED");
+  if (!closed || !tradeId || !features || !["LONG", "SHORT"].includes(side) ||
+      !Number.isFinite(Number(realizedR))) {
+    throw new Error("CLOSED_TRADE_LABEL_REQUIRED");
+  }
+
+  const outcome = {
+    tradeId: String(tradeId),
+    features,
+    side,
+    realizedR: Number(realizedR),
+    closed: true,
+    closedAt: new Date(),
+    applied: false
+  };
+  try {
+    const result = await outcomesCollection.insertOne(outcome);
+    outcome._id = result.insertedId;
+  } catch (error) {
+    if (error?.code === 11000) {
+      return { updated: false, reason: "DUPLICATE_TRADE", samples: stateCache.samples };
+    }
+    throw error;
+  }
+
+  await applyOutcome(outcome);
+  return { updated: true, samples: stateCache.samples };
+}
+
+module.exports = { fresh, validState, vector, predict, read, initialize, learnClosedTrade };
