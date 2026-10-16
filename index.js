@@ -11,6 +11,7 @@ const TPSL_PENDING = {}
 const TPSL_CLOSING = {}
 const DYNAMIC_LAST_UPDATE = {}
 const DYNAMIC_PHASE = {}
+const MIN_RANK_SCORE = 45
 const TRADE_CONFIG = {
     riskPerTrade: 0.05,      
     maxRiskPerTrade: 0.05,    
@@ -470,8 +471,6 @@ const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
 const AI_CHAT_ID = process.env.AI_CHAT_ID
 
 const RR_THRESHOLD = 1.0 // 1.3 hoặc 1.4 nếu muốn 
-// Provisional quality gate: reject weak composite ranks before choosing the top signals.
-const MIN_RANK_SCORE = 60
 let ACCOUNT_BALANCE = 0
 // const MIN_VOL_24H = 15000000
 
