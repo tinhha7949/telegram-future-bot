@@ -151,6 +151,14 @@ assert.ok(shortPlan.sl <= 105, "SHORT SL must never move farther up");
 assert.ok(shortPlan.tp < 99.5, "SHORT TP must remain beyond current price");
 assert.ok(shortPlan.rr <= 1.9, "SHORT dynamic RR must never exceed 1.9");
 
+const oldTargetNear = deriveNineAIDynamicPlan({
+  decision: alignedDecision, side: "LONG", entry: 100, current: 100.5,
+  oldSL: 95, oldTP: 101, tickSize: 0.1
+});
+assert.ok(oldTargetNear, "9AI should be able to extend TP when RR allows it");
+assert.ok(oldTargetNear.tp > 101, "TP is allowed to move farther when 9AI supports the setup");
+assert.ok(oldTargetNear.rr <= 1.9, "extended TP must remain under RR 1.9");
+
 const weakDecision = {
   side: null, authorizedForExecution: false, confidence: 0,
   roles: [{ name: "Risk Manager AI", side: "VETO", confidence: 100 }],
