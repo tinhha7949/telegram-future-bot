@@ -31,9 +31,9 @@ function envNumber(name, fallback, min, max) {
 // User-adjustable execution limits. The 9-AI strategy owns trade direction
 // and its entry/SL/TP plan; these settings only bound exposure.
 const TRADE_CONFIG = Object.freeze({
-    riskPerTrade: envNumber("RISK_PER_TRADE", 0.01, 0.0001, 0.10),
-    maxRiskPerTrade: envNumber("MAX_RISK_PER_TRADE", 0.01, 0.0001, 0.10),
-    maxPositionPercent: envNumber("MAX_POSITION_PERCENT", 0.5, 0.01, 1),
+    riskPerTrade: envNumber("RISK_PER_TRADE", 0.05, 0.0001, 0.10),
+    maxRiskPerTrade: envNumber("MAX_RISK_PER_TRADE", 0.05, 0.0001, 0.10),
+    maxPositionPercent: envNumber("MAX_POSITION_PERCENT", 1.0, 0.01, 1),
     maxActivePositions: Math.round(envNumber("MAX_ACTIVE_POSITIONS", 20, 1, 50))
 })
 let SYNCING_TIME = false
