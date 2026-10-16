@@ -40,7 +40,7 @@ const fs = require("fs")
 const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
-const { analyzeNineAI } = require("./ai-trading/nine-ai-strategy")
+const { analyzeNineAI, compareNineAICandidates } = require("./ai-trading/nine-ai-strategy")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 
 // Use a machine-local lock keyed to this script, independent of the launch
@@ -3451,7 +3451,7 @@ async function scan(symbol){
             !["LONG", "SHORT"].includes(decision.side)
         ) return null;
         console.log(
-            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
+            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | RANK=${safeFixed(decision.rankScore, 2)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
         );
         return {
             ...decision,
@@ -3774,7 +3774,7 @@ if(dbStats.total >= 30){
 // CORE MỚI KHÔNG CÒN SCORE CŨ
 // Không dùng s.score nữa
 
-const rankScore = Number(s.confidence ?? s.rankScore ?? s.qualityScore ?? s.score ?? 0);
+const rankScore = Number(s.rankScore ?? s.confidence ?? s.qualityScore ?? s.score ?? 0);
 candidates.push({
     ...s,
     finalScore: aiMain,
@@ -3790,11 +3790,7 @@ candidates.push({
         }
 
         // Rank all valid signals collected during this scan cycle.
-candidates.sort((a, b) =>
-    (Number(b.rankScore) - Number(a.rankScore)) ||
-    (Number(b.rr || 0) - Number(a.rr || 0)) ||
-    String(a.symbol).localeCompare(String(b.symbol))
-)
+candidates.sort(compareNineAICandidates)
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
     const rankScore = Number(c.rankScore);
@@ -3827,11 +3823,7 @@ let filtered = candidates.filter(c => {
     return true;
 })
 // ===== SORT LẠI =====
-filtered = filtered.sort((a, b) =>
-    (Number(b.rankScore) - Number(a.rankScore)) ||
-    (Number(b.rr || 0) - Number(a.rr || 0)) ||
-    String(a.symbol).localeCompare(String(b.symbol))
-)
+filtered = filtered.sort(compareNineAICandidates)
 
 // ===== UNIQUE COIN =====
 let unique = []
