@@ -4903,7 +4903,7 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
     try {
         const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
         if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
-            const learning = nineAiLearningMemory.learnClosedTrade({
+            const learning = await nineAiLearningMemory.learnClosedTrade({
                 tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
                 features: t.nineAiLearningFeatures,
                 side: t.side,
@@ -5631,6 +5631,11 @@ await signalClaims.createIndex(
         name: "expire_trade_signal_claims_10d"
     }
 );
+
+// Load the compact model from MongoDB before starting scan loops.
+const learningStatus = await nineAiLearningMemory.initialize(db);
+console.log(`🧠 NINE-AI MONGODB MEMORY READY: samples=${learningStatus.samples} trained=${learningStatus.trained}`);
+
         // TEST DB THỰC SỰ ĐỌC ĐƯỢC
         await trades.findOne(
             {},
