@@ -3876,7 +3876,7 @@ best.side = side;
 best.triggerType = "NINE_AI_CONSENSUS";
 best.rankDirectionMode = "NINE_AI_PRIMARY";
 console.log(
-    `🧠 NINE-AI PRIMARY ${best.symbol} | SIDE=${best.side} | CONF=${best.confidence} | SL=${best.sl} | TP=${best.tp}`
+    `🧠 NINE-AI PRIMARY ${best.symbol} | SIDE=${best.side} | CONF=${best.confidence} | RANK=${safeFixed(best.rankScore, 2)} | SL=${best.sl} | TP=${best.tp}`
 );
 let positions = []
 
