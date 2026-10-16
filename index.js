@@ -6006,7 +6006,7 @@ setInterval(
 
         // scan mỗi 1 phút
 await new Promise(r =>
-    setTimeout(r, 60000)
+    setTimeout(r, 120000)
 )
     }
 }
