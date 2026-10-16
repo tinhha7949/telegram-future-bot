@@ -115,8 +115,9 @@ assert.ok(compareNineAICandidates(
   { symbol: "ZZZ", rankScore: 70, confidence: 60, rankMetrics: { consensusMargin: 2, directionalVotes: 5, setupQuality: 80 } }
 ) < 0, "symbol name is only the final deterministic tie-breaker");
 
-// Dynamic TPSL invariants: role-derived RR never exceeds 1.9 and SL never widens.
-assert.equal(MAX_NINE_AI_RR, 1.9);
+// Dynamic TPSL invariants: role-derived RR never exceeds 1.8 and SL never widens.
+assert.equal(MAX_NINE_AI_RR, 1.8);
+assert.ok(1.3 <= MAX_NINE_AI_RR, "RR 1.3 is valid because 1.8 is a ceiling, not a required target");
 const alignedDecision = {
   side: "LONG", authorizedForExecution: true, rankScore: 82,
   rankMetrics: { roleScore: 82, features: { atr14: 2 } },
@@ -132,7 +133,7 @@ const alignedPlan = deriveNineAIDynamicPlan({
 assert.ok(alignedPlan, "aligned 9AI should produce a safe dynamic plan");
 assert.ok(alignedPlan.sl >= 95, "LONG SL must never move farther down");
 assert.ok(alignedPlan.tp > 100.5, "LONG TP must remain beyond current price");
-assert.ok(alignedPlan.rr <= 1.9, "dynamic RR must never exceed 1.9");
+assert.ok(alignedPlan.rr <= 1.8, "dynamic RR must never exceed 1.8");
 
 const shortAlignedDecision = {
   side: "SHORT", authorizedForExecution: true, rankScore: 80,
@@ -149,7 +150,7 @@ const shortPlan = deriveNineAIDynamicPlan({
 assert.ok(shortPlan, "aligned SHORT 9AI should produce a safe dynamic plan");
 assert.ok(shortPlan.sl <= 105, "SHORT SL must never move farther up");
 assert.ok(shortPlan.tp < 99.5, "SHORT TP must remain beyond current price");
-assert.ok(shortPlan.rr <= 1.9, "SHORT dynamic RR must never exceed 1.9");
+assert.ok(shortPlan.rr <= 1.8, "SHORT dynamic RR must never exceed 1.8");
 
 const oldTargetNear = deriveNineAIDynamicPlan({
   decision: alignedDecision, side: "LONG", entry: 100, current: 100.5,
@@ -157,7 +158,7 @@ const oldTargetNear = deriveNineAIDynamicPlan({
 });
 assert.ok(oldTargetNear, "9AI should be able to extend TP when RR allows it");
 assert.ok(oldTargetNear.tp > 101, "TP is allowed to move farther when 9AI supports the setup");
-assert.ok(oldTargetNear.rr <= 1.9, "extended TP must remain under RR 1.9");
+assert.ok(oldTargetNear.rr <= 1.8, "extended TP must remain under RR 1.8");
 
 const weakDecision = {
   side: null, authorizedForExecution: false, confidence: 0,
@@ -170,7 +171,7 @@ const tightenedPlan = deriveNineAIDynamicPlan({
 });
 assert.ok(tightenedPlan === null || tightenedPlan.sl >= 95,
   "weak/invalid decision must not widen LONG SL");
-assert.ok(tightenedPlan === null || tightenedPlan.rr <= 1.9,
+assert.ok(tightenedPlan === null || tightenedPlan.rr <= 1.8,
   "weak/invalid decision must not exceed RR ceiling");
 
 console.log("PASS: nine role weights, weighted ranking, trap detection, closed-candle filter, execution authorization, tie-breaks, and trade geometry, dynamic 9AI TPSL and RR cap");
