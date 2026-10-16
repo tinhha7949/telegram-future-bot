@@ -70,6 +70,15 @@ async function persistState(state) {
 
 async function applyOutcome(outcome) {
   if (outcome.applied) return false;
+  // If the model was saved but marking the event applied was interrupted,
+  // the recent model ledger prevents replaying the same outcome twice.
+  if (stateCache.recent.some(item => item.tradeId === String(outcome.tradeId))) {
+    await outcomesCollection.updateOne(
+      { _id: outcome._id, applied: { $ne: true } },
+      { $set: { applied: true, appliedAt: new Date() } }
+    );
+    return false;
+  }
   const state = { ...stateCache, weights: [...stateCache.weights], recent: [...stateCache.recent] };
   const x = vector(outcome.features);
   const reward = clamp(Number(outcome.realizedR), -5, 5);
