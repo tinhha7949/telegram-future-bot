@@ -10,6 +10,7 @@ let TIME_SYNCED = false
 const TPSL_PENDING = {}
 const TPSL_CLOSING = {}
 const DYNAMIC_LAST_UPDATE = {}
+const DYNAMIC_UPDATE_COOLDOWN_MS = 30 * 1000
 const DYNAMIC_PHASE = {}
 const MIN_NOTIONAL_RISK_COOLDOWN = new Map()
 const MIN_NOTIONAL_RISK_COOLDOWN_MS = 15 * 60 * 1000
@@ -2542,6 +2543,29 @@ async function manageDynamicTPSL(trade) {
     const tickSize = Number(info?.filters?.find(f => f.filterType === "PRICE_FILTER")?.tickSize);
     if (!(tickSize > 0)) return;
 
+    // Always check the currently armed exchange triggers before any AI update
+    // throttle. A hit target must never be moved farther away, and a hit stop
+    // must exit immediately rather than wait for the next TPSL replacement.
+    const liveTrigger = reachedProtectionTrigger({
+      side,
+      price: current,
+      stopPrices: [oldSL],
+      targetPrices: [oldTP]
+    });
+    if (liveTrigger.reached) {
+      console.log(`🚨 NINE-AI LIVE TRIGGER ${symbol} | ${liveTrigger.reason} | mark=${current}; closing at market`);
+      const closed = await closePosition(symbol, side, amount);
+      if (closed && !(await hasPosition(symbol))) {
+        const cleaned = await cancelAllOrders(symbol);
+        console.log(cleaned
+          ? `✅ NINE-AI LIVE TRIGGER EXIT VERIFIED ${symbol}`
+          : `⚠️ NINE-AI LIVE TRIGGER EXIT FLAT BUT ORDER CLEANUP FAILED ${symbol}`);
+      } else {
+        console.log(`🚨 NINE-AI LIVE TRIGGER CLOSE NOT VERIFIED ${symbol}; existing protection retained`);
+      }
+      return;
+    }
+
     // Re-evaluate the nine-role ensemble every management cycle. Its weighted
     // decision owns target RR and proposed protection; this function only
     // validates exchange geometry and the immutable no-widen-SL invariant.
@@ -2596,6 +2620,11 @@ async function manageDynamicTPSL(trade) {
 
     const minimumChange = Math.max(entry * 0.00002, tickSize * 2);
     if (Math.abs(plan.sl - oldSL) < minimumChange && Math.abs(plan.tp - oldTP) < minimumChange) return;
+
+    const lastUpdate = Number(DYNAMIC_LAST_UPDATE[symbol] || 0);
+    if (lastUpdate > 0 && Date.now() - lastUpdate < DYNAMIC_UPDATE_COOLDOWN_MS) {
+      return;
+    }
 
     const previousSL = oldSL;
     const updateTrade = {
