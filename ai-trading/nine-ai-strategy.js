@@ -282,6 +282,12 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   if (confidence < 55) riskReasons.push("CONFIDENCE_BELOW_55");
   if (side && side === "LONG" && f.last.c <= f.e21) riskReasons.push("LONG_BELOW_EMA21");
   if (side && side === "SHORT" && f.last.c >= f.e21) riskReasons.push("SHORT_ABOVE_EMA21");
+  // A confirmed trap opposing the proposed entry is a hard safety veto, not
+  // merely a small score penalty. If consensus aligns with the reversal side,
+  // the trap supports that trade instead.
+  if (side && contraSide && contraSide !== side && contrarian.strength >= 60) {
+    riskReasons.push("CONTRARIAN_TRAP_OPPOSES_SIGNAL");
+  }
   const riskAllowed = Boolean(side) && riskReasons.length === 0;
   roleResults.push({ name: ROLE_NAMES[8], side: riskAllowed ? side : "VETO",
     confidence: riskAllowed ? 75 : 100, weight: ROLE_WEIGHTS[ROLE_NAMES[8]],
