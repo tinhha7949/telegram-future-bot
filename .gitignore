@@ -2,5 +2,3 @@ node_modules/
 .env
 .env.*
 !.env.example
-data/nine-ai-learning.json
-data/nine-ai-learning.json.*.tmp
