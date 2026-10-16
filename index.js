@@ -41,6 +41,7 @@ const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
 const { analyzeNineAI } = require("./ai-trading/nine-ai-strategy")
+const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -3517,6 +3518,16 @@ function buildTradeFromCoreSignal(best, riskBudget) {
     ? best.riskDetail
     : sourceRisk;
   const qualityScore = Number(best?.qualityScore ?? best?.score ?? best?.quality?.score ?? 0);
+  const strategyFeatures = best?.rankMetrics?.features;
+  const nineAiLearningFeatures = best?.setup === "NINE_AI_15M" && strategyFeatures
+    ? {
+        trend: strategyFeatures.trend === "UP" ? 1 : strategyFeatures.trend === "DOWN" ? -1 : 0,
+        momentum: Number(strategyFeatures.momentum4) / Math.max(Number(strategyFeatures.atrPercent) || 0, 0.0001),
+        rsi: Number(strategyFeatures.rsi14),
+        volume: Number(strategyFeatures.volumeRatio),
+        extension: Number(strategyFeatures.extensionAtr)
+      }
+    : null;
 
   return {
     // Keep new core fields without requiring this mapper to be edited each time.
@@ -3533,6 +3544,7 @@ function buildTradeFromCoreSignal(best, riskBudget) {
     marketState: best.marketState ?? null,
     volatility: best.volatility ?? null,
     qualityScore: Number.isFinite(qualityScore) ? qualityScore : 0,
+    nineAiLearningFeatures,
 
     // `risk` remains the monetary sizing budget expected by the execution code.
     risk: budget,
@@ -4884,6 +4896,30 @@ await trades.updateOne(
         }
     }
 )
+
+// Train only after Binance confirms the position is closed and the realized PnL
+// has been saved. Learning failures must never interrupt trade reconciliation.
+if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
+    try {
+        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
+            const learning = nineAiLearningMemory.learnClosedTrade({
+                tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
+                features: t.nineAiLearningFeatures,
+                side: t.side,
+                realizedR: closed.pnl / riskBudget,
+                closed: true
+            });
+            if (learning.updated) {
+                console.log(`🧠 NINE-AI MEMORY UPDATED: samples=${learning.samples} trade=${t.symbol}`);
+            } else if (learning.reason === "DUPLICATE_TRADE") {
+                console.log(`🧠 NINE-AI MEMORY: duplicate outcome ignored for ${t.symbol}`);
+            }
+        }
+    } catch (learningError) {
+        console.error(`⚠️ NINE-AI MEMORY UPDATE FAILED ${t.symbol}:`, learningError?.message || learningError);
+    }
+}
 
         const latestBalance = await updateBalance()
 
