@@ -7,6 +7,8 @@
  * advertised as a trained model. Closed candles only.
  */
 
+const learningMemory = require("./nine-ai-learning-memory");
+
 const ROLE_NAMES = [
   "Technical Analyst AI",
   "ML Signal AI",
@@ -112,19 +114,28 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const techSide = trendSide && (trendSide === "LONG" ? f.mom4 > 0 : f.mom4 < 0) ? trendSide : null;
   vote(ROLE_NAMES[0], techSide, techSide ? 68 : 35, `trend=${f.trend}; mom4=${(f.mom4 * 100).toFixed(2)}%`);
 
-  // 2. ML Signal AI: transparent logistic classifier over normalized features.
+  // 2. ML Signal AI: online logistic model trained only from closed-trade outcomes.
+  const learnedFeatures = { trend: f.trend === "UP" ? 1 : f.trend === "DOWN" ? -1 : 0,
+    momentum: f.mom4 / Math.max(f.atrPct, 0.0001), rsi: f.rsi,
+    volume: f.volumeRatio, extension: f.extensionAtr };
+  const learned = learningMemory.predict(learnedFeatures);
   const z = 1.25 * clamp((f.e9 - f.e21) / f.atr, -2, 2) +
     0.85 * clamp(f.mom4 / Math.max(f.atrPct, 0.0001), -2, 2) +
     0.45 * clamp(f.mom12 / Math.max(f.atrPct * 2, 0.0002), -2, 2) +
     0.25 * clamp((f.rsi - 50) / 20, -2, 2);
-  const pLong = logistic(z);
+  const baselineP = logistic(z);
+  const pLong = learned.trained ? 0.35 * baselineP + 0.65 * learned.pLong : baselineP;
   const mlSide = pLong >= 0.62 ? "LONG" : pLong <= 0.38 ? "SHORT" : null;
-  vote(ROLE_NAMES[1], mlSide, Math.round(Math.max(pLong, 1 - pLong) * 100), `logisticP(long)=${pLong.toFixed(3)}`);
+  vote(ROLE_NAMES[1], mlSide, Math.round(Math.max(pLong, 1 - pLong) * 100),
+    `onlineP(long)=${pLong.toFixed(3)}; trainedSamples=${learned.samples}`);
 
-  // 3. Learning & Memory AI: short/medium momentum persistence and regime memory.
-  const memSide = Math.sign(f.mom4) === Math.sign(f.mom12) && Math.abs(f.mom12) > f.atrPct * 0.25
-    ? (f.mom12 > 0 ? "LONG" : "SHORT") : null;
-  vote(ROLE_NAMES[2], memSide, memSide ? 61 : 30, `momentum-persistence; mom12=${(f.mom12 * 100).toFixed(2)}%`);
+  // 3. Learning & Memory AI: persistent memory is distinct from model prediction.
+  const memoryState = learningMemory.read();
+  const memSide = learned.trained && learned.side &&
+    Math.sign(f.mom4) === Math.sign(f.mom12) &&
+    Math.abs(f.mom12) > f.atrPct * 0.25 ? learned.side : null;
+  vote(ROLE_NAMES[2], memSide, memSide ? 60 : 25,
+    `persistentClosedTradeSamples=${memoryState.samples}; momentumPersistence=${(f.mom12 * 100).toFixed(2)}%`);
 
   // 4. Bull AI.
   const bullSide = f.rsi >= 52 && f.mom4 > 0 && f.last.c > f.e21 ? "LONG" : null;
