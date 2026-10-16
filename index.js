@@ -4141,25 +4141,17 @@ if(!trade){
     // ===== MIN NOTIONAL =====
     if(notional < minNotional){
 
-        let requiredQty =
-            normalizeQtyFinal(
-                Math.ceil(
-                    (minNotional / best.price)
-                    / stepSize
-                ) * stepSize,
-                stepSize
-            )
-
-        // Không ép qty nếu làm risk vượt quá mức cho phép
-        let requiredRisk =
-            requiredQty * diff
-
-            const sizing = assessMinNotionalRisk({
-            minNotional, price: best.price, stopDistance: diff,
-            stepSize, maxRisk: trade.risk
+        // The exchange minimum is accepted only if its rounded quantity
+        // remains within the original per-trade risk budget.
+        const sizing = assessMinNotionalRisk({
+            minNotional,
+            price: best.price,
+            stopDistance: diff,
+            stepSize,
+            maxRisk: trade.risk
         });
-        requiredQty = normalizeQtyFinal(sizing.requiredQty, stepSize);
-        requiredRisk = requiredQty * diff;
+        const requiredQty = normalizeQtyFinal(sizing.requiredQty, stepSize);
+        const requiredRisk = requiredQty * diff;
         const maxAllowedRisk = trade.risk;
 
         if(!sizing.feasible || !isRiskWithinBudget(requiredRisk, maxAllowedRisk)){
