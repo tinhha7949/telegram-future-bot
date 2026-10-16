@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates,
-  deriveNineAIDynamicPlan, MAX_NINE_AI_RR
+  deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust,
+  MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE, MAX_NINE_AI_RR
 } = require("./nine-ai-strategy");
 
 assert.equal(ROLE_NAMES.length, 9);
@@ -189,4 +190,15 @@ const weakShortPlan = deriveNineAIDynamicPlan({
 assert.ok(weakShortPlan === null || weakShortPlan.tp <= 90,
   "weak/invalid decision must never pull the confirmed SHORT TP inward");
 
-console.log("PASS: nine role weights, weighted ranking, trap detection, closed-candle filter, execution authorization, tie-breaks, trade geometry, non-contracting dynamic TP, and RR cap");
+
+assert.equal(MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, 0.5);
+assert.equal(NINE_AI_STRONG_OPPOSITE_EXIT_SCORE, 72);
+assert.equal(canNineAIDynamicallyAdjust({ side: "LONG", entry: 100, current: 102.49, initialRisk: 5 }), false);
+assert.equal(canNineAIDynamicallyAdjust({ side: "LONG", entry: 100, current: 102.5, initialRisk: 5 }), true);
+assert.equal(canNineAIDynamicallyAdjust({ side: "SHORT", entry: 100, current: 97.5, initialRisk: 5 }), true);
+assert.equal(canNineAIDynamicallyAdjust({ side: "SHORT", entry: 100, current: 100.1, initialRisk: 5 }), false);
+assert.equal(shouldNineAIExitPosition({ authorizedForExecution: true, side: "SHORT", rankMetrics: { roleScore: 72 } }, "LONG"), true);
+assert.equal(shouldNineAIExitPosition({ authorizedForExecution: false, side: "SHORT", rankMetrics: { roleScore: 99 } }, "LONG"), false);
+assert.equal(shouldNineAIExitPosition({ authorizedForExecution: true, side: "LONG", rankMetrics: { roleScore: 99 } }, "LONG"), false);
+
+console.log("PASS: Nine-AI sole decision authority, AI-owned dynamic gates, weighted ranking, trade geometry, non-contracting TP, and RR cap");
