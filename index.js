@@ -3461,16 +3461,16 @@ async function scan(symbol){
         if(!r || !r.side){
             return null
         }
-        const rfRank = scoreRF15Signal(data15, {
-            data15,
-            entry: r.price,
-            sl: r.sl,
-            tp: r.tp
-        });
-        //const rfRank = {
-    //score: 0,
-    //rankMetrics: {}
-//};
+        //const rfRank = scoreRF15Signal(data15, {
+           // data15,
+            //entry: r.price,
+            //sl: r.sl,
+            //tp: r.tp
+        //});
+        const rfRank = {
+    score: 0,
+    rankMetrics: {}
+};
         // ==================================================
         // 5. SIGNAL FOUND
         // ==================================================
@@ -3827,15 +3827,15 @@ candidates.sort((a, b) =>
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
 
-    const rankScore = Number(c.rankScore)
-    if (!Number.isFinite(rankScore) || rankScore < MIN_RANK_SCORE) {
-        console.log(
-            `🚫 FILTER LOW RANK: ${c.symbol} | ` +
-            `score=${Number.isFinite(rankScore) ? rankScore : "N/A"} | ` +
-            `required=${MIN_RANK_SCORE}`
-        )
-        return false
-    }
+    //const rankScore = Number(c.rankScore)
+    //if (!Number.isFinite(rankScore) || rankScore < MIN_RANK_SCORE) {
+        //console.log(
+        //    `🚫 FILTER LOW RANK: ${c.symbol} | ` +
+           // `score=${Number.isFinite(rankScore) ? rankScore : "N/A"} | ` +
+           // `required=${MIN_RANK_SCORE}`
+        //)
+        //return false
+    //}
 
     let rr = Math.abs(c.tp - c.price) / Math.abs(c.price - c.sl)
 
