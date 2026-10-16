@@ -12,6 +12,7 @@ const TPSL_CLOSING = {}
 const DYNAMIC_LAST_UPDATE = {}
 const DYNAMIC_PHASE = {}
 const MIN_CORE_SCORE = 60
+const MAX_BEST_SIGNALS = 1
 const TRADE_CONFIG = {
     riskPerTrade: 0.05,      
     maxRiskPerTrade: 0.05,    
@@ -3880,7 +3881,7 @@ if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
 }
-let picks = filtered.slice(0, 1);
+let picks = filtered.slice(0, MAX_BEST_SIGNALS);
 for (let best of picks){
 const coreSide = best.side;
 const entry = Number(best.price);
