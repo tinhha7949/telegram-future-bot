@@ -427,6 +427,98 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   };
 }
 
+const MAX_NINE_AI_RR = 1.9;
+
+function deriveNineAIDynamicPlan({
+  decision, side, entry, current, oldSL, oldTP, tickSize
+}) {
+  const validSide = side === "LONG" || side === "SHORT";
+  const values = [entry, current, oldSL, oldTP, tickSize].map(Number);
+  if (!validSide || values.some(v => !Number.isFinite(v) || v <= 0)) return null;
+  [entry, current, oldSL, oldTP, tickSize] = values;
+
+  const features = decision?.rankMetrics?.features || decision?.features || {};
+  const roles = Array.isArray(decision?.roles) ? decision.roles : [];
+  const roleScore = Number(decision?.rankMetrics?.roleScore ?? decision?.rankScore ?? decision?.confidence ?? 50);
+  const score = clamp(Number.isFinite(roleScore) ? roleScore : 50, 0, 100);
+  const authorized = decision?.authorizedForExecution === true;
+  const supports = authorized && decision?.side === side && score >= 65;
+  const stronglyOpposes = authorized && ["LONG", "SHORT"].includes(decision?.side) &&
+    decision.side !== side && score >= 72;
+  const atr = Number(features.atr14 ?? decision?.tradePlan?.stopDistance);
+  if (!(atr > 0) || !Number.isFinite(atr)) return null;
+
+  // 9AI role consensus chooses how much room remains. Technical features only
+  // anchor prices; they do not override the role decision or safety invariants.
+  const contrarian = roles.find(role => role.name === "Contrarian AI");
+  const riskRole = roles.find(role => role.name === "Risk Manager AI");
+  const contraOpposes = contrarian?.side && contrarian.side !== side &&
+    Number(contrarian.confidence) >= 60;
+  const riskWeak = !riskRole || riskRole.side === "VETO" || Number(riskRole.confidence) >= 90;
+  let stopRoom = supports ? (score >= 82 ? 1.25 : 0.8) : 0.35;
+  if (stronglyOpposes || contraOpposes || riskWeak) stopRoom = 0.2;
+  const proposedSL = side === "LONG"
+    ? current - Math.max(tickSize * 2, atr * stopRoom)
+    : current + Math.max(tickSize * 2, atr * stopRoom);
+
+  // Monotonic protection: a long stop can only rise; a short stop can only fall.
+  let sl = side === "LONG" ? Math.max(oldSL, proposedSL) : Math.min(oldSL, proposedSL);
+  if (side === "LONG" && sl >= current - tickSize) sl = oldSL;
+  if (side === "SHORT" && sl <= current + tickSize) sl = oldSL;
+
+  // 9AI conviction selects the target RR. A strong opposite signal pulls the
+  // target inward; an aligned strong consensus may extend it, never beyond 1.9.
+  let desiredRR = supports
+    ? clamp(0.8 + score / 100 * 1.1, 0.8, MAX_NINE_AI_RR)
+    : clamp(0.8 + (100 - score) / 100 * 0.35, 0.8, 1.15);
+  if (stronglyOpposes || contraOpposes || riskWeak) desiredRR = Math.min(desiredRR, 0.9);
+  const riskDistance = Math.abs(entry - sl);
+  if (!(riskDistance > 0)) return null;
+
+  const rrCapPrice = side === "LONG"
+    ? entry + riskDistance * MAX_NINE_AI_RR
+    : entry - riskDistance * MAX_NINE_AI_RR;
+  const targetPrice = side === "LONG"
+    ? entry + riskDistance * desiredRR
+    : entry - riskDistance * desiredRR;
+  let tp = side === "LONG"
+    ? Math.min(targetPrice, rrCapPrice)
+    : Math.max(targetPrice, rrCapPrice);
+
+  // TP is allowed to move closer or farther, but it must remain on the
+  // profitable side of the live market and RR must never exceed 1.9.
+  if (side === "LONG" && tp <= current + tickSize) {
+    const safeTP = Math.min(rrCapPrice, current + tickSize * 2);
+    if (safeTP <= current + tickSize || safeTP <= entry) return null;
+    tp = safeTP;
+  }
+  if (side === "SHORT" && tp >= current - tickSize) {
+    const safeTP = Math.max(rrCapPrice, current - tickSize * 2);
+    if (safeTP >= current - tickSize || safeTP >= entry) return null;
+    tp = safeTP;
+  }
+
+  const precision = Math.max(0, String(tickSize).split(".")[1]?.length || 0);
+  sl = Number((side === "LONG"
+    ? Math.ceil(sl / tickSize) * tickSize
+    : Math.floor(sl / tickSize) * tickSize).toFixed(precision));
+  tp = Number((side === "LONG"
+    ? Math.floor(tp / tickSize) * tickSize
+    : Math.ceil(tp / tickSize) * tickSize).toFixed(precision));
+
+  if (side === "LONG" && (sl < oldSL || sl >= current || tp <= current || tp <= entry)) return null;
+  if (side === "SHORT" && (sl > oldSL || sl <= current || tp >= current || tp >= entry)) return null;
+  const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
+  if (!Number.isFinite(rr) || rr > MAX_NINE_AI_RR + 1e-9) return null;
+
+  return {
+    sl, tp, rr, desiredRR, roleScore: score, supports, stronglyOpposes,
+    action: stronglyOpposes ? "CLOSE_EARLY" : "UPDATE_TPSL",
+    reason: stronglyOpposes ? "STRONG_OPPOSITE_NINE_AI" :
+      supports ? "NINE_AI_ALIGNED" : "NINE_AI_RISK_TIGHTEN"
+  };
+}
+
 function summarize(f) {
   return { close: f.last.c, ema9: f.e9, ema21: f.e21, ema50: f.e50,
     rsi14: f.rsi, atr14: f.atr, atrPercent: f.atrPct, momentum4: f.mom4,
@@ -456,5 +548,5 @@ function compareNineAICandidates(a, b) {
 module.exports = {
   ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore,
-  analyzeNineAI, compareNineAICandidates
+  analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, MAX_NINE_AI_RR
 };
