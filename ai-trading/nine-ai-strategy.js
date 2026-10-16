@@ -478,6 +478,16 @@ function deriveNineAIDynamicPlan({
   const rrCapPrice = side === "LONG"
     ? entry + riskDistance * MAX_NINE_AI_RR
     : entry - riskDistance * MAX_NINE_AI_RR;
+  // If live price has already passed the highest allowed RR target, close
+  // rather than retain a target that violates the 1.9 ceiling.
+  if ((side === "LONG" && rrCapPrice <= current + tickSize) ||
+      (side === "SHORT" && rrCapPrice >= current - tickSize)) {
+    return {
+      sl, tp: oldTP, rr: Math.abs(oldTP - entry) / riskDistance,
+      desiredRR, roleScore: score, supports, stronglyOpposes,
+      action: "CLOSE_TARGET_REACHED", reason: "MAX_RR_TARGET_ALREADY_CROSSED"
+    };
+  }
   const targetPrice = side === "LONG"
     ? entry + riskDistance * desiredRR
     : entry - riskDistance * desiredRR;
