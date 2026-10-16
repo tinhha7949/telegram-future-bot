@@ -302,21 +302,38 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   if (!riskAllowed) return { ...abstain, reason: riskReasons.join(",") || "NO_CONSENSUS",
     roles: roleResults, candles: candles.length, features: summarize(f) };
 
-  // Nine-AI owns the complete trade plan. Entry uses the latest CLOSED 15m
-  // candle; SL combines ATR volatility with recent market structure; TP is
-  // derived from the resulting risk distance. No legacy scanner rewrites it.
+  // All nine roles vote on the initial risk plan. Technical structure and
+  // ATR supply price anchors, while weighted role evidence selects stop room
+  // and the target RR. The hard RR ceiling is always 1.90.
   const entry = f.last.c;
-  const minimumStop = Math.max(f.atr * 1.5, entry * 0.001);
+  const weightedPlan = calculateWeightedRoleScore(roleResults, side);
+  const rolePlanScore = weightedPlan.score;
+  const opposingRolePressure = roleResults
+    .filter(role => role.name !== "Decision AI" && role.name !== "Risk Manager AI" &&
+      (role.side === "LONG" || role.side === "SHORT") && role.side !== side)
+    .reduce((sum, role) => sum + (ROLE_WEIGHTS[role.name] || 0) * role.confidence, 0);
+  const riskRole = roleResults.find(role => role.name === "Risk Manager AI");
+  const contrarianRole = roleResults.find(role => role.name === "Contrarian AI");
+  const riskPressure = clamp(
+    ((Number(riskRole?.confidence) || 50) - 50) / 50 +
+    opposingRolePressure / 100 +
+    ((contrarianRole?.side && contrarianRole.side !== side) ? (Number(contrarianRole.confidence) || 0) / 200 : 0),
+    0, 1
+  );
+  const minimumStop = Math.max(f.atr * 0.8, entry * 0.0008);
   const structureStop = side === "LONG"
-    ? entry - f.swingLow + f.atr * 0.2
-    : f.swingHigh - entry + f.atr * 0.2;
-  const stopDistance = Math.max(minimumStop, structureStop);
-  const targetDistance = stopDistance * 1.8;
+    ? Math.max(entry - f.swingLow + f.atr * 0.1, 0)
+    : Math.max(f.swingHigh - entry + f.atr * 0.1, 0);
+  const baseStopDistance = Math.max(minimumStop, structureStop);
+  const stopDistance = baseStopDistance * (1 - 0.18 * riskPressure);
+  const targetRR = Math.round(clamp(0.8 + rolePlanScore / 100 * 1.1, 0.8, 1.9) * 100) / 100;
+  const targetDistance = stopDistance * targetRR;
   const sl = side === "LONG" ? entry - stopDistance : entry + stopDistance;
   const tp = side === "LONG" ? entry + targetDistance : entry - targetDistance;
   const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
-  if (![entry, sl, tp, rr].every(Number.isFinite) || entry <= 0 || sl <= 0 ||
-      (side === "LONG" ? !(sl < entry && tp > entry) : !(tp < entry && sl > entry)) || rr < 1.7) {
+  if (![entry, sl, tp, rr, targetRR].every(Number.isFinite) || entry <= 0 || sl <= 0 ||
+      (side === "LONG" ? !(sl < entry && tp > entry) : !(tp < entry && sl > entry)) ||
+      rr < 0.79 || rr > 1.9 + 1e-9) {
     return { ...abstain, reason: "FINAL_TRADE_GEOMETRY_INVALID", roles: roleResults, candles: candles.length };
   }
 
@@ -357,6 +374,9 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     roleWeight: 0.85,
     setupWeight: 0.15,
     roleWeights: ROLE_WEIGHTS,
+    desiredRR: targetRR,
+    maxRiskReward: 1.9,
+    riskPressure,
     roleContributions: rankedRoles.map(role => ({
       name: role.name, weight: role.weight, score: role.score,
       weightedContribution: role.weightedContribution, side: role.side
@@ -385,10 +405,14 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       timeframe: "15m",
       entryMethod: "LATEST_CLOSED_CANDLE",
       stopMethod: "ATR_AND_RECENT_STRUCTURE",
-      targetMethod: "RISK_MULTIPLE",
+      targetMethod: "NINE_AI_WEIGHTED_RR",
       stopDistance,
       targetDistance,
-      riskReward: rr
+      desiredRR: targetRR,
+      rolePlanScore,
+      riskPressure,
+      riskReward: rr,
+      maxRiskReward: 1.9
     },
     signalAt: f.last.closeTime, setup: "NINE_AI_15M",
     marketState: f.trend === "RANGE" ? "RANGE" : "TREND_STRONG",
