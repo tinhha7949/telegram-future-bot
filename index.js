@@ -1452,10 +1452,10 @@ let tp
 
 if(positionSide==="LONG"){
     sl=Math.ceil(rawSL/tickSize)*tickSize
-    tp=Math.ceil(rawTP/tickSize)*tickSize
+    tp=Math.floor(rawTP/tickSize)*tickSize
 }else{
     sl=Math.floor(rawSL/tickSize)*tickSize
-    tp=Math.floor(rawTP/tickSize)*tickSize
+    tp=Math.ceil(rawTP/tickSize)*tickSize
 }
 
         sl =
