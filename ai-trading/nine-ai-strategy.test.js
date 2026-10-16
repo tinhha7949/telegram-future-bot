@@ -173,5 +173,16 @@ assert.ok(tightenedPlan === null || tightenedPlan.sl >= 95,
   "weak/invalid decision must not widen LONG SL");
 assert.ok(tightenedPlan === null || tightenedPlan.rr <= 1.8,
   "weak/invalid decision must not exceed RR ceiling");
+assert.ok(tightenedPlan === null || tightenedPlan.tp >= 110,
+  "weak/invalid decision must never pull the confirmed LONG TP inward");
 
-console.log("PASS: nine role weights, weighted ranking, trap detection, closed-candle filter, execution authorization, tie-breaks, and trade geometry, dynamic 9AI TPSL and RR cap");
+// A weak/neutral re-analysis cannot shrink the original SHORT target either.
+const weakShortPlan = deriveNineAIDynamicPlan({
+  decision: { ...weakDecision, side: null },
+  side: "SHORT", entry: 100, current: 98,
+  oldSL: 105, oldTP: 90, tickSize: 0.1
+});
+assert.ok(weakShortPlan === null || weakShortPlan.tp <= 90,
+  "weak/invalid decision must never pull the confirmed SHORT TP inward");
+
+console.log("PASS: nine role weights, weighted ranking, trap detection, closed-candle filter, execution authorization, tie-breaks, trade geometry, non-contracting dynamic TP, and RR cap");
