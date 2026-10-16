@@ -359,7 +359,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
 
   // All nine roles vote on the initial risk plan. Technical structure and
   // ATR supply price anchors, while weighted role evidence selects stop room
-  // and the target RR. The hard RR ceiling is always 1.90.
+  // and the target RR. The hard RR ceiling is always 1.80.
   const entry = f.last.c;
   const weightedPlan = calculateWeightedRoleScore(roleResults, side);
   const rolePlanScore = weightedPlan.score;
@@ -381,14 +381,14 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     : Math.max(f.swingHigh - entry + f.atr * 0.1, 0);
   const baseStopDistance = Math.max(minimumStop, structureStop);
   const stopDistance = baseStopDistance * (1 - 0.18 * riskPressure);
-  const targetRR = Math.round(clamp(0.8 + rolePlanScore / 100 * 1.1, 0.8, 1.9) * 100) / 100;
+  const targetRR = Math.round(clamp(0.8 + rolePlanScore / 100 * 1.0, 0.8, 1.8) * 100) / 100;
   const targetDistance = stopDistance * targetRR;
   const sl = side === "LONG" ? entry - stopDistance : entry + stopDistance;
   const tp = side === "LONG" ? entry + targetDistance : entry - targetDistance;
   const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
   if (![entry, sl, tp, rr, targetRR].every(Number.isFinite) || entry <= 0 || sl <= 0 ||
       (side === "LONG" ? !(sl < entry && tp > entry) : !(tp < entry && sl > entry)) ||
-      rr < 0.79 || rr > 1.9 + 1e-9) {
+      rr < 0.79 || rr > 1.8 + 1e-9) {
     return { ...abstain, reason: "FINAL_TRADE_GEOMETRY_INVALID", roles: roleResults, candles: candles.length };
   }
 
@@ -430,7 +430,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     setupWeight: 0.15,
     roleWeights: ROLE_WEIGHTS,
     desiredRR: targetRR,
-    maxRiskReward: 1.9,
+    maxRiskReward: 1.8,
     riskPressure,
     roleContributions: rankedRoles.map(role => ({
       name: role.name, weight: role.weight, score: role.score,
@@ -467,7 +467,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       rolePlanScore,
       riskPressure,
       riskReward: rr,
-      maxRiskReward: 1.9
+      maxRiskReward: 1.8
     },
     signalAt: f.last.closeTime, setup: "NINE_AI_15M",
     marketState: f.trend === "RANGE" ? "RANGE" : "TREND_STRONG",
@@ -482,7 +482,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   };
 }
 
-const MAX_NINE_AI_RR = 1.9;
+const MAX_NINE_AI_RR = 1.8;
 
 function deriveNineAIDynamicPlan({
   decision, side, entry, current, oldSL, oldTP, tickSize
@@ -522,7 +522,7 @@ function deriveNineAIDynamicPlan({
   if (side === "SHORT" && sl <= current + tickSize) sl = oldSL;
 
   // 9AI conviction selects the target RR. A strong opposite signal pulls the
-  // target inward; an aligned strong consensus may extend it, never beyond 1.9.
+  // target inward; an aligned strong consensus may extend it, never beyond 1.8.
   let desiredRR = supports
     ? clamp(0.8 + score / 100 * 1.1, 0.8, MAX_NINE_AI_RR)
     : clamp(0.8 + (100 - score) / 100 * 0.35, 0.8, 1.15);
@@ -534,7 +534,7 @@ function deriveNineAIDynamicPlan({
     ? entry + riskDistance * MAX_NINE_AI_RR
     : entry - riskDistance * MAX_NINE_AI_RR;
   // If live price has already passed the highest allowed RR target, close
-  // rather than retain a target that violates the 1.9 ceiling.
+  // rather than retain a target that violates the 1.8 ceiling.
   if ((side === "LONG" && rrCapPrice <= current + tickSize) ||
       (side === "SHORT" && rrCapPrice >= current - tickSize)) {
     return {
