@@ -44,7 +44,7 @@ const fs = require("fs")
 const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
-const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, MAX_NINE_AI_RR } = require("./ai-trading/nine-ai-strategy")
+const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR } = require("./ai-trading/nine-ai-strategy")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
@@ -2272,7 +2272,7 @@ async function openPositionWithTPSL(trade, qty){
     }
 
     // Preserve the Nine-AI plan's original reward/risk ratio after fill.
-    // The execution fill may differ from the signal entry, but a generic 1.6R
+    // The execution fill may differ from the signal entry, but a legacy RR
     // default must never overwrite the TP selected by Nine-AI.
     const plannedEntry = Number(trade.entry ?? trade.price)
     const plannedSL = Number(trade.sl)
@@ -2587,12 +2587,11 @@ async function manageDynamicTPSL(trade) {
 
     const aiSide = ["LONG", "SHORT"].includes(liveDecision?.side) ? liveDecision.side : null;
     const aiScore = Number(liveDecision?.rankMetrics?.roleScore ?? liveDecision?.rankScore ?? liveDecision?.confidence ?? 0);
-    const aiOpposes = liveDecision?.authorizedForExecution === true &&
-      aiSide && aiSide !== side && aiScore >= 72;
+    const aiExit = shouldNineAIExitPosition(liveDecision, side);
 
-    // A decisive opposite nine-AI signal is allowed to exit the live position.
-    // closePosition verifies the actual Binance position after the reduce-only order.
-    if (aiOpposes) {
+    // Nine-AI itself decides whether the opposite signal is decisive.
+    // The execution layer only carries out and verifies the approved exit.
+    if (aiExit) {
       console.log(`🧠 NINE-AI EXIT ${symbol} | held=${side} | new=${aiSide} | roleScore=${aiScore.toFixed(2)}`);
       const closed = await closePosition(symbol, side, amount);
       if (closed) {
@@ -2616,10 +2615,9 @@ async function manageDynamicTPSL(trade) {
     const initialRisk = Number(trade.initialRisk) || Math.abs(entry - oldSL);
     const favorableMove = side === "LONG" ? current - entry : entry - current;
     const favorableR = initialRisk > 0 ? favorableMove / initialRisk : 0;
-    const minimumFavorableR = 0.5;
-    if (favorableR < minimumFavorableR) {
+    if (!canNineAIDynamicallyAdjust({ side, entry, current, initialRisk })) {
       console.log(
-        `🧠 NINE-AI TPSL HOLD ${symbol} | favorable=${favorableR.toFixed(2)}R < ${minimumFavorableR}R | initial SL/TP retained`
+        `🧠 NINE-AI TPSL HOLD ${symbol} | favorable=${favorableR.toFixed(2)}R below Nine-AI adjustment threshold | initial SL/TP retained`
       );
       return;
     }
@@ -3021,563 +3019,10 @@ async function loadValidFuturesSymbols(){
     }
 }
 // ============================================================ // RANGE FILTER CORE // // Single entry indicator: TradingView Range Filter [DW] // Chart settings: Type 1 / Close / 2.618 Average Change / period 14 / smoothing 27 / 15m // Stop: opposite Range Filter envelope // Target: 1.5R // Other timeframes remain in function signature for compatibility. // ============================================================
-const finite = Number.isFinite;
-// ============================================================ // BASIC // ============================================================
-function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
-// ============================================================ // CANDLE NORMALIZATION // Binance: // [time, open, high, low, close, volume] // ============================================================
-function normalizeCandle(x) {
-if (Array.isArray(x)) {
-return {
-  t: Number(x[0]),
-  o: Number(x[1]),
-  h: Number(x[2]),
-  l: Number(x[3]),
-  c: Number(x[4]),
-  v: Number(x[5] ?? 0)
-};
-}
-return { t: Number( x.t ?? x.time ?? x.timestamp ?? 0 ),
-o: Number(
-  x.o ??
-  x.open
-),
-
-h: Number(
-  x.h ??
-  x.high
-),
-
-l: Number(
-  x.l ??
-  x.low
-),
-
-c: Number(
-  x.c ??
-  x.close
-),
-
-v: Number(
-  x.v ??
-  x.volume ??
-  0
-)
-}; }
-// ============================================================ // PREPARE // ONLY CLOSED CANDLES // ============================================================
-function prepare(data, minLength) {
-if (!Array.isArray(data)) { return null; }
-const candles = data .map(normalizeCandle) .filter(x => finite(x.o) && finite(x.h) && finite(x.l) && finite(x.c) && finite(x.v) );
-const closed = candles.length > 1 ? candles.slice(0, -1) : [];
-if (closed.length < minLength) { return null; }
-return closed; }
-function rangeFilter(candles, options = {}) {
-  const cfg = {
-    filterType: 'Type 1',
-    movementSource: 'Close',
-    rangeSize: 2.618,
-    rangeScale: 'Average Change',
-    rangePeriod: 14,
-    smoothRange: true,
-    smoothPeriod: 27,
-    averageFilterChanges: false,
-    averageChanges: 2,
-    tickSize: 0.01,
-    pointValue: 1,
-    ...options
-  };
-  const { filterType, movementSource, rangeSize, rangeScale,
-    rangePeriod, smoothRange, smoothPeriod, averageFilterChanges,
-    averageChanges, tickSize, pointValue } = cfg;
-
-  if (!Array.isArray(candles)) throw new TypeError('candles phải là một mảng');
-  if (!Number.isInteger(rangePeriod) || rangePeriod < 1 ||
-      !Number.isInteger(smoothPeriod) || smoothPeriod < 1 ||
-      !Number.isInteger(averageChanges) || averageChanges < 1 ||
-      !Number.isFinite(rangeSize) || rangeSize <= 0) {
-    throw new RangeError('Tham số Range Filter không hợp lệ');
-  }
-
-  const n = candles.length;
-  const close = candles.map(c => Number(c?.c));
-  const high = candles.map((c, i) => movementSource === 'Wicks' ? Number(c?.h) : close[i]);
-  const low = candles.map((c, i) => movementSource === 'Wicks' ? Number(c?.l) : close[i]);
-  const basis = high.map((h, i) => (h + low[i]) / 2);
-
-  // Pine Cond_EMA: update only when condition is true, seeding with first sample.
-  function conditionalEma(values, length, condition = () => true) {
-    const out = new Array(values.length).fill(NaN);
-    const alpha = 2 / (length + 1);
-    let state = NaN;
-    for (let i = 0; i < values.length; i++) {
-      const x = values[i];
-      if (condition(i) && Number.isFinite(x)) {
-        state = Number.isFinite(state) ? state + alpha * (x - state) : x;
-      }
-      out[i] = state;
-    }
-    return out;
-  }
-
-  const trueRange = new Array(n).fill(NaN);
-  const absChange = new Array(n).fill(NaN);
-  for (let i = 0; i < n; i++) {
-    if (![high[i], low[i]].every(Number.isFinite)) continue;
-    if (i === 0) trueRange[i] = high[i] - low[i];
-    else if (Number.isFinite(close[i - 1])) {
-      trueRange[i] = Math.max(
-        high[i] - low[i],
-        Math.abs(high[i] - close[i - 1]),
-        Math.abs(low[i] - close[i - 1])
-      );
-    }
-    if (i > 0 && Number.isFinite(basis[i]) && Number.isFinite(basis[i - 1])) {
-      absChange[i] = Math.abs(basis[i] - basis[i - 1]);
-    }
-  }
-
-  // DW dynamic range inputs: EMA(True Range), EMA(Average Change), or
-  // population standard deviation, sampled over rangePeriod.
-  const atrLike = conditionalEma(trueRange, rangePeriod);
-  const avgChange = conditionalEma(absChange, rangePeriod);
-  const stdev = new Array(n).fill(NaN);
-  for (let i = 0; i < n; i++) {
-    const start = Math.max(0, i - rangePeriod + 1);
-    const values = basis.slice(start, i + 1);
-    if (values.length && values.every(Number.isFinite)) {
-      const mean = values.reduce((a, b) => a + b, 0) / values.length;
-      const variance = values.reduce((a, x) => a + (x - mean) ** 2, 0) / values.length;
-      stdev[i] = Math.sqrt(variance);
-    }
-  }
-
-  const rawRange = basis.map((price, i) => {
-    if (!Number.isFinite(price)) return NaN;
-    switch (rangeScale) {
-      case 'Points': return rangeSize * pointValue;
-      case 'Pips': return rangeSize * 0.0001;
-      case 'Ticks': return rangeSize * tickSize;
-      case '% of Price': return close[i] * rangeSize / 100;
-      case 'ATR': return rangeSize * atrLike[i];
-      case 'Average Change': return rangeSize * avgChange[i];
-      case 'Standard Deviation': return rangeSize * stdev[i];
-      case 'Absolute': return rangeSize;
-      default: throw new RangeError(`Range Scale không hợp lệ: ${rangeScale}`);
-    }
-  });
-  const smooth = conditionalEma(rawRange, smoothPeriod);
-  const range = rawRange.map((v, i) => smoothRange ? smooth[i] : v);
-
-  const filter = new Array(n).fill(NaN);
-  const upperBand = new Array(n).fill(NaN);
-  const lowerBand = new Array(n).fill(NaN);
-  const direction = new Array(n).fill(0);
-  const buy = new Array(n).fill(false);
-  const sell = new Array(n).fill(false);
-  const signal = new Array(n).fill(0);
-  const upward = new Array(n).fill(false);
-  const downward = new Array(n).fill(false);
-  let filterState = NaN;
-  let heldDirection = 0;
-  let avgFilterState = NaN;
-  let avgUpperState = NaN;
-  let avgLowerState = NaN;
-  let changedSamples = 0;
-  const changeAlpha = 2 / (averageChanges + 1);
-
-  for (let i = 0; i < n; i++) {
-    const h = high[i], l = low[i], r = range[i];
-    if (![h, l, r].every(Number.isFinite) || r < 0) {
-      direction[i] = heldDirection;
-      continue;
-    }
-
-    // DW Type 1: move the filter only when price clears the prior filter
-    // by the current range. Type 2 advances in discrete range increments.
-    const previous = Number.isFinite(filterState) ? filterState : basis[i];
-    if (filterType === 'Type 1') {
-      if (h - r > previous) filterState = h - r;
-      if (l + r < previous) filterState = l + r;
-      if (!Number.isFinite(filterState)) filterState = basis[i];
-    } else if (filterType === 'Type 2') {
-      if (h >= previous + r && r > 0) {
-        filterState = previous + Math.floor(Math.abs(h - previous) / r) * r;
-      }
-      if (l <= previous - r && r > 0) {
-        filterState = previous - Math.floor(Math.abs(l - previous) / r) * r;
-      }
-      if (!Number.isFinite(filterState)) filterState = basis[i];
-    } else {
-      throw new RangeError(`Filter Type không hợp lệ: ${filterType}`);
-    }
-
-    filter[i] = filterState;
-    upperBand[i] = filterState + r;
-    lowerBand[i] = filterState - r;
-
-    if (i > 0 && Number.isFinite(filter[i - 1])) {
-      if (filter[i] > filter[i - 1]) heldDirection = 1;
-      else if (filter[i] < filter[i - 1]) heldDirection = -1;
-    }
-    direction[i] = heldDirection;
-    upward[i] = heldDirection === 1;
-    downward[i] = heldDirection === -1;
-
-    const changed = i > 0 && Number.isFinite(filter[i - 1]) && filter[i] !== filter[i - 1];
-    if (changed) {
-      changedSamples++;
-      if (!Number.isFinite(avgFilterState)) {
-        avgFilterState = filter[i];
-        avgUpperState = upperBand[i];
-        avgLowerState = lowerBand[i];
-      } else {
-        avgFilterState += changeAlpha * (filter[i] - avgFilterState);
-        avgUpperState += changeAlpha * (upperBand[i] - avgUpperState);
-        avgLowerState += changeAlpha * (lowerBand[i] - avgLowerState);
-      }
-    }
-    if (averageFilterChanges && changedSamples > 0) {
-      filter[i] = avgFilterState;
-      upperBand[i] = avgUpperState;
-      lowerBand[i] = avgLowerState;
-    }
-
-    if (i > 0) {
-      buy[i] = direction[i] === 1 && direction[i - 1] !== 1;
-      sell[i] = direction[i] === -1 && direction[i - 1] !== -1;
-      signal[i] = buy[i] ? 1 : sell[i] ? -1 : 0;
-    }
-  }
-
-  return { filter, upperBand, lowerBand, direction, upward, downward, signal, buy, sell, range };
-}
-async function coreLogic(data15, symbol = null) {
-  // Match the Range Filter [DW] settings shown on the user's 15m chart:
-  // Type 1, Close, 2.618 Average Change, period 14, smooth range 27.
-  const candles = prepare(data15, 600);
-  if (!candles) return null;
-  const rf = rangeFilter(candles, {
-    filterType: 'Type 1', movementSource: 'Close',
-    rangeSize: 2.618, rangeScale: 'Average Change', rangePeriod: 14,
-    smoothRange: true, smoothPeriod: 27,
-    averageFilterChanges: false, averageChanges: 2
-  });
-  const i = candles.length - 1;
-  if (i < 1 || !Array.isArray(rf.direction)) return null;
-
-  // Trade only the first closed candle where DW's held trend direction flips.
-  const side = rf.buy[i] ? 'LONG' : rf.sell[i] ? 'SHORT' : null;
-  if (!side) return null;
-
-  const price = candles[i].c;
-  const filter = rf.filter[i];
-  const range = rf.range[i];
-  if (![price, filter, range].every(finite) || price <= 0 || range <= 0) return null;
-  if (side === 'LONG' ? price <= filter : price >= filter) return null;
-
-  // Filter the flat state: a real DW turn must move off its prior value.
-  const priorFilter = rf.filter[i - 1];
-  if (!finite(priorFilter)) return null;
-  const move = side === 'LONG' ? filter - priorFilter : priorFilter - filter;
-  if (move <= 0) return null;
-
-  // Stop outside recent 15m structure with an ATR buffer, never closer than RF.
-  // Exclude the signal candle so its range does not distort the swing level.
-  const trValues = [];
-  for (let j = Math.max(1, i - 14); j < i; j++) {
-    const prevClose = candles[j - 1].c;
-    trValues.push(Math.max(candles[j].h - candles[j].l,
-      Math.abs(candles[j].h - prevClose), Math.abs(candles[j].l - prevClose)));
-  }
-  if (trValues.length < 10) return null;
-  const atr14 = trValues.reduce((sum, value) => sum + value, 0) / trValues.length;
-  const swingCandles = candles.slice(Math.max(0, i - 24), i);
-  if (!(atr14 > 0) || swingCandles.length < 10) return null;
-  const swingStop = side === 'LONG'
-    ? Math.min(...swingCandles.map(c => c.l)) - atr14 * 0.25
-    : Math.max(...swingCandles.map(c => c.h)) + atr14 * 0.25;
-  const sl = side === 'LONG'
-    ? Math.min(rf.lowerBand[i], swingStop)
-    : Math.max(rf.upperBand[i], swingStop);
-  const risk = Math.abs(price - sl);
-  if (!finite(risk) || risk <= 0 || (side === 'LONG' ? sl >= price : sl <= price)) return null;
-
-  const targetR = 1.0;
-  const tp = side === 'LONG' ? price + risk * targetR : price - risk * targetR;
-  const volRatio = range / price;
-
-  return {
-    side, symbol, price, sl, tp,
-    signalAt: candles[i].t,
-    setup: 'RANGE_FILTER',
-    pullbackType: 'NONE',
-    triggerType: side === 'LONG' ? 'UP_TURN' : 'DOWN_TURN',
-    marketState: side === 'LONG' ? 'DW_UP_TURN' : 'DW_DOWN_TURN',
-    volatility: volRatio < 0.001 ? 'LOW' : volRatio < 0.004 ? 'NORMAL' : 'HIGH',
-    qualityScore: 0, score: 0,
-    risk: { risk, initialRisk: risk, rr: targetR, targetR },
-    filterMove: move,
-    filterRange: range
-  };
-}
-
-function scoreRF15Signal(data15) {
-  const candles = prepare(data15, 80);
-
-  const invalid = {
-    score: 0,
-    adjustment: -40,
-    early: false,
-    efficiency: 0,
-    extensionUnits: 0,
-    runBars: 0,
-    energy: 0,
-    energyRatio: 0,
-    e0: 0,
-    peakEnergy: 0,
-    halfLife: 0,
-    phase: "DEPLETED",
-    impulseSide: "FLAT",
-    weakening: false,
-    exhausted: false,
-    divergence: false
-  };
-
-  if (!candles || candles.length < 30) return invalid;
-
-  const clamp = (value, min, max) =>
-    Math.max(min, Math.min(max, value));
-
-  const n = candles.length;
-  const tr = new Array(n).fill(NaN);
-  const atr14 = new Array(n).fill(NaN);
-
-  // Tính ATR14.
-  for (let i = 1; i < n; i++) {
-    const c = candles[i];
-    const previousClose = candles[i - 1].c;
-
-    tr[i] = Math.max(
-      c.h - c.l,
-      Math.abs(c.h - previousClose),
-      Math.abs(c.l - previousClose)
-    );
-
-    const start = Math.max(1, i - 13);
-    const values = tr.slice(start, i + 1).filter(Number.isFinite);
-
-    if (values.length >= 8) {
-      atr14[i] =
-        values.reduce((sum, value) => sum + value, 0) / values.length;
-    }
-  }
-
-  let energy = 0;
-  let e0 = 0;
-  let peakEnergy = 0;
-  let halfLife = 10;
-  let age = 0;
-  let impulseDir = 0;
-  let impulsePrice = NaN;
-  let divergenceAge = 999;
-
-  const lastImpulseByDir = {
-    1: null,
-    "-1": null
-  };
-
-  for (let i = 1; i < n; i++) {
-    divergenceAge++;
-
-    // Xung lực suy yếu dần theo thời gian.
-    if (impulseDir && e0 > 0) {
-      age++;
-      energy = e0 * Math.exp(-Math.LN2 * age / halfLife);
-    }
-
-    const c = candles[i];
-    const atr = atr14[i];
-
-    if (!(atr > 0)) continue;
-
-    const body = Math.abs(c.c - c.o);
-    const candleRange = c.h - c.l;
-    const bodyRatio = candleRange > 0 ? body / candleRange : 0;
-    const bodyATR = body / atr;
-    const rangeATR = candleRange / atr;
-
-    const volumeValues = candles
-      .slice(Math.max(0, i - 20), i)
-      .map(x => Number(x.v))
-      .filter(x => Number.isFinite(x) && x > 0);
-
-    const volumeNow = Number(c.v);
-    const volumeAvg = volumeValues.length
-      ? volumeValues.reduce((sum, value) => sum + value, 0) /
-        volumeValues.length
-      : 0;
-
-    const volumeRatio =
-      volumeAvg > 0 && Number.isFinite(volumeNow)
-        ? volumeNow / volumeAvg
-        : 1;
-
-    const volumeBoost = clamp(volumeRatio, 0.75, 1.5);
-
-    const velocityStart = Math.max(0, i - 3);
-    const velocityATR =
-      Math.abs(c.c - candles[velocityStart].c) / atr;
-
-    // Nhận diện nến xung lực.
-    const isImpulse =
-      bodyATR >= 0.9 &&
-      rangeATR >= 0.9 &&
-      bodyRatio >= 0.45;
-
-    if (!isImpulse) continue;
-
-    const newDir = c.c > c.o ? 1 : -1;
-    const rawE0 = Math.min(
-      5,
-      (bodyATR * 0.7 + velocityATR * 0.3) * volumeBoost
-    );
-
-    if (!(rawE0 > 0)) continue;
-
-    const priorImpulse = lastImpulseByDir[newDir];
-
-    const madeNewExtreme = priorImpulse
-      ? newDir === 1
-        ? c.h > priorImpulse.price
-        : c.l < priorImpulse.price
-      : false;
-
-    const isDivergence =
-      !!priorImpulse &&
-      madeNewExtreme &&
-      rawE0 < priorImpulse.e0 * 0.75;
-
-    if (isDivergence) divergenceAge = 0;
-
-    lastImpulseByDir[newDir] = {
-      price: newDir === 1 ? c.h : c.l,
-      e0: rawE0
-    };
-
-    const currentRatio = e0 > 0 ? energy / e0 : 0;
-
-    if (newDir === impulseDir && currentRatio > 0.08) {
-      // Xung lực cùng hướng được nạp lại; đây không phải trạng thái suy yếu.
-      energy = Math.min(5, energy + rawE0 * 0.5);
-      e0 = energy;
-      peakEnergy = Math.max(peakEnergy, energy);
-    } else {
-      // Có xung lực mới hoặc đổi hướng.
-      impulseDir = newDir;
-      energy = rawE0;
-      e0 = rawE0;
-      peakEnergy = rawE0;
-      impulsePrice = c.c;
-    }
-
-    age = 0;
-    halfLife = clamp(8 + e0 * 2, 8, 18);
-  }
-
-  const currentATR = atr14[n - 1];
-  const currentPrice = candles[n - 1].c;
-  const energyRatio =
-    peakEnergy > 0 ? clamp(energy / peakEnergy, 0, 1) : 0;
-
-  const exhausted = age >= 3 && energyRatio <= 0.08;
-  const early = age <= 2 && energyRatio >= 0.55;
-
-  // Hiệu quả chuyển động giá trong 8 nến gần nhất, không xét hướng LONG/SHORT.
-  let path = 0;
-  const lookback = Math.min(8, n - 1);
-
-  for (let i = n - lookback; i < n; i++) {
-    path += Math.abs(candles[i].c - candles[i - 1].c);
-  }
-
-  const netMove = Math.abs(
-    currentPrice - candles[n - 1 - lookback].c
-  );
-
-  const efficiency =
-    path > 0 ? clamp(netMove / path, 0, 1) : 0;
-
-  // Giữ lại để theo dõi/log, không trừ điểm khi giá đã chạy xa.
-  const extensionUnits =
-    Number.isFinite(impulsePrice) && currentATR > 0
-      ? Math.abs(currentPrice - impulsePrice) / currentATR
-      : 0;
-
-  const weakening =
-    peakEnergy >= 1.5 &&
-    age >= 2 &&
-    energyRatio <= 0.70 &&
-    energyRatio > 0.08;
-
-  let score = 40;
-
-  if (weakening) {
-    // Cộng 8–25 điểm theo mức suy yếu của xung lực.
-    const weakeningStrength = clamp(
-      (0.70 - energyRatio) / (0.70 - 0.08),
-      0,
-      1
-    );
-
-    score += 8 + weakeningStrength * 17;
-  } else if (energyRatio > 0.70) {
-    // Xung lực vẫn còn khỏe: không thưởng trạng thái suy yếu.
-    score -= energyRatio * 10;
-  } else if (impulseDir === 0) {
-    score -= 8;
-  }
-
-  // Chuyển động càng liền mạch thì điểm càng cao.
-  score += efficiency * 8;
-
-  // Xung lực tạo cực trị mới nhưng yếu hơn lần trước là dấu hiệu suy yếu.
-  const divergence = divergenceAge <= 4;
-  if (divergence) score += 4;
-
-  if (exhausted) score -= 10;
-
-  score = Math.round(clamp(score, 0, 100));
-
-  let phase = "DEPLETED";
-  if (energyRatio > 0.70) phase = "CHARGED";
-  else if (energyRatio > 0.45) phase = "ACTIVE";
-  else if (energyRatio > 0.20) phase = "DECAYING";
-  else if (energyRatio > 0.08) phase = "FADING";
-
-  return {
-    score,
-    adjustment: score - 40,
-    early,
-    efficiency,
-    extensionUnits,
-    runBars: age,
-    energy,
-    energyRatio,
-    e0,
-    peakEnergy,
-    halfLife,
-    phase,
-    impulseSide:
-      impulseDir === 1 ? "BULL" :
-      impulseDir === -1 ? "BEAR" : "FLAT",
-    weakening,
-    exhausted,
-    divergence
-  };
-}
 // ================= SCAN =================
 async function scan(symbol){
     try {
-        // Primary signal source is the nine-role strategy. Do not require coreLogic().
+        // Nine-AI is the only signal source.
         const data15 = await getData(symbol, "15m", 601);
         if (!Array.isArray(data15)) return null;
         const decision = analyzeNineAI(data15, symbol);
@@ -3614,11 +3059,15 @@ function safeFixed(value, digits = 2){
     return n.toFixed(digits)
 }
 
-function buildTradeFromCoreSignal(best, riskBudget) {
-  const side = String(best?.side ?? best?.direction ?? '').toUpperCase();
-  const entry = Number(best?.price ?? best?.entry);
-  const sl = Number(best?.sl ?? best?.stopLoss);
-  const tp = Number(best?.tp ?? best?.takeProfit);
+function buildTradeFromNineAISignal(best, riskBudget) {
+  if (best?.authorizedForExecution !== true || best?.setup !== "NINE_AI_15M" || best?.rankDirectionMode !== "NINE_AI_PRIMARY") {
+    console.log(`❌ REJECT NON-NINE-AI SIGNAL ${best?.symbol || 'UNKNOWN'}`);
+    return null;
+  }
+  const side = String(best?.side || '').toUpperCase();
+  const entry = Number(best?.entry ?? best?.price);
+  const sl = Number(best?.sl);
+  const tp = Number(best?.tp);
   const priceRisk = Math.abs(entry - sl);
   const budget = Number(riskBudget);
   const rr = priceRisk > 0 ? Math.abs(tp - entry) / priceRisk : NaN;
@@ -3633,7 +3082,7 @@ function buildTradeFromCoreSignal(best, riskBudget) {
     !Number.isFinite(budget) || budget <= 0 ||
     !Number.isFinite(rr) || rr <= 0 || rr > MAX_NINE_AI_RR + 1e-9
   ) {
-    console.log(`❌ INVALID CORE SIGNAL ${best?.symbol || 'UNKNOWN'}`);
+    console.log(`❌ INVALID NINE-AI SIGNAL ${best?.symbol || 'UNKNOWN'}`);
     return null;
   }
 
@@ -3666,7 +3115,7 @@ function buildTradeFromCoreSignal(best, riskBudget) {
     : null;
 
   return {
-    // Keep new core fields without requiring this mapper to be edited each time.
+    // Preserve the authoritative Nine-AI decision and plan through execution.
     ...best,
     symbol: String(best.symbol),
     side,
@@ -3674,7 +3123,7 @@ function buildTradeFromCoreSignal(best, riskBudget) {
     price: entry,
     sl,
     tp,
-    setup: best.setup ?? 'CORE_SIGNAL',
+    setup: best.setup,
     pullbackType: best.pullbackType ?? null,
     triggerType: best.triggerType ?? null,
     marketState: best.marketState ?? null,
@@ -3688,6 +3137,7 @@ function buildTradeFromCoreSignal(best, riskBudget) {
     rr,
     riskDetail: {
       ...riskDetail,
+      targetR: rr,
       coreRisk: sourceRisk,
       risk: priceRisk,
       initialRisk: priceRisk,
@@ -3869,54 +3319,19 @@ let dbCache = {}
 
 for (let s of signals){
 
-    // ===== MAIN =====
-    let keyMain = `${s.setup}-${s.marketState}-${s.side}-${s.volatility}`
-
-    if(!dbCache[keyMain]){
-        dbCache[keyMain] = await getDBStats(
-            s.setup,
-            s.marketState,
-            s.side,
-            s.volatility
-        )
+    // Nine-AI is the sole ranking authority. No database win-rate,
+    // legacy score, or secondary heuristic may change its candidate rank.
+    const rankScore = Number(s.rankScore);
+    if (!Number.isFinite(rankScore)) {
+        console.log(`🚫 INVALID NINE-AI RANK ${s.symbol}`);
+        continue;
     }
-
-    let dbMain = dbCache[keyMain]
-
-// DB statistics are metadata only. They do not affect coin ranking.
-const dbStats = dbMain || { total: 0, winrate: 0.5 };
-let aiMain = 0;
-if (dbStats.total >= 30 && Number.isFinite(dbStats.winrate)) {
-  aiMain = (dbStats.winrate - 0.50) * 60 * Math.min(dbStats.total / 100, 1);
-}
-
-// DB chỉ loại setup có lịch sử rất xấu
-// ===== DB EDGE — CHỈ LOG, KHÔNG BLOCK =====
-
-if(dbStats.total >= 30){
-
-    const wr = dbStats.winrate
-
-    if(wr < 0.42){
-
-        console.log(
-        `🚫 DB BAD EDGE: ${s.symbol} | ` +
-        `WR=${(dbStats.winrate * 100).toFixed(1)}% | ` +
-        `N=${dbStats.total}`
-    )
-    }
-}
-
-// CORE MỚI KHÔNG CÒN SCORE CŨ
-// Không dùng s.score nữa
-
-const rankScore = Number(s.rankScore ?? s.confidence ?? s.qualityScore ?? s.score ?? 0);
-candidates.push({
-    ...s,
-    finalScore: aiMain,
-    rankScore,
-    type: "MAIN"
-})
+    candidates.push({
+        ...s,
+        finalScore: rankScore,
+        rankScore,
+        type: "NINE_AI"
+    })
 }
 
         // ===== NO CANDIDATE =====
@@ -4079,76 +3494,23 @@ console.log(`⛔ ${best.symbol} đang có lệnh`)
 continue
 }
 
-    // ===== DB AI =====
-
-let dbAI =
-    await getDBStats(
-        best.setup,
-        best.marketState,
-        best.side,
-        best.volatility
-    )
-    if(!dbAI && best.setup !== "NINE_AI_15M"){
-    console.log(
-        `⛔ DB AI unavailable - skip ${best.symbol}`
-    )
-    continue
-}
-if (!dbAI) dbAI = { total: 0, winrate: 0.5 };
-
-// ===== RR =====
-
-let rr =
-    best.side === "LONG"
-        ? (best.tp - best.price) /
-          (best.price - best.sl)
-        : (best.price - best.tp) /
-          (best.sl - best.price)
-
-if (!Number.isFinite(rr) || rr < 0.79 || rr > MAX_NINE_AI_RR + 1e-9) {
-    console.log(
-        `🚫 FILTER NINE-AI RR: ${best.symbol} | ` +
-        `RR=${safeFixed(rr, 2)} | allowed=0.80-${MAX_NINE_AI_RR}`
-    );
-    continue;
-}
-
-// ===== RISK MULTIPLIER =====
-
-let multiplier = 1
-
-if(dbAI.total >= 20){
-
-    let edge =
-        dbAI.winrate - 0.5
-
-    multiplier =
-        1 + edge * 2
-
-    if(multiplier > 1.25){
-        multiplier = 1.25
+    // Validate the exact Nine-AI plan. Invalid plans are rejected, never
+    // repaired with a legacy RR or database-derived target.
+    const rr = Math.abs(Number(best.tp) - Number(best.price)) /
+        Math.abs(Number(best.price) - Number(best.sl));
+    if (!Number.isFinite(rr) || rr < 0.79 || rr > MAX_NINE_AI_RR + 1e-9) {
+        console.log(
+            `🚫 FILTER NINE-AI RR: ${best.symbol} | RR=${safeFixed(rr, 2)} | allowed=0.80-${MAX_NINE_AI_RR}`
+        );
+        continue;
     }
 
-    if(multiplier < 0.75){
-        multiplier = 0.75
-    }
-}
-
-let balance =
-    ACCOUNT_BALANCE
-
-let riskPercent = TRADE_CONFIG.riskPerTrade
-
-let risk =
-    balance *
-    riskPercent *
-    multiplier
-
-// Không cho AI tăng risk quá mức
-risk = Math.min(
-    risk,
-    balance * TRADE_CONFIG.maxRiskPerTrade
-)
+    // Position risk is an execution safety budget, not a second strategy.
+    // Nine-AI owns direction and geometry; account caps can only reduce
+    // exposure, never alter its SL/TP or invent a new RR.
+    const balance = ACCOUNT_BALANCE;
+    const riskPercent = Math.min(TRADE_CONFIG.riskPerTrade, TRADE_CONFIG.maxRiskPerTrade);
+    const risk = balance * riskPercent;
 console.log(
     `🧮 RISK CALC ${best.symbol} | ` +
     `balance=${ACCOUNT_BALANCE} | ` +
@@ -4181,7 +3543,7 @@ if(risk <= 0){
 // const best = { ...signal, symbol }
 // Returns a DB-ready trade, or null when the signal is invalid.
 
-const trade = buildTradeFromCoreSignal(
+const trade = buildTradeFromNineAISignal(
     best,
     risk
 )
@@ -4438,6 +3800,12 @@ if(!trade){
         }
 
         const signalKey = `${trade.symbol}:${Number(trade.signalAt)}`
+        const plannedTargetR = Math.abs(Number(trade.tp) - Number(trade.entry)) /
+            Math.abs(Number(trade.entry) - Number(trade.sl));
+        if (!Number.isFinite(plannedTargetR) || plannedTargetR <= 0 || plannedTargetR > MAX_NINE_AI_RR + 1e-9) {
+            console.log(`⛔ INVALID NINE-AI RR BEFORE CLAIM ${trade.symbol}: ${plannedTargetR}`);
+            continue;
+        }
         try{
             await signalClaims.insertOne({
                 signalKey,
@@ -4449,7 +3817,7 @@ if(!trade){
                 plannedTP: Number(trade.tp),
                 initialRisk: Number(trade.initialRisk),
                 riskBudget: Number(trade.risk),
-                targetR: Number(trade.riskDetail?.targetR || 1.6),
+                targetR: plannedTargetR,
                 state: "CLAIMED",
                 createdAt: new Date()
             })
@@ -4544,7 +3912,7 @@ if(!execution?.ok){
             trade.riskDetail?.initialRisk ||
             Math.abs(Number(trade.price) - Number(trade.sl))
         )
-        const targetR = Number(trade.riskDetail?.targetR || 1.6)
+        const targetR = Number(trade.riskDetail?.targetR ?? trade.targetR ?? trade.rr)
         if(
             !Number.isFinite(recoveredEntry) || recoveredEntry <= 0 ||
             !Number.isFinite(recoveredRisk) || recoveredRisk <= 0 ||
