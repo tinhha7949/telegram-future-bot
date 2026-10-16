@@ -203,6 +203,51 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     return { ...abstain, reason: "FINAL_TRADE_GEOMETRY_INVALID", roles: roleResults, candles: candles.length };
   }
 
+  // Ranking is deliberately anchored to the nine-AI confidence, while the
+  // remaining 30% rewards independent agreement and market confirmation.
+  // These are transparent technical features, not claims of guaranteed edge.
+  const opposingVotes = side === "LONG" ? shortVotes.length : longVotes.length;
+  const directionalVotes = chosenVotes.length;
+  const consensusMargin = directionalVotes - opposingVotes;
+  const consensusCoverage = clamp(directionalVotes / 7 * 100, 0, 100);
+  const marginQuality = clamp((consensusMargin + 7) / 14 * 100, 0, 100);
+  const trendAlignment = trendSide === side ? 100 : 0;
+  const momentumMatches = [
+    Math.sign(f.mom4) === (side === "LONG" ? 1 : -1),
+    Math.sign(f.mom12) === (side === "LONG" ? 1 : -1)
+  ].filter(Boolean).length;
+  const momentumAlignment = momentumMatches * 50;
+  const volumeQuality = clamp(f.volumeRatio / 1.5 * 100, 0, 100);
+  const extensionQuality = clamp(100 - Math.abs(f.extensionAtr) * 15, 0, 100);
+  const setupQuality = Math.round(
+    consensusCoverage * 0.30 +
+    marginQuality * 0.20 +
+    trendAlignment * 0.20 +
+    momentumAlignment * 0.15 +
+    volumeQuality * 0.10 +
+    extensionQuality * 0.05
+  );
+  const rankScore = Math.round(clamp(confidence * 0.70 + setupQuality * 0.30, 0, 100) * 100) / 100;
+  const rankMetrics = {
+    score: rankScore,
+    confidenceWeight: 0.70,
+    setupQuality,
+    directionalVotes,
+    opposingVotes,
+    consensusMargin,
+    consensusCoverage: Math.round(consensusCoverage),
+    trendAlignment,
+    momentumAlignment,
+    volumeQuality: Math.round(volumeQuality),
+    extensionQuality: Math.round(extensionQuality),
+    phase: f.trend,
+    impulseSide: side,
+    energyRatio: f.volumeRatio,
+    early: false,
+    roles: roleResults,
+    features: summarize(f)
+  };
+
   return {
     symbol, side, action: side, confidence, price: entry, entry, sl, tp, rr,
     tradePlan: {
@@ -217,10 +262,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     signalAt: f.last.closeTime, setup: "NINE_AI_15M",
     marketState: f.trend === "RANGE" ? "RANGE" : "TREND_STRONG",
     volatility: f.atrPct > 0.015 ? "HIGH" : f.atrPct < 0.004 ? "LOW" : "NORMAL",
-    qualityScore: confidence, score: confidence, rankScore: confidence,
-    rankMetrics: { score: confidence, adjustment: 0, phase: f.trend,
-      impulseSide: side, energyRatio: f.volumeRatio, early: false,
-      roles: roleResults, features: summarize(f) },
+    qualityScore: rankScore, score: rankScore, rankScore,
+    rankMetrics,
     roles: roleResults, candles: candles.length,
     // A non-WAIT decision that passed all nine-role checks is the only
     // signal the scanner may consider; deterministic execution risk guards
@@ -236,4 +279,23 @@ function summarize(f) {
     extensionAtr: f.extensionAtr, swingHigh: f.swingHigh, swingLow: f.swingLow };
 }
 
-module.exports = { ROLE_NAMES, parseClosedCandles, buildFeatures, analyzeNineAI };
+// Higher composite rank wins. The nine-AI confidence remains the first
+// meaningful tie-breaker, followed by role consensus and market confirmation.
+// Symbol order is only the final deterministic fallback.
+function compareNineAICandidates(a, b) {
+  const num = (value, fallback = 0) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  return (
+    num(b?.rankScore, num(b?.confidence)) - num(a?.rankScore, num(a?.confidence)) ||
+    num(b?.confidence) - num(a?.confidence) ||
+    num(b?.rankMetrics?.consensusMargin) - num(a?.rankMetrics?.consensusMargin) ||
+    num(b?.rankMetrics?.directionalVotes) - num(a?.rankMetrics?.directionalVotes) ||
+    num(b?.rankMetrics?.setupQuality) - num(a?.rankMetrics?.setupQuality) ||
+    num(b?.rankMetrics?.volumeQuality) - num(a?.rankMetrics?.volumeQuality) ||
+    String(a?.symbol || "").localeCompare(String(b?.symbol || ""))
+  );
+}
+
+module.exports = { ROLE_NAMES, parseClosedCandles, buildFeatures, analyzeNineAI, compareNineAICandidates };
