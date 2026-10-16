@@ -2,7 +2,7 @@
 const assert = require("node:assert/strict");
 const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles,
-  detectContrarianSignal, calculateWeightedRoleScore, compareNineAICandidates
+  detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates
 } = require("./nine-ai-strategy");
 
 assert.equal(ROLE_NAMES.length, 9);
@@ -69,6 +69,14 @@ const bearTrap = detectContrarianSignal(bearTrapCandles, {
 });
 assert.equal(bearTrap.side, "LONG");
 assert.equal(bearTrap.reason, "BEAR_TRAP_RECLAIM");
+assert.equal(isContrarianConflict("LONG", bullTrap), true,
+  "a confirmed bull trap must veto a conflicting LONG entry");
+assert.equal(isContrarianConflict("SHORT", bearTrap), true,
+  "a confirmed bear trap must veto a conflicting SHORT entry");
+assert.equal(isContrarianConflict("SHORT", bullTrap), false,
+  "the reversal direction should not be vetoed by the trap it follows");
+assert.equal(isContrarianConflict("LONG", { side: "SHORT", strength: 40 }), false,
+  "weak countertrend evidence must not trigger the hard veto");
 
 // The ranking score must actually change when role evidence changes, with
 // every role's declared weight represented in the calculation.
