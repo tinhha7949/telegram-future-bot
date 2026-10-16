@@ -8,6 +8,7 @@
  */
 
 const learningMemory = require("./nine-ai-learning-memory");
+const independentModels = require("./nine-ai-independent-models");
 
 const ROLE_NAMES = [
   "Technical Analyst AI",
@@ -219,69 +220,120 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const trendSide = f.trend === "UP" ? "LONG" : f.trend === "DOWN" ? "SHORT" : null;
 
   // 1. Technical Analyst AI: multi-EMA trend plus momentum confirmation.
-  const techSide = trendSide && (trendSide === "LONG" ? f.mom4 > 0 : f.mom4 < 0) ? trendSide : null;
-  vote(ROLE_NAMES[0], techSide, techSide ? 68 : 35, `trend=${f.trend}; mom4=${(f.mom4 * 100).toFixed(2)}%`);
+  const legacyTechSide = trendSide && (trendSide === "LONG" ? f.mom4 > 0 : f.mom4 < 0) ? trendSide : null;
+  const techSide = modelSide("technical", legacyTechSide);
+  vote(ROLE_NAMES[0], techSide, modelConfidence("technical") ?? (techSide ? 68 : 35),
+    independent.get("technical")?.trained
+      ? `independentModelP(long)=${independent.get("technical").pLong}; samples=${independent.get("technical").samples}`
+      : `warmupFallback=technical-rules; trend=${f.trend}; mom4=${(f.mom4 * 100).toFixed(2)}%`);
 
   // 2. ML Signal AI: online logistic model trained only from closed-trade outcomes.
   const learnedFeatures = { trend: f.trend === "UP" ? 1 : f.trend === "DOWN" ? -1 : 0,
     momentum: f.mom4 / Math.max(f.atrPct, 0.0001), rsi: f.rsi,
     volume: f.volumeRatio, extension: f.extensionAtr };
   const learned = learningMemory.predict(learnedFeatures);
+  const independent = new Map(independentModels.predictAll(learnedFeatures)
+    .map(model => [model.modelId, model]));
+  const modelSide = (id, fallback) => independent.get(id)?.trained
+    ? independent.get(id).side : fallback;
+  const modelConfidence = id => {
+    const model = independent.get(id);
+    return model?.trained ? Math.round(Math.max(model.probability, 1 - model.probability) * 100) : null;
+  };
   const z = 1.25 * clamp((f.e9 - f.e21) / f.atr, -2, 2) +
     0.85 * clamp(f.mom4 / Math.max(f.atrPct, 0.0001), -2, 2) +
     0.45 * clamp(f.mom12 / Math.max(f.atrPct * 2, 0.0002), -2, 2) +
     0.25 * clamp((f.rsi - 50) / 20, -2, 2);
   const baselineP = logistic(z);
   const pLong = learned.trained ? 0.35 * baselineP + 0.65 * learned.pLong : baselineP;
-  const mlSide = pLong >= 0.62 ? "LONG" : pLong <= 0.38 ? "SHORT" : null;
-  vote(ROLE_NAMES[1], mlSide, Math.round(Math.max(pLong, 1 - pLong) * 100),
-    `onlineP(long)=${pLong.toFixed(3)}; trainedSamples=${learned.samples}`);
+  const legacyMlSide = pLong >= 0.62 ? "LONG" : pLong <= 0.38 ? "SHORT" : null;
+  const mlModel = independent.get("signal");
+  const mlSide = modelSide("signal", legacyMlSide);
+  const mlConfidence = modelConfidence("signal") ?? Math.round(Math.max(pLong, 1 - pLong) * 100);
+  vote(ROLE_NAMES[1], mlSide, mlConfidence,
+    mlModel?.trained
+      ? `independentModelP(long)=${mlModel.pLong}; samples=${mlModel.samples}`
+      : `warmupFallback=legacy-online; samples=${mlModel?.samples || 0}; legacySamples=${learned.samples}`);
 
   // 3. Learning & Memory AI: persistent memory is distinct from model prediction.
   const memoryState = learningMemory.read();
-  const memSide = learned.trained && learned.side &&
+  const legacyMemSide = learned.trained && learned.side &&
     Math.sign(f.mom4) === Math.sign(f.mom12) &&
     Math.abs(f.mom12) > f.atrPct * 0.25 ? learned.side : null;
-  vote(ROLE_NAMES[2], memSide, memSide ? 60 : 25,
-    `persistentClosedTradeSamples=${memoryState.samples}; momentumPersistence=${(f.mom12 * 100).toFixed(2)}%`);
+  const memModel = independent.get("memory");
+  const memSide = modelSide("memory", legacyMemSide);
+  vote(ROLE_NAMES[2], memSide, modelConfidence("memory") ?? (memSide ? 60 : 25),
+    memModel?.trained
+      ? `independentMemoryModelP(long)=${memModel.pLong}; samples=${memModel.samples}`
+      : `warmupFallback=legacy-memory; samples=${memoryState.samples}; momentumPersistence=${(f.mom12 * 100).toFixed(2)}%`);
 
   // 4. Bull AI.
-  const bullSide = f.rsi >= 52 && f.mom4 > 0 && f.last.c > f.e21 ? "LONG" : null;
-  vote(ROLE_NAMES[3], bullSide, bullSide ? 60 : 25, `RSI=${f.rsi.toFixed(1)}; close-vs-EMA21`);
+  const legacyBullSide = f.rsi >= 52 && f.mom4 > 0 && f.last.c > f.e21 ? "LONG" : null;
+  const bullModel = independent.get("bull");
+  const bullSide = bullModel?.trained
+    ? (bullModel.pLong >= 0.58 ? "LONG" : null) : legacyBullSide;
+  vote(ROLE_NAMES[3], bullSide, modelConfidence("bull") ?? (bullSide ? 60 : 25),
+    bullModel?.trained ? `independentBullModelP(long)=${bullModel.pLong}` : `warmupFallback=bull-rules; RSI=${f.rsi.toFixed(1)}`);
 
   // 5. Bear AI.
-  const bearSide = f.rsi <= 48 && f.mom4 < 0 && f.last.c < f.e21 ? "SHORT" : null;
-  vote(ROLE_NAMES[4], bearSide, bearSide ? 60 : 25, `RSI=${f.rsi.toFixed(1)}; close-vs-EMA21`);
+  const legacyBearSide = f.rsi <= 48 && f.mom4 < 0 && f.last.c < f.e21 ? "SHORT" : null;
+  const bearModel = independent.get("bear");
+  const bearSide = bearModel?.trained
+    ? (bearModel.pLong <= 0.42 ? "SHORT" : null) : legacyBearSide;
+  vote(ROLE_NAMES[4], bearSide, modelConfidence("bear") ?? (bearSide ? 60 : 25),
+    bearModel?.trained ? `independentBearModelP(long)=${bearModel.pLong}` : `warmupFallback=bear-rules; RSI=${f.rsi.toFixed(1)}`);
 
   // 6. Contrarian AI: detect false breakouts/breakdowns and rejection wicks.
   const contrarian = detectContrarianSignal(candles, f);
-  const contraSide = contrarian.side;
-  vote(ROLE_NAMES[5], contraSide, contraSide ? contrarian.strength : 50,
-    `${contrarian.reason}; extension=${f.extensionAtr.toFixed(2)} ATR; RSI=${f.rsi.toFixed(1)}; wickUp=${(contrarian.upperWickRatio || 0).toFixed(2)}; wickDown=${(contrarian.lowerWickRatio || 0).toFixed(2)}`);
+  const contraModel = independent.get("contrarian");
+  // A confirmed trap remains the stronger signal and retains its hard-veto semantics.
+  const contraSide = contrarian.side || modelSide("contrarian", null);
+  vote(ROLE_NAMES[5], contraSide, contrarian.side ? contrarian.strength :
+    (modelConfidence("contrarian") ?? 50),
+    contrarian.side
+      ? `${contrarian.reason}; extension=${f.extensionAtr.toFixed(2)} ATR; RSI=${f.rsi.toFixed(1)}; wickUp=${(contrarian.upperWickRatio || 0).toFixed(2)}; wickDown=${(contrarian.lowerWickRatio || 0).toFixed(2)}`
+      : contraModel?.trained ? `independentContrarianModelP(long)=${contraModel.pLong}; no-confirmed-trap`
+      : `warmupFallback=no-confirmed-trap; extension=${f.extensionAtr.toFixed(2)} ATR`);
 
   // 7. Analyst/Auditor AI: independent quality and data integrity check.
   const candle = f.last;
   const candleRange = candle.h - candle.l;
   const candleBody = Math.abs(candle.c - candle.o);
-  const auditorSide = f.volumeRatio >= 0.65 && candleRange > 0 &&
+  const legacyAuditorSide = f.volumeRatio >= 0.65 && candleRange > 0 &&
     candleBody / candleRange >= 0.2 ? techSide : null;
-  vote(ROLE_NAMES[6], auditorSide, auditorSide ? 58 : 20,
-    `volumeRatio=${f.volumeRatio.toFixed(2)}; body/range=${(candleRange ? candleBody / candleRange : 0).toFixed(2)}`);
+  const analystModel = independent.get("analyst");
+  const auditorSide = modelSide("analyst", legacyAuditorSide);
+  vote(ROLE_NAMES[6], auditorSide, modelConfidence("analyst") ?? (auditorSide ? 58 : 20),
+    analystModel?.trained
+      ? `independentAnalystModelP(long)=${analystModel.pLong}; volumeRatio=${f.volumeRatio.toFixed(2)}`
+      : `warmupFallback=market-quality-check; volumeRatio=${f.volumeRatio.toFixed(2)}; body/range=${(candleRange ? candleBody / candleRange : 0).toFixed(2)}`);
 
   // 8. Decision AI: consensus from roles 1-7. The risk role can still veto.
   const longCount = longVotes.length, shortCount = shortVotes.length;
-  let side = longCount >= 4 && longCount - shortCount >= 2 ? "LONG" :
+  const consensusSide = longCount >= 4 && longCount - shortCount >= 2 ? "LONG" :
     shortCount >= 4 && shortCount - longCount >= 2 ? "SHORT" : null;
+  const decisionModel = independent.get("decision");
+  const side = decisionModel?.trained
+    ? (consensusSide && decisionModel.side === consensusSide ? consensusSide : null)
+    : consensusSide;
   const chosenVotes = side === "LONG" ? longVotes : side === "SHORT" ? shortVotes : [];
   const confidence = chosenVotes.length
     ? Math.round(avg(chosenVotes.map(v => v.confidence)) * Math.min(1, chosenVotes.length / 5))
     : 0;
-  roleResults.push({ name: ROLE_NAMES[7], side: side || "WAIT", confidence,
+  const decisionConfidence = modelConfidence("decision");
+  roleResults.push({ name: ROLE_NAMES[7], side: side || "WAIT",
+    confidence: decisionConfidence == null ? confidence : Math.min(confidence || decisionConfidence, decisionConfidence),
     weight: ROLE_WEIGHTS[ROLE_NAMES[7]],
-    reason: `longVotes=${longCount}; shortVotes=${shortCount}; minConsensus=4` });
+    reason: decisionModel?.trained
+      ? `independentDecisionP(long)=${decisionModel.pLong}; consensus=${consensusSide || "WAIT"}; samples=${decisionModel.samples}`
+      : `warmupFallback=consensus; longVotes=${longCount}; shortVotes=${shortCount}; minConsensus=4` });
 
   // 9. Risk Manager AI: risk veto for volatility, poor location, weak consensus.
   const riskReasons = [];
+  const riskModel = independent.get("risk");
+  if (riskModel?.trained && riskModel.pLoss >= 0.65) {
+    riskReasons.push("INDEPENDENT_MODEL_HIGH_LOSS_RISK");
+  }
   if (f.atrPct < 0.001 || f.atrPct > 0.04) riskReasons.push("ATR_PERCENT_OUT_OF_RANGE");
   if (f.rsi > 86 && side === "LONG") riskReasons.push("LONG_OVERBOUGHT");
   if (f.rsi < 14 && side === "SHORT") riskReasons.push("SHORT_OVERSOLD");
@@ -296,8 +348,11 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   }
   const riskAllowed = Boolean(side) && riskReasons.length === 0;
   roleResults.push({ name: ROLE_NAMES[8], side: riskAllowed ? side : "VETO",
-    confidence: riskAllowed ? 75 : 100, weight: ROLE_WEIGHTS[ROLE_NAMES[8]],
-    reason: riskAllowed ? "RISK_CHECKS_PASSED" : (riskReasons.join(",") || "NO_DECISION") });
+    confidence: riskAllowed ? (riskModel?.trained ? Math.round(riskModel.pLoss * 100) : 75) : 100,
+    weight: ROLE_WEIGHTS[ROLE_NAMES[8]],
+    reason: riskAllowed
+      ? (riskModel?.trained ? `RISK_CHECKS_PASSED; independentPLoss=${riskModel.pLoss}` : "RISK_CHECKS_PASSED; model-warmup")
+      : (riskReasons.join(",") || "NO_DECISION") });
 
   if (!riskAllowed) return { ...abstain, reason: riskReasons.join(",") || "NO_CONSENSUS",
     roles: roleResults, candles: candles.length, features: summarize(f) };
