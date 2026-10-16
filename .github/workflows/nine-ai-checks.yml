@@ -17,6 +17,8 @@ jobs:
       - run: node --check index.js
       - run: node --check ai-trading/execution-risk.js
       - run: node ai-trading/execution-risk.test.js
+      - run: node --check ai-trading/tpsl-safety.js
+      - run: node ai-trading/tpsl-safety.test.js
       - run: node --check ai-trading/nine-ai-strategy.js
       - run: node --check ai-trading/nine-ai-learning-memory.js
       - run: node --check ai-trading/nine-ai-independent-models.js
