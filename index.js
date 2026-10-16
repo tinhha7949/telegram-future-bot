@@ -3774,7 +3774,7 @@ if(dbStats.total >= 30){
 // CORE MỚI KHÔNG CÒN SCORE CŨ
 // Không dùng s.score nữa
 
-const rankScore = Number(s.rankScore ?? s.qualityScore ?? s.score ?? 0);
+const rankScore = Number(s.confidence ?? s.rankScore ?? s.qualityScore ?? s.score ?? 0);
 candidates.push({
     ...s,
     finalScore: aiMain,
@@ -3791,7 +3791,9 @@ candidates.push({
 
         // Rank all valid signals collected during this scan cycle.
 candidates.sort((a, b) =>
-    Number(b.rankScore) - Number(a.rankScore)
+    (Number(b.rankScore) - Number(a.rankScore)) ||
+    (Number(b.rr || 0) - Number(a.rr || 0)) ||
+    String(a.symbol).localeCompare(String(b.symbol))
 )
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
@@ -3826,7 +3828,9 @@ let filtered = candidates.filter(c => {
 })
 // ===== SORT LẠI =====
 filtered = filtered.sort((a, b) =>
-    Number(b.rankScore) - Number(a.rankScore)
+    (Number(b.rankScore) - Number(a.rankScore)) ||
+    (Number(b.rr || 0) - Number(a.rr || 0)) ||
+    String(a.symbol).localeCompare(String(b.symbol))
 )
 
 // ===== UNIQUE COIN =====
