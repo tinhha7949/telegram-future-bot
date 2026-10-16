@@ -21,6 +21,21 @@ const ROLE_NAMES = [
   "Risk Manager AI"
 ];
 
+// Explicit rank influence for every role. These sum to 1.00.
+// Contrarian has meaningful weight because it checks traps/reversal evidence;
+// Risk Manager is also a hard veto and is never allowed to be bypassed by rank.
+const ROLE_WEIGHTS = Object.freeze({
+  "Technical Analyst AI": 0.15,
+  "ML Signal AI": 0.15,
+  "Learning & Memory AI": 0.10,
+  "Bull AI": 0.10,
+  "Bear AI": 0.10,
+  "Contrarian AI": 0.15,
+  "Analyst AI": 0.10,
+  "Decision AI": 0.10,
+  "Risk Manager AI": 0.05
+});
+
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const finite = n => Number.isFinite(Number(n));
 const avg = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
@@ -94,6 +109,92 @@ function buildFeatures(candles) {
 
 function logistic(z) { return 1 / (1 + Math.exp(-clamp(z, -12, 12))); }
 
+function detectContrarianSignal(candles, f) {
+  if (!Array.isArray(candles) || candles.length < 6 || !f?.last || !(f.atr > 0)) {
+    return { side: null, strength: 0, reason: "INSUFFICIENT_TRAP_CONTEXT" };
+  }
+
+  const last = f.last;
+  const prior = candles.slice(-6, -1);
+  const priorHigh = Math.max(...prior.map(c => c.h));
+  const priorLow = Math.min(...prior.map(c => c.l));
+  const range = Math.max(last.h - last.l, Number.EPSILON);
+  const body = Math.abs(last.c - last.o);
+  const upperWick = last.h - Math.max(last.o, last.c);
+  const lowerWick = Math.min(last.o, last.c) - last.l;
+  const upperWickRatio = upperWick / range;
+  const lowerWickRatio = lowerWick / range;
+  const brokeHigh = last.h > priorHigh + f.atr * 0.05;
+  const rejectedHigh = last.c < priorHigh;
+  const brokeLow = last.l < priorLow - f.atr * 0.05;
+  const reclaimedLow = last.c > priorLow;
+  const volumeConfirmation = f.volumeRatio >= 1.05;
+  const upperRejection = upperWickRatio >= 0.35 && upperWick >= body * 1.1;
+  const lowerRejection = lowerWickRatio >= 0.35 && lowerWick >= body * 1.1;
+
+  // A trap requires price to pierce a recent level and close back through it,
+  // plus a meaningful rejection wick. RSI/extension alone is only exhaustion,
+  // not proof of a reversal.
+  if (brokeHigh && rejectedHigh && upperRejection) {
+    return {
+      side: "SHORT",
+      strength: clamp(60 + (volumeConfirmation ? 10 : 0) +
+        (f.rsi >= 68 || f.extensionAtr >= 1.2 ? 10 : 0), 60, 80),
+      reason: "BULL_TRAP_REJECTION",
+      priorHigh, priorLow, upperWickRatio, lowerWickRatio, volumeConfirmation
+    };
+  }
+  if (brokeLow && reclaimedLow && lowerRejection) {
+    return {
+      side: "LONG",
+      strength: clamp(60 + (volumeConfirmation ? 10 : 0) +
+        (f.rsi <= 32 || f.extensionAtr <= -1.2 ? 10 : 0), 60, 80),
+      reason: "BEAR_TRAP_RECLAIM",
+      priorHigh, priorLow, upperWickRatio, lowerWickRatio, volumeConfirmation
+    };
+  }
+
+  // Secondary exhaustion warning. This can add contrary evidence, but is
+  // deliberately weaker than a confirmed false breakout/breakdown.
+  if (f.rsi >= 78 && f.extensionAtr >= 1.8 && upperRejection) {
+    return { side: "SHORT", strength: 58, reason: "BULLISH_EXHAUSTION", priorHigh, priorLow, upperWickRatio, lowerWickRatio, volumeConfirmation };
+  }
+  if (f.rsi <= 22 && f.extensionAtr <= -1.8 && lowerRejection) {
+    return { side: "LONG", strength: 58, reason: "BEARISH_EXHAUSTION", priorHigh, priorLow, upperWickRatio, lowerWickRatio, volumeConfirmation };
+  }
+
+  return {
+    side: null, strength: 0, reason: "NO_CONFIRMED_TRAP",
+    priorHigh, priorLow, upperWickRatio, lowerWickRatio, volumeConfirmation
+  };
+}
+
+function calculateWeightedRoleScore(roleResults, side) {
+  if (!Array.isArray(roleResults) || !["LONG", "SHORT"].includes(side)) return 0;
+  let weightedTotal = 0;
+  let totalWeight = 0;
+  const scoredRoles = roleResults.map(role => {
+    const weight = ROLE_WEIGHTS[role.name] || 0;
+    let score = 50;
+    if (role.name === "Risk Manager AI") {
+      // Risk quality is separate from direction; only approved candidates reach ranking.
+      score = role.side === "VETO" ? 0 : clamp(Number(role.confidence) || 75, 0, 100);
+    } else if (role.side === side) {
+      score = clamp(Number(role.confidence) || 50, 0, 100);
+    } else if (role.side === "LONG" || role.side === "SHORT") {
+      score = 100 - clamp(Number(role.confidence) || 50, 0, 100);
+    }
+    weightedTotal += score * weight;
+    totalWeight += weight;
+    return { ...role, weight, score: Math.round(score * 100) / 100,
+      weightedContribution: Math.round(score * weight * 100) / 100 };
+  });
+  return {
+    score: totalWeight > 0 ? Math.round(weightedTotal / totalWeight * 100) / 100 : 0,
+    roles: scoredRoles
+  };
+}
+
 function analyzeNineAI(raw, symbol, now = Date.now()) {
   const candles = parseClosedCandles(raw, now);
   const abstain = { symbol, side: null, action: "WAIT", confidence: 0, reason: "INSUFFICIENT_CLOSED_CANDLES", roles: [], candles: candles.length };
@@ -104,7 +205,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const longVotes = [], shortVotes = [];
   const roleResults = [];
   const vote = (name, side, confidence, reason) => {
-    roleResults.push({ name, side: side || "NEUTRAL", confidence: Math.round(confidence), reason });
+    roleResults.push({ name, side: side || "NEUTRAL", confidence: Math.round(confidence), reason,
+      weight: ROLE_WEIGHTS[name] || 0 });
     if (side === "LONG") longVotes.push({ name, confidence });
     if (side === "SHORT") shortVotes.push({ name, confidence });
   };
@@ -145,10 +247,11 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const bearSide = f.rsi <= 48 && f.mom4 < 0 && f.last.c < f.e21 ? "SHORT" : null;
   vote(ROLE_NAMES[4], bearSide, bearSide ? 60 : 25, `RSI=${f.rsi.toFixed(1)}; close-vs-EMA21`);
 
-  // 6. Contrarian AI: only countertrend at statistically stretched RSI/price.
-  const contraSide = f.rsi >= 78 && f.extensionAtr > 1.8 ? "SHORT" :
-    f.rsi <= 22 && f.extensionAtr < -1.8 ? "LONG" : null;
-  vote(ROLE_NAMES[5], contraSide, contraSide ? 64 : 30, `extension=${f.extensionAtr.toFixed(2)} ATR`);
+  // 6. Contrarian AI: detect false breakouts/breakdowns and rejection wicks.
+  const contrarian = detectContrarianSignal(candles, f);
+  const contraSide = contrarian.side;
+  vote(ROLE_NAMES[5], contraSide, contraSide ? contrarian.strength : 50,
+    `${contrarian.reason}; extension=${f.extensionAtr.toFixed(2)} ATR; RSI=${f.rsi.toFixed(1)}; wickUp=${(contrarian.upperWickRatio || 0).toFixed(2)}; wickDown=${(contrarian.lowerWickRatio || 0).toFixed(2)}`);
 
   // 7. Analyst/Auditor AI: independent quality and data integrity check.
   const candle = f.last;
@@ -168,6 +271,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     ? Math.round(avg(chosenVotes.map(v => v.confidence)) * Math.min(1, chosenVotes.length / 5))
     : 0;
   roleResults.push({ name: ROLE_NAMES[7], side: side || "WAIT", confidence,
+    weight: ROLE_WEIGHTS[ROLE_NAMES[7]],
     reason: `longVotes=${longCount}; shortVotes=${shortCount}; minConsensus=4` });
 
   // 9. Risk Manager AI: risk veto for volatility, poor location, weak consensus.
@@ -180,7 +284,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   if (side && side === "SHORT" && f.last.c >= f.e21) riskReasons.push("SHORT_ABOVE_EMA21");
   const riskAllowed = Boolean(side) && riskReasons.length === 0;
   roleResults.push({ name: ROLE_NAMES[8], side: riskAllowed ? side : "VETO",
-    confidence: riskAllowed ? 75 : 100, reason: riskAllowed ? "RISK_CHECKS_PASSED" : (riskReasons.join(",") || "NO_DECISION") });
+    confidence: riskAllowed ? 75 : 100, weight: ROLE_WEIGHTS[ROLE_NAMES[8]],
+    reason: riskAllowed ? "RISK_CHECKS_PASSED" : (riskReasons.join(",") || "NO_DECISION") });
 
   if (!riskAllowed) return { ...abstain, reason: riskReasons.join(",") || "NO_CONSENSUS",
     roles: roleResults, candles: candles.length, features: summarize(f) };
@@ -203,9 +308,12 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     return { ...abstain, reason: "FINAL_TRADE_GEOMETRY_INVALID", roles: roleResults, candles: candles.length };
   }
 
-  // Ranking is deliberately anchored to the nine-AI confidence, while the
-  // remaining 30% rewards independent agreement and market confirmation.
-  // These are transparent technical features, not claims of guaranteed edge.
+  // All nine roles contribute through explicit weights. A role agreeing with
+  // the chosen side adds its conviction; an opposing role subtracts it; a
+  // neutral role contributes 50 rather than an arbitrary fixed penalty.
+  // Market setup quality is only a 15% secondary factor, never a replacement
+  // for the nine-role score. Contrarian is weighted at 15% and its trap result
+  // is visible in the role audit trail.
   const opposingVotes = side === "LONG" ? shortVotes.length : longVotes.length;
   const directionalVotes = chosenVotes.length;
   const consensusMargin = directionalVotes - opposingVotes;
@@ -227,10 +335,21 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     volumeQuality * 0.10 +
     extensionQuality * 0.05
   );
-  const rankScore = Math.round(clamp(confidence * 0.70 + setupQuality * 0.30, 0, 100) * 100) / 100;
+  const weighted = calculateWeightedRoleScore(roleResults, side);
+  const roleScore = weighted.score;
+  const rankScore = Math.round(clamp(roleScore * 0.85 + setupQuality * 0.15, 0, 100) * 100) / 100;
+  const rankedRoles = weighted.roles;
   const rankMetrics = {
     score: rankScore,
-    confidenceWeight: 0.70,
+    roleScore,
+    roleWeight: 0.85,
+    setupWeight: 0.15,
+    roleWeights: ROLE_WEIGHTS,
+    roleContributions: rankedRoles.map(role => ({
+      name: role.name, weight: role.weight, score: role.score,
+      weightedContribution: role.weightedContribution, side: role.side
+    })),
+    contrarian: { side: contrarian.side, strength: contrarian.strength, reason: contrarian.reason },
     setupQuality,
     directionalVotes,
     opposingVotes,
@@ -244,7 +363,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     impulseSide: side,
     energyRatio: f.volumeRatio,
     early: false,
-    roles: roleResults,
+    roles: rankedRoles,
     features: summarize(f)
   };
 
@@ -264,7 +383,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     volatility: f.atrPct > 0.015 ? "HIGH" : f.atrPct < 0.004 ? "LOW" : "NORMAL",
     qualityScore: rankScore, score: rankScore, rankScore,
     rankMetrics,
-    roles: roleResults, candles: candles.length,
+    roles: rankedRoles, candles: candles.length,
     // A non-WAIT decision that passed all nine-role checks is the only
     // signal the scanner may consider; deterministic execution risk guards
     // and position limits still have final veto authority.
@@ -298,4 +417,8 @@ function compareNineAICandidates(a, b) {
   );
 }
 
-module.exports = { ROLE_NAMES, parseClosedCandles, buildFeatures, analyzeNineAI, compareNineAICandidates };
+module.exports = {
+  ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures,
+  detectContrarianSignal, calculateWeightedRoleScore,
+  analyzeNineAI, compareNineAICandidates
+};
