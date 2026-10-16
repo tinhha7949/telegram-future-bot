@@ -1,6 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
-const { ROLE_NAMES, analyzeNineAI, parseClosedCandles } = require("./nine-ai-strategy");
+const { ROLE_NAMES, analyzeNineAI, parseClosedCandles, compareNineAICandidates } = require("./nine-ai-strategy");
 assert.equal(ROLE_NAMES.length, 9);
 assert.equal(new Set(ROLE_NAMES).size, 9);
 const now = Date.now();
@@ -30,4 +30,24 @@ if (result.side) {
 } else {
   assert.equal(result.authorizedForExecution, undefined);
 }
-console.log("PASS: nine roles, closed-candle filter, execution authorization, deterministic analysis, and trade geometry");
+
+const highQuality = {
+  symbol: "ZZZUSDT", confidence: 60, rankScore: 72,
+  rankMetrics: { consensusMargin: 3, directionalVotes: 5, setupQuality: 90, volumeQuality: 80 }
+};
+const lowerQuality = {
+  symbol: "AAAUSDT", confidence: 61, rankScore: 68,
+  rankMetrics: { consensusMargin: 2, directionalVotes: 5, setupQuality: 80, volumeQuality: 70 }
+};
+assert.ok(compareNineAICandidates(highQuality, lowerQuality) < 0,
+  "higher composite score must outrank a coin with slightly higher raw confidence");
+assert.ok(compareNineAICandidates(
+  { symbol: "BBB", rankScore: 70, confidence: 60, rankMetrics: { consensusMargin: 3, directionalVotes: 5, setupQuality: 80 } },
+  { symbol: "AAA", rankScore: 70, confidence: 60, rankMetrics: { consensusMargin: 2, directionalVotes: 5, setupQuality: 80 } }
+) < 0, "consensus margin must break a true composite-score tie before symbol name");
+assert.ok(compareNineAICandidates(
+  { symbol: "AAA", rankScore: 70, confidence: 60, rankMetrics: { consensusMargin: 2, directionalVotes: 5, setupQuality: 80 } },
+  { symbol: "ZZZ", rankScore: 70, confidence: 60, rankMetrics: { consensusMargin: 2, directionalVotes: 5, setupQuality: 80 } }
+) < 0, "symbol name is only the final deterministic tie-breaker");
+
+console.log("PASS: nine roles, closed-candle filter, execution authorization, weighted ranking, tie-breaks, and trade geometry");
