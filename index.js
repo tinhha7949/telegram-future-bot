@@ -3838,6 +3838,15 @@ for(let c of filtered){
 
 filtered = unique
 
+// Diagnostic shortlist only: this is recalculated on every scan cycle.
+// The bot still executes at most MAX_BEST_SIGNALS candidates, currently 1.
+if(filtered.length > 0){
+    const shortlist = filtered.slice(0, 5).map(c =>
+        `${c.symbol}(RANK=${safeFixed(c.rankScore, 2)},CONF=${safeFixed(c.confidence, 1)},VOTES=${c.rankMetrics?.directionalVotes || 0}-${c.rankMetrics?.opposingVotes || 0})`
+    ).join(" | ")
+    console.log(`🧠 NINE-AI TOP ${Math.min(5, filtered.length)}: ${shortlist}`)
+}
+
 if(filtered.length === 0){
     console.log("❌ No filtered signal")
     return
