@@ -14,10 +14,10 @@ const DYNAMIC_PHASE = {}
 const MIN_CORE_SCORE = 60
 const MAX_BEST_SIGNALS = 1
 const TRADE_CONFIG = {
-    riskPerTrade: 0.05,      
-    maxRiskPerTrade: 0.05,    
-    maxPositionPercent: 1.0,  
-    maxActivePositions: 20      
+    riskPerTrade: 0.01,
+    maxRiskPerTrade: 0.01,
+    maxPositionPercent: 0.5,
+    maxActivePositions: 3
 }
 let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
@@ -27,6 +27,7 @@ const fs = require("fs")
 const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
+const { analyzeNineAI } = require("./ai-trading/nine-ai-strategy")
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -3425,89 +3426,27 @@ function scoreRF15Signal(data15) {
 }
 // ================= SCAN =================
 async function scan(symbol){
-
-    try{
-
-        // ==================================================
-        // 1. LOAD MARKET DATA
-        // ==================================================
-        const data15 = await getData(symbol, "15m", 601)
-        // ==================================================
-        // 3. CORE LOGIC
-        // ==================================================
-
-        let r
-
-        try{
-
-            r = await coreLogic(data15, symbol)
-
-        }catch(coreErr){
-
-            console.error(
-                `🔥 CORE ERROR: ${symbol}`,
-                coreErr?.message || coreErr
-            )
-
-            console.error(
-                coreErr?.stack || ""
-            )
-
-            return null
-        }
-
-        // ==================================================
-        // 4. NO SIGNAL
-        // ==================================================
-        if(!r || !r.side){
-            return null
-        }
-        const rfRank = scoreRF15Signal(data15, {
-            data15,
-            entry: r.price,
-            sl: r.sl,
-            tp: r.tp
-        });
-        //const rfRank = {
-    //score: 0,
-    //rankMetrics: {}
-//};
-        // ==================================================
-        // 5. SIGNAL FOUND
-        // ==================================================
-
+    try {
+        // Primary signal source is the nine-role strategy. Do not require coreLogic().
+        const data15 = await getData(symbol, "15m", 601);
+        if (!Array.isArray(data15)) return null;
+        const decision = analyzeNineAI(data15, symbol);
+        if (!decision || !["LONG", "SHORT"].includes(decision.side)) return null;
         console.log(
-    `🟢 SIGNAL: ${symbol} | ` +
-    `SIDE=${r.side} | ` +
-    `QUALITY=${rfRank.score} | ` +
-    `ADJ=${rfRank.adjustment} | ` +
-    `IMPULSE=${rfRank.impulseSide} | ` +
-    `PHASE=${rfRank.phase} | ` +
-    `ENERGY=${safeFixed(rfRank.energyRatio * 100, 1)}% | ` +
-    `EARLY=${rfRank.early}`
-);
-
+            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
+        );
         return {
+            ...decision,
             symbol,
-            ...r,
-            qualityScore: rfRank.score,
-            score: rfRank.score,
-            rankScore: rfRank.score,
-            rankMetrics: rfRank
-        }
-
-    }catch(e){
-
-        console.error(
-            `🔥 SCAN ERROR: ${symbol}`,
-            e?.message || e
-        )
-
-        console.error(
-            e?.stack || ""
-        )
-
-        return null
+            setup: "NINE_AI_15M",
+            triggerType: "NINE_AI_CONSENSUS",
+            rankDirectionMode: "FOLLOW_CORE",
+            rankScore: Number(decision.rankScore || decision.confidence),
+            qualityScore: Number(decision.qualityScore || decision.confidence)
+        };
+    } catch (e) {
+        console.error(`🔥 NINE-AI SCAN ERROR ${symbol}:`, e?.message || e);
+        return null;
     }
 }
 function safeFixed(value, digits = 2){
@@ -3897,7 +3836,10 @@ if (
 const baseDistance = Math.abs(entry - coreSL);
 if (!(baseDistance > 0)) continue;
 
-if (best.rankDirectionMode === "COUNTER_CORE") {
+if (best.setup === "NINE_AI_15M") {
+    // Preserve the ensemble's ATR-derived SL/TP and its >=1.7R geometry.
+    best.triggerType = "NINE_AI_CONSENSUS";
+} else if (best.rankDirectionMode === "COUNTER_CORE") {
     best.side = coreSide === "LONG" ? "SHORT" : "LONG";
 
     const tpDistance = baseDistance * 0.9;
@@ -4007,12 +3949,13 @@ let dbAI =
         best.side,
         best.volatility
     )
-    if(!dbAI){
+    if(!dbAI && best.setup !== "NINE_AI_15M"){
     console.log(
         `⛔ DB AI unavailable - skip ${best.symbol}`
     )
     continue
 }
+if (!dbAI) dbAI = { total: 0, winrate: 0.5 };
 
 // ===== RR =====
 
