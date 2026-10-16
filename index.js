@@ -2967,7 +2967,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 80)
+        .slice(0, 50)
         .map(candidate => candidate.symbol);
 
       console.log(
