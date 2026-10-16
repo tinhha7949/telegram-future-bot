@@ -1,8 +1,16 @@
 "use strict";
 const assert = require("node:assert/strict");
-const { ROLE_NAMES, analyzeNineAI, parseClosedCandles, compareNineAICandidates } = require("./nine-ai-strategy");
+const {
+  ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles,
+  detectContrarianSignal, calculateWeightedRoleScore, compareNineAICandidates
+} = require("./nine-ai-strategy");
+
 assert.equal(ROLE_NAMES.length, 9);
 assert.equal(new Set(ROLE_NAMES).size, 9);
+assert.equal(Object.keys(ROLE_WEIGHTS).length, 9);
+assert.ok(Math.abs(Object.values(ROLE_WEIGHTS).reduce((a, b) => a + b, 0) - 1) < 1e-9);
+assert.equal(ROLE_WEIGHTS["Contrarian AI"], 0.15);
+
 const now = Date.now();
 const rows = [];
 let price = 100;
@@ -27,9 +35,55 @@ if (result.side) {
   assert.equal(result.tradePlan.entryMethod, "LATEST_CLOSED_CANDLE");
   assert.equal(result.tradePlan.stopMethod, "ATR_AND_RECENT_STRUCTURE");
   assert.equal(result.entry, result.price);
+  assert.equal(result.rankMetrics.roleContributions.length, 9);
+  assert.equal(result.rankMetrics.roleScore, result.rankMetrics.roleContributions
+    .reduce((sum, role) => sum + role.weightedContribution, 0));
+  assert.ok(result.rankScore >= 0 && result.rankScore <= 100);
+  assert.ok(result.rankMetrics.contrarian.reason);
 } else {
   assert.equal(result.authorizedForExecution, undefined);
 }
+
+// A false breakout above the recent range, rejected by a long upper wick,
+// must be identified as a bull trap rather than a generic RSI fade.
+const priorCandles = [];
+for (let i = 0; i < 5; i++) {
+  priorCandles.push({ o: 99.5, h: 101, l: 99, c: 100, v: 100 });
+}
+const bullTrapCandles = [...priorCandles, { o: 100.2, h: 102, l: 99.8, c: 100.4, v: 140 }];
+const bullTrap = detectContrarianSignal(bullTrapCandles, {
+  last: bullTrapCandles[bullTrapCandles.length - 1], atr: 1,
+  volumeRatio: 1.4, rsi: 72, extensionAtr: 1.4
+});
+assert.equal(bullTrap.side, "SHORT");
+assert.equal(bullTrap.reason, "BULL_TRAP_REJECTION");
+assert.ok(bullTrap.strength >= 60);
+
+// A failed breakdown that reclaims support must be identified as a bear trap.
+const bearTrapCandles = [...priorCandles, { o: 99.8, h: 100.2, l: 97.8, c: 100.1, v: 150 }];
+const bearTrap = detectContrarianSignal(bearTrapCandles, {
+  last: bearTrapCandles[bearTrapCandles.length - 1], atr: 1,
+  volumeRatio: 1.5, rsi: 28, extensionAtr: -1.4
+});
+assert.equal(bearTrap.side, "LONG");
+assert.equal(bearTrap.reason, "BEAR_TRAP_RECLAIM");
+
+// The ranking score must actually change when role evidence changes, with
+// every role's declared weight represented in the calculation.
+const roleSetA = ROLE_NAMES.map(name => ({
+  name, side: name === "Risk Manager AI" ? "LONG" : "LONG", confidence: 70
+}));
+const roleSetB = ROLE_NAMES.map(name => ({
+  name, side: name === "Risk Manager AI" ? "LONG" : "NEUTRAL", confidence: 70
+}));
+const weightedA = calculateWeightedRoleScore(roleSetA, "LONG");
+const weightedB = calculateWeightedRoleScore(roleSetB, "LONG");
+assert.ok(weightedA.score > weightedB.score);
+assert.equal(weightedA.roles.length, 9);
+assert.ok(Math.abs(weightedA.roles.reduce((sum, role) => sum + role.weight, 0) - 1) < 1e-9);
+assert.equal(weightedA.roles.find(role => role.name === "Contrarian AI").weight, 0.15);
+assert.equal(weightedA.roles.find(role => role.name === "Contrarian AI").score, 70);
+assert.equal(weightedB.roles.find(role => role.name === "Contrarian AI").score, 50);
 
 const highQuality = {
   symbol: "ZZZUSDT", confidence: 60, rankScore: 72,
@@ -50,4 +104,4 @@ assert.ok(compareNineAICandidates(
   { symbol: "ZZZ", rankScore: 70, confidence: 60, rankMetrics: { consensusMargin: 2, directionalVotes: 5, setupQuality: 80 } }
 ) < 0, "symbol name is only the final deterministic tie-breaker");
 
-console.log("PASS: nine roles, closed-candle filter, execution authorization, weighted ranking, tie-breaks, and trade geometry");
+console.log("PASS: nine role weights, weighted ranking, trap detection, closed-candle filter, execution authorization, tie-breaks, and trade geometry");
