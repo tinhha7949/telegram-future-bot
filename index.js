@@ -486,7 +486,6 @@ const CHAT_ID = process.env.CHAT_ID
 const BOT_TOKEN_2 = process.env.BOT_TOKEN_2
 const AI_CHAT_ID = process.env.AI_CHAT_ID
 
-const RR_THRESHOLD = 1.0 // 1.3 hoặc 1.4 nếu muốn 
 let ACCOUNT_BALANCE = 0
 // const MIN_VOL_24H = 15000000
 
@@ -2440,6 +2439,20 @@ async function manageDynamicTPSL(trade) {
       return;
     }
 
+    if (plan?.action === "CLOSE_TARGET_REACHED") {
+      console.log(`🧠 NINE-AI MAX-RR TARGET HIT ${symbol} | closing at market to preserve RR<=${MAX_NINE_AI_RR}`);
+      const closed = await closePosition(symbol, side, amount);
+      if (closed && !(await hasPosition(symbol))) {
+        const cancelled = await cancelAllOrders(symbol);
+        console.log(cancelled
+          ? `✅ NINE-AI RR-CAP EXIT VERIFIED ${symbol}`
+          : `⚠️ NINE-AI RR-CAP EXIT FLAT BUT ORDER CLEANUP NEEDS RECONCILIATION ${symbol}`);
+      } else {
+        console.log(`🚨 NINE-AI RR-CAP EXIT NOT VERIFIED ${symbol}; protective orders retained`);
+      }
+      return;
+    }
+
     if (!plan) {
       console.log(`🧠 NINE-AI TPSL HOLD ${symbol} | side=${aiSide || "WAIT"} | score=${aiScore.toFixed(2)} | no safe RR<=${MAX_NINE_AI_RR} plan`);
       return;
@@ -3427,7 +3440,7 @@ function buildTradeFromCoreSignal(best, riskBudget) {
     !Number.isFinite(tp) || tp <= 0 ||
     !Number.isFinite(priceRisk) || priceRisk <= 0 ||
     !Number.isFinite(budget) || budget <= 0 ||
-    !Number.isFinite(rr) || rr <= 0
+    !Number.isFinite(rr) || rr <= 0 || rr > MAX_NINE_AI_RR + 1e-9
   ) {
     console.log(`❌ INVALID CORE SIGNAL ${best?.symbol || 'UNKNOWN'}`);
     return null;
