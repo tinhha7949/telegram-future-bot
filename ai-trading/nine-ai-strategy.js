@@ -218,16 +218,6 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     if (side === "SHORT") shortVotes.push({ name, confidence });
   };
   const trendSide = f.trend === "UP" ? "LONG" : f.trend === "DOWN" ? "SHORT" : null;
-
-  // 1. Technical Analyst AI: multi-EMA trend plus momentum confirmation.
-  const legacyTechSide = trendSide && (trendSide === "LONG" ? f.mom4 > 0 : f.mom4 < 0) ? trendSide : null;
-  const techSide = modelSide("technical", legacyTechSide);
-  vote(ROLE_NAMES[0], techSide, modelConfidence("technical") ?? (techSide ? 68 : 35),
-    independent.get("technical")?.trained
-      ? `independentModelP(long)=${independent.get("technical").pLong}; samples=${independent.get("technical").samples}`
-      : `warmupFallback=technical-rules; trend=${f.trend}; mom4=${(f.mom4 * 100).toFixed(2)}%`);
-
-  // 2. ML Signal AI: online logistic model trained only from closed-trade outcomes.
   const learnedFeatures = { trend: f.trend === "UP" ? 1 : f.trend === "DOWN" ? -1 : 0,
     momentum: f.mom4 / Math.max(f.atrPct, 0.0001), rsi: f.rsi,
     volume: f.volumeRatio, extension: f.extensionAtr };
@@ -240,6 +230,16 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     const model = independent.get(id);
     return model?.trained ? Math.round(Math.max(model.probability, 1 - model.probability) * 100) : null;
   };
+
+  // 1. Technical Analyst AI: multi-EMA trend plus momentum confirmation.
+  const legacyTechSide = trendSide && (trendSide === "LONG" ? f.mom4 > 0 : f.mom4 < 0) ? trendSide : null;
+  const techSide = modelSide("technical", legacyTechSide);
+  vote(ROLE_NAMES[0], techSide, modelConfidence("technical") ?? (techSide ? 68 : 35),
+    independent.get("technical")?.trained
+      ? `independentModelP(long)=${independent.get("technical").pLong}; samples=${independent.get("technical").samples}`
+      : `warmupFallback=technical-rules; trend=${f.trend}; mom4=${(f.mom4 * 100).toFixed(2)}%`);
+
+  // 2. ML Signal AI: online logistic model trained only from closed-trade outcomes.
   const z = 1.25 * clamp((f.e9 - f.e21) / f.atr, -2, 2) +
     0.85 * clamp(f.mom4 / Math.max(f.atrPct, 0.0001), -2, 2) +
     0.45 * clamp(f.mom12 / Math.max(f.atrPct * 2, 0.0002), -2, 2) +
@@ -348,7 +348,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   }
   const riskAllowed = Boolean(side) && riskReasons.length === 0;
   roleResults.push({ name: ROLE_NAMES[8], side: riskAllowed ? side : "VETO",
-    confidence: riskAllowed ? (riskModel?.trained ? Math.round(riskModel.pLoss * 100) : 75) : 100,
+    confidence: riskAllowed ? (riskModel?.trained ? Math.round((1 - riskModel.pLoss) * 100) : 75) : 100,
     weight: ROLE_WEIGHTS[ROLE_NAMES[8]],
     reason: riskAllowed
       ? (riskModel?.trained ? `RISK_CHECKS_PASSED; independentPLoss=${riskModel.pLoss}` : "RISK_CHECKS_PASSED; model-warmup")
