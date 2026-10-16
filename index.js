@@ -1849,8 +1849,9 @@ async function setInitialTPSL(trade){
                     rawSL / tickSize
                 ) * tickSize
 
+            // Round TP inward so exchange tick rounding cannot push RR above 1.9.
             tp =
-                Math.ceil(
+                Math.floor(
                     rawTP / tickSize
                 ) * tickSize
 
@@ -1862,7 +1863,7 @@ async function setInitialTPSL(trade){
                 ) * tickSize
 
             tp =
-                Math.floor(
+                Math.ceil(
                     rawTP / tickSize
                 ) * tickSize
         }
