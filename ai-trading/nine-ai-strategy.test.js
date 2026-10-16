@@ -2,7 +2,8 @@
 const assert = require("node:assert/strict");
 const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles,
-  detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates
+  detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates,
+  deriveNineAIDynamicPlan, MAX_NINE_AI_RR
 } = require("./nine-ai-strategy");
 
 assert.equal(ROLE_NAMES.length, 9);
@@ -114,4 +115,54 @@ assert.ok(compareNineAICandidates(
   { symbol: "ZZZ", rankScore: 70, confidence: 60, rankMetrics: { consensusMargin: 2, directionalVotes: 5, setupQuality: 80 } }
 ) < 0, "symbol name is only the final deterministic tie-breaker");
 
-console.log("PASS: nine role weights, weighted ranking, trap detection, closed-candle filter, execution authorization, tie-breaks, and trade geometry");
+// Dynamic TPSL invariants: role-derived RR never exceeds 1.9 and SL never widens.
+assert.equal(MAX_NINE_AI_RR, 1.9);
+const alignedDecision = {
+  side: "LONG", authorizedForExecution: true, rankScore: 82,
+  rankMetrics: { roleScore: 82, features: { atr14: 2 } },
+  roles: [
+    { name: "Contrarian AI", side: "LONG", confidence: 70 },
+    { name: "Risk Manager AI", side: "LONG", confidence: 75 }
+  ]
+};
+const alignedPlan = deriveNineAIDynamicPlan({
+  decision: alignedDecision, side: "LONG", entry: 100, current: 101,
+  oldSL: 95, oldTP: 110, tickSize: 0.1
+});
+assert.ok(alignedPlan, "aligned 9AI should produce a safe dynamic plan");
+assert.ok(alignedPlan.sl >= 95, "LONG SL must never move farther down");
+assert.ok(alignedPlan.tp > 101, "LONG TP must remain beyond current price");
+assert.ok(alignedPlan.rr <= 1.9, "dynamic RR must never exceed 1.9");
+
+const shortAlignedDecision = {
+  side: "SHORT", authorizedForExecution: true, rankScore: 80,
+  rankMetrics: { roleScore: 80, features: { atr14: 2 } },
+  roles: [
+    { name: "Contrarian AI", side: "SHORT", confidence: 70 },
+    { name: "Risk Manager AI", side: "SHORT", confidence: 75 }
+  ]
+};
+const shortPlan = deriveNineAIDynamicPlan({
+  decision: shortAlignedDecision, side: "SHORT", entry: 100, current: 99,
+  oldSL: 105, oldTP: 90, tickSize: 0.1
+});
+assert.ok(shortPlan, "aligned SHORT 9AI should produce a safe dynamic plan");
+assert.ok(shortPlan.sl <= 105, "SHORT SL must never move farther up");
+assert.ok(shortPlan.tp < 99, "SHORT TP must remain beyond current price");
+assert.ok(shortPlan.rr <= 1.9, "SHORT dynamic RR must never exceed 1.9");
+
+const weakDecision = {
+  side: null, authorizedForExecution: false, confidence: 0,
+  roles: [{ name: "Risk Manager AI", side: "VETO", confidence: 100 }],
+  rankMetrics: { features: { atr14: 2 } }
+};
+const tightenedPlan = deriveNineAIDynamicPlan({
+  decision: weakDecision, side: "LONG", entry: 100, current: 102,
+  oldSL: 95, oldTP: 110, tickSize: 0.1
+});
+assert.ok(tightenedPlan === null || tightenedPlan.sl >= 95,
+  "weak/invalid decision must not widen LONG SL");
+assert.ok(tightenedPlan === null || tightenedPlan.rr <= 1.9,
+  "weak/invalid decision must not exceed RR ceiling");
+
+console.log("PASS: nine role weights, weighted ranking, trap detection, closed-candle filter, execution authorization, tie-breaks, and trade geometry, dynamic 9AI TPSL and RR cap");
