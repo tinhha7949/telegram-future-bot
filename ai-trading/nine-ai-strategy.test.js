@@ -126,12 +126,12 @@ const alignedDecision = {
   ]
 };
 const alignedPlan = deriveNineAIDynamicPlan({
-  decision: alignedDecision, side: "LONG", entry: 100, current: 101,
+  decision: alignedDecision, side: "LONG", entry: 100, current: 100.5,
   oldSL: 95, oldTP: 110, tickSize: 0.1
 });
 assert.ok(alignedPlan, "aligned 9AI should produce a safe dynamic plan");
 assert.ok(alignedPlan.sl >= 95, "LONG SL must never move farther down");
-assert.ok(alignedPlan.tp > 101, "LONG TP must remain beyond current price");
+assert.ok(alignedPlan.tp > 100.5, "LONG TP must remain beyond current price");
 assert.ok(alignedPlan.rr <= 1.9, "dynamic RR must never exceed 1.9");
 
 const shortAlignedDecision = {
@@ -143,12 +143,12 @@ const shortAlignedDecision = {
   ]
 };
 const shortPlan = deriveNineAIDynamicPlan({
-  decision: shortAlignedDecision, side: "SHORT", entry: 100, current: 99,
+  decision: shortAlignedDecision, side: "SHORT", entry: 100, current: 99.5,
   oldSL: 105, oldTP: 90, tickSize: 0.1
 });
 assert.ok(shortPlan, "aligned SHORT 9AI should produce a safe dynamic plan");
 assert.ok(shortPlan.sl <= 105, "SHORT SL must never move farther up");
-assert.ok(shortPlan.tp < 99, "SHORT TP must remain beyond current price");
+assert.ok(shortPlan.tp < 99.5, "SHORT TP must remain beyond current price");
 assert.ok(shortPlan.rr <= 1.9, "SHORT dynamic RR must never exceed 1.9");
 
 const weakDecision = {
