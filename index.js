@@ -4678,7 +4678,8 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
                 researchPolicy: t.nineAiResearchPolicy || null,
                 side: t.side,
                 realizedR: closed.pnl / riskBudget,
-                closed: true
+                closed: true,
+                closedAt: closed.closedAt
             });
             if (learning.updated) {
                 console.log(`🧠 NINE-AI MEMORY UPDATED: samples=${learning.samples} trade=${t.symbol}`);
@@ -5578,15 +5579,18 @@ try {
     setInterval(runDiagnosisResearch, 6 * 60 * 60 * 1000);
 } catch (diagnosisInitError) { console.error("⚠️ NINE-AI CAUSAL DIAGNOSIS INIT FAILED:", diagnosisInitError?.message || diagnosisInitError); }
 
-// Autonomous strategy research mines closed-trade memory. Single-feature rule
-// hypotheses stay shadow-only by default; live selection is regime/family-aware.
+// Autonomous strategy research mines confirmed closed-trade memory, validates
+// candidates on chronological holdout data, and can auto-promote qualified policies
+// into bounded live ranking evidence. Live matched-vs-unmatched outcomes drive rollback.
 try {
     const researchStatus = await nineAiAutonomousResearch.initialize(db);
     console.log(`🧪 NINE-AI AUTONOMOUS RESEARCH READY: mode=${researchStatus.mode} minSamples=${researchStatus.minSamples}`);
     const runResearch = async () => {
         try {
             const result = await nineAiAutonomousResearch.runResearchCycle();
-            console.log(`🧪 NINE-AI RESEARCH: status=${result.status} samples=${result.sampleCount} candidates=${result.storedCandidates ?? 0}`);
+            console.log(`🧪 NINE-AI RESEARCH: status=${result.status} samples=${result.sampleCount} candidates=${result.storedCandidates ?? 0}`); 
+            if (result.activatedPolicy) console.log(`🚀 NINE-AI POLICY AUTO-PROMOTED LIVE: policy=${result.activatedPolicy.policyId} rule=${result.activatedPolicy.description}`);
+            if (result.rolledBackPolicy) console.warn(`↩️ NINE-AI POLICY ROLLED BACK: policy=${result.rolledBackPolicy.policyId} matchedVsUnmatchedUpliftR=${result.rolledBackPolicy.livePerformance.matchedVsUnmatchedUpliftR}`);
         } catch (researchError) {
             console.error("⚠️ NINE-AI RESEARCH CYCLE FAILED:", researchError?.message || researchError);
         }

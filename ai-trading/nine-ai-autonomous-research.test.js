@@ -54,6 +54,38 @@ assert.equal(activePolicyResult.scoreEvidence, -0.3);
 assert.equal(activePolicyResult.reason, "ACTIVE_RESEARCH_RULE_MISMATCH_SOFT_EVIDENCE");
 assert.equal(research.evaluateLiveDecision(liveDecision, null).reason, "NO_ACTIVE_RESEARCH_POLICY");
 
+// Live retirement must evaluate the policy's matched trades against unmatched
+// trades, not merely the account's overall PnL while a policy was active.
+const underperformingLiveRows = [
+  ...Array.from({ length: 10 }, (_, i) => ({
+    realizedR: -0.5, researchPolicy: { matched: true }, closedAt: new Date(1700000000000 + i)
+  })),
+  ...Array.from({ length: 10 }, (_, i) => ({
+    realizedR: 0.25, researchPolicy: { matched: false }, closedAt: new Date(1700000001000 + i)
+  }))
+];
+const underperformingLive = research.assessLivePolicyPerformance(underperformingLiveRows);
+assert.equal(underperformingLive.enoughEvidence, true);
+assert.equal(underperformingLive.underperforming, true);
+assert.ok(underperformingLive.matchedVsUnmatchedUpliftR < 0);
+
+const healthyLiveRows = [
+  ...Array.from({ length: 10 }, (_, i) => ({
+    realizedR: 0.5, researchPolicy: { matched: true }, closedAt: new Date(1700000000000 + i)
+  })),
+  ...Array.from({ length: 10 }, (_, i) => ({
+    realizedR: 0.1, researchPolicy: { matched: false }, closedAt: new Date(1700000001000 + i)
+  }))
+];
+const healthyLive = research.assessLivePolicyPerformance(healthyLiveRows);
+assert.equal(healthyLive.enoughEvidence, true);
+assert.equal(healthyLive.underperforming, false);
+assert.ok(healthyLive.matchedVsUnmatchedUpliftR > 0);
+
+const tooFewLiveRows = underperformingLiveRows.slice(0, 15);
+assert.equal(research.assessLivePolicyPerformance(tooFewLiveRows).underperforming, false,
+  "policy rollback must wait for enough matched and unmatched live observations");
+
 const overlayMatchDecision = { ...liveDecision, rankScore: 70, qualityScore: 70, score: 70, rankMetrics: { ...liveDecision.rankMetrics } };
 const overlayMatch = research.applyResearchPolicyEvidence(overlayMatchDecision, {
   status: "ACTIVE", policyId: "p-match", testUpliftR: 0.3,

@@ -227,7 +227,7 @@ async function initialize(db) {
 
 // Train only from confirmed closed trades. Unique MongoDB tradeId prevents
 // duplicate learning; unapplied events are replayed safely after a restart.
-async function learnClosedTrade({ tradeId, features, context = null, researchPolicy = null, side, realizedR, closed }) {
+async function learnClosedTrade({ tradeId, features, context = null, researchPolicy = null, side, realizedR, closed, closedAt = null }) {
   if (!stateCollection || !outcomesCollection) throw new Error("NINE_AI_MONGODB_NOT_INITIALIZED");
   if (!closed || !tradeId || !features || !["LONG", "SHORT"].includes(side) ||
       !Number.isFinite(Number(realizedR))) {
@@ -242,7 +242,7 @@ async function learnClosedTrade({ tradeId, features, context = null, researchPol
     side,
     realizedR: Number(realizedR),
     closed: true,
-    closedAt: new Date(),
+    closedAt: closedAt ? new Date(closedAt) : new Date(),
     applied: false
   };
   try {

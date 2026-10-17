@@ -64,7 +64,8 @@ function makeCollection() {
           { name: "Bull AI", side: "LONG", confidence: 80 },
           { name: "Bear AI", side: "SHORT", confidence: 70 }
         ] },
-      side: "LONG", realizedR: i % 3 === 0 ? -1 : 1, closed: true
+      side: "LONG", realizedR: i % 3 === 0 ? -1 : 1, closed: true,
+      closedAt: new Date(1700000000000 + i * 1000)
     });
     assert.equal(result.updated, true);
   }
@@ -74,6 +75,8 @@ function makeCollection() {
   const savedOutcome = [...outcomes.docs.values()].find(item => item.tradeId === "closed-24");
   assert.equal(savedOutcome.context.marketRegime, "TREND_UP");
   assert.equal(savedOutcome.context.entryQuality, 76);
+  assert.equal(savedOutcome.closedAt.getTime(), 1700000000000 + 24 * 1000,
+    "research ledger must preserve the exchange-confirmed close time");
   const policyAfter = learner.decisionPolicy();
   assert.notDeepEqual(policyAfter.decisionWeights, policyBefore.decisionWeights, "closed outcomes adapt ranking weights");
   assert.ok(Math.abs(Object.values(policyAfter.decisionWeights).reduce((a,b)=>a+b,0)-1)<1e-9);

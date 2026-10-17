@@ -155,6 +155,26 @@ function buildResearch(rows, now = new Date()) {
     rejectedCount: candidates.length - accepted.length
   };
 }
+function assessLivePolicyPerformance(rows) {
+  const matchedRows = rows.filter(row => row?.researchPolicy?.matched === true);
+  const unmatchedRows = rows.filter(row => row?.researchPolicy?.matched === false);
+  const all = stats(rows);
+  const matched = stats(matchedRows);
+  const unmatched = stats(unmatchedRows);
+  const matchedUncertainty = matched.n ? (matched.standardDeviation || 0) / Math.sqrt(matched.n) : Infinity;
+  const unmatchedUncertainty = unmatched.n ? (unmatched.standardDeviation || 0) / Math.sqrt(unmatched.n) : Infinity;
+  const upliftR = matched.meanR == null || unmatched.meanR == null ? null : matched.meanR - unmatched.meanR;
+  const enoughEvidence = all.n >= 20 && matched.n >= 8 && unmatched.n >= 8;
+  const underperforming = enoughEvidence && (
+    matched.meanR < 0 ||
+    matched.meanR + matchedUncertainty < unmatched.meanR - unmatchedUncertainty
+  );
+  return {
+    all, matched, unmatched, matchedVsUnmatchedUpliftR: upliftR,
+    enoughEvidence, underperforming
+  };
+}
+
 async function initialize(db) {
   if (!db || typeof db.collection !== "function") throw new Error("NINE_AI_RESEARCH_MONGODB_REQUIRED");
   outcomesCollection = db.collection("nine_ai_learning_outcomes");
@@ -195,11 +215,17 @@ async function runResearchCycle({ now = new Date() } = {}) {
       const policyOutcomes = await outcomesCollection.find({
         "researchPolicy.policyId": currentPolicy.policyId, closed: true, applied: true
       }).sort({ closedAt: -1 }).limit(200).toArray();
-      const policyPerformance = stats(policyOutcomes);
-      if (policyPerformance.n >= 20 && policyPerformance.meanR < 0) {
+      // Compare trades where the live policy matched its learned rule against
+      // trades where it did not. Overall PnL alone cannot identify whether the
+      // policy's evidence helped or hurt, because the Nine-AI core still selects
+      // direction and the overlay only changes candidate ranking.
+      const policyPerformance = assessLivePolicyPerformance(policyOutcomes);
+      if (policyPerformance.underperforming) {
         await policyCollection.updateOne({ _id: currentPolicy._id }, { $set: {
           status: "ROLLED_BACK", rolledBackAt: new Date(now),
-          rollbackReason: "LIVE_POLICY_MEAN_R_NEGATIVE_AFTER_20_CLOSED_TRADES",
+          rollbackReason: policyPerformance.matched.meanR < 0
+            ? "LIVE_MATCHED_POLICY_TRADES_NEGATIVE"
+            : "LIVE_MATCHED_POLICY_TRADES_UNDERPERFORM_UNMATCHED",
           livePerformance: policyPerformance
         } });
         rolledBackPolicy = { policyId: currentPolicy.policyId, livePerformance: policyPerformance };
@@ -306,5 +332,5 @@ function evaluateLiveDecision(decision, policy) {
 module.exports = {
   FEATURE_RULES, MIN_RESEARCH_SAMPLES, MIN_TRAIN_MATCHES, MIN_TEST_MATCHES, MIN_TEST_COVERAGE,
   getPath, matchesRule, stats, quantiles, ruleCandidates, evaluateRule,
-  evaluateCandidate, buildResearch, initialize, runResearchCycle, getActivePolicy, decisionToResearchRow, evaluateLiveDecision, applyResearchPolicyEvidence
+  evaluateCandidate, buildResearch, assessLivePolicyPerformance, initialize, runResearchCycle, getActivePolicy, decisionToResearchRow, evaluateLiveDecision, applyResearchPolicyEvidence
 };
