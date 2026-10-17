@@ -46,6 +46,7 @@ const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, shouldN
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
 const nineAiContextualLearning = require("./ai-trading/nine-ai-contextual-learning")
+const nineAiCounterfactualResearch = require("./ai-trading/nine-ai-counterfactual-research")
 const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
 const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
 const nineAiTpslLearning = require("./ai-trading/nine-ai-tpsl-learning")
@@ -2931,6 +2932,24 @@ function ema(arr, p){
 
     return e
 }
+async function getNineAiResearchCandles(symbol, entryTime, closedAt) {
+    const end = Number(closedAt) || Date.now();
+    const start = Math.max(0, (Number(entryTime) || end) - 30 * 15 * 60 * 1000);
+    const url = "https://fapi.binance.com/fapi/v1/klines?symbol=" + encodeURIComponent(symbol) + "&interval=15m&startTime=" + Math.floor(start) + "&endTime=" + Math.floor(end) + "&limit=1000";
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        const res = await safeFetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, signal: controller.signal }, 1);
+        clearTimeout(timeout);
+        if (!res || !res.ok) return null;
+        const candles = await res.json();
+        if (!Array.isArray(candles)) return null;
+        return candles.filter(row => Array.isArray(row) && Number(row[6]) <= end);
+    } catch (error) {
+        console.error("⚠️ NINE-AI RESEARCH CANDLE FETCH FAILED " + symbol + ":", error?.message || error);
+        return null;
+    }
+}
 async function getData(symbol, interval, limit){
 
     const url =
@@ -4621,6 +4640,26 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
     } catch (contextualError) {
         console.error("⚠️ NINE-AI CONTEXTUAL LEARNING FAILED " + t.symbol + ":",
             contextualError?.message || contextualError);
+    }
+
+    // Run retrospective alternatives only after confirmed close. These simulated
+    // results are kept separate from actual PnL and never force an opposite trade.
+    try {
+        const researchCandles = await getNineAiResearchCandles(t.symbol, t.createdAt, closed.closedAt);
+        if (researchCandles && researchCandles.length >= 4) {
+            const research = await nineAiCounterfactualResearch.researchClosedTrade({
+                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
+                symbol: t.symbol, side: t.side, entry: Number(t.entry),
+                sl: Number(t.sl), tp: Number(t.tp), entryTime: Number(t.createdAt),
+                createdAt: Number(t.createdAt), closedAt: closed.closedAt,
+                regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
+            }, researchCandles);
+            if (research.variants) console.log("🧪 NINE-AI COUNTERFACTUAL RESEARCH: variants=" + research.variants +
+                " samples=" + research.samples + " candidates=" + research.candidates + " " + t.symbol);
+        }
+    } catch (researchError) {
+        console.error("⚠️ NINE-AI COUNTERFACTUAL RESEARCH FAILED " + t.symbol + ":",
+            researchError?.message || researchError);
     }
 }
 
