@@ -234,10 +234,21 @@ function decisionToResearchRow(decision) {
   };
 }
 function evaluateLiveDecision(decision, policy) {
-  if (!policy || policy.status !== "ACTIVE" || !policy.rule) return { allowed: true, reason: "NO_ACTIVE_RESEARCH_POLICY" };
-  const allowed = matchesRule(decisionToResearchRow(decision), policy.rule);
-  return { allowed, reason: allowed ? "ACTIVE_RESEARCH_RULE_PASSED" : "ACTIVE_RESEARCH_RULE_BLOCKED",
-    policyId: policy.policyId, description: policy.description || policy.rule.description };
+  if (!policy || policy.status !== "ACTIVE" || !policy.rule) {
+    return { allowed: true, matched: null, scoreEvidence: 0, reason: "NO_ACTIVE_RESEARCH_POLICY" };
+  }
+  const matched = matchesRule(decisionToResearchRow(decision), policy.rule);
+  const testUpliftR = Number(policy.testUpliftR);
+  // Research findings are attribution/ranking evidence only. A mismatch must
+  // never veto a valid Nine-AI direction or turn a losing strategy into WAIT.
+  return {
+    allowed: true,
+    matched,
+    scoreEvidence: Number.isFinite(testUpliftR) ? (matched ? testUpliftR : -Math.abs(testUpliftR)) : 0,
+    reason: matched ? "ACTIVE_RESEARCH_RULE_MATCHED_SOFT_EVIDENCE" : "ACTIVE_RESEARCH_RULE_MISMATCH_SOFT_EVIDENCE",
+    policyId: policy.policyId,
+    description: policy.description || policy.rule.description
+  };
 }
 
 module.exports = {
