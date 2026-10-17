@@ -3108,7 +3108,40 @@ function buildTradeFromNineAISignal(best, riskBudget) {
         momentum: Number(strategyFeatures.momentum4) / Math.max(Number(strategyFeatures.atrPercent) || 0, 0.0001),
         rsi: Number(strategyFeatures.rsi14),
         volume: Number(strategyFeatures.volumeRatio),
-        extension: Number(strategyFeatures.extensionAtr)
+        extension: Number(strategyFeatures.extensionAtr),
+        candleBody: Number(strategyFeatures.candleBodyRatio) || 0,
+        wickImbalance: (Number(strategyFeatures.lowerWickRatio) || 0) - (Number(strategyFeatures.upperWickRatio) || 0),
+        breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
+        regime: strategyFeatures.marketRegime === "TREND_UP" ? 1 : strategyFeatures.marketRegime === "TREND_DOWN" ? -1 :
+          strategyFeatures.marketRegime === "SIDEWAYS" ? -0.5 : 0,
+        volatilityRegime: strategyFeatures.volatilityRegime === "HIGH" ? 1 : strategyFeatures.volatilityRegime === "LOW" ? -1 : 0,
+        structurePosition: Number(strategyFeatures.structurePosition) || 0,
+        roomToResistance: Number(strategyFeatures.roomToResistanceAtr) || 0,
+        roomToSupport: Number(strategyFeatures.roomToSupportAtr) || 0,
+        falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
+        directionalStreak: Number(strategyFeatures.directionalStreak) || 0
+      }
+    : null;
+  const nineAiLearningContext = best?.setup === "NINE_AI_15M" && strategyFeatures
+    ? {
+        marketRegime: String(strategyFeatures.marketRegime || best.marketState || "UNKNOWN"),
+        volatilityRegime: String(strategyFeatures.volatilityRegime || best.volatility || "UNKNOWN"),
+        structureTrend: String(strategyFeatures.structureTrend || "UNKNOWN"),
+        breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
+        falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
+        entryQuality: Number(best.rankMetrics?.entryQuality) || 0,
+        breakoutQuality: Number(best.rankMetrics?.breakoutQuality) || 0,
+        roomQuality: Number(best.rankMetrics?.roomQuality) || 0,
+        grossRR: Number(best.rr) || 0,
+        netRR: Number.isFinite(Number(best.rankMetrics?.netRR)) ? Number(best.rankMetrics.netRR) : null,
+        netRRStatus: String(best.rankMetrics?.netRRStatus || "NOT_CONFIGURED"),
+        rankScore: Number(best.rankScore) || 0,
+        confidence: Number(best.confidence) || 0,
+        roleVotes: Array.isArray(best.roles) ? best.roles.map(role => ({
+          name: String(role.name || ""),
+          side: String(role.side || "NEUTRAL"),
+          confidence: Number(role.confidence) || 0
+        })) : []
       }
     : null;
 
@@ -3128,6 +3161,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     volatility: best.volatility ?? null,
     qualityScore: Number.isFinite(qualityScore) ? qualityScore : 0,
     nineAiLearningFeatures,
+    nineAiLearningContext,
 
     // `risk` remains the monetary sizing budget expected by the execution code.
     risk: budget,
@@ -4406,6 +4440,7 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
             const learning = await nineAiLearningMemory.learnClosedTrade({
                 tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
                 features: t.nineAiLearningFeatures,
+                context: t.nineAiLearningContext || null,
                 side: t.side,
                 realizedR: closed.pnl / riskBudget,
                 closed: true
@@ -4427,6 +4462,7 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
             const independentLearning = await nineAiIndependentModels.learnClosedTrade({
                 tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
                 features: t.nineAiLearningFeatures,
+                context: t.nineAiLearningContext || null,
                 side: t.side,
                 realizedR: closed.pnl / riskBudget,
                 closed: true,
