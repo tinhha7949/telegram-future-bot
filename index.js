@@ -5434,6 +5434,13 @@ try {
 }
 
 
+try {
+    const counterfactualStatus = await nineAiCounterfactualResearch.initialize(db);
+    console.log("NINE-AI COUNTERFACTUAL RESEARCH READY: samples=" + counterfactualStatus.samples + " validatedPolicies=" + counterfactualStatus.policies);
+} catch (counterfactualError) {
+    console.error("NINE-AI COUNTERFACTUAL RESEARCH INIT FAILED:", counterfactualError?.message || counterfactualError);
+}
+
 // Autonomous strategy research mines closed-trade memory. Single-feature rule
 // hypotheses stay shadow-only by default; live selection is regime/family-aware.
 try {
