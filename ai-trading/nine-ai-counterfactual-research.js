@@ -18,7 +18,7 @@ let policies = [];
 let seen = new Set();
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const n = (v, d = NaN) => Number.isFinite(Number(v)) ? Number(v) : d;
+const n = (v, d = NaN) => v == null || v === "" ? d : Number.isFinite(Number(v)) ? Number(v) : d;
 
 function normalizeCandles(raw) {
   if (!Array.isArray(raw)) return [];
@@ -88,7 +88,8 @@ function buildVariants(trade, rawCandles) {
   const opposite = trade.side === "LONG" ? "SHORT" : "LONG";
   const mirrorSl = opposite === "LONG" ? entry-risk : entry+risk;
   const mirrorTp = opposite === "LONG" ? entry+Math.abs(tp-entry) : entry-Math.abs(tp-entry);
-  add("OPPOSITE_SIDE", opposite, entryIndex, entry, mirrorSl, mirrorTp, 0);
+  // Skip the entry candle so its pre-entry high/low cannot leak into replay.
+  add("OPPOSITE_SIDE", opposite, entryIndex + 1, entry, mirrorSl, mirrorTp, 0);
   // Delayed entries use only the delayed candle open; SL/TP distances remain fixed.
   for (const delay of [1,2]) {
     const idx = entryIndex + delay;
@@ -105,7 +106,7 @@ function buildVariants(trade, rawCandles) {
     const reward = r*clamp(rr,0.8,2.5);
     const stop = trade.side === "LONG" ? entry-r : entry+r;
     const target = trade.side === "LONG" ? entry+reward : entry-reward;
-    add("RISK_SCALE_"+String(mult).replace(".","_"),trade.side,entryIndex,entry,stop,target,0);
+    add("RISK_SCALE_"+String(mult).replace(".","_"),trade.side,entryIndex + 1,entry,stop,target,0);
   }
   return result;
 }
