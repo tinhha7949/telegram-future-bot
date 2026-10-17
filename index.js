@@ -45,6 +45,7 @@ const crypto = require("crypto")
 const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR } = require("./ai-trading/nine-ai-strategy")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
+const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const { reachedProtectionTrigger } = require("./ai-trading/tpsl-safety")
 
@@ -5205,6 +5206,26 @@ const independentModelStatus = await nineAiIndependentModels.initialize(
 console.log(`🧠 NINE INDEPENDENT ML MODELS READY: migratedTrades=${independentModelStatus.migratedLegacyTrades} allTrained=${independentModelStatus.allTrained}`);
 for (const model of nineAiIndependentModels.status()) {
     console.log(`🧠 MODEL ${model.role}: samples=${model.samples} trained=${model.trained} accuracy=${model.evaluation.accuracy ?? "N/A"} brier=${model.evaluation.brierScore ?? "N/A"}`);
+}
+
+// Autonomous strategy research mines persisted closed-trade memory. It only
+// creates auditable shadow candidates; it cannot mutate live strategy/execution.
+try {
+    const researchStatus = await nineAiAutonomousResearch.initialize(db);
+    console.log(`🧪 NINE-AI AUTONOMOUS RESEARCH READY: mode=${researchStatus.mode} minSamples=${researchStatus.minSamples}`);
+    const runResearch = async () => {
+        try {
+            const result = await nineAiAutonomousResearch.runResearchCycle();
+            console.log(`🧪 NINE-AI RESEARCH: status=${result.status} samples=${result.sampleCount} candidates=${result.storedCandidates ?? 0}`);
+        } catch (researchError) {
+            console.error("⚠️ NINE-AI RESEARCH CYCLE FAILED:", researchError?.message || researchError);
+        }
+    };
+    void runResearch();
+    setInterval(runResearch, 6 * 60 * 60 * 1000);
+} catch (researchError) {
+    // Research is optional and must never block market scanning or risk controls.
+    console.error("⚠️ NINE-AI RESEARCH INIT FAILED:", researchError?.message || researchError);
 }
 
         // TEST DB THỰC SỰ ĐỌC ĐƯỢC
