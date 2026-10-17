@@ -2704,6 +2704,10 @@ async function manageDynamicTPSL(trade) {
       lowerWickRatio: Number(featureState.lowerWickRatio || 0),
       structurePosition: Number(featureState.structurePosition || 0),
       structureTrend: featureState.structureTrend || "UNKNOWN",
+      atr14: Number(featureState.atr14 || 0),
+      bearishEngulfing: featureState.bearishEngulfing === true,
+      bullishEngulfing: featureState.bullishEngulfing === true,
+      falseBreakoutRisk: Number(featureState.falseBreakoutRisk || 0),
       reversalStrength: Number(featureState.reversalStrength || 0),
       decisionSide: aiSide,
       roleScore: aiScore,
@@ -2711,7 +2715,7 @@ async function manageDynamicTPSL(trade) {
       targetDistanceR: (side === "LONG" ? oldTP - current : current - oldTP) / Math.max(currentInitialRisk, Number.EPSILON)
     };
     const tpslAction = nineAiTpslLearning.chooseManagementAction({
-      side, entry, current, oldTP, initialRisk: currentInitialRisk,
+      side, entry, current, oldSL, oldTP, initialRisk: currentInitialRisk,
       targetRisk: Math.abs(entry - oldSL), tickSize, maxRR: MAX_NINE_AI_RR,
       score: aiScore, decisionSide: aiSide,
       trendAligned: featureState.trend === (side === "LONG" ? "UP" : "DOWN"),
@@ -2765,6 +2769,18 @@ async function manageDynamicTPSL(trade) {
       plan.reason = tpslAction.reason;
       trade.nineAiTpslLastAction = tpslAction.action;
       trade.nineAiTpslRegime = featureState.marketRegime || "UNKNOWN";
+    } else if (tpslAction.action === "TRAIL_SL") {
+      const learnedSL = Number(tpslAction.sl);
+      const monotonic = side === "LONG"
+        ? learnedSL > oldSL && learnedSL < current
+        : learnedSL < oldSL && learnedSL > current;
+      if (monotonic) {
+        plan.sl = learnedSL;
+        plan.action = "TRAIL_SL";
+        plan.reason = tpslAction.reason;
+        trade.nineAiTpslLastAction = "TRAIL_SL";
+        trade.nineAiTpslRegime = featureState.marketRegime || "UNKNOWN";
+      }
     }
 
     const minimumChange = Math.max(entry * 0.00002, tickSize * 2);
