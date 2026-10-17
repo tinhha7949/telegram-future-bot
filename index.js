@@ -47,6 +47,7 @@ const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
 const nineAiContextualLearning = require("./ai-trading/nine-ai-contextual-learning")
 const nineAiCounterfactualResearch = require("./ai-trading/nine-ai-counterfactual-research")
+const nineAiLossDiagnosis = require("./ai-trading/nine-ai-loss-diagnosis")
 const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
 const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
 const nineAiTpslLearning = require("./ai-trading/nine-ai-tpsl-learning")
@@ -4624,6 +4625,20 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
     try {
         const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
         if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
+            const diagnosis = await nineAiLossDiagnosis.recordClosedTrade({
+                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)), symbol: t.symbol, side: t.side,
+                realizedR: closed.pnl / riskBudget,
+                features: { ...t.nineAiLearningFeatures, marketRegime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN" },
+                context: t.nineAiLearningContext || null, entry: Number(t.entry), sl: Number(t.sl), tp: Number(t.tp),
+                regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
+            });
+            if (diagnosis.recorded) console.log("🧠 NINE-AI LOSS DIAGNOSIS: " + diagnosis.diagnosis.tags.join(",") + " outcome=" + diagnosis.diagnosis.outcome + " " + t.symbol);
+        }
+    } catch (diagnosisError) { console.error("⚠️ NINE-AI LOSS DIAGNOSIS FAILED " + t.symbol + ":", diagnosisError?.message || diagnosisError); }
+
+    try {
+        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
             const contextual = await nineAiContextualLearning.recordClosedTrade({
                 tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
                 symbol: t.symbol,
@@ -5441,6 +5456,19 @@ try {
 } catch (counterfactualError) {
     console.error("NINE-AI COUNTERFACTUAL RESEARCH INIT FAILED:", counterfactualError?.message || counterfactualError);
 }
+
+try {
+    const diagnosisStatus = await nineAiLossDiagnosis.initialize(db);
+    console.log("🧠 NINE-AI CAUSAL DIAGNOSIS + STRATEGY LAB READY: " + diagnosisStatus.ready);
+    const runDiagnosisResearch = async () => {
+        try {
+            const result = await nineAiLossDiagnosis.runResearchCycle();
+            console.log("🧪 NINE-AI STRATEGY LAB: trades=" + result.closedTradesAnalyzed + " losses=" + result.lossesAnalyzed + " hypotheses=" + result.hypotheses + " validated=" + result.validatedCandidates);
+        } catch (error) { console.error("⚠️ NINE-AI STRATEGY LAB CYCLE FAILED:", error?.message || error); }
+    };
+    void runDiagnosisResearch();
+    setInterval(runDiagnosisResearch, 6 * 60 * 60 * 1000);
+} catch (diagnosisInitError) { console.error("⚠️ NINE-AI CAUSAL DIAGNOSIS INIT FAILED:", diagnosisInitError?.message || diagnosisInitError); }
 
 // Autonomous strategy research mines closed-trade memory. Single-feature rule
 // hypotheses stay shadow-only by default; live selection is regime/family-aware.
