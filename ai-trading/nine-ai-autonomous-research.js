@@ -90,11 +90,12 @@ function evaluateRule(rows, rule) {
   const matched = rows.filter(row => matchesRule(row, rule));
   return { ...stats(matched), coverage: rows.length ? matched.length / rows.length : 0 };
 }
-function evaluateCandidate(rows, rule) {
-  const sorted = [...rows].sort((a, b) => new Date(a.closedAt || 0) - new Date(b.closedAt || 0));
-  const split = Math.floor(sorted.length * 0.7);
-  const train = sorted.slice(0, split);
-  const test = sorted.slice(split);
+const MIN_RESEARCH_SAMPLES = 60;
+const MIN_TRAIN_MATCHES = 15;
+const MIN_TEST_MATCHES = 8;
+const MIN_TEST_COVERAGE = 0.15;
+
+function evaluateCandidate(train, test, rule) {
   const baselineTrain = stats(train);
   const baselineTest = stats(test);
   const trainResult = evaluateRule(train, rule);
@@ -106,33 +107,43 @@ function evaluateCandidate(rows, rule) {
   const trainUncertainty = trainResult.n ? (trainResult.standardDeviation || 0) / Math.sqrt(trainResult.n) : Infinity;
   const testUncertainty = testResult.n ? (testResult.standardDeviation || 0) / Math.sqrt(testResult.n) : Infinity;
   const baselineTestUncertainty = baselineTest.n ? (baselineTest.standardDeviation || 0) / Math.sqrt(baselineTest.n) : Infinity;
-  const qualified = trainResult.n > 0 && testResult.n > 0 &&
-    trainUpliftR >= trainUncertainty && testUpliftR > 0 &&
+  const enoughData = trainResult.n >= MIN_TRAIN_MATCHES &&
+    testResult.n >= MIN_TEST_MATCHES && testResult.coverage >= MIN_TEST_COVERAGE;
+  const qualified = enoughData && trainUpliftR > trainUncertainty &&
+    testUpliftR > 0 &&
     testResult.meanR - testUncertainty > baselineTest.meanR + baselineTestUncertainty;
   return {
     rule, qualified,
     train: { baseline: baselineTrain, candidate: trainResult, upliftR: trainUpliftR },
     test: { baseline: baselineTest, candidate: testResult, upliftR: testUpliftR },
     status: qualified ? "SHADOW_CANDIDATE" : "REJECTED",
-    rejectionReason: qualified ? null : "INSUFFICIENT_SAMPLE_OR_OUT_OF_SAMPLE_UPLIFT"
+    rejectionReason: qualified ? null : !enoughData
+      ? "INSUFFICIENT_TRAIN_TEST_MATCHES_OR_COVERAGE"
+      : "INSUFFICIENT_OUT_OF_SAMPLE_UPLIFT"
   };
 }
 function buildResearch(rows, now = new Date()) {
   const usable = rows.filter(row => row && row.closed === true &&
     finite(row.realizedR) && row.features && typeof row.features === "object" &&
-    ["LONG", "SHORT"].includes(row.side));
-  if (usable.length < 2) {
-    return { status: "COLLECTING_OUTCOMES", sampleCount: usable.length, candidates: [] };
+    ["LONG", "SHORT"].includes(row.side))
+    .sort((a, b) => new Date(a.closedAt || 0) - new Date(b.closedAt || 0));
+  if (usable.length < MIN_RESEARCH_SAMPLES) {
+    return { status: "COLLECTING_OUTCOMES", sampleCount: usable.length, requiredSamples: MIN_RESEARCH_SAMPLES, candidates: [] };
   }
-  const candidates = ruleCandidates(usable).map(rule => evaluateCandidate(usable, rule))
+  const splitAt = Math.floor(usable.length * 0.7);
+  const train = usable.slice(0, splitAt);
+  const test = usable.slice(splitAt);
+  // Candidate thresholds are mined from TRAIN only. The latest 30% remains
+  // untouched until final evaluation, preventing threshold-selection leakage.
+  const candidates = ruleCandidates(train).map(rule => evaluateCandidate(train, test, rule))
     .sort((a, b) => Number(b.qualified) - Number(a.qualified) ||
       Number(b.test.upliftR ?? -Infinity) - Number(a.test.upliftR ?? -Infinity));
   const accepted = candidates.filter(candidate => candidate.qualified).slice(0, 5);
   return {
     status: accepted.length ? "CANDIDATES_FOUND" : "NO_QUALIFIED_CANDIDATE",
     sampleCount: usable.length,
-    baseline: stats(usable),
-    split: "chronological_70_30",
+    baseline: { train: stats(train), test: stats(test) },
+    split: "chronological_70_30_thresholds_mined_from_train_only",
     evaluatedRules: candidates.length,
     candidates: accepted.map((candidate, index) => ({
       ...candidate,
