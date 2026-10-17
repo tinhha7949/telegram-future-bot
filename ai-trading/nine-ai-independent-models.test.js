@@ -121,7 +121,7 @@ function collection() {
     return migrationCollections.get(name);
   } };
   for (const config of ml.MODEL_CONFIGS) {
-    migrationCollections.get(`nine_ai_ml_${config.id}_state`).docs.set("model", {
+    migrationDb.collection(`nine_ai_ml_${config.id}_state`).docs.set("model", {
       _id: "model", modelId: config.id, version: 1, samples: 4,
       weights: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6], recent: [],
       evaluation: { evaluated: 4, correct: 3, brierSum: 1.2 }, updatedAt: null
