@@ -56,14 +56,16 @@ if (result.side) {
   assert.ok(Math.abs(result.rankMetrics.roleScore - contributionSum) < 0.1,
     "rounded per-role contributions should reconcile to the weighted role score");
   assert.ok(result.rankScore >= 0 && result.rankScore <= 100);
-  assert.equal(result.rankMetrics.roleWeight, 0.8);
-  assert.equal(result.rankMetrics.setupWeight, 0.1);
-  assert.equal(result.rankMetrics.entryQualityWeight, 0.1);
+  assert.ok(Math.abs(result.rankMetrics.roleWeight + result.rankMetrics.setupWeight +
+    result.rankMetrics.entryQualityWeight - 1) < 1e-9);
+  assert.ok(result.rankMetrics.roleWeight >= 0.45 && result.rankMetrics.roleWeight <= 0.90);
+  assert.ok(result.rankMetrics.setupWeight >= 0.03 && result.rankMetrics.setupWeight <= 0.35);
+  assert.ok(result.rankMetrics.entryQualityWeight >= 0.03 && result.rankMetrics.entryQualityWeight <= 0.35);
   assert.ok(Math.abs(result.rankScore - (
-    result.rankMetrics.roleScore * 0.8 +
-    result.rankMetrics.setupQuality * 0.1 +
-    result.rankMetrics.entryQuality * 0.1
-  )) < 0.02, "final ranking must include role consensus, market setup, and entry quality");
+    result.rankMetrics.roleScore * result.rankMetrics.roleWeight +
+    result.rankMetrics.setupQuality * result.rankMetrics.setupWeight +
+    result.rankMetrics.entryQuality * result.rankMetrics.entryQualityWeight
+  )) < 0.02, "ranking uses learned component weights");
   assert.ok(result.rankMetrics.entryQuality >= 0 && result.rankMetrics.entryQuality <= 100);
   assert.ok(result.rankMetrics.breakoutQuality >= 0 && result.rankMetrics.breakoutQuality <= 100);
   assert.ok(result.rankMetrics.roomQuality >= 0 && result.rankMetrics.roomQuality <= 100);
