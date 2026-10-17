@@ -33,7 +33,7 @@ const result = research.buildResearch(rows, new Date("2026-10-17T00:00:00Z"));
 assert.equal(result.sampleCount, 100);
 assert.equal(result.split, "chronological_70_30");
 assert.ok(result.evaluatedRules > 50);
-assert.ok(result.candidates.every(candidate => candidate.activation === "SHADOW_ONLY"));
+assert.ok(result.candidates.every(candidate => candidate.activation === "AUTO_PROMOTE_IF_VALIDATED"));
 assert.ok(result.candidates.every(candidate => candidate.test.candidate.n >= research.MIN_TEST_MATCHES));
 assert.ok(result.candidates.every(candidate => candidate.test.upliftR >= research.MIN_TEST_UPLIFT_R));
 const liveDecision = { side: "LONG", rankMetrics: { roleScore: 80, entryQuality: 80,
