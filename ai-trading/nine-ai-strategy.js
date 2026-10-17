@@ -11,6 +11,7 @@ const learningMemory = require("./nine-ai-learning-memory");
 const independentModels = require("./nine-ai-independent-models");
 const contextualLearning = require("./nine-ai-contextual-learning");
 const counterfactualResearch = require("./nine-ai-counterfactual-research");
+const rewardModel = require("./nine-ai-reward-model");
 
 const ROLE_NAMES = [
   "Technical Analyst AI",
@@ -366,17 +367,28 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
     breakoutStrength: f.breakoutStrength, falseBreakoutRisk: f.falseBreakoutRisk
   });
+  // General reward model estimates net-R for either direction from learned outcomes.
+  // Its uncertainty is retained explicitly, so sparse data cannot dominate the ensemble.
+  const rewardEvidence = {
+    LONG: rewardModel.predict(learnedFeatures, "LONG"),
+    SHORT: rewardModel.predict(learnedFeatures, "SHORT")
+  };
   // Context expectancy is already shrunk by sample reliability. Compare learned
   // edge and observed meanR directly instead of requiring a hand-written edge gap.
   let contextualWinner = null;
   if (contextualEvidence.LONG.ready && contextualEvidence.SHORT.ready) {
     const longEvidence = contextualEvidence.LONG;
     const shortEvidence = contextualEvidence.SHORT;
-    if (longEvidence.meanR > 0 && longEvidence.edge > shortEvidence.edge && longEvidence.meanR >= shortEvidence.meanR) {
-      contextualWinner = "LONG";
-    } else if (shortEvidence.meanR > 0 && shortEvidence.edge > longEvidence.edge && shortEvidence.meanR >= longEvidence.meanR) {
-      contextualWinner = "SHORT";
-    }
+    if (longEvidence.edge > shortEvidence.edge && longEvidence.meanR >= shortEvidence.meanR) contextualWinner = "LONG";
+    else if (shortEvidence.edge > longEvidence.edge && shortEvidence.meanR >= longEvidence.meanR) contextualWinner = "SHORT";
+  }
+  // Combine broad online reward estimates with contextual expectancy. Compare
+  // uncertainty-adjusted expected net-R rather than a fixed hand-written scenario gate.
+  const longRewardLCB = rewardEvidence.LONG.expectedR - rewardEvidence.LONG.uncertainty;
+  const shortRewardLCB = rewardEvidence.SHORT.expectedR - rewardEvidence.SHORT.uncertainty;
+  if (rewardEvidence.LONG.ready || rewardEvidence.SHORT.ready) {
+    if (longRewardLCB > shortRewardLCB) contextualWinner = "LONG";
+    else if (shortRewardLCB > longRewardLCB) contextualWinner = "SHORT";
   }
   const counterfactualAdvice = counterfactualResearch.advice({
     side: contextualWinner || (contextualEvidence.LONG.edge >= contextualEvidence.SHORT.edge ? "LONG" : "SHORT"),
@@ -633,6 +645,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     entryQualityWeight: adaptiveDecisionWeights.entry, adaptivePolicySamples: policy.samples,
     roleWeights: policy.roleWeights,
     contextualLearning: { long: contextualEvidence.LONG, short: contextualEvidence.SHORT, tags: contextualEvidence.LONG.tags, winner: contextualWinner },
+    rewardModel: { long: rewardEvidence.LONG, short: rewardEvidence.SHORT },
     counterfactualResearch: counterfactualAdvice,
     desiredRR: targetRR,
     maxRiskReward: 1.8,
