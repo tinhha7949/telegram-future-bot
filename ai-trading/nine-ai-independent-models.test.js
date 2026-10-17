@@ -142,5 +142,28 @@ function collection() {
     assert.deepEqual(saved.weights.slice(0, 6), [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
     assert.ok(saved.weights.slice(6).every(weight => weight === 0));
   }
-  console.log("PASS: nine independent contextual models persist context, migrate state, and deduplicate closed outcomes");
+  // Regression: twenty consecutive confirmed losses must still be ingested as
+  // training data, not converted into a permanent global no-trade state.
+  const lossCollections = new Map();
+  const lossDb = { collection(name) {
+    if (!lossCollections.has(name)) lossCollections.set(name, collection());
+    return lossCollections.get(name);
+  } };
+  await ml.initialize(lossDb);
+  for (let i = 0; i < 20; i++) {
+    await ml.learnClosedTrade({
+      tradeId: `all-loss-${i}`, features,
+      context: { marketRegime: "TREND_UP", entryQuality: 81 },
+      side: "LONG", realizedR: -1, closed: true
+    });
+  }
+  assert.ok(ml.status().every(model => model.samples === 20 && model.trained),
+    "all nine models must train on twenty confirmed losing trades");
+  for (const config of ml.MODEL_CONFIGS) {
+    const outcomes = lossCollections.get(`nine_ai_ml_${config.id}_outcomes`);
+    assert.equal([...outcomes.docs.values()].filter(item => item.applied === true).length, 20,
+      `${config.id} model must apply every unique closed loss exactly once`);
+  }
+
+  console.log("PASS: nine independent contextual models persist context, migrate state, deduplicate outcomes, and learn from 20 losses");
 })().catch(error => { console.error(error); process.exitCode = 1; });

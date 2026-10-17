@@ -23,8 +23,9 @@ const ROLE_NAMES = [
 ];
 
 // Explicit rank influence for every role. These sum to 1.00.
-// Contrarian has meaningful weight because it checks traps/reversal evidence;
-// Risk Manager is also a hard veto and is never allowed to be bypassed by rank.
+// Contrarian has meaningful weight because it checks traps/reversal evidence.
+// Risk Manager contributes a soft learned risk penalty; deterministic safety
+// rules and confirmed opposing traps remain hard vetoes.
 const ROLE_WEIGHTS = Object.freeze({
   "Technical Analyst AI": 0.15,
   "ML Signal AI": 0.15,
@@ -189,6 +190,27 @@ function buildFeatures(candles) {
 
 function logistic(z) { return 1 / (1 + Math.exp(-clamp(z, -12, 12))); }
 
+// A trained model that is uncertain must not erase a valid rule-based vote.
+// A confident learned side still overrides the fallback and changes decisions
+// based on closed-trade outcomes.
+function resolveModelSide(model, fallback) {
+  return model?.trained && ["LONG", "SHORT"].includes(model.side) ? model.side : fallback;
+}
+
+// Learned loss probability is evidence for ranking, not a standalone order veto.
+// Deterministic market-safety rules below remain in force.
+function assessIndependentRiskModel(riskModel) {
+  if (!riskModel?.trained || !finite(riskModel.pLoss)) {
+    return { veto: false, confidence: 75, reason: "RISK_MODEL_WARMUP_OR_UNAVAILABLE" };
+  }
+  const pLoss = clamp(Number(riskModel.pLoss), 0, 1);
+  return {
+    veto: false,
+    confidence: clamp(Math.round((1 - pLoss) * 100), 10, 100),
+    reason: pLoss >= 0.65 ? "HIGH_LOSS_RISK_SOFT_PENALTY" : "RISK_MODEL_SCORE_APPLIED"
+  };
+}
+
 function detectContrarianSignal(candles, f) {
   if (!Array.isArray(candles) || candles.length < 6 || !f?.last || !(f.atr > 0)) {
     return { side: null, strength: 0, reason: "INSUFFICIENT_TRAP_CONTEXT" };
@@ -318,8 +340,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const learned = learningMemory.predict(learnedFeatures);
   const independent = new Map(independentModels.predictAll(learnedFeatures)
     .map(model => [model.modelId, model]));
-  const modelSide = (id, fallback) => independent.get(id)?.trained
-    ? independent.get(id).side : fallback;
+  const modelSide = (id, fallback) => resolveModelSide(independent.get(id), fallback);
   const modelConfidence = id => {
     const model = independent.get(id);
     return model?.trained ? Math.round(Math.max(model.probability, 1 - model.probability) * 100) : null;
@@ -364,16 +385,14 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   // 4. Bull AI.
   const legacyBullSide = f.rsi >= 52 && f.mom4 > 0 && f.last.c > f.e21 ? "LONG" : null;
   const bullModel = independent.get("bull");
-  const bullSide = bullModel?.trained
-    ? (bullModel.pLong >= 0.58 ? "LONG" : null) : legacyBullSide;
+  const bullSide = resolveModelSide(bullModel, legacyBullSide);
   vote(ROLE_NAMES[3], bullSide, modelConfidence("bull") ?? (bullSide ? 60 : 25),
     bullModel?.trained ? `independentBullModelP(long)=${bullModel.pLong}` : `warmupFallback=bull-rules; RSI=${f.rsi.toFixed(1)}`);
 
   // 5. Bear AI.
   const legacyBearSide = f.rsi <= 48 && f.mom4 < 0 && f.last.c < f.e21 ? "SHORT" : null;
   const bearModel = independent.get("bear");
-  const bearSide = bearModel?.trained
-    ? (bearModel.pLong <= 0.42 ? "SHORT" : null) : legacyBearSide;
+  const bearSide = resolveModelSide(bearModel, legacyBearSide);
   vote(ROLE_NAMES[4], bearSide, modelConfidence("bear") ?? (bearSide ? 60 : 25),
     bearModel?.trained ? `independentBearModelP(long)=${bearModel.pLong}` : `warmupFallback=bear-rules; RSI=${f.rsi.toFixed(1)}`);
 
@@ -407,7 +426,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const consensusSide = longCount >= 4 && longCount - shortCount >= 2 ? "LONG" :
     shortCount >= 4 && shortCount - longCount >= 2 ? "SHORT" : null;
   const decisionModel = independent.get("decision");
-  const side = decisionModel?.trained
+  const side = decisionModel?.trained && ["LONG", "SHORT"].includes(decisionModel.side)
     ? (consensusSide && decisionModel.side === consensusSide ? consensusSide : null)
     : consensusSide;
   const chosenVotes = side === "LONG" ? longVotes : side === "SHORT" ? shortVotes : [];
@@ -425,9 +444,9 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   // 9. Risk Manager AI: risk veto for volatility, poor location, weak consensus.
   const riskReasons = [];
   const riskModel = independent.get("risk");
-  if (riskModel?.trained && riskModel.pLoss >= 0.65) {
-    riskReasons.push("INDEPENDENT_MODEL_HIGH_LOSS_RISK");
-  }
+  const learnedRisk = assessIndependentRiskModel(riskModel);
+  // pLoss is deliberately not a hard veto. Its inverse lowers this role's
+  // ranking contribution, while deterministic safety checks still veto.
   if (f.atrPct < 0.001 || f.atrPct > 0.04) riskReasons.push("ATR_PERCENT_OUT_OF_RANGE");
   if (f.rsi > 86 && side === "LONG") riskReasons.push("LONG_OVERBOUGHT");
   if (f.rsi < 14 && side === "SHORT") riskReasons.push("SHORT_OVERSOLD");
@@ -442,10 +461,10 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   }
   const riskAllowed = Boolean(side) && riskReasons.length === 0;
   roleResults.push({ name: ROLE_NAMES[8], side: riskAllowed ? side : "VETO",
-    confidence: riskAllowed ? (riskModel?.trained ? Math.round((1 - riskModel.pLoss) * 100) : 75) : 100,
+    confidence: riskAllowed ? learnedRisk.confidence : 100,
     weight: ROLE_WEIGHTS[ROLE_NAMES[8]],
     reason: riskAllowed
-      ? (riskModel?.trained ? `RISK_CHECKS_PASSED; independentPLoss=${riskModel.pLoss}` : "RISK_CHECKS_PASSED; model-warmup")
+      ? `RISK_CHECKS_PASSED; ${learnedRisk.reason}; independentPLoss=${riskModel?.pLoss ?? "unavailable"}`
       : (riskReasons.join(",") || "NO_DECISION") });
 
   if (!riskAllowed) return { ...abstain, reason: riskReasons.join(",") || "NO_CONSENSUS",
@@ -786,6 +805,7 @@ function compareNineAICandidates(a, b) {
 
 module.exports = {
   ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures,
+  resolveModelSide, assessIndependentRiskModel,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore,
   analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan,
   shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR, MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE

@@ -42,13 +42,9 @@ const liveDecision = { side: "LONG", rankMetrics: { roleScore: 80, entryQuality:
 assert.equal(research.decisionToResearchRow(liveDecision).features.volume, 1.4);
 assert.equal(research.evaluateLiveDecision(liveDecision, { status: "ACTIVE", policyId: "p1",
   rule: { path: "features.volume", operator: "gte", threshold: 1.1 } }).allowed, true);
-const shadowPolicyResult = research.evaluateLiveDecision(liveDecision, { status: "ACTIVE", policyId: "p2",
+const activePolicyResult = research.evaluateLiveDecision(liveDecision, { status: "ACTIVE", policyId: "p2",
   rule: { path: "features.volume", operator: "gte", threshold: 1.5 } });
-assert.equal(shadowPolicyResult.allowed, true, "single-feature rules must not block low-score or otherwise valid live signals by default");
-assert.equal(shadowPolicyResult.reason, "LEGACY_RULE_POLICY_SHADOW_ONLY");
-process.env.NINE_AI_ENABLE_LEGACY_RULE_POLICY = "true";
-assert.equal(research.evaluateLiveDecision(liveDecision, { status: "ACTIVE", policyId: "p2",
-  rule: { path: "features.volume", operator: "gte", threshold: 1.5 } }).allowed, false,
-  "legacy rule enforcement requires explicit opt-in");
-delete process.env.NINE_AI_ENABLE_LEGACY_RULE_POLICY;
+assert.equal(activePolicyResult.allowed, false, "validated ACTIVE research policies must be enforced without an environment opt-in");
+assert.equal(activePolicyResult.reason, "ACTIVE_RESEARCH_RULE_BLOCKED");
+assert.equal(research.evaluateLiveDecision(liveDecision, null).reason, "NO_ACTIVE_RESEARCH_POLICY");
 console.log("nine-ai-autonomous-research tests passed");
