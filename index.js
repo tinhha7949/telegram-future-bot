@@ -50,6 +50,8 @@ const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution
 const nineAiTpslLearning = require("./ai-trading/nine-ai-tpsl-learning")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const { reachedProtectionTrigger } = require("./ai-trading/tpsl-safety")
+const { TpslLogThrottle } = require("./ai-trading/tpsl-log-throttle")
+const tpslHoldLogThrottle = new TpslLogThrottle()
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -2671,9 +2673,16 @@ async function manageDynamicTPSL(trade) {
     }
 
     if (!plan) {
-      console.log(`🧠 NINE-AI TPSL HOLD ${symbol} | side=${aiSide || "WAIT"} | score=${aiScore.toFixed(2)} | no safe RR<=${MAX_NINE_AI_RR} plan`);
+      // This path runs every dynamic TPSL cycle. Log a stable state only once,
+      // and emit a new line if the symbol's side/state or reason changes.
+      if (tpslHoldLogThrottle.shouldLog(symbol, `HOLD_NO_SAFE_RR:${aiSide || "WAIT"}`, "NO_SAFE_RR_PLAN")) {
+        console.log(`🧠 NINE-AI TPSL HOLD ${symbol} | side=${aiSide || "WAIT"} | score=${aiScore.toFixed(2)} | no safe RR<=${MAX_NINE_AI_RR} plan`);
+      }
       return;
     }
+
+    // A valid plan ends the previous HOLD state, so a later recurrence is logged.
+    tpslHoldLogThrottle.clear(symbol);
 
     // TP can move in either direction. SL safety remains a separate invariant.
     const featureState = liveDecision?.rankMetrics?.features || {};
