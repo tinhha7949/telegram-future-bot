@@ -59,8 +59,8 @@ function vector(features) {
     clamp((Number(f.roomToSupport) || 0) / 3, -1, 1),
     clamp(Number(f.falseBreakoutRisk) || 0, 0, 1),
     clamp(Number(f.directionalStreak) || 0, -1, 1),
-    clamp(((Number(f.longEntryQuality) || 50) - 50) / 50, -1, 1),
-    clamp(((Number(f.shortEntryQuality) || 50) - 50) / 50, -1, 1)
+    clamp(((Number.isFinite(Number(f.longEntryQuality)) ? Number(f.longEntryQuality) : 50) - 50) / 50, -1, 1),
+    clamp(((Number.isFinite(Number(f.shortEntryQuality)) ? Number(f.shortEntryQuality) : 50) - 50) / 50, -1, 1)
   ];
 }
 
