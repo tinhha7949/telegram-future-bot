@@ -150,6 +150,32 @@ function chooseManagementAction(input, policyStats = cachedStats) {
     return choose("CLOSE_EARLY", "LEARNED_OPPOSITION_EDGE", { favorableR });
   }
 
+  const f = input.features || input.context || {};
+  const directionSign = side === "LONG" ? 1 : -1;
+  const adverseEvidence = [
+    opposition,
+    input?.trendAligned === false,
+    input?.momentumAligned === false,
+    f.structureTrend === (side === "LONG" ? "LOWER_HIGHS_LOWS" : "HIGHER_HIGHS_LOWS"),
+    side === "LONG" ? f.bearishEngulfing === true : f.bullishEngulfing === true,
+    num(f.falseBreakoutRisk) > 0
+  ].filter(Boolean).length;
+  const oldSL = Number(input?.oldSL);
+  const atr = num(f.atr14, initialRisk);
+  if (favorableR > 0 && adverseEvidence > 0 && oldSL > 0 &&
+      (actionValues.TRAIL_SL.meanR >= baseline.meanR || adverseEvidence > 0)) {
+    const distance = Math.max(tickSize * 2, atr / (1 + adverseEvidence));
+    const proposedSL = side === "LONG"
+      ? Math.max(oldSL, current - distance)
+      : Math.min(oldSL, current + distance);
+    if ((side === "LONG" && proposedSL < current - tickSize && proposedSL > oldSL) ||
+        (side === "SHORT" && proposedSL > current + tickSize && proposedSL < oldSL)) {
+      return choose("TRAIL_SL", "REVERSAL_EVIDENCE_PROTECTS_OPEN_PROFIT", {
+        favorableR, sl: proposedSL, adverseEvidence
+      });
+    }
+  }
+
   if (targetDistanceR > 0 && continuation && capRemaining > tickSize &&
       actionValues.EXTEND_TP.meanR > baseline.meanR) {
     const learnedRoom = Math.max(tickSize * 2, initialRisk * (1 + actionValues.EXTEND_TP.uncertainty));
