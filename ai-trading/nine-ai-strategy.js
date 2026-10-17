@@ -143,6 +143,35 @@ function buildFeatures(candles) {
       ? (trend === "UP" ? "TREND_UP" : "TREND_DOWN")
       : trend === "RANGE" && momentumStrength < 0.8 ? "SIDEWAYS" : "TRANSITION";
   const volatilityRegime = atrPct > 0.015 ? "HIGH" : atrPct < 0.004 ? "LOW" : "NORMAL";
+  const directionalBreakoutQuality = direction => {
+    const aligned = direction === "LONG" ? breakoutStrength > 0 : breakoutStrength < 0;
+    if (falseBreakoutRisk) return 15;
+    if (aligned) return clamp(55 + Math.abs(breakoutStrength) * 20 +
+      (volumeRatio >= 1.1 ? 10 : 0) +
+      (Math.abs(candleBodyRatio) >= 0.55 ? 10 : 0), 0, 100);
+    return breakoutStrength !== 0 ? 30 : 60;
+  };
+  const directionalRoomQuality = direction => {
+    const room = direction === "LONG" ? roomToResistanceAtr : roomToSupportAtr;
+    const alignedBreakout = direction === "LONG" ? brokeAbove : brokeBelow;
+    if (room < 0) return alignedBreakout && Math.abs(breakoutStrength) >= 0.1 ? 65 : 20;
+    if (room < 0.5) return 25;
+    if (room < 1) return 50;
+    if (room < 1.5) return 70;
+    return 90;
+  };
+  const longEntryQuality = clamp(
+    directionalRoomQuality("LONG") * 0.45 +
+    directionalBreakoutQuality("LONG") * 0.35 +
+    clamp(100 - Math.max(0, extensionAtr) * 15, 0, 100) * 0.20 -
+    (extensionAtr > 2.2 ? 20 : 0), 0, 100
+  );
+  const shortEntryQuality = clamp(
+    directionalRoomQuality("SHORT") * 0.45 +
+    directionalBreakoutQuality("SHORT") * 0.35 +
+    clamp(100 - Math.max(0, -extensionAtr) * 15, 0, 100) * 0.20 -
+    (extensionAtr < -2.2 ? 20 : 0), 0, 100
+  );
   return {
     last, e9, e21, e50, rsi: rs, atr, atrPct, mom4, mom12,
     volumeRatio, high20, low20, swingHigh, swingLow, trend, marketRegime,
@@ -151,8 +180,10 @@ function buildFeatures(candles) {
     breakoutStrength, brokeAbove, brokeBelow, falseBreakoutRisk,
     structurePosition, roomToResistanceAtr, roomToSupportAtr, structureTrend,
     directionalStreak, trendStrengthAtr, momentumStrength, extensionAtr,
+    longEntryQuality, shortEntryQuality,
     valid: [e9, e21, e50, rs, atr, high20, low20, candleBodyRatio,
-      upperWickRatio, lowerWickRatio, breakoutStrength, structurePosition].every(Number.isFinite) && atr > 0
+      upperWickRatio, lowerWickRatio, breakoutStrength, structurePosition,
+      longEntryQuality, shortEntryQuality].every(Number.isFinite) && atr > 0
   };
 }
 
@@ -280,7 +311,9 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     roomToResistance: f.roomToResistanceAtr,
     roomToSupport: f.roomToSupportAtr,
     falseBreakoutRisk: f.falseBreakoutRisk,
-    directionalStreak: f.directionalStreak
+    directionalStreak: f.directionalStreak,
+    longEntryQuality: f.longEntryQuality,
+    shortEntryQuality: f.shortEntryQuality
   };
   const learned = learningMemory.predict(learnedFeatures);
   const independent = new Map(independentModels.predictAll(learnedFeatures)
@@ -499,9 +532,9 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   );
   const lateEntryPenalty = Math.abs(f.extensionAtr) > 2.2 &&
     Math.sign(f.extensionAtr) === (side === "LONG" ? 1 : -1);
+  const directionalEntryQuality = side === "LONG" ? f.longEntryQuality : f.shortEntryQuality;
   const entryQuality = Math.round(clamp(
-    roomQuality * 0.35 + breakoutQuality * 0.25 + extensionQuality * 0.15 +
-      rewardQuality * 0.25 - (lateEntryPenalty ? 20 : 0), 0, 100
+    directionalEntryQuality * 0.75 + rewardQuality * 0.25, 0, 100
   ));
   const setupQuality = Math.round(
     consensusCoverage * 0.25 +
@@ -724,7 +757,9 @@ function summarize(f) {
     bearishEngulfing: f.bearishEngulfing, breakoutStrength: f.breakoutStrength,
     falseBreakoutRisk: f.falseBreakoutRisk, structurePosition: f.structurePosition,
     structureTrend: f.structureTrend, roomToResistanceAtr: f.roomToResistanceAtr,
-    roomToSupportAtr: f.roomToSupportAtr, directionalStreak: f.directionalStreak
+    roomToSupportAtr: f.roomToSupportAtr, directionalStreak: f.directionalStreak,
+    longEntryQuality: Math.round(f.longEntryQuality),
+    shortEntryQuality: Math.round(f.shortEntryQuality)
   };
 }
 
