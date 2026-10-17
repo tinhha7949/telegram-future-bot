@@ -13,7 +13,7 @@ function fresh() {
     _id: "main",
     version: 2,
     samples: 0,
-    weights: [0, 0.35, 0.25, 0.15, 0.1, -0.1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    weights: [0, 0.35, 0.25, 0.15, 0.1, -0.1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     bias: 0,
     recent: [],
     updatedAt: null
@@ -22,7 +22,7 @@ function fresh() {
 
 function validState(state) {
   const legacy = state?.version === 1 && Array.isArray(state.weights) && state.weights.length === 6;
-  const current = state?.version === 2 && Array.isArray(state.weights) && state.weights.length === 16;
+  const current = state?.version === 2 && Array.isArray(state.weights) && state.weights.length === 18;
   return Boolean(state && (legacy || current) &&
     Number.isInteger(state.samples) && state.samples >= 0 &&
     state.weights.every(Number.isFinite) &&
@@ -35,7 +35,7 @@ function upgradeState(state) {
   return {
     ...state,
     version: 2,
-    weights: [...state.weights, ...Array(10).fill(0)],
+    weights: [...state.weights, ...Array(12).fill(0)],
     recent: [...state.recent]
   };
 }
@@ -58,7 +58,9 @@ function vector(features) {
     clamp((Number(f.roomToResistance) || 0) / 3, -1, 1),
     clamp((Number(f.roomToSupport) || 0) / 3, -1, 1),
     clamp(Number(f.falseBreakoutRisk) || 0, 0, 1),
-    clamp(Number(f.directionalStreak) || 0, -1, 1)
+    clamp(Number(f.directionalStreak) || 0, -1, 1),
+    clamp(((Number(f.longEntryQuality) || 50) - 50) / 50, -1, 1),
+    clamp(((Number(f.shortEntryQuality) || 50) - 50) / 50, -1, 1)
   ];
 }
 
