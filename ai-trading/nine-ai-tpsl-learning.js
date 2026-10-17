@@ -99,6 +99,7 @@ function chooseManagementAction(input, policyStats = cachedStats) {
     const extension = Math.min(initialRisk * 0.25, capRemaining);
     const tp = current + direction * Math.max(extension, tickSize * 3);
     if (direction * (tp - current) > tickSize &&
+        direction * (tp - oldTP) > tickSize &&
         direction * (cap - tp) >= -tickSize) {
       return { action: "EXTEND_TP", reason: learnedSupportsExtension
         ? "LEARNED_EXTENSION_EDGE" : "STRONG_CONTINUATION_NEAR_TP", tp, favorableR };
