@@ -192,9 +192,6 @@ async function runResearchCycle({ now = new Date() } = {}) {
     if (best && best.qualified && policyCollection) {
       const current = await policyCollection.findOne({ status: "ACTIVE" });
       if (!current || Number(best.test.upliftR) > Number(current.testUpliftR ?? -Infinity)) {
-        await policyCollection.updateMany({ status: "ACTIVE" }, {
-          $set: { status: "SUPERSEDED", supersededAt: new Date(now) }
-        });
         activatedPolicy = {
           policyId: best.candidateId, version: cycleId, status: "ACTIVE",
           mode: "AUTO_PROMOTED_AFTER_OUT_OF_SAMPLE_VALIDATION",
@@ -204,6 +201,9 @@ async function runResearchCycle({ now = new Date() } = {}) {
           testMatches: best.test.candidate.n, activatedAt: new Date(now)
         };
         await policyCollection.insertOne(activatedPolicy);
+        await policyCollection.updateMany({ status: "ACTIVE", policyId: { $ne: activatedPolicy.policyId } }, {
+          $set: { status: "SUPERSEDED", supersededAt: new Date(now) }
+        });
       }
     }
     return { ...research, cycleId, storedCandidates: research.candidates.length,
