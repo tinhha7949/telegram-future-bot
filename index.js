@@ -2646,6 +2646,17 @@ async function manageDynamicTPSL(trade) {
     }
 
     if (plan?.action === "CLOSE_TARGET_REACHED") {
+      trade.nineAiTpslLastAction = "CLOSE_PROFIT";
+      trade.nineAiTpslRegime = liveDecision?.rankMetrics?.features?.marketRegime || "UNKNOWN";
+      await trades.updateOne(
+        { symbol, result: "PENDING" },
+        { $set: {
+          nineAiTpslLastAction: trade.nineAiTpslLastAction,
+          nineAiTpslRegime: trade.nineAiTpslRegime,
+          nineAiTpslLastReason: "MAX_RR_TARGET_ALREADY_CROSSED",
+          nineAiTpslDecisionAt: Date.now()
+        } }
+      );
       console.log(`🧠 NINE-AI MAX-RR TARGET HIT ${symbol} | closing at market to preserve RR<=${MAX_NINE_AI_RR}`);
       const closed = await closePosition(symbol, side, amount);
       if (closed && !(await hasPosition(symbol))) {
@@ -2705,6 +2716,8 @@ async function manageDynamicTPSL(trade) {
       plan.tp = Number(tpslAction.tp);
       plan.action = tpslAction.action;
       plan.reason = tpslAction.reason;
+      trade.nineAiTpslLastAction = tpslAction.action;
+      trade.nineAiTpslRegime = featureState.marketRegime || "UNKNOWN";
     }
 
     const minimumChange = Math.max(entry * 0.00002, tickSize * 2);
@@ -2757,8 +2770,7 @@ async function manageDynamicTPSL(trade) {
           stronglyOpposes: plan.stronglyOpposes, desiredRR: plan.desiredRR,
           reason: plan.reason, evaluatedAt: now
         },
-        nineAiTpslLastAction: ["EXTEND_TP", "TIGHTEN_TP"].includes(tpslAction.action)
-          ? tpslAction.action : (trade.nineAiTpslLastAction || "HOLD"),
+        nineAiTpslLastAction: trade.nineAiTpslLastAction || "HOLD",
         nineAiTpslRegime: featureState.marketRegime || "UNKNOWN",
         nineAiTpslLastReason: tpslAction.reason || plan.reason,
         nineAiTpslDecisionAt: now,
