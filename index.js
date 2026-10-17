@@ -314,8 +314,12 @@ const exits = trades.filter(x =>
         const realizedPnl = exits.reduce((sum, x) => sum + Number(x.realizedPnl || 0), 0)
         // Include commissions for every fill after entry in the learning reward.
         const tradeFills = trades.filter(x => Number(x.time || 0) >= openTime)
-        const commissions = tradeFills.reduce((sum, x) => sum + Math.abs(Number(x.commission || 0)), 0)
-        const pnl = realizedPnl - commissions
+        // Commission values use commissionAsset. Only subtract USDT fees here;
+        // raw BNB amounts must never be subtracted from USDT-denominated PnL.
+        const commissionsUSDT = tradeFills.reduce((sum, x) =>
+            sum + (String(x.commissionAsset || "USDT").toUpperCase() === "USDT"
+                ? Math.abs(Number(x.commission || 0)) : 0), 0)
+        const pnl = realizedPnl - commissionsUSDT
 
         const lastFill = fills.at(-1)
 
