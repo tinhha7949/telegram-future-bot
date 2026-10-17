@@ -199,6 +199,24 @@ function resolveModelSide(model, fallback) {
   return model?.trained && ["LONG", "SHORT"].includes(model.side) ? model.side : fallback;
 }
 
+function assessEntryRiskEvidence({ side, features = {}, contrarian = {} } = {}) {
+  const evidence = [];
+  const f = features || {};
+  // Evidence is retained for the learner, but none of these handcrafted
+  // cut-offs determines whether a directional candidate may be considered.
+  if (Number.isFinite(Number(f.atrPct))) evidence.push(`atrPct=${Number(f.atrPct).toPrecision(4)}`);
+  if (Number.isFinite(Number(f.rsi))) evidence.push(`rsi=${Number(f.rsi).toFixed(1)}`);
+  if (Number.isFinite(Number(f.last?.c)) && Number.isFinite(Number(f.e21)) && Number(f.e21) > 0) {
+    evidence.push(`ema21DistancePct=${(((Number(f.last.c) - Number(f.e21)) / Number(f.e21)) * 100).toFixed(3)}`);
+  }
+  if (isContrarianConflict(side, contrarian)) evidence.push("opposingTrapEvidence");
+  if (contrarian?.side && contrarian.side === side) evidence.push("alignedReversalEvidence");
+  return {
+    allowed: side === "LONG" || side === "SHORT",
+    evidence
+  };
+}
+
 function resolveConsensusSide(consensusSide) {
   return ["LONG", "SHORT"].includes(consensusSide) ? consensusSide : null;
 }
@@ -479,33 +497,21 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       ? `independentDecisionP(long)=${decisionModel.pLong}; consensus=${consensusSide || "WAIT"}; samples=${decisionModel.samples}`
       : `warmupFallback=consensus; longVotes=${longCount}; shortVotes=${shortCount}; minConsensus=4` });
 
-  // 9. Risk Manager AI: risk veto for volatility, poor location, weak consensus.
-  const riskReasons = [];
+  // 9. Risk Manager AI: learned evidence affects ranking, not entry eligibility.
+  // These market observations remain visible to the model and audit trail, but
+  // fixed confidence/ATR/RSI/EMA/trap cut-offs must not veto a candidate.
   const riskModel = independent.get("risk");
   const learnedRisk = assessIndependentRiskModel(riskModel);
-  // pLoss is deliberately not a hard veto. Its inverse lowers this role's
-  // ranking contribution, while deterministic safety checks still veto.
-  if (f.atrPct < 0.001 || f.atrPct > 0.04) riskReasons.push("ATR_PERCENT_OUT_OF_RANGE");
-  if (f.rsi > 86 && side === "LONG") riskReasons.push("LONG_OVERBOUGHT");
-  if (f.rsi < 14 && side === "SHORT") riskReasons.push("SHORT_OVERSOLD");
-  if (confidence < 55) riskReasons.push("CONFIDENCE_BELOW_55");
-  if (side && side === "LONG" && f.last.c <= f.e21) riskReasons.push("LONG_BELOW_EMA21");
-  if (side && side === "SHORT" && f.last.c >= f.e21) riskReasons.push("SHORT_ABOVE_EMA21");
-  // A confirmed trap opposing the proposed entry is a hard safety veto, not
-  // merely a small score penalty. If consensus aligns with the reversal side,
-  // the trap supports that trade instead.
-  if (isContrarianConflict(side, contrarian)) {
-    riskReasons.push("CONTRARIAN_TRAP_OPPOSES_SIGNAL");
-  }
-  const riskAllowed = Boolean(side) && riskReasons.length === 0;
+  const riskEvidence = assessEntryRiskEvidence({ side, features: f, contrarian });
+  const riskAllowed = riskEvidence.allowed;
   roleResults.push({ name: ROLE_NAMES[8], side: riskAllowed ? side : "VETO",
     confidence: riskAllowed ? learnedRisk.confidence : 100,
     weight: ROLE_WEIGHTS[ROLE_NAMES[8]],
     reason: riskAllowed
-      ? `RISK_CHECKS_PASSED; ${learnedRisk.reason}; independentPLoss=${riskModel?.pLoss ?? "unavailable"}`
-      : (riskReasons.join(",") || "NO_DECISION") });
+      ? `LEARNED_RISK_ADVISORY; evidence=${riskEvidence.evidence.join("|") || "none"}; ${learnedRisk.reason}; independentPLoss=${riskModel?.pLoss ?? "unavailable"}`
+      : "NO_CONSENSUS" });
 
-  if (!riskAllowed) return { ...abstain, reason: riskReasons.join(",") || "NO_CONSENSUS",
+  if (!riskAllowed) return { ...abstain, reason: "NO_CONSENSUS",
     roles: roleResults, candles: candles.length, features: summarize(f) };
 
   // All nine roles vote on the initial risk plan. Technical structure and
@@ -845,7 +851,7 @@ function compareNineAICandidates(a, b) {
 
 module.exports = {
   ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures,
-  resolveModelSide, resolveConsensusSide, assessIndependentRiskModel,
+  resolveModelSide, resolveConsensusSide, assessIndependentRiskModel, assessEntryRiskEvidence,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore,
   analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan,
   shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR, MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE
