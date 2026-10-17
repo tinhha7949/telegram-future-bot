@@ -1,9 +1,8 @@
 "use strict";
 
-// Nine genuinely separate online ML classifiers. Each role owns its model
-// parameters, outcome ledger, rolling evaluation metrics and MongoDB collections.
-// No hosted model or paid API is used. Predictions are advisory until each
-// model has enough independently persisted closed-trade samples.
+// Nine separate online classifiers. MongoDB stores model state and the full outcome
+// ledger; RAM retains only compact coefficients/metrics required for synchronous scoring.
+// No outcome history is retained in each runtime. No hosted model or paid API is used.
 const MODEL_CONFIGS = Object.freeze([
   { id: "technical", role: "Technical Analyst AI", scales: [1, 1.4, 0.8, 0.5, 0.7, 0.6], rate: 0.020 },
   { id: "signal", role: "ML Signal AI", scales: [1, 1, 1, 1, 1, 1], rate: 0.025 },
@@ -17,7 +16,6 @@ const MODEL_CONFIGS = Object.freeze([
 ]);
 
 const MIN_TRAINING_SAMPLES = 20;
-const RECENT_LIMIT = 2000;
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const finite = x => Number.isFinite(Number(x));
 let dbRef = null;
@@ -27,10 +25,10 @@ function fresh(config) {
   return {
     _id: "model",
     modelId: config.id,
-    version: 2,
+    version: 3,
     samples: 0,
     weights: Array(18).fill(0),
-    recent: [],
+    lastAppliedTradeId: null,
     evaluation: { evaluated: 0, correct: 0, brierSum: 0 },
     updatedAt: null
   };
@@ -38,22 +36,25 @@ function fresh(config) {
 
 function validState(state, config) {
   const legacy = state?.version === 1 && Array.isArray(state.weights) && state.weights.length === 6;
-  const current = state?.version === 2 && Array.isArray(state.weights) && state.weights.length === 18;
+  const v2 = state?.version === 2 && Array.isArray(state.weights) && state.weights.length === 18;
+  const v3 = state?.version === 3 && Array.isArray(state.weights) && state.weights.length === 18;
   return Boolean(state && state._id === "model" && state.modelId === config.id &&
-    (legacy || current) && Number.isInteger(state.samples) && state.samples >= 0 &&
-    state.weights.every(Number.isFinite) && Array.isArray(state.recent) &&
+    (legacy || v2 || v3) && Number.isInteger(state.samples) && state.samples >= 0 &&
+    state.weights.every(Number.isFinite) && (state.version >= 3 || Array.isArray(state.recent)) &&
     state.evaluation && Number.isFinite(state.evaluation.evaluated) &&
     Number.isFinite(state.evaluation.correct) && Number.isFinite(state.evaluation.brierSum));
 }
 
 function upgradeState(state, config) {
   if (!validState(state, config)) return fresh(config);
-  if (state.version === 2) return state;
+  if (state.version === 3) return state;
+  const recent = Array.isArray(state.recent) ? state.recent : [];
+  const { recent: _recent, ...persistedFields } = state;
   return {
-    ...state,
-    version: 2,
-    weights: [...state.weights, ...Array(12).fill(0)],
-    recent: [...state.recent],
+    ...persistedFields,
+    version: 3,
+    weights: state.weights.length === 6 ? [...state.weights, ...Array(12).fill(0)] : [...state.weights],
+    lastAppliedTradeId: recent.length ? String(recent[recent.length - 1].tradeId || "") || null : (state.lastAppliedTradeId || null),
     evaluation: { ...state.evaluation }
   };
 }
@@ -125,7 +126,7 @@ async function persistState(runtime, state) {
   const { _id, ...fields } = state;
   await stateCollection.updateOne(
     { _id: "model" },
-    { $set: fields, $setOnInsert: { _id: "model" } },
+    { $set: fields, $unset: { recent: "" }, $setOnInsert: { _id: "model" } },
     { upsert: true }
   );
   runtime.state = state;
@@ -142,7 +143,7 @@ function directionalLabel(outcome) {
 async function applyOutcome(runtime, outcome) {
   if (outcome.applied) return false;
   const state = runtime.state;
-  if (state.recent.some(item => item.tradeId === String(outcome.tradeId))) {
+  if (state.lastAppliedTradeId === String(outcome.tradeId)) {
     await runtime.outcomesCollection.updateOne(
       { _id: outcome._id, applied: { $ne: true } },
       { $set: { applied: true, appliedAt: new Date() } }
@@ -162,7 +163,7 @@ async function applyOutcome(runtime, outcome) {
   const next = {
     ...state,
     weights: state.weights.map((weight, i) => clamp(weight + lr * error * x[i], -4, 4)),
-    recent: [...state.recent],
+    lastAppliedTradeId: String(outcome.tradeId),
     evaluation: { ...state.evaluation }
   };
 
@@ -170,12 +171,6 @@ async function applyOutcome(runtime, outcome) {
   next.evaluation.evaluated++;
   if ((p >= 0.5 && label >= 0.5) || (p < 0.5 && label < 0.5)) next.evaluation.correct++;
   next.evaluation.brierSum += (p - label) ** 2;
-  next.recent.push({
-    tradeId: String(outcome.tradeId),
-    realizedR: Number(outcome.realizedR),
-    context: outcome.context || null
-  });
-  next.recent = next.recent.slice(-RECENT_LIMIT);
   next.updatedAt = new Date().toISOString();
 
   await persistState(runtime, next);
@@ -251,21 +246,30 @@ async function initialize(db, legacyOutcomesCollection = null) {
     }
     runtimes.set(config.id, runtime);
 
-    const pending = await runtime.outcomesCollection.find({ applied: { $ne: true } })
-      .sort({ closedAt: 1 }).toArray();
-    for (const outcome of pending) await applyOutcome(runtime, outcome);
+    // Bounded recovery prevents a large historical backlog from being loaded at once.
+    while (true) {
+      const pending = await runtime.outcomesCollection.find({ applied: { $ne: true } })
+        .sort({ closedAt: 1 }).limit(100).toArray();
+      if (!pending.length) break;
+      for (const outcome of pending) await applyOutcome(runtime, outcome);
+    }
   }
 
   // Warm-start the nine separate models from legacy confirmed closed-trade
   // records. Each model receives its own copy in its own outcome ledger.
   let migrated = 0;
   if (legacyOutcomesCollection) {
-    const legacy = await legacyOutcomesCollection.find({
-      closed: true, independentModelsMigrated: { $ne: true }
-    }).sort({ closedAt: 1 }).toArray();
-    for (const outcome of legacy) {
-      if (!outcome.tradeId || !outcome.features || !["LONG", "SHORT"].includes(outcome.side) ||
-          !finite(outcome.realizedR)) continue;
+    while (true) {
+      const legacy = await legacyOutcomesCollection.find({
+        closed: true, independentModelsMigrated: { $ne: true }
+      }).sort({ closedAt: 1 }).limit(100).toArray();
+      if (!legacy.length) break;
+      for (const outcome of legacy) {
+        if (!outcome.tradeId || !outcome.features || !["LONG", "SHORT"].includes(outcome.side) ||
+            !finite(outcome.realizedR)) {
+          await legacyOutcomesCollection.updateOne({ _id: outcome._id }, { $set: { independentModelsMigrated: true } });
+          continue;
+        }
       for (const config of MODEL_CONFIGS) {
         await recordForModel(runtimes.get(config.id), {
           tradeId: String(outcome.tradeId), features: outcome.features,
@@ -277,7 +281,8 @@ async function initialize(db, legacyOutcomesCollection = null) {
         { _id: outcome._id },
         { $set: { independentModelsMigrated: true } }
       );
-      migrated++;
+        migrated++;
+      }
     }
   }
 
