@@ -9,7 +9,7 @@ function diagnoseTrade(t={}){
  const lq=n(f.longEntryQuality,50),sq=n(f.shortEntryQuality,50),eq=n(c.entryQuality??f.entryQuality,side==="LONG"?lq:sq),causes=[];
  const add=(code,confidence,evidence,alternative)=>causes.push({code,confidence,evidence,alternative});
  if(ext>=1.5&&((side==="LONG"&&rsi>=65&&mom>0)||(side==="SHORT"&&rsi<=35&&mom<0)))add("POSSIBLE_LATE_MOMENTUM_ENTRY",.72,{ext,rsi,mom},"Test earlier causal entry and pullback; never reverse automatically.");
- if((side==="LONG"&&(mom<0||trend==="DOWN"||regime==="TREND_DOWN"))||(side==="SHORT"&&(mom>0||trend==="UP"||regime==="TREND_UP"))add("DIRECTION_TREND_MISMATCH",.68,{side,trend,regime,mom},"Compare independently valid trend and reversal setups.");
+ if((side==="LONG"&&(mom<0||trend==="DOWN"||regime==="TREND_DOWN"))||(side==="SHORT"&&(mom>0||trend==="UP"||regime==="TREND_UP")))add("DIRECTION_TREND_MISMATCH",.68,{side,trend,regime,mom},"Compare independently valid trend and reversal setups.");
  if(fb>=.5)add("FALSE_BREAKOUT_RISK",.7,{fb,vol},"Test breakout confirmation and retest out of sample.");
  if(vol<.75)add("LOW_VOLUME_CONFIRMATION",.62,{vol},"Test low-volume exclusion out of sample.");
  if(eq<50)add("WEAK_ENTRY_QUALITY",.6,{eq,lq,sq},"Test stricter entry-quality thresholds.");
