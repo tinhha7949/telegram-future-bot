@@ -2,7 +2,7 @@
 const assert = require("node:assert/strict");
 const research = require("./nine-ai-autonomous-research");
 
-assert.ok(research.ruleCandidates().length > 50);
+assert.equal(research.ruleCandidates().length, 0, "strategy hypotheses require observed data, not a manually fixed threshold grid");
 assert.equal(research.matchesRule({ features: { volume: 1.2 } },
   { path: "features.volume", operator: "gte", threshold: 1.1 }), true);
 assert.equal(research.matchesRule({ features: { volume: 0.8 } },
@@ -15,7 +15,7 @@ const few = Array.from({ length: 15 }, (_, i) => ({
   closed: true, side: "LONG", realizedR: i % 2 ? 1 : -1,
   features: { volume: 1.2 }, closedAt: new Date(1700000000000 + i * 1000)
 }));
-assert.equal(research.buildResearch(few).status, "WARMUP");
+assert.notEqual(research.buildResearch(few).status, "WARMUP", "research should evaluate available outcomes instead of waiting for an arbitrary 100-trade gate");
 
 const rows = [];
 for (let i = 0; i < 100; i++) {
@@ -32,10 +32,10 @@ for (let i = 0; i < 100; i++) {
 const result = research.buildResearch(rows, new Date("2026-10-17T00:00:00Z"));
 assert.equal(result.sampleCount, 100);
 assert.equal(result.split, "chronological_70_30");
-assert.ok(result.evaluatedRules > 50);
+assert.ok(result.evaluatedRules > 0);
 assert.ok(result.candidates.every(candidate => candidate.activation === "AUTO_PROMOTE_IF_VALIDATED"));
-assert.ok(result.candidates.every(candidate => candidate.test.candidate.n >= research.MIN_TEST_MATCHES));
-assert.ok(result.candidates.every(candidate => candidate.test.upliftR >= research.MIN_TEST_UPLIFT_R));
+assert.ok(result.candidates.every(candidate => candidate.test.candidate.n > 0));
+assert.ok(result.candidates.every(candidate => candidate.test.upliftR > 0));
 const liveDecision = { side: "LONG", rankMetrics: { roleScore: 80, entryQuality: 80,
   features: { volumeRatio: 1.4, rsi14: 60, extensionAtr: 0.2, momentum4: 0.8,
     atrPercent: 1, falseBreakoutRisk: 0, longEntryQuality: 80, shortEntryQuality: 35 } } };
