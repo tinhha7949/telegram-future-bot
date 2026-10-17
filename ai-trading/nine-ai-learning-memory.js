@@ -141,8 +141,8 @@ function predict(features, state = stateCache) {
   return {
     pLong,
     samples: model.samples,
-    trained: model.samples >= 20,
-    side: model.samples < 20 ? null : pLong >= 0.58 ? "LONG" : pLong <= 0.42 ? "SHORT" : null
+    trained: model.samples > 0,
+    side: model.samples === 0 ? null : pLong > 0.5 ? "LONG" : pLong < 0.5 ? "SHORT" : null
   };
 }
 
@@ -222,7 +222,7 @@ async function initialize(db) {
     if (!pending.length) break;
     for (const outcome of pending) await applyOutcome(outcome);
   }
-  return { samples: stateCache.samples, trained: stateCache.samples >= 20 };
+  return { samples: stateCache.samples, trained: stateCache.samples > 0 };
 }
 
 // Train only from confirmed closed trades. Unique MongoDB tradeId prevents
