@@ -2,6 +2,7 @@
 const assert = require("node:assert/strict");
 const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles, buildFeatures,
+  resolveModelSide, assessIndependentRiskModel,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates,
   deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust,
   MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE, MAX_NINE_AI_RR
@@ -12,6 +13,20 @@ assert.equal(new Set(ROLE_NAMES).size, 9);
 assert.equal(Object.keys(ROLE_WEIGHTS).length, 9);
 assert.ok(Math.abs(Object.values(ROLE_WEIGHTS).reduce((a, b) => a + b, 0) - 1) < 1e-9);
 assert.equal(ROLE_WEIGHTS["Contrarian AI"], 0.15);
+
+// A trained model with no decisive direction must not erase the rule-based
+// fallback vote, which previously caused a sudden wave of WAIT/NO SIGNAL.
+assert.equal(resolveModelSide({ trained: true, side: null }, "LONG"), "LONG");
+assert.equal(resolveModelSide({ trained: true, side: "SHORT" }, "LONG"), "SHORT");
+assert.equal(resolveModelSide({ trained: false, side: "SHORT" }, "LONG"), "LONG");
+
+// A high learned loss probability lowers the Risk Manager's ranking confidence
+// but never acts as a standalone veto. Deterministic safety rules remain active.
+const highLossAssessment = assessIndependentRiskModel({ trained: true, pLoss: 0.9 });
+assert.equal(highLossAssessment.veto, false);
+assert.equal(highLossAssessment.confidence, 10);
+assert.equal(highLossAssessment.reason, "HIGH_LOSS_RISK_SOFT_PENALTY");
+assert.equal(assessIndependentRiskModel({ trained: false }).veto, false);
 
 const now = Date.now();
 const rows = [];
