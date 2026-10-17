@@ -45,6 +45,7 @@ const crypto = require("crypto")
 const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR } = require("./ai-trading/nine-ai-strategy")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
+const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const { reachedProtectionTrigger } = require("./ai-trading/tpsl-safety")
 
@@ -3029,11 +3030,26 @@ async function scan(symbol){
             decision.authorizedForExecution !== true ||
             !["LONG", "SHORT"].includes(decision.side)
         ) return null;
+        let researchPolicyAtEntry = null;
+        try {
+            const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
+            const policyCheck = nineAiAutonomousResearch.evaluateLiveDecision(decision, activePolicy);
+            if (!policyCheck.allowed) {
+                console.log("🧠 NINE-AI AUTO-LEARNED RULE BLOCKED " + symbol + " | " + policyCheck.description + " | policy=" + policyCheck.policyId);
+                return null;
+            }
+            if (activePolicy && policyCheck.allowed) {
+                researchPolicyAtEntry = { policyId: activePolicy.policyId, description: activePolicy.description };
+            }
+        } catch (policyError) {
+            console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
+        }
         console.log(
             `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
         );
         return {
             ...decision,
+            nineAiResearchPolicy: researchPolicyAtEntry,
             symbol,
             setup: "NINE_AI_15M",
             triggerType: "NINE_AI_CONSENSUS",
@@ -3168,6 +3184,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     qualityScore: Number.isFinite(qualityScore) ? qualityScore : 0,
     nineAiLearningFeatures,
     nineAiLearningContext,
+    nineAiResearchPolicy: best.nineAiResearchPolicy ?? null,
 
     // `risk` remains the monetary sizing budget expected by the execution code.
     risk: budget,
@@ -4447,6 +4464,7 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
                 tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
                 features: t.nineAiLearningFeatures,
                 context: t.nineAiLearningContext || null,
+                researchPolicy: t.nineAiResearchPolicy || null,
                 side: t.side,
                 realizedR: closed.pnl / riskBudget,
                 closed: true
@@ -5205,6 +5223,26 @@ const independentModelStatus = await nineAiIndependentModels.initialize(
 console.log(`🧠 NINE INDEPENDENT ML MODELS READY: migratedTrades=${independentModelStatus.migratedLegacyTrades} allTrained=${independentModelStatus.allTrained}`);
 for (const model of nineAiIndependentModels.status()) {
     console.log(`🧠 MODEL ${model.role}: samples=${model.samples} trained=${model.trained} accuracy=${model.evaluation.accuracy ?? "N/A"} brier=${model.evaluation.brierScore ?? "N/A"}`);
+}
+
+// Autonomous strategy research mines persisted closed-trade memory. It only
+// creates auditable shadow candidates; it cannot mutate live strategy/execution.
+try {
+    const researchStatus = await nineAiAutonomousResearch.initialize(db);
+    console.log(`🧪 NINE-AI AUTONOMOUS RESEARCH READY: mode=${researchStatus.mode} minSamples=${researchStatus.minSamples}`);
+    const runResearch = async () => {
+        try {
+            const result = await nineAiAutonomousResearch.runResearchCycle();
+            console.log(`🧪 NINE-AI RESEARCH: status=${result.status} samples=${result.sampleCount} candidates=${result.storedCandidates ?? 0}`);
+        } catch (researchError) {
+            console.error("⚠️ NINE-AI RESEARCH CYCLE FAILED:", researchError?.message || researchError);
+        }
+    };
+    void runResearch();
+    setInterval(runResearch, 6 * 60 * 60 * 1000);
+} catch (researchError) {
+    // Research is optional and must never block market scanning or risk controls.
+    console.error("⚠️ NINE-AI RESEARCH INIT FAILED:", researchError?.message || researchError);
 }
 
         // TEST DB THỰC SỰ ĐỌC ĐƯỢC

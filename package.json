@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "test": "node --check index.js && node --check ai-trading/execution-risk.js && node ai-trading/execution-risk.test.js && node --check ai-trading/tpsl-safety.js && node ai-trading/tpsl-safety.test.js && node --check ai-trading/nine-ai-strategy.js && node --check ai-trading/nine-ai-learning-memory.js && node ai-trading/nine-ai-strategy.test.js && node ai-trading/nine-ai-learning-memory.test.js && node --check ai-trading/nine-ai-independent-models.js && node ai-trading/nine-ai-independent-models.test.js"
+    "test": "node --check index.js && node --check ai-trading/execution-risk.js && node ai-trading/execution-risk.test.js && node --check ai-trading/tpsl-safety.js && node ai-trading/tpsl-safety.test.js && node --check ai-trading/nine-ai-strategy.js && node --check ai-trading/nine-ai-learning-memory.js && node ai-trading/nine-ai-strategy.test.js && node ai-trading/nine-ai-learning-memory.test.js && node --check ai-trading/nine-ai-independent-models.js && node ai-trading/nine-ai-independent-models.test.js && node --check ai-trading/nine-ai-autonomous-research.js && node ai-trading/nine-ai-autonomous-research.test.js"
   },
   "dependencies": {
     "mongodb": "^6.3.0"
