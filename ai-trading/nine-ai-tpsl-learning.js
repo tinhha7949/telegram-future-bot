@@ -1,15 +1,42 @@
 "use strict";
 
-const MIN_ACTION_SAMPLES = 20;
+// Contextual online policy for live TPSL management.
+// Every confirmed closed trade contributes its final R and the market/management
+// context that preceded its last action. No sample-count gate decides whether
+// a candidate action is eligible; estimates continuously shrink toward the
+// observed global baseline as evidence becomes sparse.
 const MAX_OUTCOMES = 5000;
-const VALID_ACTIONS = new Set(["EXTEND_TP", "TIGHTEN_TP", "CLOSE_EARLY", "CLOSE_PROFIT"]);
-
+const VALID_ACTIONS = new Set(["EXTEND_TP", "TIGHTEN_TP", "CLOSE_EARLY", "CLOSE_PROFIT", "TRAIL_SL", "HOLD"]);
 let outcomesCollection = null;
-let cachedStats = { actions: {}, regimes: {}, refreshedAt: 0 };
+let cachedStats = { actions: {}, regimes: {}, global: { samples: 0, meanR: 0 }, refreshedAt: 0 };
+
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const num = (v, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
+
+function featureVector(input = {}) {
+  const side = String(input.side || "").toUpperCase();
+  const sign = side === "SHORT" ? -1 : 1;
+  const f = input.features || input.context || {};
+  const direction = String(input.decisionSide || "").toUpperCase();
+  return {
+    favorableR: clamp(num(input.favorableR), -5, 10),
+    targetDistanceR: clamp(num(input.targetDistanceR), -5, 10),
+    trendAlignment: num(input.trendAligned === true ? 1 : input.trendAligned === false ? -1 : 0),
+    momentumAlignment: num(input.momentumAligned === true ? 1 : input.momentumAligned === false ? -1 : 0),
+    opposingDirection: direction && ["LONG", "SHORT"].includes(direction) ? (direction === side ? -1 : 1) : 0,
+    reversalStructure: num(f.reversalStrength ?? f.reversalEvidence),
+    momentum: clamp(sign * num(f.momentum12 ?? f.momentum), -5, 5),
+    atrPct: clamp(num(f.atrPercent ?? f.atrPct), 0, 1),
+    extensionAtr: clamp(sign * num(f.extensionAtr), -8, 8),
+    body: clamp(sign * num(f.candleBodyRatio), -1, 1),
+    wick: clamp(sign * (num(f.lowerWickRatio) - num(f.upperWickRatio)), -1, 1),
+    structure: clamp(sign * num(f.structurePosition), -1, 1)
+  };
+}
 
 function summarizeOutcomes(rows) {
-  const actions = {};
-  const regimes = {};
+  const actions = {}, regimes = {};
+  let globalSum = 0, globalSamples = 0;
   const add = (bucket, key, realizedR) => {
     if (!bucket[key]) bucket[key] = { samples: 0, sumR: 0, meanR: 0 };
     bucket[key].samples += 1;
@@ -23,8 +50,10 @@ function summarizeOutcomes(rows) {
     if (!VALID_ACTIONS.has(action) || !Number.isFinite(realizedR)) continue;
     add(actions, action, realizedR);
     add(regimes, `${regime}:${action}`, realizedR);
+    globalSum += realizedR;
+    globalSamples++;
   }
-  return { actions, regimes };
+  return { actions, regimes, global: { samples: globalSamples, meanR: globalSamples ? globalSum / globalSamples : 0 } };
 }
 
 async function refreshStats() {
@@ -41,26 +70,30 @@ async function initialize(collection) {
   await outcomesCollection.createIndex({ tradeId: 1 }, { unique: true, name: "uniq_nine_ai_tpsl_trade" });
   await outcomesCollection.createIndex({ closedAt: -1 }, { name: "nine_ai_tpsl_closed_at" });
   await refreshStats();
-  return {
-    ready: true,
-    samples: Object.values(cachedStats.actions).reduce((sum, x) => sum + x.samples, 0)
-  };
+  return { ready: true, samples: cachedStats.global.samples };
 }
 
-function getPolicyStats() {
-  return cachedStats;
+function getPolicyStats() { return cachedStats; }
+
+function expectedR(stats, action, regime) {
+  const local = stats?.regimes?.[`${regime}:${action}`];
+  const broad = stats?.actions?.[action];
+  const global = stats?.global || { samples: 0, meanR: 0 };
+  const selected = local?.samples ? local : broad?.samples ? broad : null;
+  if (!selected) return { meanR: global.meanR || 0, samples: 0, uncertainty: 1 };
+  const n = selected.samples;
+  const priorN = global.samples ? Math.sqrt(global.samples) : 1;
+  const prior = global.meanR || 0;
+  const meanR = (selected.sumR + prior * priorN) / (n + priorN);
+  return { meanR, samples: n, uncertainty: 1 / Math.sqrt(n + priorN) };
 }
 
 function chooseManagementAction(input, policyStats = cachedStats) {
   const side = String(input?.side || "").toUpperCase();
-  const entry = Number(input?.entry);
-  const current = Number(input?.current);
-  const oldTP = Number(input?.oldTP);
+  const entry = Number(input?.entry), current = Number(input?.current), oldTP = Number(input?.oldTP);
   const initialRisk = Number(input?.initialRisk);
   const tickSize = Math.max(Number(input?.tickSize) || 0, Number.EPSILON);
   const maxRR = Math.max(0.8, Number(input?.maxRR) || 1.8);
-  const score = Math.max(0, Math.min(100, Number(input?.score) || 0));
-  const decisionSide = String(input?.decisionSide || "").toUpperCase();
   const regime = String(input?.regime || "UNKNOWN");
   if (!["LONG", "SHORT"].includes(side) ||
       ![entry, current, oldTP, initialRisk].every(Number.isFinite) ||
@@ -72,71 +105,70 @@ function chooseManagementAction(input, policyStats = cachedStats) {
   const favorableR = direction * (current - entry) / initialRisk;
   const targetDistanceR = direction * (oldTP - current) / initialRisk;
   const targetReached = targetDistanceR <= 0;
-  const targetNear = targetDistanceR > 0 && targetDistanceR <= 0.30;
-  const aligned = decisionSide === side && score >= 72 &&
-    input?.trendAligned === true && input?.momentumAligned === true;
-  const targetRisk = Number(input?.targetRisk) > 0 ? Number(input.targetRisk) : initialRisk;
-  const cap = entry + direction * targetRisk * maxRR;
+  const continuation = input?.trendAligned === true && input?.momentumAligned === true &&
+    String(input?.decisionSide || "").toUpperCase() === side;
+  const opposition = ["LONG", "SHORT"].includes(String(input?.decisionSide || "").toUpperCase()) &&
+    String(input.decisionSide).toUpperCase() !== side;
+  const cap = entry + direction * initialRisk * maxRR;
   const capRemaining = direction * (cap - current);
-  const extendStats = policyStats?.regimes?.[`${regime}:EXTEND_TP`] || policyStats?.actions?.EXTEND_TP;
-  const closeStats = policyStats?.regimes?.[`${regime}:CLOSE_PROFIT`] || policyStats?.actions?.CLOSE_PROFIT;
-  const learnedSupportsExtension = extendStats?.samples >= MIN_ACTION_SAMPLES &&
-    closeStats?.samples >= MIN_ACTION_SAMPLES &&
-    Number(extendStats.meanR) > Number(closeStats.meanR) + 0.05;
+  const features = featureVector({ ...input, favorableR, targetDistanceR });
+  const actionValues = Object.fromEntries([...VALID_ACTIONS].map(action => [
+    action, expectedR(policyStats, action, regime)
+  ]));
+  const baseline = expectedR(policyStats, "HOLD", regime);
+  const choose = (action, reason, extra = {}) => ({
+    action, reason, expectedR: actionValues[action]?.meanR ?? baseline.meanR,
+    baselineExpectedR: baseline.meanR, samples: actionValues[action]?.samples ?? 0,
+    context: features, ...extra
+  });
 
-  if (targetReached) {
-    // Never assume an exchange TP can be moved after it has triggered. If the
-    // position still exists, lock in profit rather than race a stale order.
-    return { action: "CLOSE_PROFIT", reason: "TP_REACHED_WHILE_POSITION_OPEN", favorableR };
+  if (targetReached) return choose("CLOSE_PROFIT", "TARGET_REACHED", { favorableR });
+
+  // Opposing direction and reversal evidence are features, not fixed score gates.
+  if (opposition && actionValues.CLOSE_EARLY.meanR > baseline.meanR) {
+    return choose("CLOSE_EARLY", "LEARNED_OPPOSITION_EDGE", { favorableR });
   }
 
-  if (decisionSide && decisionSide !== side && score >= 72 && favorableR > 0) {
-    return { action: "CLOSE_EARLY", reason: "STRONG_OPPOSITE_SIGNAL_IN_PROFIT", favorableR };
-  }
-
-  if (targetNear && aligned && capRemaining > tickSize * 3 &&
-      (score >= 80 || learnedSupportsExtension)) {
-    const extension = Math.min(initialRisk * 0.25, capRemaining);
-    const tp = current + direction * Math.max(extension, tickSize * 3);
-    if (direction * (tp - current) > tickSize &&
-        direction * (tp - oldTP) > tickSize &&
+  if (targetDistanceR > 0 && continuation && capRemaining > tickSize &&
+      actionValues.EXTEND_TP.meanR > baseline.meanR) {
+    const learnedRoom = Math.max(tickSize * 2, initialRisk * (1 + actionValues.EXTEND_TP.uncertainty));
+    const extension = Math.min(learnedRoom, capRemaining);
+    const tp = current + direction * extension;
+    if (direction * (tp - current) > tickSize && direction * (tp - oldTP) > tickSize &&
         direction * (cap - tp) >= -tickSize) {
-      return { action: "EXTEND_TP", reason: learnedSupportsExtension
-        ? "LEARNED_EXTENSION_EDGE" : "STRONG_CONTINUATION_NEAR_TP", tp, favorableR };
+      return choose("EXTEND_TP", "LEARNED_CONTINUATION_EDGE", { tp, favorableR });
     }
   }
 
-  if (favorableR >= 0.5 && score < 48) {
-    const distance = Math.max(tickSize * 3, initialRisk * 0.15);
+  if (favorableR > 0 && !continuation && actionValues.TIGHTEN_TP.meanR > baseline.meanR) {
+    const distance = Math.max(tickSize * 2, initialRisk * actionValues.TIGHTEN_TP.uncertainty);
     const tp = current + direction * distance;
-    if (direction * (tp - current) > tickSize &&
-        direction * (oldTP - tp) > 0 &&
-        direction * (tp - entry) <= targetRisk * maxRR + tickSize) {
-      return { action: "TIGHTEN_TP", reason: "WEAKENING_SIGNAL_LOCK_PROFIT", tp, favorableR };
+    if (direction * (tp - current) > tickSize && direction * (oldTP - tp) > 0 &&
+        direction * (tp - entry) <= initialRisk * maxRR + tickSize) {
+      return choose("TIGHTEN_TP", "LEARNED_PROFIT_REALIZATION_EDGE", { tp, favorableR });
     }
   }
 
-  return { action: "HOLD", reason: "NO_TPSL_POLICY_CHANGE", favorableR };
+  return choose("HOLD", "NO_LEARNED_ACTION_EDGE", { favorableR });
 }
 
-async function recordClosedTrade({ tradeId, action, regime, realizedR, closedAt }) {
+async function recordClosedTrade({ tradeId, action, regime, realizedR, closedAt, context = null }) {
   if (!outcomesCollection || !tradeId || !VALID_ACTIONS.has(String(action || "")) ||
       !Number.isFinite(Number(realizedR))) return { updated: false, reason: "INSUFFICIENT_OUTCOME" };
   try {
     const result = await outcomesCollection.updateOne(
       { tradeId: String(tradeId) },
       { $setOnInsert: {
-        tradeId: String(tradeId),
-        action: String(action),
-        regime: String(regime || "UNKNOWN"),
-        realizedR: Number(realizedR),
+        tradeId: String(tradeId), action: String(action),
+        regime: String(regime || "UNKNOWN"), realizedR: Number(realizedR),
+        context: context && typeof context === "object" ? context : null,
         closedAt: Number(closedAt) || Date.now()
       } },
       { upsert: true }
     );
     if (result.upsertedCount) {
       await refreshStats();
-      return { updated: true };
+      return { updated: true, samples: cachedStats.global.samples };
     }
     return { updated: false, reason: "DUPLICATE_TRADE" };
   } catch (error) {
@@ -145,6 +177,6 @@ async function recordClosedTrade({ tradeId, action, regime, realizedR, closedAt 
 }
 
 module.exports = {
-  MIN_ACTION_SAMPLES, summarizeOutcomes, chooseManagementAction,
+  MAX_OUTCOMES, VALID_ACTIONS, featureVector, summarizeOutcomes, chooseManagementAction,
   initialize, refreshStats, getPolicyStats, recordClosedTrade
 };
