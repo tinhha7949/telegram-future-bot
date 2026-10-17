@@ -3039,7 +3039,7 @@ async function scan(symbol){
                 console.log("🧠 NINE-AI AUTO-LEARNED RULE BLOCKED " + symbol + " | " + policyCheck.description + " | policy=" + policyCheck.policyId);
                 return null;
             }
-            if (activePolicy && policyCheck.allowed) {
+            if (activePolicy && policyCheck.allowed && policyCheck.reason === "ACTIVE_RESEARCH_RULE_PASSED") {
                 researchPolicyAtEntry = { policyId: activePolicy.policyId, description: activePolicy.description };
             }
         } catch (policyError) {
