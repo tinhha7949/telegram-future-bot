@@ -55,6 +55,28 @@ assert.equal(trailAction.action, "TRAIL_SL",
 assert.ok(trailAction.sl > 95 && trailAction.sl < 104,
   "learned stop trailing must be monotonic and remain behind current price");
 
+const trailBetterEvidence = summarizeOutcomes([
+  { action: "TRAIL_SL", regime: "TRANSITION", realizedR: 2.0 },
+  { action: "HOLD", regime: "TRANSITION", realizedR: -1.0 }
+]);
+const learnedTrailAction = chooseManagementAction({
+  ...reversalInput, oldSL: 95,
+  features: { ...reversalInput.features, atr14: 2 }
+}, trailBetterEvidence);
+assert.equal(learnedTrailAction.action, "TRAIL_SL",
+  "trailing remains eligible when learned TRAIL_SL expectancy beats HOLD");
+
+const trailWorseEvidence = summarizeOutcomes([
+  { action: "TRAIL_SL", regime: "TRANSITION", realizedR: -1.0 },
+  { action: "HOLD", regime: "TRANSITION", realizedR: 2.0 }
+]);
+const rejectedTrailAction = chooseManagementAction({
+  ...reversalInput, oldSL: 95,
+  features: { ...reversalInput.features, atr14: 2 }
+}, trailWorseEvidence);
+assert.notEqual(rejectedTrailAction.action, "TRAIL_SL",
+  "trailing must be gated when learned TRAIL_SL expectancy is below HOLD");
+
 const vector = featureVector(reversalInput);
 assert.ok(vector.opposingDirection > 0);
 assert.ok(vector.momentum < 0, "adverse momentum must be represented relative to the held side");
