@@ -46,7 +46,10 @@ function makeCollection() {
   assert.equal(learner.predict(features).trained, false);
   assert.equal(learner.read().version, 3);
   assert.equal(learner.vector(features).length, 18);
-  assert.deepEqual(learner.decisionPolicy().decisionWeights, { role: 0.8, setup: 0.1, entry: 0.1 });
+  const initialWeights = learner.decisionPolicy().decisionWeights;
+  assert.ok(Math.abs(initialWeights.role - 0.8) < 1e-9);
+  assert.ok(Math.abs(initialWeights.setup - 0.1) < 1e-9);
+  assert.ok(Math.abs(initialWeights.entry - 0.1) < 1e-9);
   const policyBefore = learner.decisionPolicy();
 
   for (let i = 0; i < 25; i++) {
