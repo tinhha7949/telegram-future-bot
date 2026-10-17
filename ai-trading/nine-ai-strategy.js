@@ -387,9 +387,10 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   });
   // Only a context-matched alternative whose paired uplift exceeds its own
   // observed uncertainty can change the direction. No blanket "loss => reverse".
-  const validatedFlip = counterfactualAdvice.validatedSuggestions.find(s =>
-    s.variant === "OPPOSITE_SIDE" && s.side && s.testUpliftR > Number(s.standardError || 0) && s.testMeanR > 0);
-  if (validatedFlip) contextualWinner = validatedFlip.side;
+  const validatedDirection = counterfactualAdvice.validatedSuggestions.find(s =>
+    ["OPPOSITE_SIDE", "DELAY_1_BAR", "DELAY_2_BAR", "EARLIER_1_BAR", "EARLIER_2_BAR"].includes(s.variant) &&
+    s.side && s.testUpliftR > Number(s.standardError || 0) && s.testMeanR > 0);
+  if (validatedDirection && validatedDirection.variant === "OPPOSITE_SIDE") contextualWinner = validatedDirection.side;
   const learned = learningMemory.predict(learnedFeatures);
   const independent = new Map(independentModels.predictAll(learnedFeatures)
     .map(model => [model.modelId, model]));
