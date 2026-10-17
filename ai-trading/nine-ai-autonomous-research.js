@@ -153,7 +153,7 @@ async function initialize(db) {
   await policyCollection.createIndex({ status: 1, activatedAt: -1 }, { name: "nine_ai_active_policy_lookup" });
   await hypothesesCollection.createIndex({ candidateId: 1 }, { unique: true, name: "uniq_nine_ai_hypothesis" });
   await versionsCollection.createIndex({ version: 1 }, { unique: true, name: "uniq_nine_ai_strategy_version" });
-  return { ready: true, mode: "AUTO_PROMOTE_VALIDATED_RULES", minSamples: MIN_SAMPLES };
+  return { ready: true, mode: "CONTINUOUS_DATA_DERIVED_HYPOTHESES" };
 }
 async function runResearchCycle({ now = new Date() } = {}) {
   if (!outcomesCollection || !hypothesesCollection || !versionsCollection) {
