@@ -6,8 +6,6 @@
 // expectancy by side and market condition to the synchronous strategy scorer.
 const COLLECTION = "nine_ai_contextual_outcomes";
 const MAX_OUTCOMES = 2000;
-const MIN_CONTEXT_SAMPLES = 5;
-const MIN_GLOBAL_SIDE_SAMPLES = 8;
 let outcomes = null;
 let records = [];
 let seen = new Set();
@@ -55,13 +53,13 @@ function assess(features = {}) {
     // Prefer the most specific condition with enough observations. Never let
     // a tiny bucket override the broad historical result.
     const candidates = tags.slice(2).concat(tags.slice(1, 2)).map(tag => ({ tag, stats: summarizeSide(side, [tag]) }))
-      .filter(item => item.stats.samples >= MIN_CONTEXT_SAMPLES)
+      .filter(item => item.stats.samples > 0)
       .sort((a, b) => b.stats.samples - a.stats.samples);
     const selected = candidates[0] || null;
-    const minimum = selected ? MIN_CONTEXT_SAMPLES : MIN_GLOBAL_SIDE_SAMPLES;
     const usable = selected ? selected.stats : global;
-    const ready = usable.samples >= minimum;
-    const reliability = ready ? usable.samples / (usable.samples + 10) : 0;
+    const ready = usable.samples > 0;
+    const priorStrength = Math.sqrt(Math.max(1, records.length));
+    const reliability = ready ? usable.samples / (usable.samples + priorStrength) : 0;
     result[side] = {
       ready, samples: usable.samples, context: selected?.tag || "ALL",
       meanR: usable.meanR, winRate: Number(usable.winRate.toFixed(4)),
@@ -119,9 +117,9 @@ function status() {
     samples: records.length,
     long: summarizeSide("LONG"),
     short: summarizeSide("SHORT"),
-    minimumContextSamples: MIN_CONTEXT_SAMPLES
+    contextSamplePolicy: "CONTINUOUS_SHRINKAGE_NO_MINIMUM_SAMPLE_GATE"
   };
 }
 
-module.exports = { COLLECTION, MAX_OUTCOMES, MIN_CONTEXT_SAMPLES, contextTags, assess,
+module.exports = { COLLECTION, MAX_OUTCOMES, contextTags, assess,
   initialize, recordClosedTrade, status };

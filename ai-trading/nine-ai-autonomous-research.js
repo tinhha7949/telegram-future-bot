@@ -4,22 +4,17 @@
 // candidate entry filters, validates them on a chronological holdout, and
 // stores versioned candidates. Qualified rules are automatically promoted to
 // live signal eligibility, attributed to trades, and rolled back on poor results.
-const MIN_SAMPLES = 100;
 const MAX_OUTCOMES = 2000;
-const MIN_TRAIN_MATCHES = 20;
-const MIN_TEST_MATCHES = 20;
-const MIN_TEST_UPLIFT_R = 0.15;
-const MIN_TEST_MEAN_R = 0.05;
 const FEATURE_RULES = Object.freeze({
-  "features.volume": { label: "volume ratio", thresholds: [0.7, 0.85, 1, 1.1, 1.25, 1.5], direction: "gte" },
-  "features.rsi": { label: "RSI", thresholds: [25, 30, 35, 45, 50, 55, 65, 70, 75], direction: "range" },
-  "features.extension": { label: "EMA extension in ATR", thresholds: [0.5, 1, 1.5, 2], direction: "abs_lte" },
-  "features.momentum": { label: "normalized momentum", thresholds: [-1.5, -1, -0.5, 0, 0.5, 1, 1.5], direction: "sign" },
-  "features.falseBreakoutRisk": { label: "false-breakout risk", thresholds: [0.5], direction: "lte" },
-  "features.longEntryQuality": { label: "long entry quality", thresholds: [40, 50, 60, 70, 80], direction: "gte" },
-  "features.shortEntryQuality": { label: "short entry quality", thresholds: [40, 50, 60, 70, 80], direction: "gte" },
-  "context.roleScore": { label: "Nine-AI role score", thresholds: [55, 60, 65, 70, 75, 80, 85], direction: "gte" },
-  "context.entryQuality": { label: "entry quality", thresholds: [40, 50, 60, 70, 80], direction: "gte" }
+  "features.volume": { label: "volume ratio", direction: "gte" },
+  "features.rsi": { label: "RSI", direction: "range" },
+  "features.extension": { label: "EMA extension in ATR", direction: "abs_lte" },
+  "features.momentum": { label: "normalized momentum", direction: "sign" },
+  "features.falseBreakoutRisk": { label: "false-breakout risk", direction: "lte" },
+  "features.longEntryQuality": { label: "long entry quality", direction: "gte" },
+  "features.shortEntryQuality": { label: "short entry quality", direction: "gte" },
+  "context.roleScore": { label: "Nine-AI role score", direction: "gte" },
+  "context.entryQuality": { label: "entry quality", direction: "gte" }
 });
 let outcomesCollection = null;
 let hypothesesCollection = null;
@@ -46,36 +41,46 @@ function matchesRule(row, rule) {
   return false;
 }
 function stats(rows) {
-  if (!rows.length) return { n: 0, meanR: null, winRate: null, totalR: 0 };
+  if (!rows.length) return { n: 0, meanR: null, standardDeviation: null, winRate: null, totalR: 0 };
   const totalR = rows.reduce((sum, row) => sum + Math.max(-5, Math.min(5, Number(row.realizedR))), 0);
   return {
     n: rows.length,
     meanR: totalR / rows.length,
+    standardDeviation: Math.sqrt(rows.reduce((sum, row) => sum + (Math.max(-5, Math.min(5, Number(row.realizedR))) - totalR / rows.length) ** 2, 0) / rows.length),
     winRate: rows.filter(row => Number(row.realizedR) > 0).length / rows.length,
     totalR
   };
 }
-function ruleCandidates() {
+function quantiles(values) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return [];
+  return [...new Set([0.2, 0.4, 0.6, 0.8].map(q => sorted[Math.round((sorted.length - 1) * q)]))];
+}
+function ruleCandidates(rows = []) {
   const result = [];
   for (const [path, spec] of Object.entries(FEATURE_RULES)) {
-    for (const threshold of spec.thresholds) {
+    const values = (Array.isArray(rows) ? rows : [])
+      .map(row => Number(getPath(row, path))).filter(Number.isFinite);
+    const thresholds = quantiles(values);
+    for (let i = 0; i < thresholds.length; i++) {
+      const threshold = thresholds[i];
       if (spec.direction === "range") {
-        const width = threshold <= 35 || threshold >= 65 ? 15 : 10;
-        result.push({ path, operator: "rsi_band", low: threshold, high: Math.min(100, threshold + width),
-          description: `${spec.label} in ${threshold}-${Math.min(100, threshold + width)}` });
+        const high = thresholds[Math.min(i + 1, thresholds.length - 1)];
+        result.push({ path, operator: "rsi_band", low: Math.min(threshold, high), high: Math.max(threshold, high),
+          description: `${spec.label} observed quantile band ${Math.min(threshold, high)}-${Math.max(threshold, high)}` });
       } else if (spec.direction === "abs_lte") {
-        result.push({ path, operator: "abs_lte", threshold,
-          description: `absolute ${spec.label} <= ${threshold}` });
+        result.push({ path, operator: "abs_lte", threshold: Math.abs(threshold),
+          description: `absolute ${spec.label} <= observed quantile ${Math.abs(threshold)}` });
       } else if (spec.direction === "sign") {
         result.push({ path, operator: "positive", threshold,
-          description: `${spec.label} > ${threshold}` });
+          description: `${spec.label} > observed quantile ${threshold}` });
         result.push({ path, operator: "negative", threshold: -Math.abs(threshold),
-          description: `${spec.label} < ${-Math.abs(threshold)}` });
+          description: `${spec.label} < observed quantile ${-Math.abs(threshold)}` });
       } else {
         result.push({ path, operator: spec.direction, threshold,
           ...(path === "features.longEntryQuality" ? { side: "LONG" } : {}),
           ...(path === "features.shortEntryQuality" ? { side: "SHORT" } : {}),
-          description: `${spec.label} ${spec.direction === "gte" ? ">=" : "<="} ${threshold}` });
+          description: `${spec.label} ${spec.direction === "gte" ? ">=" : "<="} observed quantile ${threshold}` });
       }
     }
   }
@@ -98,10 +103,12 @@ function evaluateCandidate(rows, rule) {
     ? null : trainResult.meanR - baselineTrain.meanR;
   const testUpliftR = testResult.meanR == null || baselineTest.meanR == null
     ? null : testResult.meanR - baselineTest.meanR;
-  const qualified = trainResult.n >= MIN_TRAIN_MATCHES &&
-    testResult.n >= MIN_TEST_MATCHES &&
-    trainUpliftR >= 0 && testUpliftR >= MIN_TEST_UPLIFT_R &&
-    testResult.meanR >= MIN_TEST_MEAN_R;
+  const trainUncertainty = trainResult.n ? (trainResult.standardDeviation || 0) / Math.sqrt(trainResult.n) : Infinity;
+  const testUncertainty = testResult.n ? (testResult.standardDeviation || 0) / Math.sqrt(testResult.n) : Infinity;
+  const baselineTestUncertainty = baselineTest.n ? (baselineTest.standardDeviation || 0) / Math.sqrt(baselineTest.n) : Infinity;
+  const qualified = trainResult.n > 0 && testResult.n > 0 &&
+    trainUpliftR >= trainUncertainty && testUpliftR > 0 &&
+    testResult.meanR - testUncertainty > baselineTest.meanR + baselineTestUncertainty;
   return {
     rule, qualified,
     train: { baseline: baselineTrain, candidate: trainResult, upliftR: trainUpliftR },
@@ -114,10 +121,10 @@ function buildResearch(rows, now = new Date()) {
   const usable = rows.filter(row => row && row.closed === true &&
     finite(row.realizedR) && row.features && typeof row.features === "object" &&
     ["LONG", "SHORT"].includes(row.side));
-  if (usable.length < MIN_SAMPLES) {
-    return { status: "WARMUP", sampleCount: usable.length, requiredSamples: MIN_SAMPLES, candidates: [] };
+  if (usable.length < 2) {
+    return { status: "COLLECTING_OUTCOMES", sampleCount: usable.length, candidates: [] };
   }
-  const candidates = ruleCandidates().map(rule => evaluateCandidate(usable, rule))
+  const candidates = ruleCandidates(usable).map(rule => evaluateCandidate(usable, rule))
     .sort((a, b) => Number(b.qualified) - Number(a.qualified) ||
       Number(b.test.upliftR ?? -Infinity) - Number(a.test.upliftR ?? -Infinity));
   const accepted = candidates.filter(candidate => candidate.qualified).slice(0, 5);
@@ -146,7 +153,7 @@ async function initialize(db) {
   await policyCollection.createIndex({ status: 1, activatedAt: -1 }, { name: "nine_ai_active_policy_lookup" });
   await hypothesesCollection.createIndex({ candidateId: 1 }, { unique: true, name: "uniq_nine_ai_hypothesis" });
   await versionsCollection.createIndex({ version: 1 }, { unique: true, name: "uniq_nine_ai_strategy_version" });
-  return { ready: true, mode: "AUTO_PROMOTE_VALIDATED_RULES", minSamples: MIN_SAMPLES };
+  return { ready: true, mode: "CONTINUOUS_DATA_DERIVED_HYPOTHESES" };
 }
 async function runResearchCycle({ now = new Date() } = {}) {
   if (!outcomesCollection || !hypothesesCollection || !versionsCollection) {
@@ -234,14 +241,24 @@ function decisionToResearchRow(decision) {
   };
 }
 function evaluateLiveDecision(decision, policy) {
-  if (!policy || policy.status !== "ACTIVE" || !policy.rule) return { allowed: true, reason: "NO_ACTIVE_RESEARCH_POLICY" };
-  const allowed = matchesRule(decisionToResearchRow(decision), policy.rule);
-  return { allowed, reason: allowed ? "ACTIVE_RESEARCH_RULE_PASSED" : "ACTIVE_RESEARCH_RULE_BLOCKED",
-    policyId: policy.policyId, description: policy.description || policy.rule.description };
+  if (!policy || policy.status !== "ACTIVE" || !policy.rule) {
+    return { allowed: true, matched: null, scoreEvidence: 0, reason: "NO_ACTIVE_RESEARCH_POLICY" };
+  }
+  const matched = matchesRule(decisionToResearchRow(decision), policy.rule);
+  const testUpliftR = Number(policy.testUpliftR);
+  // Research findings are attribution/ranking evidence only. A mismatch must
+  // never veto a valid Nine-AI direction or turn a losing strategy into WAIT.
+  return {
+    allowed: true,
+    matched,
+    scoreEvidence: Number.isFinite(testUpliftR) ? (matched ? testUpliftR : -Math.abs(testUpliftR)) : 0,
+    reason: matched ? "ACTIVE_RESEARCH_RULE_MATCHED_SOFT_EVIDENCE" : "ACTIVE_RESEARCH_RULE_MISMATCH_SOFT_EVIDENCE",
+    policyId: policy.policyId,
+    description: policy.description || policy.rule.description
+  };
 }
 
 module.exports = {
-  MIN_SAMPLES, MIN_TRAIN_MATCHES, MIN_TEST_MATCHES, MIN_TEST_UPLIFT_R,
-  FEATURE_RULES, getPath, matchesRule, stats, ruleCandidates, evaluateRule,
+  FEATURE_RULES, getPath, matchesRule, stats, quantiles, ruleCandidates, evaluateRule,
   evaluateCandidate, buildResearch, initialize, runResearchCycle, getActivePolicy, decisionToResearchRow, evaluateLiveDecision
 };

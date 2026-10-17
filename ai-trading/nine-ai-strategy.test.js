@@ -4,8 +4,7 @@ const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles, buildFeatures,
   resolveModelSide, resolveConsensusSide, assessIndependentRiskModel, assessEntryRiskEvidence,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates,
-  deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust,
-  MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE, MAX_NINE_AI_RR
+  deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR
 } = require("./nine-ai-strategy");
 
 assert.equal(ROLE_NAMES.length, 9);
@@ -244,8 +243,8 @@ const tightenedPlan = deriveNineAIDynamicPlan({
 });
 assert.ok(tightenedPlan === null || tightenedPlan.sl >= 95,
   "weak/invalid decision must not widen LONG SL");
-assert.ok(tightenedPlan === null || tightenedPlan.rr <= 1.8,
-  "weak/invalid decision must not exceed RR ceiling");
+assert.ok(tightenedPlan === null || tightenedPlan.action === "CLOSE_TARGET_REACHED" || tightenedPlan.rr <= 1.8,
+  "weak/invalid decision must stay under the RR ceiling or request immediate exit if the live target is already crossed");
 assert.ok(tightenedPlan === null || tightenedPlan.tp >= 110,
   "weak/invalid decision must never pull the confirmed LONG TP inward");
 
@@ -259,13 +258,12 @@ assert.ok(weakShortPlan === null || weakShortPlan.tp <= 90,
   "weak/invalid decision must never pull the confirmed SHORT TP inward");
 
 
-assert.equal(MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, 0.5);
-assert.equal(NINE_AI_STRONG_OPPOSITE_EXIT_SCORE, 72);
-assert.equal(canNineAIDynamicallyAdjust({ side: "LONG", entry: 100, current: 102.49, initialRisk: 5 }), false);
-assert.equal(canNineAIDynamicallyAdjust({ side: "LONG", entry: 100, current: 102.5, initialRisk: 5 }), true);
-assert.equal(canNineAIDynamicallyAdjust({ side: "SHORT", entry: 100, current: 97.5, initialRisk: 5 }), true);
-assert.equal(canNineAIDynamicallyAdjust({ side: "SHORT", entry: 100, current: 100.1, initialRisk: 5 }), false);
-assert.equal(shouldNineAIExitPosition({ authorizedForExecution: true, side: "SHORT", rankMetrics: { roleScore: 72 } }, "LONG"), true);
+assert.equal(canNineAIDynamicallyAdjust({ side: "LONG", entry: 100, current: 100.1, initialRisk: 5 }), true);
+assert.equal(canNineAIDynamicallyAdjust({ side: "SHORT", entry: 100, current: 100.1, initialRisk: 5 }), true);
+assert.equal(shouldNineAIExitPosition({
+  authorizedForExecution: true, side: "SHORT",
+  rankMetrics: { features: { trend: "DOWN", momentum12: -1, structureTrend: "LOWER_HIGHS_LOWS" } }
+}, "LONG"), true);
 assert.equal(shouldNineAIExitPosition({ authorizedForExecution: false, side: "SHORT", rankMetrics: { roleScore: 99 } }, "LONG"), false);
 assert.equal(shouldNineAIExitPosition({ authorizedForExecution: true, side: "LONG", rankMetrics: { roleScore: 99 } }, "LONG"), false);
 

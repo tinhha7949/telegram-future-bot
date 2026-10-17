@@ -404,7 +404,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     0.25 * clamp((f.rsi - 50) / 20, -2, 2);
   const baselineP = logistic(z);
   const pLong = learned.trained ? 0.35 * baselineP + 0.65 * learned.pLong : baselineP;
-  const legacyMlSide = pLong >= 0.62 ? "LONG" : pLong <= 0.38 ? "SHORT" : null;
+  const legacyMlSide = pLong > 0.5 ? "LONG" : pLong < 0.5 ? "SHORT" : null;
   const mlModel = independent.get("signal");
   const mlSide = modelSide("signal", legacyMlSide);
   const mlConfidence = modelConfidence("signal") ?? Math.round(Math.max(pLong, 1 - pLong) * 100);
@@ -684,23 +684,24 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
 }
 
 const MAX_NINE_AI_RR = 1.8;
-const MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE = 0.5;
-const NINE_AI_STRONG_OPPOSITE_EXIT_SCORE = 72;
 
 function shouldNineAIExitPosition(decision, heldSide) {
   if (!decision || decision.authorizedForExecution !== true || !["LONG", "SHORT"].includes(heldSide)) return false;
   const side = decision.side;
-  const score = Number(decision?.rankMetrics?.roleScore ?? decision?.rankScore ?? decision?.confidence ?? 0);
-  return ["LONG", "SHORT"].includes(side) && side !== heldSide && Number.isFinite(score) && score >= NINE_AI_STRONG_OPPOSITE_EXIT_SCORE;
+  if (!["LONG", "SHORT"].includes(side) || side === heldSide) return false;
+  const f = decision?.rankMetrics?.features || decision?.features || {};
+  const opposingTrend = f.trend === (heldSide === "LONG" ? "DOWN" : "UP");
+  const opposingMomentum = Number(f.momentum12 || 0) * (heldSide === "LONG" ? 1 : -1) < 0;
+  const opposingStructure = f.structureTrend === (heldSide === "LONG" ? "LOWER_HIGHS_LOWS" : "HIGHER_HIGHS_LOWS");
+  const opposingCandle = heldSide === "LONG" ? f.bearishEngulfing === true : f.bullishEngulfing === true;
+  // Exit on converging reversal evidence, not a hand-picked confidence score.
+  return [opposingTrend, opposingMomentum, opposingStructure, opposingCandle].filter(Boolean).length >= 2;
 }
 
 function canNineAIDynamicallyAdjust({ side, entry, current, initialRisk }) {
   if (!["LONG", "SHORT"].includes(side)) return false;
   const values = [entry, current, initialRisk].map(Number);
-  if (values.some(value => !Number.isFinite(value) || value <= 0)) return false;
-  const [e, c, risk] = values;
-  const favorableMove = side === "LONG" ? c - e : e - c;
-  return favorableMove / risk >= MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE;
+  return values.every(value => Number.isFinite(value) && value > 0);
 }
 
 function deriveNineAIDynamicPlan({
@@ -716,21 +717,34 @@ function deriveNineAIDynamicPlan({
   const roleScore = Number(decision?.rankMetrics?.roleScore ?? decision?.rankScore ?? decision?.confidence ?? 50);
   const score = clamp(Number.isFinite(roleScore) ? roleScore : 50, 0, 100);
   const authorized = decision?.authorizedForExecution === true;
-  const supports = authorized && decision?.side === side && score >= 65;
+  const supports = authorized && decision?.side === side;
   const stronglyOpposes = authorized && ["LONG", "SHORT"].includes(decision?.side) &&
-    decision.side !== side && score >= 72;
+    decision.side !== side;
   const atr = Number(features.atr14 ?? decision?.tradePlan?.stopDistance);
   if (!(atr > 0) || !Number.isFinite(atr)) return null;
 
-  // 9AI role consensus chooses how much room remains. Technical features only
-  // anchor prices; they do not override the role decision or safety invariants.
+  // Continuous context weighting: trend/momentum alignment gives the trade
+  // room to breathe; converging reversal evidence progressively tightens the
+  // stop. No confidence band or fixed R-profit gate controls whether learning runs.
+  const direction = side === "LONG" ? 1 : -1;
+  const momentum = direction * Number(features.momentum12 || 0);
+  const trendAligned = features.trend === (side === "LONG" ? "UP" : "DOWN");
+  const structureAligned = features.structureTrend === (side === "LONG" ? "HIGHER_HIGHS_LOWS" : "LOWER_HIGHS_LOWS");
+  const reversalSignals = [
+    stronglyOpposes,
+    momentum < 0,
+    features.trend === (side === "LONG" ? "DOWN" : "UP"),
+    features.structureTrend === (side === "LONG" ? "LOWER_HIGHS_LOWS" : "HIGHER_HIGHS_LOWS"),
+    side === "LONG" ? features.bearishEngulfing === true : features.bullishEngulfing === true,
+    Number(features.falseBreakoutRisk || 0) > 0
+  ].filter(Boolean).length;
   const contrarian = roles.find(role => role.name === "Contrarian AI");
+  const contraOpposes = Boolean(contrarian?.side && contrarian.side !== side);
   const riskRole = roles.find(role => role.name === "Risk Manager AI");
-  const contraOpposes = contrarian?.side && contrarian.side !== side &&
-    Number(contrarian.confidence) >= 60;
-  const riskWeak = !riskRole || riskRole.side === "VETO" || Number(riskRole.confidence) >= 90;
-  let stopRoom = supports ? (score >= 82 ? 1.25 : 0.8) : 0.35;
-  if (stronglyOpposes || contraOpposes || riskWeak) stopRoom = 0.2;
+  const riskWeak = !riskRole || riskRole.side === "VETO";
+  const alignment = (trendAligned ? 1 : 0) + (structureAligned ? 1 : 0) + (momentum > 0 ? 1 : 0);
+  const stopRoom = Math.max(0.2, 1.4 / (1 + reversalSignals) + alignment * 0.12 -
+    (contraOpposes ? 0.12 : 0) - (riskWeak ? 0.08 : 0));
   const proposedSL = side === "LONG"
     ? current - Math.max(tickSize * 2, atr * stopRoom)
     : current + Math.max(tickSize * 2, atr * stopRoom);
@@ -744,10 +758,10 @@ function deriveNineAIDynamicPlan({
   // it when aligned evidence supports a farther target, but must never pull
   // it inward merely because a later score is weaker. Opposite signals are
   // handled by the live-position exit policy in index.js.
-  let desiredRR = supports
-    ? clamp(0.8 + score / 100 * 1.1, 0.8, MAX_NINE_AI_RR)
-    : clamp(0.8 + (100 - score) / 100 * 0.35, 0.8, 1.15);
-  if (stronglyOpposes || contraOpposes || riskWeak) desiredRR = Math.min(desiredRR, 0.9);
+  const directionalConfidence = clamp(score / 100, 0, 1);
+  let desiredRR = clamp(0.8 + directionalConfidence * 1.1, 0.8, MAX_NINE_AI_RR);
+  const reversalPressure = reversalSignals + Number(contraOpposes) + Number(riskWeak);
+  desiredRR = clamp(desiredRR / (1 + reversalPressure * 0.12), 0.8, MAX_NINE_AI_RR);
   const riskDistance = Math.abs(entry - sl);
   if (!(riskDistance > 0)) return null;
 
@@ -854,5 +868,5 @@ module.exports = {
   resolveModelSide, resolveConsensusSide, assessIndependentRiskModel, assessEntryRiskEvidence,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore,
   analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan,
-  shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR, MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE
+  shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR
 };

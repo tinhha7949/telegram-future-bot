@@ -2690,14 +2690,53 @@ async function manageDynamicTPSL(trade) {
     // TP can move in either direction. SL safety remains a separate invariant.
     const featureState = liveDecision?.rankMetrics?.features || {};
     const currentInitialRisk = Number(trade.initialRisk) || Math.abs(entry - oldSL);
+    const tpslContext = {
+      side,
+      marketRegime: featureState.marketRegime || "UNKNOWN",
+      trendAligned: featureState.trend === (side === "LONG" ? "UP" : "DOWN"),
+      momentumAligned: Number(featureState.momentum12 || 0) * (side === "LONG" ? 1 : -1) > 0,
+      trend: featureState.trend || "UNKNOWN",
+      momentum12: Number(featureState.momentum12 || 0),
+      atrPercent: Number(featureState.atrPercent || 0),
+      extensionAtr: Number(featureState.extensionAtr || 0),
+      candleBodyRatio: Number(featureState.candleBodyRatio || 0),
+      upperWickRatio: Number(featureState.upperWickRatio || 0),
+      lowerWickRatio: Number(featureState.lowerWickRatio || 0),
+      structurePosition: Number(featureState.structurePosition || 0),
+      structureTrend: featureState.structureTrend || "UNKNOWN",
+      atr14: Number(featureState.atr14 || 0),
+      bearishEngulfing: featureState.bearishEngulfing === true,
+      bullishEngulfing: featureState.bullishEngulfing === true,
+      falseBreakoutRisk: Number(featureState.falseBreakoutRisk || 0),
+      reversalStrength: Number(featureState.reversalStrength || 0),
+      decisionSide: aiSide,
+      roleScore: aiScore,
+      favorableR: favorableR,
+      targetDistanceR: (side === "LONG" ? oldTP - current : current - oldTP) / Math.max(currentInitialRisk, Number.EPSILON)
+    };
     const tpslAction = nineAiTpslLearning.chooseManagementAction({
-      side, entry, current, oldTP, initialRisk: currentInitialRisk,
+      side, entry, current, oldSL, oldTP, initialRisk: currentInitialRisk,
       targetRisk: Math.abs(entry - oldSL), tickSize, maxRR: MAX_NINE_AI_RR,
       score: aiScore, decisionSide: aiSide,
       trendAligned: featureState.trend === (side === "LONG" ? "UP" : "DOWN"),
       momentumAligned: Number(featureState.momentum12 || 0) * (side === "LONG" ? 1 : -1) > 0,
-      regime: featureState.marketRegime || "UNKNOWN"
+      regime: featureState.marketRegime || "UNKNOWN",
+      favorableR, targetDistanceR: tpslContext.targetDistanceR, features: tpslContext
     }, nineAiTpslLearning.getPolicyStats());
+
+    trade.nineAiTpslLastAction = tpslAction.action || "HOLD";
+    trade.nineAiTpslRegime = featureState.marketRegime || "UNKNOWN";
+    trade.nineAiTpslLearningContext = { ...tpslContext, action: trade.nineAiTpslLastAction, reason: tpslAction.reason };
+    await trades.updateOne(
+      { symbol, result: "PENDING" },
+      { $set: {
+        nineAiTpslLastAction: trade.nineAiTpslLastAction,
+        nineAiTpslRegime: trade.nineAiTpslRegime,
+        nineAiTpslLearningContext: trade.nineAiTpslLearningContext,
+        nineAiTpslLastReason: tpslAction.reason,
+        nineAiTpslDecisionAt: Date.now()
+      } }
+    );
 
     if (tpslAction.action === "CLOSE_PROFIT" || tpslAction.action === "CLOSE_EARLY") {
       trade.nineAiTpslLastAction = tpslAction.action;
@@ -2730,6 +2769,18 @@ async function manageDynamicTPSL(trade) {
       plan.reason = tpslAction.reason;
       trade.nineAiTpslLastAction = tpslAction.action;
       trade.nineAiTpslRegime = featureState.marketRegime || "UNKNOWN";
+    } else if (tpslAction.action === "TRAIL_SL") {
+      const learnedSL = Number(tpslAction.sl);
+      const monotonic = side === "LONG"
+        ? learnedSL > oldSL && learnedSL < current
+        : learnedSL < oldSL && learnedSL > current;
+      if (monotonic) {
+        plan.sl = learnedSL;
+        plan.action = "TRAIL_SL";
+        plan.reason = tpslAction.reason;
+        trade.nineAiTpslLastAction = "TRAIL_SL";
+        trade.nineAiTpslRegime = featureState.marketRegime || "UNKNOWN";
+      }
     }
 
     const minimumChange = Math.max(entry * 0.00002, tickSize * 2);
@@ -3170,12 +3221,21 @@ async function scan(symbol){
         try {
             const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
             const policyCheck = nineAiAutonomousResearch.evaluateLiveDecision(decision, activePolicy);
-            if (!policyCheck.allowed) {
-                console.log("🧠 NINE-AI AUTO-LEARNED RULE BLOCKED " + symbol + " | " + policyCheck.description + " | policy=" + policyCheck.policyId);
-                return null;
-            }
-            if (activePolicy && policyCheck.allowed && policyCheck.reason === "ACTIVE_RESEARCH_RULE_PASSED") {
-                researchPolicyAtEntry = { policyId: activePolicy.policyId, description: activePolicy.description };
+            if (activePolicy) {
+                researchPolicyAtEntry = {
+                    policyId: activePolicy.policyId,
+                    description: activePolicy.description,
+                    matched: policyCheck.matched,
+                    scoreEvidence: policyCheck.scoreEvidence,
+                    testUpliftR: Number(activePolicy.testUpliftR) || 0
+                };
+                decision.rankMetrics = decision.rankMetrics || {};
+                decision.rankMetrics.researchPolicyEvidence = researchPolicyAtEntry;
+                console.log("🧠 NINE-AI RESEARCH EVIDENCE " + symbol +
+                    " | matched=" + String(policyCheck.matched) +
+                    " | upliftR=" + String(researchPolicyAtEntry.testUpliftR) +
+                    " | policy=" + activePolicy.policyId +
+                    " | entry remains eligible");
             }
         } catch (policyError) {
             console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
@@ -4709,9 +4769,10 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
             if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
                 const tpslLearning = await nineAiTpslLearning.recordClosedTrade({
                     tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
-                    action: t.nineAiTpslLastAction,
+                    action: t.nineAiTpslLastAction || "HOLD",
                     regime: t.nineAiTpslRegime || t.marketState || "UNKNOWN",
                     realizedR: closed.pnl / riskBudget,
+                    context: t.nineAiTpslLearningContext || null,
                     closedAt: closed.closedAt
                 });
                 if (tpslLearning.updated) {

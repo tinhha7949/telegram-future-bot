@@ -15,7 +15,6 @@ const MODEL_CONFIGS = Object.freeze([
   { id: "risk", role: "Risk Manager AI", scales: [1, 0.6, 0.6, 1.0, 1.2, 1.2], rate: 0.020, target: "loss" }
 ]);
 
-const MIN_TRAINING_SAMPLES = 20;
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const finite = x => Number.isFinite(Number(x));
 let dbRef = null;
@@ -97,13 +96,13 @@ function predictOne(config, state, features) {
     modelId: config.id,
     role: config.role,
     samples: model.samples,
-    trained: model.samples >= MIN_TRAINING_SAMPLES,
+    trained: model.samples > 0,
     probability: Number(probability.toFixed(6)),
     pLong: config.target === "loss" ? null : Number(probability.toFixed(6)),
     pLoss: config.target === "loss" ? Number(probability.toFixed(6)) : null,
-    side: model.samples < MIN_TRAINING_SAMPLES ? null :
+    side: model.samples === 0 ? null :
       config.target === "loss" ? null :
-      probability >= 0.58 ? "LONG" : probability <= 0.42 ? "SHORT" : null,
+      probability > 0.5 ? "LONG" : probability < 0.5 ? "SHORT" : null,
     evaluation: {
       evaluated: model.evaluation.evaluated,
       accuracy: model.evaluation.evaluated
@@ -289,7 +288,7 @@ async function initialize(db, legacyOutcomesCollection = null) {
   return {
     models: predictAll({}),
     migratedLegacyTrades: migrated,
-    allTrained: MODEL_CONFIGS.every(config => runtimes.get(config.id).state.samples >= MIN_TRAINING_SAMPLES)
+    allTrained: MODEL_CONFIGS.every(config => runtimes.get(config.id).state.samples > 0)
   };
 }
 
@@ -301,6 +300,6 @@ function status() {
 }
 
 module.exports = {
-  MODEL_CONFIGS, MIN_TRAINING_SAMPLES, fresh, validState, upgradeState, vector,
+  MODEL_CONFIGS, fresh, validState, upgradeState, vector,
   predictAll, learnClosedTrade, initialize, status
 };
