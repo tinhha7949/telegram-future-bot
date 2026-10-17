@@ -385,16 +385,14 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   // 4. Bull AI.
   const legacyBullSide = f.rsi >= 52 && f.mom4 > 0 && f.last.c > f.e21 ? "LONG" : null;
   const bullModel = independent.get("bull");
-  const bullSide = bullModel?.trained
-    ? (bullModel.pLong >= 0.58 ? "LONG" : null) : legacyBullSide;
+  const bullSide = resolveModelSide(bullModel, legacyBullSide);
   vote(ROLE_NAMES[3], bullSide, modelConfidence("bull") ?? (bullSide ? 60 : 25),
     bullModel?.trained ? `independentBullModelP(long)=${bullModel.pLong}` : `warmupFallback=bull-rules; RSI=${f.rsi.toFixed(1)}`);
 
   // 5. Bear AI.
   const legacyBearSide = f.rsi <= 48 && f.mom4 < 0 && f.last.c < f.e21 ? "SHORT" : null;
   const bearModel = independent.get("bear");
-  const bearSide = bearModel?.trained
-    ? (bearModel.pLong <= 0.42 ? "SHORT" : null) : legacyBearSide;
+  const bearSide = resolveModelSide(bearModel, legacyBearSide);
   vote(ROLE_NAMES[4], bearSide, modelConfidence("bear") ?? (bearSide ? 60 : 25),
     bearModel?.trained ? `independentBearModelP(long)=${bearModel.pLong}` : `warmupFallback=bear-rules; RSI=${f.rsi.toFixed(1)}`);
 
