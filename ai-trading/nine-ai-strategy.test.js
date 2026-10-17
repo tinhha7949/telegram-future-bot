@@ -243,8 +243,8 @@ const tightenedPlan = deriveNineAIDynamicPlan({
 });
 assert.ok(tightenedPlan === null || tightenedPlan.sl >= 95,
   "weak/invalid decision must not widen LONG SL");
-assert.ok(tightenedPlan === null || tightenedPlan.rr <= 1.8,
-  "weak/invalid decision must not exceed RR ceiling");
+assert.ok(tightenedPlan === null || tightenedPlan.action === "CLOSE_TARGET_REACHED" || tightenedPlan.rr <= 1.8,
+  "weak/invalid decision must stay under the RR ceiling or request immediate exit if the live target is already crossed");
 assert.ok(tightenedPlan === null || tightenedPlan.tp >= 110,
   "weak/invalid decision must never pull the confirmed LONG TP inward");
 
