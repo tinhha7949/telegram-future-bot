@@ -171,6 +171,8 @@ async function refreshPerformance({ force = false, now = Date.now() } = {}) {
 async function initialize(db) {
   if (!db || typeof db.collection !== "function") throw new Error("NINE_AI_EVOLUTION_MONGODB_REQUIRED");
   outcomesCollection = db.collection("nine_ai_learning_outcomes");
+  await outcomesCollection.createIndex({ closed: 1, applied: 1, closedAt: -1 },
+    { name: "nine_ai_strategy_evolution_outcomes" });
   await refreshPerformance({ force: true });
   return { ready: true, familyGroups: performance.size, families: [...FAMILIES] };
 }
