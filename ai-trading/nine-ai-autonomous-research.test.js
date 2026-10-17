@@ -54,6 +54,33 @@ assert.equal(activePolicyResult.scoreEvidence, -0.3);
 assert.equal(activePolicyResult.reason, "ACTIVE_RESEARCH_RULE_MISMATCH_SOFT_EVIDENCE");
 assert.equal(research.evaluateLiveDecision(liveDecision, null).reason, "NO_ACTIVE_RESEARCH_POLICY");
 
+const overlayMatchDecision = { ...liveDecision, rankScore: 70, qualityScore: 70, score: 70, rankMetrics: { ...liveDecision.rankMetrics } };
+const overlayMatch = research.applyResearchPolicyEvidence(overlayMatchDecision, {
+  status: "ACTIVE", policyId: "p-match", testUpliftR: 0.3,
+  rule: { path: "features.volume", operator: "gte", threshold: 1.1 }
+});
+assert.equal(overlayMatch.policyCheck.allowed, true);
+assert.equal(overlayMatch.policyCheck.matched, true);
+assert.equal(overlayMatch.adjustmentPoints, 3);
+assert.equal(overlayMatchDecision.rankScore, 73);
+assert.equal(overlayMatchDecision.authorizedForExecution, undefined);
+const overlayMismatchDecision = { ...liveDecision, rankScore: 70, rankMetrics: { ...liveDecision.rankMetrics } };
+const overlayMismatch = research.applyResearchPolicyEvidence(overlayMismatchDecision, {
+  status: "ACTIVE", policyId: "p-mismatch", testUpliftR: 0.3,
+  rule: { path: "features.volume", operator: "gte", threshold: 1.5 }
+});
+assert.equal(overlayMismatch.policyCheck.allowed, true, "research mismatch is ranking evidence, never a veto");
+assert.equal(overlayMismatch.adjustmentPoints, -3);
+assert.equal(overlayMismatchDecision.rankScore, 67);
+const boundedDecision = { ...liveDecision, rankScore: 99, rankMetrics: { ...liveDecision.rankMetrics } };
+const bounded = research.applyResearchPolicyEvidence(boundedDecision, {
+  status: "ACTIVE", policyId: "p-bound", testUpliftR: 9,
+  rule: { path: "features.volume", operator: "gte", threshold: 1.1 }
+});
+assert.equal(bounded.adjustmentPoints, 10);
+assert.equal(boundedDecision.rankScore, 100);
+
+
 const small = research.buildResearch(rows.slice(0, 40));
 assert.equal(small.status, "COLLECTING_OUTCOMES", "small samples must never promote a live strategy");
 assert.equal(small.requiredSamples, research.MIN_RESEARCH_SAMPLES);
