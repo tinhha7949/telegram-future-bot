@@ -267,4 +267,25 @@ assert.equal(shouldNineAIExitPosition({
 assert.equal(shouldNineAIExitPosition({ authorizedForExecution: false, side: "SHORT", rankMetrics: { roleScore: 99 } }, "LONG"), false);
 assert.equal(shouldNineAIExitPosition({ authorizedForExecution: true, side: "LONG", rankMetrics: { roleScore: 99 } }, "LONG"), false);
 
+// General reward learner: arbitrary feature changes must alter its prediction;
+// outcomes are continuous net-R estimates rather than binary win/loss labels.
+const rewardModel = require("./nine-ai-reward-model");
+const rewardFeatures = { trend: 1, momentum: 0.8, rsi: 61, volume: 1.4, extension: 0.3,
+  candleBody: 0.6, wickImbalance: 0.2, breakoutStrength: 0.4, regime: 1,
+  volatilityRegime: 0, structurePosition: 0.5, roomToResistance: 1.2,
+  roomToSupport: 0.8, falseBreakoutRisk: 0, directionalStreak: 0.6,
+  longEntryQuality: 78, shortEntryQuality: 32 };
+assert.equal(rewardModel.featureVector(rewardFeatures).length, rewardModel.FEATURE_KEYS.length + 1);
+const rewardState = rewardModel.freshState();
+assert.equal(rewardModel.predict(rewardFeatures, "LONG", rewardState).ready, false);
+rewardState.sides.LONG.samples = 40;
+rewardState.sides.LONG.weights[0] = 0.25;
+rewardState.sides.LONG.weights[1] = 0.7;
+rewardState.sides.LONG.variance = 0.4;
+const rewardPrediction = rewardModel.predict(rewardFeatures, "LONG", rewardState);
+assert.equal(rewardPrediction.ready, true);
+assert.ok(Number.isFinite(rewardPrediction.expectedR) && rewardPrediction.uncertainty > 0);
+assert.notEqual(rewardPrediction.expectedR, rewardModel.predict({ ...rewardFeatures, trend: -1 }, "LONG", rewardState).expectedR);
+assert.equal(rewardModel.predict(rewardFeatures, "WAIT", rewardState).ready, false);
+
 console.log("PASS: Nine-AI sole decision authority, AI-owned dynamic gates, weighted ranking, trade geometry, non-contracting TP, and RR cap");
