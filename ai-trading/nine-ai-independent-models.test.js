@@ -74,10 +74,12 @@ function collection() {
     candleBody: 0.6, wickImbalance: -0.2, breakoutStrength: 0.7,
     regime: 1, volatilityRegime: 0, structurePosition: 0.8,
     roomToResistance: 1.2, roomToSupport: 2.1,
-    falseBreakoutRisk: 0, directionalStreak: 0.67
+    falseBreakoutRisk: 0, directionalStreak: 0.67,
+    longEntryQuality: 81, shortEntryQuality: 32
   };
-  assert.equal(ml.vector(features, ml.MODEL_CONFIGS[0]).length, 16);
+  assert.equal(ml.vector(features, ml.MODEL_CONFIGS[0]).length, 18);
   assert.equal(ml.fresh(ml.MODEL_CONFIGS[0]).version, 2);
+  assert.equal(ml.fresh(ml.MODEL_CONFIGS[0]).weights.length, 18);
   for (let i = 0; i < 25; i++) {
     await ml.learnClosedTrade({
       tradeId: `closed-${i}`, features,
@@ -132,7 +134,7 @@ function collection() {
   for (const config of ml.MODEL_CONFIGS) {
     const saved = migrationCollections.get(`nine_ai_ml_${config.id}_state`).docs.get("model");
     assert.equal(saved.version, 2);
-    assert.equal(saved.weights.length, 16);
+    assert.equal(saved.weights.length, 18);
     assert.deepEqual(saved.weights.slice(0, 6), [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
     assert.ok(saved.weights.slice(6).every(weight => weight === 0));
   }
