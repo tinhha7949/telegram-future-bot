@@ -40,11 +40,17 @@ const liveDecision = { side: "LONG", rankMetrics: { roleScore: 80, entryQuality:
   features: { volumeRatio: 1.4, rsi14: 60, extensionAtr: 0.2, momentum4: 0.8,
     atrPercent: 1, falseBreakoutRisk: 0, longEntryQuality: 80, shortEntryQuality: 35 } } };
 assert.equal(research.decisionToResearchRow(liveDecision).features.volume, 1.4);
-assert.equal(research.evaluateLiveDecision(liveDecision, { status: "ACTIVE", policyId: "p1",
-  rule: { path: "features.volume", operator: "gte", threshold: 1.1 } }).allowed, true);
+const matchedPolicyResult = research.evaluateLiveDecision(liveDecision, { status: "ACTIVE", policyId: "p1",
+  testUpliftR: 0.3, rule: { path: "features.volume", operator: "gte", threshold: 1.1 } });
+assert.equal(matchedPolicyResult.allowed, true);
+assert.equal(matchedPolicyResult.matched, true);
+assert.equal(matchedPolicyResult.scoreEvidence, 0.3);
 const activePolicyResult = research.evaluateLiveDecision(liveDecision, { status: "ACTIVE", policyId: "p2",
-  rule: { path: "features.volume", operator: "gte", threshold: 1.5 } });
-assert.equal(activePolicyResult.allowed, false, "validated ACTIVE research policies must be enforced without an environment opt-in");
-assert.equal(activePolicyResult.reason, "ACTIVE_RESEARCH_RULE_BLOCKED");
+  testUpliftR: 0.3, rule: { path: "features.volume", operator: "gte", threshold: 1.5 } });
+assert.equal(activePolicyResult.allowed, true,
+  "a research-rule mismatch must never veto a valid Nine-AI directional signal");
+assert.equal(activePolicyResult.matched, false);
+assert.equal(activePolicyResult.scoreEvidence, -0.3);
+assert.equal(activePolicyResult.reason, "ACTIVE_RESEARCH_RULE_MISMATCH_SOFT_EVIDENCE");
 assert.equal(research.evaluateLiveDecision(liveDecision, null).reason, "NO_ACTIVE_RESEARCH_POLICY");
 console.log("nine-ai-autonomous-research tests passed");
