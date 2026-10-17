@@ -46,6 +46,7 @@ const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, shouldN
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
 const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
+const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const { reachedProtectionTrigger } = require("./ai-trading/tpsl-safety")
 
@@ -3145,6 +3146,11 @@ function buildTradeFromNineAISignal(best, riskBudget) {
   const nineAiLearningContext = best?.setup === "NINE_AI_15M" && strategyFeatures
     ? {
         marketRegime: String(strategyFeatures.marketRegime || best.marketState || "UNKNOWN"),
+        strategyFamily: String(best?.strategyClassification?.family || "CONSENSUS_FALLBACK"),
+        strategyFit: Number(best?.strategyClassification?.fit) || 0,
+        strategyEdgeR: Number(best?.strategyEdge?.selectionValue) || 0,
+        strategyEdgeSamples: Number(best?.strategyEdge?.samples) || 0,
+        strategyEdgeSource: String(best?.strategyEdge?.edgeSource || "COLD_START"),
         volatilityRegime: String(strategyFeatures.volatilityRegime || best.volatility || "UNKNOWN"),
         structureTrend: String(strategyFeatures.structureTrend || "UNKNOWN"),
         breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
@@ -3184,6 +3190,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     qualityScore: Number.isFinite(qualityScore) ? qualityScore : 0,
     nineAiLearningFeatures,
     nineAiLearningContext,
+    nineAiStrategyFamily: String(best?.strategyClassification?.family || "CONSENSUS_FALLBACK"),
     nineAiResearchPolicy: best.nineAiResearchPolicy ?? null,
 
     // `risk` remains the monetary sizing budget expected by the execution code.
@@ -3395,7 +3402,8 @@ for (let s of signals){
         }
 
         // Rank all valid signals collected during this scan cycle.
-candidates.sort(compareNineAICandidates)
+candidates = nineAiStrategyEvolution.rankCandidates(candidates)
+console.log("🧬 NINE-AI STRATEGY SELECTION: " + candidates.slice(0, 5).map(c => `${c.symbol}:${c.strategyClassification.family}[edge=${safeFixed(c.strategyEdge.selectionValue, 3)}R,n=${c.strategyEdge.samples},source=${c.strategyEdge.edgeSource}]`).join(" | "))
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
     const cooldownUntil = MIN_NOTIONAL_RISK_COOLDOWN.get(c.symbol) || 0;
@@ -3431,7 +3439,7 @@ let filtered = candidates.filter(c => {
     return true;
 })
 // ===== SORT LẠI =====
-filtered = filtered.sort(compareNineAICandidates)
+filtered = filtered.sort(nineAiStrategyEvolution.compareCandidates)
 
 // ===== UNIQUE COIN =====
 let unique = []
@@ -5204,6 +5212,20 @@ try {
     }
 }
 
+// Initialize the regime-aware strategy selector before scanner loops. It learns
+// family/regime expectancy from confirmed closed outcomes; score is a tie-breaker.
+try {
+    const evolutionStatus = await nineAiStrategyEvolution.initialize(db);
+    console.log(`🧬 NINE-AI STRATEGY EVOLUTION READY: groups=${evolutionStatus.familyGroups} families=${evolutionStatus.families.join(",")}`);
+    setInterval(() => {
+        nineAiStrategyEvolution.refreshPerformance().then(status => {
+            if (!status.cached) console.log(`🧬 NINE-AI STRATEGY EDGE REFRESH: outcomes=${status.outcomes} groups=${status.families}`);
+        }).catch(error => console.error("⚠️ NINE-AI STRATEGY EDGE REFRESH FAILED:", error?.message || error));
+    }, 30 * 60 * 1000);
+} catch (evolutionError) {
+    console.error("⚠️ NINE-AI STRATEGY EVOLUTION INIT FAILED:", evolutionError?.message || evolutionError);
+}
+
 // Tự xóa bản ghi sau 10 ngày tính từ createdAt
 await signalClaims.createIndex(
     { createdAt: 1 },
@@ -5225,8 +5247,8 @@ for (const model of nineAiIndependentModels.status()) {
     console.log(`🧠 MODEL ${model.role}: samples=${model.samples} trained=${model.trained} accuracy=${model.evaluation.accuracy ?? "N/A"} brier=${model.evaluation.brierScore ?? "N/A"}`);
 }
 
-// Autonomous strategy research mines persisted closed-trade memory. It only
-// creates auditable shadow candidates; it cannot mutate live strategy/execution.
+// Autonomous strategy research mines closed-trade memory. Single-feature rule
+// hypotheses stay shadow-only by default; live selection is regime/family-aware.
 try {
     const researchStatus = await nineAiAutonomousResearch.initialize(db);
     console.log(`🧪 NINE-AI AUTONOMOUS RESEARCH READY: mode=${researchStatus.mode} minSamples=${researchStatus.minSamples}`);

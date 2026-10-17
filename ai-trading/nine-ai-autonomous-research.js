@@ -189,7 +189,7 @@ async function runResearchCycle({ now = new Date() } = {}) {
     }
     let activatedPolicy = null;
     const best = research.candidates[0];
-    if (best && best.qualified && policyCollection) {
+    if (best && best.qualified && policyCollection && process.env.NINE_AI_ENABLE_LEGACY_RULE_POLICY === "true") {
       const current = await policyCollection.findOne({ status: "ACTIVE" });
       if (!current || Number(best.test.upliftR) > Number(current.testUpliftR ?? -Infinity)) {
         activatedPolicy = {
@@ -234,6 +234,9 @@ function decisionToResearchRow(decision) {
   };
 }
 function evaluateLiveDecision(decision, policy) {
+  if (process.env.NINE_AI_ENABLE_LEGACY_RULE_POLICY !== "true") {
+    return { allowed: true, reason: policy?.status === "ACTIVE" ? "LEGACY_RULE_POLICY_SHADOW_ONLY" : "NO_ACTIVE_RESEARCH_POLICY", policyId: policy?.policyId || null };
+  }
   if (!policy || policy.status !== "ACTIVE" || !policy.rule) return { allowed: true, reason: "NO_ACTIVE_RESEARCH_POLICY" };
   const allowed = matchesRule(decisionToResearchRow(decision), policy.rule);
   return { allowed, reason: allowed ? "ACTIVE_RESEARCH_RULE_PASSED" : "ACTIVE_RESEARCH_RULE_BLOCKED",
