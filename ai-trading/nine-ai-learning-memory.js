@@ -6,7 +6,7 @@
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 let stateCollection = null;
 let outcomesCollection = null;
-let stateCache = fresh();
+let stateCache = null;
 
 const BASE_DECISION_WEIGHTS = Object.freeze({ role: 0.80, setup: 0.10, entry: 0.10 });
 const BASE_ROLE_WEIGHTS = Object.freeze({
@@ -44,6 +44,8 @@ function fresh() {
     roleWeights: { ...BASE_ROLE_WEIGHTS }, recent: [], updatedAt: null
   };
 }
+
+stateCache = fresh();
 
 function validState(state) {
   const v1 = state?.version === 1 && Array.isArray(state.weights) && state.weights.length === 6;
