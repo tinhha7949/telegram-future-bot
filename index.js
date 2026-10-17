@@ -3226,19 +3226,19 @@ async function scan(symbol){
         let researchPolicyAtEntry = null;
         try {
             const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
-            const policyCheck = nineAiAutonomousResearch.evaluateLiveDecision(decision, activePolicy);
+            const appliedPolicy = nineAiAutonomousResearch.applyResearchPolicyEvidence(decision, activePolicy);
+            const policyCheck = appliedPolicy.policyCheck;
             if (activePolicy) {
-                researchPolicyAtEntry = {
+                researchPolicyAtEntry = decision.rankMetrics?.researchPolicyEvidence || {
                     policyId: activePolicy.policyId,
-                    description: activePolicy.description,
                     matched: policyCheck.matched,
                     scoreEvidence: policyCheck.scoreEvidence,
-                    testUpliftR: Number(activePolicy.testUpliftR) || 0
+                    testUpliftR: Number(activePolicy.testUpliftR) || 0,
+                    adjustmentPoints: appliedPolicy.adjustmentPoints || 0
                 };
-                decision.rankMetrics = decision.rankMetrics || {};
-                decision.rankMetrics.researchPolicyEvidence = researchPolicyAtEntry;
-                console.log("🧠 NINE-AI RESEARCH EVIDENCE " + symbol +
+                console.log("🧠 NINE-AI RESEARCH POLICY " + symbol +
                     " | matched=" + String(policyCheck.matched) +
+                    " | rankAdjustment=" + String(researchPolicyAtEntry.adjustmentPoints) +
                     " | upliftR=" + String(researchPolicyAtEntry.testUpliftR) +
                     " | policy=" + activePolicy.policyId +
                     " | entry remains eligible");
