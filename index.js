@@ -3030,12 +3030,16 @@ async function scan(symbol){
             decision.authorizedForExecution !== true ||
             !["LONG", "SHORT"].includes(decision.side)
         ) return null;
+        let researchPolicyAtEntry = null;
         try {
             const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
             const policyCheck = nineAiAutonomousResearch.evaluateLiveDecision(decision, activePolicy);
             if (!policyCheck.allowed) {
                 console.log("🧠 NINE-AI AUTO-LEARNED RULE BLOCKED " + symbol + " | " + policyCheck.description + " | policy=" + policyCheck.policyId);
                 return null;
+            }
+            if (activePolicy && policyCheck.allowed) {
+                researchPolicyAtEntry = { policyId: activePolicy.policyId, description: activePolicy.description };
             }
         } catch (policyError) {
             console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
@@ -3045,6 +3049,7 @@ async function scan(symbol){
         );
         return {
             ...decision,
+            nineAiResearchPolicy: researchPolicyAtEntry,
             symbol,
             setup: "NINE_AI_15M",
             triggerType: "NINE_AI_CONSENSUS",
@@ -3179,6 +3184,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     qualityScore: Number.isFinite(qualityScore) ? qualityScore : 0,
     nineAiLearningFeatures,
     nineAiLearningContext,
+    nineAiResearchPolicy: best.nineAiResearchPolicy ?? null,
 
     // `risk` remains the monetary sizing budget expected by the execution code.
     risk: budget,
@@ -4458,6 +4464,7 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
                 tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
                 features: t.nineAiLearningFeatures,
                 context: t.nineAiLearningContext || null,
+                researchPolicy: t.nineAiResearchPolicy || null,
                 side: t.side,
                 realizedR: closed.pnl / riskBudget,
                 closed: true
