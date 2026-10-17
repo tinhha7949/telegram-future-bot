@@ -36,4 +36,12 @@ assert.ok(result.evaluatedRules > 50);
 assert.ok(result.candidates.every(candidate => candidate.activation === "SHADOW_ONLY"));
 assert.ok(result.candidates.every(candidate => candidate.test.candidate.n >= research.MIN_TEST_MATCHES));
 assert.ok(result.candidates.every(candidate => candidate.test.upliftR >= research.MIN_TEST_UPLIFT_R));
+const liveDecision = { side: "LONG", rankMetrics: { roleScore: 80, entryQuality: 80,
+  features: { volumeRatio: 1.4, rsi14: 60, extensionAtr: 0.2, momentum4: 0.8,
+    atrPercent: 1, falseBreakoutRisk: 0, longEntryQuality: 80, shortEntryQuality: 35 } } };
+assert.equal(research.decisionToResearchRow(liveDecision).features.volume, 1.4);
+assert.equal(research.evaluateLiveDecision(liveDecision, { status: "ACTIVE", policyId: "p1",
+  rule: { path: "features.volume", operator: "gte", threshold: 1.1 } }).allowed, true);
+assert.equal(research.evaluateLiveDecision(liveDecision, { status: "ACTIVE", policyId: "p2",
+  rule: { path: "features.volume", operator: "gte", threshold: 1.5 } }).allowed, false);
 console.log("nine-ai-autonomous-research tests passed");
