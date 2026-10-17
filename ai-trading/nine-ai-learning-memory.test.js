@@ -45,7 +45,7 @@ function makeCollection() {
   await learner.initialize(db);
   assert.equal(learner.predict(features).trained, false);
   assert.equal(learner.read().version, 2);
-  assert.equal(learner.vector(features).length, 16);
+  assert.equal(learner.vector(features).length, 18);
 
   for (let i = 0; i < 25; i++) {
     const result = await learner.learnClosedTrade({
@@ -83,7 +83,7 @@ function makeCollection() {
   });
   assert.equal(learner.read().version, 2);
   assert.equal(learner.read().samples, 3);
-  assert.equal(learner.read().weights.length, 16);
+  assert.equal(learner.read().weights.length, 18);
   assert.deepEqual(learner.read().weights.slice(0, 6), [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
   assert.ok(learner.read().weights.slice(6).every(weight => weight === 0));
   console.log("PASS: contextual learner stores outcomes, upgrades old state, and deduplicates closed trades");
