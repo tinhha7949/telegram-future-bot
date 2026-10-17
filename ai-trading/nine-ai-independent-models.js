@@ -300,6 +300,6 @@ function status() {
 }
 
 module.exports = {
-  MODEL_CONFIGS, MIN_TRAINING_SAMPLES, fresh, validState, upgradeState, vector,
+  MODEL_CONFIGS, fresh, validState, upgradeState, vector,
   predictAll, learnClosedTrade, initialize, status
 };
