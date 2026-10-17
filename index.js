@@ -3221,12 +3221,21 @@ async function scan(symbol){
         try {
             const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
             const policyCheck = nineAiAutonomousResearch.evaluateLiveDecision(decision, activePolicy);
-            if (!policyCheck.allowed) {
-                console.log("🧠 NINE-AI AUTO-LEARNED RULE BLOCKED " + symbol + " | " + policyCheck.description + " | policy=" + policyCheck.policyId);
-                return null;
-            }
-            if (activePolicy && policyCheck.allowed && policyCheck.reason === "ACTIVE_RESEARCH_RULE_PASSED") {
-                researchPolicyAtEntry = { policyId: activePolicy.policyId, description: activePolicy.description };
+            if (activePolicy) {
+                researchPolicyAtEntry = {
+                    policyId: activePolicy.policyId,
+                    description: activePolicy.description,
+                    matched: policyCheck.matched,
+                    scoreEvidence: policyCheck.scoreEvidence,
+                    testUpliftR: Number(activePolicy.testUpliftR) || 0
+                };
+                decision.rankMetrics = decision.rankMetrics || {};
+                decision.rankMetrics.researchPolicyEvidence = researchPolicyAtEntry;
+                console.log("🧠 NINE-AI RESEARCH EVIDENCE " + symbol +
+                    " | matched=" + String(policyCheck.matched) +
+                    " | upliftR=" + String(researchPolicyAtEntry.testUpliftR) +
+                    " | policy=" + activePolicy.policyId +
+                    " | entry remains eligible");
             }
         } catch (policyError) {
             console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
