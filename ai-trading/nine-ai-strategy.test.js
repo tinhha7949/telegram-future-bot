@@ -35,6 +35,8 @@ assert.ok(Number.isFinite(contextFeatures.breakoutStrength));
 assert.ok(contextFeatures.structurePosition >= -1 && contextFeatures.structurePosition <= 1);
 assert.ok(Number.isFinite(contextFeatures.roomToResistanceAtr));
 assert.ok(Number.isFinite(contextFeatures.roomToSupportAtr));
+assert.ok(contextFeatures.longEntryQuality >= 0 && contextFeatures.longEntryQuality <= 100);
+assert.ok(contextFeatures.shortEntryQuality >= 0 && contextFeatures.shortEntryQuality <= 100);
 const result = analyzeNineAI(rows, "TESTUSDT", now);
 assert.equal(result.symbol, "TESTUSDT");
 assert.equal(result.roles.length, 9);
