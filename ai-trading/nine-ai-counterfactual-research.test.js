@@ -43,4 +43,23 @@ assert.ok(earlyVariants.some(v => v.variant === "EARLIER_2_BAR" && v.signalIndex
 const flat = Array.from({length: 50}, (_, i) => [i*900000,100,100.2,99.8,100,10,(i+1)*900000-1]);
 const flatVariants = research.buildVariants({tradeId:"flat-test",side:"LONG",entry:100,sl:98,tp:104,entryTime:35*900000,realizedR:0},flat);
 assert.ok(!flatVariants.some(v => v.variant === "EARLIER_1_BAR" || v.variant === "EARLIER_2_BAR"));
-\nconsole.log("nine-ai-counterfactual-research.test.js: OK");
+\n
+const tags = research.featureTags({extensionAtr:2.1, rsi14:72, momentum4:0.03, falseBreakoutRisk:0.7, volumeRatio:0.6});
+assert.ok(tags.includes("EXTENDED_ENTRY"));
+assert.ok(tags.includes("MOMENTUM_EXHAUSTION"));
+assert.ok(tags.includes("RSI_OVERBOUGHT"));
+assert.ok(tags.includes("FALSE_BREAKOUT_RISK"));
+assert.ok(tags.includes("LOW_VOLUME"));
+const contextualRows = [];
+for (let i = 0; i < 12; i++) {
+  const closedAt = Date.UTC(2026, 0, 1) + i * 86400000;
+  const tradeId = "context-" + i;
+  contextualRows.push({tradeId, variant:"BASELINE", side:"LONG", regime:"TREND_UP", netR:-1, closedAt, hypothetical:false});
+  contextualRows.push({tradeId, variant:"OPPOSITE_SIDE", side:"SHORT", regime:"TREND_UP", netR:0.5, closedAt, hypothetical:true, features:["EXTENDED_ENTRY","MOMENTUM_EXHAUSTION"]});
+}
+const contextualAdvice = research.pairedVariantEvidence(contextualRows,
+  {extensionAtr:2.0, rsi14:70, momentum4:0.02}, "TREND_UP");
+assert.ok(contextualAdvice.some(p => p.variant === "OPPOSITE_SIDE" && p.side === "SHORT"));
+assert.ok(contextualAdvice[0].testUpliftR > contextualAdvice[0].standardError);
+
+console.log("nine-ai-counterfactual-research.test.js: OK");
