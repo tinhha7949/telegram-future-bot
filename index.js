@@ -3133,6 +3133,8 @@ function buildTradeFromNineAISignal(best, riskBudget) {
         structureTrend: String(strategyFeatures.structureTrend || "UNKNOWN"),
         breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
         falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
+        roleScore: Number(best.rankMetrics?.roleScore) || 0,
+        setupQuality: Number(best.rankMetrics?.setupQuality) || 0,
         entryQuality: Number(best.rankMetrics?.entryQuality) || 0,
         breakoutQuality: Number(best.rankMetrics?.breakoutQuality) || 0,
         roomQuality: Number(best.rankMetrics?.roomQuality) || 0,

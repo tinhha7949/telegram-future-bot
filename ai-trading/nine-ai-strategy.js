@@ -255,12 +255,12 @@ function isContrarianConflict(side, contrarian) {
     contrarian.side !== side && Number(contrarian.strength) >= 60);
 }
 
-function calculateWeightedRoleScore(roleResults, side) {
-  if (!Array.isArray(roleResults) || !["LONG", "SHORT"].includes(side)) return 0;
+function calculateWeightedRoleScore(roleResults, side, adaptiveRoleWeights = ROLE_WEIGHTS) {
+  if (!Array.isArray(roleResults) || !["LONG", "SHORT"].includes(side)) return { score: 0, roles: [] };
   let weightedTotal = 0;
   let totalWeight = 0;
   const scoredRoles = roleResults.map(role => {
-    const weight = ROLE_WEIGHTS[role.name] || 0;
+    const weight = Number(adaptiveRoleWeights?.[role.name] ?? ROLE_WEIGHTS[role.name] ?? 0);
     let score = 50;
     if (role.name === "Risk Manager AI") {
       // Risk quality is separate from direction; only approved candidates reach ranking.
@@ -544,22 +544,20 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     breakoutQuality * 0.10 +
     roomQuality * 0.10
   );
-  const weighted = calculateWeightedRoleScore(roleResults, side);
+  const policy = learningMemory.decisionPolicy();
+  const adaptiveDecisionWeights = policy.decisionWeights;
+  const weighted = calculateWeightedRoleScore(roleResults, side, policy.roleWeights);
   const roleScore = weighted.score;
-  // The role ensemble remains dominant, while market setup and side-specific
-  // entry economics both affect final ranking. Fee-adjusted reward quality is
-  // used only when the operator has explicitly configured round-trip costs.
   const rankScore = Math.round(clamp(
-    roleScore * 0.80 + setupQuality * 0.10 + entryQuality * 0.10, 0, 100
+    roleScore * adaptiveDecisionWeights.role + setupQuality * adaptiveDecisionWeights.setup +
+    entryQuality * adaptiveDecisionWeights.entry, 0, 100
   ) * 100) / 100;
   const rankedRoles = weighted.roles;
   const rankMetrics = {
-    score: rankScore,
-    roleScore,
-    roleWeight: 0.80,
-    setupWeight: 0.10,
-    entryQualityWeight: 0.10,
-    roleWeights: ROLE_WEIGHTS,
+    score: rankScore, roleScore,
+    roleWeight: adaptiveDecisionWeights.role, setupWeight: adaptiveDecisionWeights.setup,
+    entryQualityWeight: adaptiveDecisionWeights.entry, adaptivePolicySamples: policy.samples,
+    roleWeights: policy.roleWeights,
     desiredRR: targetRR,
     maxRiskReward: 1.8,
     riskPressure,
