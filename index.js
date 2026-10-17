@@ -2690,14 +2690,46 @@ async function manageDynamicTPSL(trade) {
     // TP can move in either direction. SL safety remains a separate invariant.
     const featureState = liveDecision?.rankMetrics?.features || {};
     const currentInitialRisk = Number(trade.initialRisk) || Math.abs(entry - oldSL);
+    const tpslContext = {
+      marketRegime: featureState.marketRegime || "UNKNOWN",
+      trend: featureState.trend || "UNKNOWN",
+      momentum12: Number(featureState.momentum12 || 0),
+      atrPercent: Number(featureState.atrPercent || 0),
+      extensionAtr: Number(featureState.extensionAtr || 0),
+      candleBodyRatio: Number(featureState.candleBodyRatio || 0),
+      upperWickRatio: Number(featureState.upperWickRatio || 0),
+      lowerWickRatio: Number(featureState.lowerWickRatio || 0),
+      structurePosition: Number(featureState.structurePosition || 0),
+      structureTrend: featureState.structureTrend || "UNKNOWN",
+      reversalStrength: Number(featureState.reversalStrength || 0),
+      decisionSide: aiSide,
+      roleScore: aiScore,
+      favorableR: favorableR,
+      targetDistanceR: (side === "LONG" ? oldTP - current : current - oldTP) / Math.max(currentInitialRisk, Number.EPSILON)
+    };
     const tpslAction = nineAiTpslLearning.chooseManagementAction({
       side, entry, current, oldTP, initialRisk: currentInitialRisk,
       targetRisk: Math.abs(entry - oldSL), tickSize, maxRR: MAX_NINE_AI_RR,
       score: aiScore, decisionSide: aiSide,
       trendAligned: featureState.trend === (side === "LONG" ? "UP" : "DOWN"),
       momentumAligned: Number(featureState.momentum12 || 0) * (side === "LONG" ? 1 : -1) > 0,
-      regime: featureState.marketRegime || "UNKNOWN"
+      regime: featureState.marketRegime || "UNKNOWN",
+      favorableR, targetDistanceR: tpslContext.targetDistanceR, features: tpslContext
     }, nineAiTpslLearning.getPolicyStats());
+
+    trade.nineAiTpslLastAction = tpslAction.action || "HOLD";
+    trade.nineAiTpslRegime = featureState.marketRegime || "UNKNOWN";
+    trade.nineAiTpslLearningContext = { ...tpslContext, action: trade.nineAiTpslLastAction, reason: tpslAction.reason };
+    await trades.updateOne(
+      { symbol, result: "PENDING" },
+      { $set: {
+        nineAiTpslLastAction: trade.nineAiTpslLastAction,
+        nineAiTpslRegime: trade.nineAiTpslRegime,
+        nineAiTpslLearningContext: trade.nineAiTpslLearningContext,
+        nineAiTpslLastReason: tpslAction.reason,
+        nineAiTpslDecisionAt: Date.now()
+      } }
+    );
 
     if (tpslAction.action === "CLOSE_PROFIT" || tpslAction.action === "CLOSE_EARLY") {
       trade.nineAiTpslLastAction = tpslAction.action;
@@ -4709,9 +4741,10 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
             if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
                 const tpslLearning = await nineAiTpslLearning.recordClosedTrade({
                     tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
-                    action: t.nineAiTpslLastAction,
+                    action: t.nineAiTpslLastAction || "HOLD",
                     regime: t.nineAiTpslRegime || t.marketState || "UNKNOWN",
                     realizedR: closed.pnl / riskBudget,
+                    context: t.nineAiTpslLearningContext || null,
                     closedAt: closed.closedAt
                 });
                 if (tpslLearning.updated) {
