@@ -16,6 +16,7 @@ function makeCollection() {
       const old = docs.get(String(query._id));
       if (!old && !options.upsert) return { matchedCount: 0 };
       const next = { ...(old || {}), ...(update.$set || {}) };
+      for (const key of Object.keys(update.$unset || {})) delete next[key];
       if (!old) Object.assign(next, update.$setOnInsert || {});
       docs.set(String(query._id), next);
       return { matchedCount: old ? 1 : 0, upsertedCount: old ? 0 : 1 };
@@ -28,9 +29,10 @@ function makeCollection() {
       docs.set(String(saved._id), saved);
       return { insertedId: saved._id };
     },
-    find(query) {
-      const rows = [...docs.values()].filter(x => x.applied !== true);
-      return { sort() { return this; }, async toArray() { return rows; } };
+    find(query = {}) {
+      let rows = [...docs.values()].filter(doc => Object.entries(query).every(([key, value]) =>
+        value && typeof value === "object" && "$ne" in value ? doc[key] !== value.$ne : doc[key] === value));
+      return { sort() { return this; }, limit(n) { rows = rows.slice(0, n); return this; }, async toArray() { return rows; } };
     },
     docs
   };
@@ -44,7 +46,8 @@ function makeCollection() {
 
   await learner.initialize(db);
   assert.equal(learner.predict(features).trained, false);
-  assert.equal(learner.read().version, 3);
+  assert.equal(learner.read().version, 4);
+  assert.equal(Object.hasOwn(learner.read(), "recent"), false, "outcome history must not be retained in RAM");
   assert.equal(learner.vector(features).length, 18);
   const initialWeights = learner.decisionPolicy().decisionWeights;
   assert.ok(Math.abs(initialWeights.role - 0.8) < 1e-9);
@@ -96,7 +99,7 @@ function makeCollection() {
   await learner.initialize({
     collection(name) { return name === "nine_ai_learning_state" ? legacyState : legacyOutcomes; }
   });
-  assert.equal(learner.read().version, 3);
+  assert.equal(learner.read().version, 4);
   assert.equal(learner.read().samples, 3);
   assert.ok(learner.read().decisionWeights && learner.read().roleWeights);
   assert.equal(learner.read().weights.length, 18);
