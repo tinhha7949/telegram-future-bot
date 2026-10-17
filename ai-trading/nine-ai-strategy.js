@@ -9,6 +9,7 @@
 
 const learningMemory = require("./nine-ai-learning-memory");
 const independentModels = require("./nine-ai-independent-models");
+const contextualLearning = require("./nine-ai-contextual-learning");
 
 const ROLE_NAMES = [
   "Technical Analyst AI",
@@ -337,6 +338,17 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     longEntryQuality: f.longEntryQuality,
     shortEntryQuality: f.shortEntryQuality
   };
+  const contextualEvidence = contextualLearning.assess({
+    ...learnedFeatures, marketRegime: f.marketRegime, rsi14: f.rsi,
+    extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
+    breakoutStrength: f.breakoutStrength, falseBreakoutRisk: f.falseBreakoutRisk
+  });
+  const contextualWinner = contextualEvidence.LONG.ready && contextualEvidence.SHORT.ready &&
+    contextualEvidence.LONG.edge - contextualEvidence.SHORT.edge >= 8 && contextualEvidence.LONG.meanR > 0
+      ? "LONG"
+      : contextualEvidence.LONG.ready && contextualEvidence.SHORT.ready &&
+        contextualEvidence.SHORT.edge - contextualEvidence.LONG.edge >= 8 && contextualEvidence.SHORT.meanR > 0
+        ? "SHORT" : null;
   const learned = learningMemory.predict(learnedFeatures);
   const independent = new Map(independentModels.predictAll(learnedFeatures)
     .map(model => [model.modelId, model]));
@@ -385,16 +397,26 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   // 4. Bull AI.
   const legacyBullSide = f.rsi >= 52 && f.mom4 > 0 && f.last.c > f.e21 ? "LONG" : null;
   const bullModel = independent.get("bull");
-  const bullSide = resolveModelSide(bullModel, legacyBullSide);
-  vote(ROLE_NAMES[3], bullSide, modelConfidence("bull") ?? (bullSide ? 60 : 25),
-    bullModel?.trained ? `independentBullModelP(long)=${bullModel.pLong}` : `warmupFallback=bull-rules; RSI=${f.rsi.toFixed(1)}`);
+  const bullLearnedSide = contextualEvidence.LONG.ready && contextualEvidence.LONG.meanR > 0.05
+    ? "LONG" : contextualWinner === "SHORT" ? "SHORT" : null;
+  const bullSide = bullLearnedSide || resolveModelSide(bullModel, legacyBullSide);
+  const bullBaseConfidence = modelConfidence("bull") ?? (bullSide ? 60 : 25);
+  const bullEvidence = contextualEvidence.LONG.ready ? clamp(contextualEvidence.LONG.edge, -12, 12) : 0;
+  vote(ROLE_NAMES[3], bullSide, clamp(bullBaseConfidence + bullEvidence, 10, 95),
+    `contextEdgeLong=${contextualEvidence.LONG.edge}; contextSamples=${contextualEvidence.LONG.samples}; ` +
+    (bullModel?.trained ? `independentBullModelP(long)=${bullModel.pLong}` : `warmupFallback=bull-rules; RSI=${f.rsi.toFixed(1)}`));
 
   // 5. Bear AI.
   const legacyBearSide = f.rsi <= 48 && f.mom4 < 0 && f.last.c < f.e21 ? "SHORT" : null;
   const bearModel = independent.get("bear");
-  const bearSide = resolveModelSide(bearModel, legacyBearSide);
-  vote(ROLE_NAMES[4], bearSide, modelConfidence("bear") ?? (bearSide ? 60 : 25),
-    bearModel?.trained ? `independentBearModelP(long)=${bearModel.pLong}` : `warmupFallback=bear-rules; RSI=${f.rsi.toFixed(1)}`);
+  const bearLearnedSide = contextualEvidence.SHORT.ready && contextualEvidence.SHORT.meanR > 0.05
+    ? "SHORT" : contextualWinner === "LONG" ? "LONG" : null;
+  const bearSide = bearLearnedSide || resolveModelSide(bearModel, legacyBearSide);
+  const bearBaseConfidence = modelConfidence("bear") ?? (bearSide ? 60 : 25);
+  const bearEvidence = contextualEvidence.SHORT.ready ? clamp(contextualEvidence.SHORT.edge, -12, 12) : 0;
+  vote(ROLE_NAMES[4], bearSide, clamp(bearBaseConfidence + bearEvidence, 10, 95),
+    `contextEdgeShort=${contextualEvidence.SHORT.edge}; contextSamples=${contextualEvidence.SHORT.samples}; ` +
+    (bearModel?.trained ? `independentBearModelP(long)=${bearModel.pLong}` : `warmupFallback=bear-rules; RSI=${f.rsi.toFixed(1)}`));
 
   // 6. Contrarian AI: detect false breakouts/breakdowns and rejection wicks.
   const contrarian = detectContrarianSignal(candles, f);
@@ -577,6 +599,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     roleWeight: adaptiveDecisionWeights.role, setupWeight: adaptiveDecisionWeights.setup,
     entryQualityWeight: adaptiveDecisionWeights.entry, adaptivePolicySamples: policy.samples,
     roleWeights: policy.roleWeights,
+    contextualLearning: { long: contextualEvidence.LONG, short: contextualEvidence.SHORT, tags: contextualEvidence.LONG.tags, winner: contextualWinner },
     desiredRR: targetRR,
     maxRiskReward: 1.8,
     riskPressure,
