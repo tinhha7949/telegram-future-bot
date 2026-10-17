@@ -235,6 +235,40 @@ async function getActivePolicy() {
   if (!policyCollection) throw new Error("NINE_AI_RESEARCH_NOT_INITIALIZED");
   return policyCollection.findOne({ status: "ACTIVE" }, { sort: { activatedAt: -1 } });
 }
+function applyResearchPolicyEvidence(decision, policy) {
+  if (!decision || typeof decision !== "object") {
+    return { decision, policyCheck: { allowed: true, matched: null, scoreEvidence: 0, reason: "INVALID_DECISION" } };
+  }
+  const policyCheck = evaluateLiveDecision(decision, policy);
+  if (!policy || policy.status !== "ACTIVE" || !policy.rule) {
+    return { decision, policyCheck, adjustmentPoints: 0 };
+  }
+  // A validated research rule influences ranking, never authorization. Keep
+  // the adjustment bounded so a narrow hypothesis cannot overpower the nine-role
+  // consensus or bypass execution/risk/TPSL safety checks.
+  const adjustmentPoints = Math.round(Math.max(-10, Math.min(10,
+    Number(policyCheck.scoreEvidence || 0) * 10)) * 100) / 100;
+  const baseRankScore = Number(decision.rankScore ?? decision.qualityScore ?? decision.confidence ?? 0);
+  const adjustedRankScore = Math.round(Math.max(0, Math.min(100,
+    (Number.isFinite(baseRankScore) ? baseRankScore : 0) + adjustmentPoints)) * 100) / 100;
+  decision.rankMetrics = decision.rankMetrics || {};
+  decision.rankMetrics.researchPolicyEvidence = {
+    policyId: policy.policyId,
+    matched: policyCheck.matched,
+    scoreEvidence: policyCheck.scoreEvidence,
+    testUpliftR: Number(policy.testUpliftR) || 0,
+    baseRankScore,
+    adjustmentPoints,
+    adjustedRankScore,
+    reason: policyCheck.reason
+  };
+  decision.rankMetrics.score = adjustedRankScore;
+  decision.rankScore = adjustedRankScore;
+  decision.qualityScore = adjustedRankScore;
+  decision.score = adjustedRankScore;
+  return { decision, policyCheck, adjustmentPoints };
+}
+
 function decisionToResearchRow(decision) {
   const f = decision?.rankMetrics?.features || {};
   return {
@@ -272,5 +306,5 @@ function evaluateLiveDecision(decision, policy) {
 module.exports = {
   FEATURE_RULES, MIN_RESEARCH_SAMPLES, MIN_TRAIN_MATCHES, MIN_TEST_MATCHES, MIN_TEST_COVERAGE,
   getPath, matchesRule, stats, quantiles, ruleCandidates, evaluateRule,
-  evaluateCandidate, buildResearch, initialize, runResearchCycle, getActivePolicy, decisionToResearchRow, evaluateLiveDecision
+  evaluateCandidate, buildResearch, initialize, runResearchCycle, getActivePolicy, decisionToResearchRow, evaluateLiveDecision, applyResearchPolicyEvidence
 };
