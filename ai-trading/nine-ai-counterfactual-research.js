@@ -119,6 +119,7 @@ function stats(list) {
 
 function evaluatePolicy(rowsToCheck = rows) {
   const grouped = new Map();
+  const allBaselines = rowsToCheck.filter(r => r.variant === "BASELINE");
   for (const r of rowsToCheck) {
     const key = groupKey(r);
     if (!grouped.has(key)) grouped.set(key, []);
@@ -126,7 +127,6 @@ function evaluatePolicy(rowsToCheck = rows) {
   }
   const candidates=[];
   for (const [key, group] of grouped) {
-    const actual=group.filter(r=>r.variant==="BASELINE");
     const alternatives=group.filter(r=>r.variant!=="BASELINE");
     // Each trade produces several alternatives; aggregate each variant separately
     // so one closed trade cannot inflate the sample count.
@@ -139,7 +139,7 @@ function evaluatePolicy(rowsToCheck = rows) {
       const split=Math.floor(unique.length*0.7);
       const train=unique.slice(0,split), test=unique.slice(split);
       if(train.length<MIN_TRAIN||test.length<MIN_TEST) continue;
-      const baselineByTrade=new Map(actual.map(r=>[r.tradeId,r]));
+      const baselineByTrade=new Map(allBaselines.map(r=>[r.tradeId,r]));
       const pairedTrain=train.filter(r=>baselineByTrade.has(r.tradeId)).map(r=>({candidate:r.netR,base:baselineByTrade.get(r.tradeId).netR}));
       const pairedTest=test.filter(r=>baselineByTrade.has(r.tradeId)).map(r=>({candidate:r.netR,base:baselineByTrade.get(r.tradeId).netR}));
       if(pairedTrain.length<MIN_TRAIN||pairedTest.length<MIN_TEST)continue;
