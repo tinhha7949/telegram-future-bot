@@ -27,4 +27,20 @@ for(let i=0;i<50;i++){
 }
 const candidates=research.evaluatePolicy(rows);
 assert.ok(candidates.some(p=>p.variant==="DELAY_1_BAR"&&p.testSamples>=15&&p.testUpliftR>=0.1));
-console.log("nine-ai-counterfactual-research.test.js: OK");
+
+// Earlier entries require a causal setup at the earlier close and enter at the next open.
+const rising = Array.from({length: 50}, (_, i) => {
+  const open = 100 + i;
+  return [i * 900000, open, open + 0.4, open - 0.4, open + 0.2, 10 + i / 10, (i + 1) * 900000 - 1];
+});
+const earlyGate = research.validateEarlierSetup(research.normalizeCandles(rising), 33, "LONG");
+assert.equal(earlyGate.valid, true);
+assert.equal(research.validateEarlierSetup(research.normalizeCandles(rising), 33, "SHORT").valid, false);
+const earlyVariants = research.buildVariants({tradeId:"early-test",side:"LONG",entry:135.2,sl:133.2,tp:139.2,entryTime:35*900000,realizedR:0.5}, rising);
+assert.ok(earlyVariants.some(v => v.variant === "EARLIER_1_BAR" && v.signalGate === "CAUSAL_EMA_MOMENTUM_CONFIRMED"));
+assert.ok(earlyVariants.some(v => v.variant === "EARLIER_2_BAR" && v.signalIndex < 34));
+// Flat data must not produce an earlier entry: no independent momentum setup.
+const flat = Array.from({length: 50}, (_, i) => [i*900000,100,100.2,99.8,100,10,(i+1)*900000-1]);
+const flatVariants = research.buildVariants({tradeId:"flat-test",side:"LONG",entry:100,sl:98,tp:104,entryTime:35*900000,realizedR:0},flat);
+assert.ok(!flatVariants.some(v => v.variant === "EARLIER_1_BAR" || v.variant === "EARLIER_2_BAR"));
+\nconsole.log("nine-ai-counterfactual-research.test.js: OK");

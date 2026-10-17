@@ -63,6 +63,30 @@ function simulate({ candles: raw, entryIndex, side, entry, sl, tp, risk, delay =
     netR:signed/risk-feeR, barsHeld:candles.length-start };
 }
 
+// Evaluate an earlier signal using only candles that had closed by signalIndex.
+// This is an explicit, causal proxy (EMA trend + recent directional momentum),
+// not a claim that the original live signal engine ran at that historical time.
+function validateEarlierSetup(candles, signalIndex, side) {
+  if (!Number.isInteger(signalIndex) || signalIndex < 24 || signalIndex >= candles.length ||
+      !["LONG", "SHORT"].includes(side)) return { valid: false, reason: "INSUFFICIENT_CAUSAL_HISTORY" };
+  const history = candles.slice(0, signalIndex + 1);
+  const closes = history.map(c => c.close);
+  const ema = (values, period) => {
+    if (values.length < period) return NaN;
+    const alpha = 2 / (period + 1);
+    let value = values.slice(0, period).reduce((sum, v) => sum + v, 0) / period;
+    for (let i = period; i < values.length; i++) value = values[i] * alpha + value * (1 - alpha);
+    return value;
+  };
+  const e9 = ema(closes, 9), e21 = ema(closes, 21);
+  const last = closes.at(-1), previous = closes.at(-2), earlier = closes.at(-4);
+  const valid = side === "LONG"
+    ? last > e9 && e9 > e21 && last > previous && previous >= earlier
+    : last < e9 && e9 < e21 && last < previous && previous <= earlier;
+  return { valid, reason: valid ? "CAUSAL_EMA_MOMENTUM_CONFIRMED" : "EARLIER_SETUP_NOT_VALID", signalIndex,
+    signalTime: candles[signalIndex].closeTime };
+}
+
 function buildVariants(trade, rawCandles) {
   const candles = normalizeCandles(rawCandles);
   if (candles.length < 4) return [];
@@ -98,6 +122,25 @@ function buildVariants(trade, rawCandles) {
     const stop = trade.side === "LONG" ? e-risk : e+risk;
     const target = trade.side === "LONG" ? e+Math.abs(tp-entry) : e-Math.abs(tp-entry);
     add("DELAY_"+delay+"_BAR", trade.side, idx, e, stop, target, 0);
+  }
+  // Earlier-entry counterfactuals are admitted only when a directional setup
+  // was independently valid at the earlier candle close. Entry is the NEXT
+  // candle open, never the earlier candle's close/high/low, avoiding leakage.
+  for (const barsEarlier of [1,2]) {
+    const signalIndex = entryIndex - barsEarlier - 1;
+    const entryIdx = signalIndex + 1;
+    if (signalIndex < 24 || entryIdx >= candles.length - 1) continue;
+    const gate = validateEarlierSetup(candles, signalIndex, trade.side);
+    if (!gate.valid) continue;
+    const e = candles[entryIdx].open;
+    const stop = trade.side === "LONG" ? e-risk : e+risk;
+    const target = trade.side === "LONG" ? e+Math.abs(tp-entry) : e-Math.abs(tp-entry);
+    const before = result.length;
+    add("EARLIER_"+barsEarlier+"_BAR", trade.side, entryIdx, e, stop, target, 0);
+    if (result.length > before) {
+      Object.assign(result[result.length-1], { signalIndex, signalTime: gate.signalTime,
+        signalGate: gate.reason, entryTime: candles[entryIdx].time });
+    }
   }
   // Tight/loose risk and reward alternatives at the same entry, bounded by the
   // original stop direction and original RR.
@@ -210,4 +253,4 @@ function advice({side,regime="UNKNOWN"}={}) {
 }
 function status(){return {samples:rows.length,validatedPolicies:policies.length,minTrain:MIN_TRAIN,minTest:MIN_TEST};}
 
-module.exports={OUTCOME_COLLECTION,POLICY_COLLECTION,MIN_TRAIN,MIN_TEST,normalizeCandles,simulate,buildVariants,evaluatePolicy,initialize,researchClosedTrade,advice,status};
+module.exports={OUTCOME_COLLECTION,POLICY_COLLECTION,MIN_TRAIN,MIN_TEST,normalizeCandles,simulate,validateEarlierSetup,buildVariants,evaluatePolicy,initialize,researchClosedTrade,advice,status};
