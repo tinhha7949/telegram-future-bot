@@ -45,6 +45,7 @@ const crypto = require("crypto")
 const { analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR } = require("./ai-trading/nine-ai-strategy")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
+const nineAiContextualLearning = require("./ai-trading/nine-ai-contextual-learning")
 const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
 const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
 const nineAiTpslLearning = require("./ai-trading/nine-ai-tpsl-learning")
@@ -4600,6 +4601,27 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
         console.error(`⚠️ NINE INDEPENDENT ML UPDATE FAILED ${t.symbol}:`,
             independentLearningError?.message || independentLearningError);
     }
+
+    try {
+        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
+            const contextual = await nineAiContextualLearning.recordClosedTrade({
+                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
+                symbol: t.symbol,
+                features: { ...t.nineAiLearningFeatures,
+                    marketRegime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN" },
+                context: t.nineAiLearningContext || null,
+                side: t.side,
+                realizedR: closed.pnl / riskBudget,
+                closed: true,
+                closedAt: closed.closedAt
+            });
+            if (contextual.updated) console.log("🧠 NINE-AI CONTEXT LEARNED: tags=" + contextual.tags.join(",") + " samples=" + contextual.samples + " " + t.symbol);
+        }
+    } catch (contextualError) {
+        console.error("⚠️ NINE-AI CONTEXTUAL LEARNING FAILED " + t.symbol + ":",
+            contextualError?.message || contextualError);
+    }
 }
 
         // Train the TPSL policy only after Binance confirms a close and realized PnL exists.
@@ -5364,6 +5386,14 @@ console.log(`🧠 NINE INDEPENDENT ML MODELS READY: migratedTrades=${independent
 for (const model of nineAiIndependentModels.status()) {
     console.log(`🧠 MODEL ${model.role}: samples=${model.samples} trained=${model.trained} accuracy=${model.evaluation.accuracy ?? "N/A"} brier=${model.evaluation.brierScore ?? "N/A"}`);
 }
+
+try {
+    const contextualStatus = await nineAiContextualLearning.initialize(db);
+    console.log("🧠 NINE-AI CONTEXTUAL LEARNING READY: samples=" + contextualStatus.samples + " uniqueTrades=" + contextualStatus.uniqueTrades);
+} catch (contextualError) {
+    console.error("⚠️ NINE-AI CONTEXTUAL LEARNING INIT FAILED:", contextualError?.message || contextualError);
+}
+
 
 // Autonomous strategy research mines closed-trade memory. Single-feature rule
 // hypotheses stay shadow-only by default; live selection is regime/family-aware.
