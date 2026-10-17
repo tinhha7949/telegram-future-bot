@@ -4,11 +4,11 @@
 // candidate entry filters, validates them on a chronological holdout, and
 // stores versioned candidates. This module never edits source code or changes
 // live execution; promotion remains shadow-only until separately gated.
-const MIN_SAMPLES = 40;
+const MIN_SAMPLES = 100;
 const MAX_OUTCOMES = 2000;
-const MIN_TRAIN_MATCHES = 12;
-const MIN_TEST_MATCHES = 10;
-const MIN_TEST_UPLIFT_R = 0.10;
+const MIN_TRAIN_MATCHES = 20;
+const MIN_TEST_MATCHES = 20;
+const MIN_TEST_UPLIFT_R = 0.15;
 const MIN_TEST_MEAN_R = 0.05;
 const FEATURE_RULES = Object.freeze({
   "features.volume": { label: "volume ratio", thresholds: [0.7, 0.85, 1, 1.1, 1.25, 1.5], direction: "gte" },
@@ -24,6 +24,7 @@ const FEATURE_RULES = Object.freeze({
 let outcomesCollection = null;
 let hypothesesCollection = null;
 let versionsCollection = null;
+let policyCollection = null;
 let cycleRunning = false;
 
 function finite(value) {
@@ -141,9 +142,11 @@ async function initialize(db) {
   outcomesCollection = db.collection("nine_ai_learning_outcomes");
   hypothesesCollection = db.collection("nine_ai_strategy_hypotheses");
   versionsCollection = db.collection("nine_ai_strategy_versions");
+  policyCollection = db.collection("nine_ai_strategy_policy");
+  await policyCollection.createIndex({ status: 1, activatedAt: -1 }, { name: "nine_ai_active_policy_lookup" });
   await hypothesesCollection.createIndex({ candidateId: 1 }, { unique: true, name: "uniq_nine_ai_hypothesis" });
   await versionsCollection.createIndex({ version: 1 }, { unique: true, name: "uniq_nine_ai_strategy_version" });
-  return { ready: true, mode: "SHADOW_ONLY", minSamples: MIN_SAMPLES };
+  return { ready: true, mode: "AUTO_PROMOTE_VALIDATED_RULES", minSamples: MIN_SAMPLES };
 }
 async function runResearchCycle({ now = new Date() } = {}) {
   if (!outcomesCollection || !hypothesesCollection || !versionsCollection) {
@@ -168,13 +171,60 @@ async function runResearchCycle({ now = new Date() } = {}) {
         if (error?.code !== 11000) throw error;
       }
     }
-    return { ...research, cycleId, storedCandidates: research.candidates.length };
+    let activatedPolicy = null;
+    const best = research.candidates[0];
+    if (best && best.qualified && policyCollection) {
+      const current = await policyCollection.findOne({ status: "ACTIVE" });
+      if (!current || Number(best.test.upliftR) > Number(current.testUpliftR ?? -Infinity)) {
+        await policyCollection.updateMany({ status: "ACTIVE" }, {
+          $set: { status: "SUPERSEDED", supersededAt: new Date(now) }
+        });
+        activatedPolicy = {
+          policyId: best.candidateId, version: cycleId, status: "ACTIVE",
+          mode: "AUTO_PROMOTED_AFTER_OUT_OF_SAMPLE_VALIDATION",
+          rule: best.rule, description: best.rule.description,
+          sampleCount: research.sampleCount, trainUpliftR: best.train.upliftR,
+          testUpliftR: best.test.upliftR, testMeanR: best.test.candidate.meanR,
+          testMatches: best.test.candidate.n, activatedAt: new Date(now)
+        };
+        await policyCollection.insertOne(activatedPolicy);
+      }
+    }
+    return { ...research, cycleId, storedCandidates: research.candidates.length,
+      activatedPolicy: activatedPolicy ? { policyId: activatedPolicy.policyId, description: activatedPolicy.description } : null };
   } finally {
     cycleRunning = false;
   }
 }
+async function getActivePolicy() {
+  if (!policyCollection) throw new Error("NINE_AI_RESEARCH_NOT_INITIALIZED");
+  return policyCollection.findOne({ status: "ACTIVE" }, { sort: { activatedAt: -1 } });
+}
+function decisionToResearchRow(decision) {
+  const f = decision?.rankMetrics?.features || {};
+  return {
+    side: decision?.side,
+    features: {
+      volume: Number(f.volumeRatio), rsi: Number(f.rsi14), extension: Number(f.extensionAtr),
+      momentum: Number(f.momentum4) / Math.max(Number(f.atrPercent) || 0, 0.0001),
+      falseBreakoutRisk: Number(f.falseBreakoutRisk),
+      longEntryQuality: Number(f.longEntryQuality), shortEntryQuality: Number(f.shortEntryQuality)
+    },
+    context: {
+      roleScore: Number(decision?.rankMetrics?.roleScore ?? decision?.rankScore ?? decision?.confidence),
+      entryQuality: Number(decision?.rankMetrics?.entryQuality)
+    }
+  };
+}
+function evaluateLiveDecision(decision, policy) {
+  if (!policy || policy.status !== "ACTIVE" || !policy.rule) return { allowed: true, reason: "NO_ACTIVE_RESEARCH_POLICY" };
+  const allowed = matchesRule(decisionToResearchRow(decision), policy.rule);
+  return { allowed, reason: allowed ? "ACTIVE_RESEARCH_RULE_PASSED" : "ACTIVE_RESEARCH_RULE_BLOCKED",
+    policyId: policy.policyId, description: policy.description || policy.rule.description };
+}
+
 module.exports = {
   MIN_SAMPLES, MIN_TRAIN_MATCHES, MIN_TEST_MATCHES, MIN_TEST_UPLIFT_R,
   FEATURE_RULES, getPath, matchesRule, stats, ruleCandidates, evaluateRule,
-  evaluateCandidate, buildResearch, initialize, runResearchCycle
+  evaluateCandidate, buildResearch, initialize, runResearchCycle, getActivePolicy, decisionToResearchRow, evaluateLiveDecision
 };
