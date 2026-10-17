@@ -404,7 +404,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     0.25 * clamp((f.rsi - 50) / 20, -2, 2);
   const baselineP = logistic(z);
   const pLong = learned.trained ? 0.35 * baselineP + 0.65 * learned.pLong : baselineP;
-  const legacyMlSide = pLong >= 0.62 ? "LONG" : pLong <= 0.38 ? "SHORT" : null;
+  const legacyMlSide = pLong > 0.5 ? "LONG" : pLong < 0.5 ? "SHORT" : null;
   const mlModel = independent.get("signal");
   const mlSide = modelSide("signal", legacyMlSide);
   const mlConfidence = modelConfidence("signal") ?? Math.round(Math.max(pLong, 1 - pLong) * 100);
