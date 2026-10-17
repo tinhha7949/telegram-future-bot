@@ -4752,6 +4752,7 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
                 sl: Number(t.sl), tp: Number(t.tp), entryTime: Number(t.createdAt),
                 createdAt: Number(t.createdAt), closedAt: closed.closedAt,
                 realizedR: Number.isFinite(Number(closed.pnl)) && Number(t.riskDetail?.riskBudget ?? t.risk ?? 0) > 0 ? Number(closed.pnl) / Number(t.riskDetail?.riskBudget ?? t.risk) : null,
+                features: { ...(t.nineAiLearningFeatures || {}), ...(t.nineAiLearningContext || {}) },
                 regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
             }, researchCandles);
             if (research.variants) console.log("🧪 NINE-AI COUNTERFACTUAL RESEARCH: variants=" + research.variants +
