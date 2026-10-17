@@ -150,7 +150,7 @@ async function runResearchCycle({ now = new Date() } = {}) {
   cycleRunning = true;
   try {
     const rows = await outcomesCollection.find({ closed: true, applied: true })
-      .sort({ closedAt: 1 }).limit(MAX_OUTCOMES).toArray();
+      .sort({ closedAt: -1 }).limit(MAX_OUTCOMES).toArray();
     const research = buildResearch(rows, now);
     const cycleId = `research-${new Date(now).getTime()}`;
     await versionsCollection.updateOne({ version: cycleId }, { $set: {
