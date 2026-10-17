@@ -530,8 +530,6 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const rewardQuality = clamp(
     (hasCostModel ? netRR : rr) / MAX_NINE_AI_RR * 100, 0, 100
   );
-  const lateEntryPenalty = Math.abs(f.extensionAtr) > 2.2 &&
-    Math.sign(f.extensionAtr) === (side === "LONG" ? 1 : -1);
   const directionalEntryQuality = side === "LONG" ? f.longEntryQuality : f.shortEntryQuality;
   const entryQuality = Math.round(clamp(
     directionalEntryQuality * 0.75 + rewardQuality * 0.25, 0, 100
@@ -548,13 +546,19 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   );
   const weighted = calculateWeightedRoleScore(roleResults, side);
   const roleScore = weighted.score;
-  const rankScore = Math.round(clamp(roleScore * 0.85 + setupQuality * 0.15, 0, 100) * 100) / 100;
+  // The role ensemble remains dominant, while market setup and side-specific
+  // entry economics both affect final ranking. Fee-adjusted reward quality is
+  // used only when the operator has explicitly configured round-trip costs.
+  const rankScore = Math.round(clamp(
+    roleScore * 0.80 + setupQuality * 0.10 + entryQuality * 0.10, 0, 100
+  ) * 100) / 100;
   const rankedRoles = weighted.roles;
   const rankMetrics = {
     score: rankScore,
     roleScore,
-    roleWeight: 0.85,
-    setupWeight: 0.15,
+    roleWeight: 0.80,
+    setupWeight: 0.10,
+    entryQualityWeight: 0.10,
     roleWeights: ROLE_WEIGHTS,
     desiredRR: targetRR,
     maxRiskReward: 1.8,
