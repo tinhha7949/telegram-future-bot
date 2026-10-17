@@ -171,6 +171,22 @@ async function runResearchCycle({ now = new Date() } = {}) {
         if (error?.code !== 11000) throw error;
       }
     }
+    let rolledBackPolicy = null;
+    const currentPolicy = await policyCollection.findOne({ status: "ACTIVE" });
+    if (currentPolicy) {
+      const policyOutcomes = await outcomesCollection.find({
+        "researchPolicy.policyId": currentPolicy.policyId, closed: true, applied: true
+      }).sort({ closedAt: -1 }).limit(200).toArray();
+      const policyPerformance = stats(policyOutcomes);
+      if (policyPerformance.n >= 20 && policyPerformance.meanR < 0) {
+        await policyCollection.updateOne({ _id: currentPolicy._id }, { $set: {
+          status: "ROLLED_BACK", rolledBackAt: new Date(now),
+          rollbackReason: "LIVE_POLICY_MEAN_R_NEGATIVE_AFTER_20_CLOSED_TRADES",
+          livePerformance: policyPerformance
+        } });
+        rolledBackPolicy = { policyId: currentPolicy.policyId, livePerformance: policyPerformance };
+      }
+    }
     let activatedPolicy = null;
     const best = research.candidates[0];
     if (best && best.qualified && policyCollection) {
@@ -191,7 +207,8 @@ async function runResearchCycle({ now = new Date() } = {}) {
       }
     }
     return { ...research, cycleId, storedCandidates: research.candidates.length,
-      activatedPolicy: activatedPolicy ? { policyId: activatedPolicy.policyId, description: activatedPolicy.description } : null };
+      activatedPolicy: activatedPolicy ? { policyId: activatedPolicy.policyId, description: activatedPolicy.description } : null,
+      rolledBackPolicy };
   } finally {
     cycleRunning = false;
   }
