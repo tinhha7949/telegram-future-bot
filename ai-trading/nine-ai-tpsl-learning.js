@@ -34,8 +34,20 @@ function featureVector(input = {}) {
   };
 }
 
+function contextKey(context = {}) {
+  const f = context.features || context;
+  const side = String(context.side || "").toUpperCase();
+  const decisionSide = String(context.decisionSide || f.decisionSide || "").toUpperCase();
+  const alignment = decisionSide && side ? (decisionSide === side ? "ALIGNED" : "OPPOSED") : "UNKNOWN_SIDE";
+  const trend = String(f.trend || "UNKNOWN");
+  const structure = String(f.structureTrend || "UNKNOWN");
+  const momentum = num(f.momentum12 ?? f.momentum);
+  const momentumState = momentum === 0 ? "FLAT" : momentum > 0 ? "POSITIVE" : "NEGATIVE";
+  return [String(context.marketRegime || context.regime || "UNKNOWN"), trend, structure, alignment, momentumState].join("|");
+}
+
 function summarizeOutcomes(rows) {
-  const actions = {}, regimes = {};
+  const actions = {}, regimes = {}, contexts = {};
   let globalSum = 0, globalSamples = 0;
   const add = (bucket, key, realizedR) => {
     if (!bucket[key]) bucket[key] = { samples: 0, sumR: 0, meanR: 0 };
@@ -50,10 +62,13 @@ function summarizeOutcomes(rows) {
     if (!VALID_ACTIONS.has(action) || !Number.isFinite(realizedR)) continue;
     add(actions, action, realizedR);
     add(regimes, `${regime}:${action}`, realizedR);
+    if (row.context && typeof row.context === "object") {
+      add(contexts, `${contextKey(row.context)}:${action}`, realizedR);
+    }
     globalSum += realizedR;
     globalSamples++;
   }
-  return { actions, regimes, global: { samples: globalSamples, meanR: globalSamples ? globalSum / globalSamples : 0 } };
+  return { actions, regimes, contexts, global: { samples: globalSamples, meanR: globalSamples ? globalSum / globalSamples : 0 } };
 }
 
 async function refreshStats() {
@@ -75,11 +90,12 @@ async function initialize(collection) {
 
 function getPolicyStats() { return cachedStats; }
 
-function expectedR(stats, action, regime) {
+function expectedR(stats, action, regime, context = null) {
+  const contextual = context ? stats?.contexts?.[`${contextKey(context)}:${action}`] : null;
   const local = stats?.regimes?.[`${regime}:${action}`];
   const broad = stats?.actions?.[action];
   const global = stats?.global || { samples: 0, meanR: 0 };
-  const selected = local?.samples ? local : broad?.samples ? broad : null;
+  const selected = contextual?.samples ? contextual : local?.samples ? local : broad?.samples ? broad : null;
   if (!selected) return { meanR: global.meanR || 0, samples: 0, uncertainty: 1 };
   const n = selected.samples;
   const priorN = global.samples ? Math.sqrt(global.samples) : 1;
@@ -112,10 +128,15 @@ function chooseManagementAction(input, policyStats = cachedStats) {
   const cap = entry + direction * initialRisk * maxRR;
   const capRemaining = direction * (cap - current);
   const features = featureVector({ ...input, favorableR, targetDistanceR });
+  const actionContext = {
+    ...input,
+    marketRegime: regime,
+    features: input.features || input.context || {}
+  };
   const actionValues = Object.fromEntries([...VALID_ACTIONS].map(action => [
-    action, expectedR(policyStats, action, regime)
+    action, expectedR(policyStats, action, regime, actionContext)
   ]));
-  const baseline = expectedR(policyStats, "HOLD", regime);
+  const baseline = expectedR(policyStats, "HOLD", regime, actionContext);
   const choose = (action, reason, extra = {}) => ({
     action, reason, expectedR: actionValues[action]?.meanR ?? baseline.meanR,
     baselineExpectedR: baseline.meanR, samples: actionValues[action]?.samples ?? 0,
@@ -177,6 +198,6 @@ async function recordClosedTrade({ tradeId, action, regime, realizedR, closedAt,
 }
 
 module.exports = {
-  MAX_OUTCOMES, VALID_ACTIONS, featureVector, summarizeOutcomes, chooseManagementAction,
+  MAX_OUTCOMES, VALID_ACTIONS, featureVector, contextKey, summarizeOutcomes, chooseManagementAction,
   initialize, refreshStats, getPolicyStats, recordClosedTrade
 };
