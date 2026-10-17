@@ -11,9 +11,9 @@ let stateCache = fresh();
 function fresh() {
   return {
     _id: "main",
-    version: 1,
+    version: 2,
     samples: 0,
-    weights: [0, 0.35, 0.25, 0.15, 0.1, -0.1],
+    weights: [0, 0.35, 0.25, 0.15, 0.1, -0.1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     bias: 0,
     recent: [],
     updatedAt: null
@@ -21,11 +21,23 @@ function fresh() {
 }
 
 function validState(state) {
-  return Boolean(state && state.version === 1 &&
+  const legacy = state?.version === 1 && Array.isArray(state.weights) && state.weights.length === 6;
+  const current = state?.version === 2 && Array.isArray(state.weights) && state.weights.length === 18;
+  return Boolean(state && (legacy || current) &&
     Number.isInteger(state.samples) && state.samples >= 0 &&
-    Array.isArray(state.weights) && state.weights.length === 6 &&
     state.weights.every(Number.isFinite) &&
     Number.isFinite(state.bias) && Array.isArray(state.recent));
+}
+
+function upgradeState(state) {
+  if (!validState(state)) return fresh();
+  if (state.version === 2) return state;
+  return {
+    ...state,
+    version: 2,
+    weights: [...state.weights, ...Array(12).fill(0)],
+    recent: [...state.recent]
+  };
 }
 
 function vector(features) {
@@ -36,7 +48,19 @@ function vector(features) {
     clamp(Number(f.momentum) || 0, -3, 3),
     clamp(((Number(f.rsi) || 50) - 50) / 30, -2, 2),
     clamp((Number(f.volume) || 1) - 1, -2, 3),
-    clamp(Number(f.extension) || 0, -3, 3)
+    clamp(Number(f.extension) || 0, -3, 3),
+    clamp(Number(f.candleBody) || 0, -1, 1),
+    clamp(Number(f.wickImbalance) || 0, -1, 1),
+    clamp((Number(f.breakoutStrength) || 0) / 2, -1.5, 1.5),
+    clamp(Number(f.regime) || 0, -1, 1),
+    clamp(Number(f.volatilityRegime) || 0, -1, 1),
+    clamp(Number(f.structurePosition) || 0, -1, 1),
+    clamp((Number(f.roomToResistance) || 0) / 3, -1, 1),
+    clamp((Number(f.roomToSupport) || 0) / 3, -1, 1),
+    clamp(Number(f.falseBreakoutRisk) || 0, 0, 1),
+    clamp(Number(f.directionalStreak) || 0, -1, 1),
+    clamp(((Number.isFinite(Number(f.longEntryQuality)) ? Number(f.longEntryQuality) : 50) - 50) / 50, -1, 1),
+    clamp(((Number.isFinite(Number(f.shortEntryQuality)) ? Number(f.shortEntryQuality) : 50) - 50) / 50, -1, 1)
   ];
 }
 
@@ -98,6 +122,7 @@ async function applyOutcome(outcome) {
     tradeId: String(outcome.tradeId),
     realizedR: reward,
     side: outcome.side,
+    context: outcome.context || null,
     closedAt: Number(outcome.closedAt || Date.now())
   });
   state.recent = state.recent.slice(-100);
@@ -120,8 +145,10 @@ async function initialize(db) {
   await outcomesCollection.createIndex({ tradeId: 1 }, { unique: true, name: "uniq_nine_ai_trade_outcome" });
 
   const stored = await stateCollection.findOne({ _id: "main" });
-  stateCache = validState(stored) ? stored : fresh();
-  if (!stored || !validState(stored)) await persistState(stateCache);
+  stateCache = validState(stored) ? upgradeState(stored) : fresh();
+  if (!stored || !validState(stored) || stored.version !== stateCache.version) {
+    await persistState(stateCache);
+  }
 
   // Recover outcomes recorded before a process interruption but not yet applied.
   const pending = await outcomesCollection.find({ applied: { $ne: true } }).sort({ closedAt: 1 }).toArray();
@@ -131,7 +158,7 @@ async function initialize(db) {
 
 // Train only from confirmed closed trades. Unique MongoDB tradeId prevents
 // duplicate learning; unapplied events are replayed safely after a restart.
-async function learnClosedTrade({ tradeId, features, side, realizedR, closed }) {
+async function learnClosedTrade({ tradeId, features, context = null, side, realizedR, closed }) {
   if (!stateCollection || !outcomesCollection) throw new Error("NINE_AI_MONGODB_NOT_INITIALIZED");
   if (!closed || !tradeId || !features || !["LONG", "SHORT"].includes(side) ||
       !Number.isFinite(Number(realizedR))) {
@@ -141,6 +168,7 @@ async function learnClosedTrade({ tradeId, features, side, realizedR, closed }) 
   const outcome = {
     tradeId: String(tradeId),
     features,
+    context: context && typeof context === "object" ? context : null,
     side,
     realizedR: Number(realizedR),
     closed: true,
@@ -152,6 +180,11 @@ async function learnClosedTrade({ tradeId, features, side, realizedR, closed }) 
     outcome._id = result.insertedId;
   } catch (error) {
     if (error?.code === 11000) {
+      // A previous attempt may have inserted the event but failed before
+      // applying it. Retry that durable pending event instead of waiting for
+      // the next process restart to recover learning.
+      const existing = await outcomesCollection.findOne({ tradeId: String(tradeId) });
+      if (existing && existing.applied !== true) await applyOutcome(existing);
       return { updated: false, reason: "DUPLICATE_TRADE", samples: stateCache.samples };
     }
     throw error;
@@ -161,4 +194,4 @@ async function learnClosedTrade({ tradeId, features, side, realizedR, closed }) 
   return { updated: true, samples: stateCache.samples };
 }
 
-module.exports = { fresh, validState, vector, predict, read, initialize, learnClosedTrade };
+module.exports = { fresh, validState, upgradeState, vector, predict, read, initialize, learnClosedTrade };

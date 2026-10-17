@@ -1,7 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const {
-  ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles,
+  ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles, buildFeatures,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates,
   deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust,
   MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE, MAX_NINE_AI_RR
@@ -24,6 +24,19 @@ for (let i = 0; i < 100; i++) {
 }
 rows.push([now, price, price + 0.1, price - 0.1, price + 0.05, 100, now + 899999]);
 assert.equal(parseClosedCandles(rows, now).length, 100);
+const parsed = parseClosedCandles(rows, now);
+const contextFeatures = buildFeatures(parsed);
+assert.ok(["TREND_UP", "TREND_DOWN", "SIDEWAYS", "TRANSITION"].includes(contextFeatures.marketRegime));
+assert.ok(["HIGH", "NORMAL", "LOW"].includes(contextFeatures.volatilityRegime));
+assert.ok(contextFeatures.candleBodyRatio >= -1 && contextFeatures.candleBodyRatio <= 1);
+assert.ok(contextFeatures.upperWickRatio >= 0 && contextFeatures.upperWickRatio <= 1);
+assert.ok(contextFeatures.lowerWickRatio >= 0 && contextFeatures.lowerWickRatio <= 1);
+assert.ok(Number.isFinite(contextFeatures.breakoutStrength));
+assert.ok(contextFeatures.structurePosition >= -1 && contextFeatures.structurePosition <= 1);
+assert.ok(Number.isFinite(contextFeatures.roomToResistanceAtr));
+assert.ok(Number.isFinite(contextFeatures.roomToSupportAtr));
+assert.ok(contextFeatures.longEntryQuality >= 0 && contextFeatures.longEntryQuality <= 100);
+assert.ok(contextFeatures.shortEntryQuality >= 0 && contextFeatures.shortEntryQuality <= 100);
 const result = analyzeNineAI(rows, "TESTUSDT", now);
 assert.equal(result.symbol, "TESTUSDT");
 assert.equal(result.roles.length, 9);
@@ -43,6 +56,13 @@ if (result.side) {
   assert.ok(Math.abs(result.rankMetrics.roleScore - contributionSum) < 0.1,
     "rounded per-role contributions should reconcile to the weighted role score");
   assert.ok(result.rankScore >= 0 && result.rankScore <= 100);
+  assert.ok(result.rankMetrics.entryQuality >= 0 && result.rankMetrics.entryQuality <= 100);
+  assert.ok(result.rankMetrics.breakoutQuality >= 0 && result.rankMetrics.breakoutQuality <= 100);
+  assert.ok(result.rankMetrics.roomQuality >= 0 && result.rankMetrics.roomQuality <= 100);
+  assert.equal(result.rankMetrics.netRRStatus, "NOT_CONFIGURED");
+  assert.equal(result.rankMetrics.netRR, null);
+  assert.ok(result.rankMetrics.features.marketRegime);
+  assert.ok(result.rankMetrics.features.volatilityRegime);
   assert.ok(result.rankMetrics.contrarian.reason);
 } else {
   assert.equal(result.authorizedForExecution, undefined);

@@ -27,9 +27,9 @@ function fresh(config) {
   return {
     _id: "model",
     modelId: config.id,
-    version: 1,
+    version: 2,
     samples: 0,
-    weights: [0, 0, 0, 0, 0, 0],
+    weights: Array(18).fill(0),
     recent: [],
     evaluation: { evaluated: 0, correct: 0, brierSum: 0 },
     updatedAt: null
@@ -37,12 +37,25 @@ function fresh(config) {
 }
 
 function validState(state, config) {
+  const legacy = state?.version === 1 && Array.isArray(state.weights) && state.weights.length === 6;
+  const current = state?.version === 2 && Array.isArray(state.weights) && state.weights.length === 18;
   return Boolean(state && state._id === "model" && state.modelId === config.id &&
-    state.version === 1 && Number.isInteger(state.samples) && state.samples >= 0 &&
-    Array.isArray(state.weights) && state.weights.length === 6 &&
+    (legacy || current) && Number.isInteger(state.samples) && state.samples >= 0 &&
     state.weights.every(Number.isFinite) && Array.isArray(state.recent) &&
     state.evaluation && Number.isFinite(state.evaluation.evaluated) &&
     Number.isFinite(state.evaluation.correct) && Number.isFinite(state.evaluation.brierSum));
+}
+
+function upgradeState(state, config) {
+  if (!validState(state, config)) return fresh(config);
+  if (state.version === 2) return state;
+  return {
+    ...state,
+    version: 2,
+    weights: [...state.weights, ...Array(12).fill(0)],
+    recent: [...state.recent],
+    evaluation: { ...state.evaluation }
+  };
 }
 
 function vector(features, config) {
@@ -53,9 +66,21 @@ function vector(features, config) {
     clamp((Number(f.momentum) || 0) / 2, -1.5, 1.5),
     clamp(((Number(f.rsi) || 50) - 50) / 30, -1.7, 1.7),
     clamp((Number(f.volume) || 1) - 1, -1, 3),
-    clamp(Number(f.extension) || 0, -3, 3)
+    clamp(Number(f.extension) || 0, -3, 3),
+    clamp(Number(f.candleBody) || 0, -1, 1),
+    clamp(Number(f.wickImbalance) || 0, -1, 1),
+    clamp((Number(f.breakoutStrength) || 0) / 2, -1.5, 1.5),
+    clamp(Number(f.regime) || 0, -1, 1),
+    clamp(Number(f.volatilityRegime) || 0, -1, 1),
+    clamp(Number(f.structurePosition) || 0, -1, 1),
+    clamp((Number(f.roomToResistance) || 0) / 3, -1, 1),
+    clamp((Number(f.roomToSupport) || 0) / 3, -1, 1),
+    clamp(Number(f.falseBreakoutRisk) || 0, 0, 1),
+    clamp(Number(f.directionalStreak) || 0, -1, 1),
+    clamp(((Number.isFinite(Number(f.longEntryQuality)) ? Number(f.longEntryQuality) : 50) - 50) / 50, -1, 1),
+    clamp(((Number.isFinite(Number(f.shortEntryQuality)) ? Number(f.shortEntryQuality) : 50) - 50) / 50, -1, 1)
   ];
-  return base.map((value, i) => value * config.scales[i]);
+  return base.map((value, i) => value * (config.scales[i] ?? 1));
 }
 
 function sigmoid(z) {
@@ -145,7 +170,11 @@ async function applyOutcome(runtime, outcome) {
   next.evaluation.evaluated++;
   if ((p >= 0.5 && label >= 0.5) || (p < 0.5 && label < 0.5)) next.evaluation.correct++;
   next.evaluation.brierSum += (p - label) ** 2;
-  next.recent.push({ tradeId: String(outcome.tradeId), realizedR: Number(outcome.realizedR) });
+  next.recent.push({
+    tradeId: String(outcome.tradeId),
+    realizedR: Number(outcome.realizedR),
+    context: outcome.context || null
+  });
   next.recent = next.recent.slice(-RECENT_LIMIT);
   next.updatedAt = new Date().toISOString();
 
@@ -161,6 +190,7 @@ async function recordForModel(runtime, trade) {
   const doc = {
     tradeId: String(trade.tradeId),
     features: trade.features,
+    context: trade.context && typeof trade.context === "object" ? trade.context : null,
     side: trade.side,
     realizedR: Number(trade.realizedR),
     closed: true,
@@ -171,7 +201,13 @@ async function recordForModel(runtime, trade) {
     const result = await runtime.outcomesCollection.insertOne(doc);
     doc._id = result.insertedId;
   } catch (error) {
-    if (error?.code === 11000) return false;
+    if (error?.code === 11000) {
+      // Retry a durable outcome that was inserted by an earlier attempt but
+      // not yet applied to this model's persisted weights.
+      const existing = await runtime.outcomesCollection.findOne({ tradeId: String(trade.tradeId) });
+      if (existing && existing.applied !== true) await applyOutcome(runtime, existing);
+      return false;
+    }
     throw error;
   }
   await applyOutcome(runtime, doc);
@@ -209,8 +245,10 @@ async function initialize(db, legacyOutcomesCollection = null) {
       { tradeId: 1 }, { unique: true, name: `uniq_nine_ai_ml_${config.id}_trade` }
     );
     const stored = await runtime.stateCollection.findOne({ _id: "model" });
-    runtime.state = validState(stored, config) ? stored : fresh(config);
-    if (!stored || !validState(stored, config)) await persistState(runtime, runtime.state);
+    runtime.state = validState(stored, config) ? upgradeState(stored, config) : fresh(config);
+    if (!stored || !validState(stored, config) || stored.version !== runtime.state.version) {
+      await persistState(runtime, runtime.state);
+    }
     runtimes.set(config.id, runtime);
 
     const pending = await runtime.outcomesCollection.find({ applied: { $ne: true } })
@@ -258,6 +296,6 @@ function status() {
 }
 
 module.exports = {
-  MODEL_CONFIGS, MIN_TRAINING_SAMPLES, fresh, validState, vector,
+  MODEL_CONFIGS, MIN_TRAINING_SAMPLES, fresh, validState, upgradeState, vector,
   predictAll, learnClosedTrade, initialize, status
 };
