@@ -92,13 +92,26 @@ async function initialize(db) {
   outcomesCollection = db.collection("nine_ai_reward_model_outcomes");
   await outcomesCollection.createIndex({ tradeId: 1 }, { unique: true, name: "uniq_nine_ai_reward_trade" });
   await outcomesCollection.createIndex({ closedAt: -1 }, { name: "nine_ai_reward_closed_at" });
-  const stored = await stateCollection.findOne({ _id: "main" });
-  state = stored?.version === 1 && stored.sides?.LONG?.weights?.length === FEATURE_KEYS.length + 1 &&
-    stored.sides?.SHORT?.weights?.length === FEATURE_KEYS.length + 1 ? stored : freshState();
-  // Rebuild the compact model deterministically if state was missing/corrupt or
-  // recover any durable events that were inserted before a process interruption.
-  const pending = await outcomesCollection.find({ applied: { $ne: true } }).sort({ closedAt: 1 }).limit(MAX_OUTCOMES).toArray();
-  for (const row of pending) await applyOutcome(row);
+  // Rebuild from the durable outcome ledger on every process start. Updating model
+  // state and marking an outcome applied are two separate Mongo writes, so merely
+  // replaying {applied:false} could double-train after a crash between those writes.
+  // Deterministic replay makes restart behavior idempotent and repairs stale state.
+  const durableRows = await outcomesCollection.find({
+    side: { $in: ["LONG", "SHORT"] }, closed: true,
+    realizedR: { $exists: true }, features: { $exists: true }
+  }).sort({ closedAt: 1, _id: 1 }).limit(MAX_OUTCOMES).toArray();
+  state = freshState();
+  for (const row of durableRows) {
+    if (!row || ![ "LONG", "SHORT" ].includes(row.side) ||
+        !Number.isFinite(Number(row.realizedR)) || !row.features) continue;
+    trainOne(state.sides[row.side], featureVector(row.features), clamp(Number(row.realizedR), -10, 10));
+  }
+  state.updatedAt = durableRows.length ? new Date().toISOString() : null;
+  await persist();
+  if (durableRows.length) {
+    await outcomesCollection.updateMany({ _id: { $in: durableRows.map(row => row._id) } },
+      { $set: { applied: true, appliedAt: new Date() } });
+  }
   return status();
 }
 async function applyOutcome(row) {
