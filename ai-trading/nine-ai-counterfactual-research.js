@@ -110,7 +110,7 @@ function buildVariants(trade, rawCandles) {
   return result;
 }
 
-function groupKey(row) { return row.variant + "|" + row.side + "|" + (row.regime || "UNKNOWN"); }
+function groupKey(row) { return row.side + "|" + (row.regime || "UNKNOWN"); }
 function stats(list) {
   const mean = list.length ? list.reduce((s,r)=>s+n(r.netR,0),0)/list.length : 0;
   const wins = list.filter(r=>n(r.netR,0)>0).length;
