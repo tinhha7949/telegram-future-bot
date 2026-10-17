@@ -175,11 +175,16 @@ async function researchClosedTrade(trade, rawCandles) {
   for(const v of variants){
     const key=String(trade.tradeId)+"|"+v.variant;
     if(seen.has(key))continue;
+    const isBaseline = v.variant === "BASELINE";
+    const actualR = n(trade.realizedR);
+    const baselineNetR = Number.isFinite(actualR) ? actualR : v.netR;
     const doc={tradeId:String(trade.tradeId),symbol:String(trade.symbol||""),side:v.side,
       originalSide:trade.side,variant:v.variant,entry:v.entry,sl:v.sl,tp:v.tp,
-      grossR:v.grossR,netR:v.netR,exit:v.exit,exitTime:v.exitTime,barsHeld:v.barsHeld,
+      grossR:isBaseline ? baselineNetR + FEE_R : v.grossR,
+      netR:isBaseline ? baselineNetR : v.netR,exit:isBaseline ? "ACTUAL" : v.exit,
+      exitTime:isBaseline ? (trade.closedAt || v.exitTime) : v.exitTime,barsHeld:v.barsHeld,
       regime:String(trade.regime||"UNKNOWN"),closedAt:trade.closedAt?new Date(trade.closedAt):new Date(),
-      hypothetical:true,feesIncluded:true};
+      hypothetical:!isBaseline,feesIncluded:true};
     try{await outcomeCollection.insertOne(doc);rows.unshift(doc);seen.add(key);inserted.push(doc);}
     catch(e){if(e?.code===11000){seen.add(key);continue;}throw e;}
   }
