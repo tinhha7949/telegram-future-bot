@@ -54,7 +54,7 @@ function assess(features = {}) {
     const global = summarizeSide(side);
     // Prefer the most specific condition with enough observations. Never let
     // a tiny bucket override the broad historical result.
-    const candidates = tags.slice(1).map(tag => ({ tag, stats: summarizeSide(side, [tag]) }))
+    const candidates = tags.slice(2).concat(tags.slice(1, 2)).map(tag => ({ tag, stats: summarizeSide(side, [tag]) }))
       .filter(item => item.stats.samples >= MIN_CONTEXT_SAMPLES)
       .sort((a, b) => b.stats.samples - a.stats.samples);
     const selected = candidates[0] || null;
