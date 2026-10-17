@@ -25,3 +25,5 @@ jobs:
       - run: node ai-trading/nine-ai-strategy.test.js
       - run: node ai-trading/nine-ai-learning-memory.test.js
       - run: node ai-trading/nine-ai-independent-models.test.js
+      - run: node --check ai-trading/nine-ai-autonomous-research.js
+      - run: node ai-trading/nine-ai-autonomous-research.test.js
