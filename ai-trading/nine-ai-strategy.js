@@ -366,19 +366,29 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
     breakoutStrength: f.breakoutStrength, falseBreakoutRisk: f.falseBreakoutRisk
   });
-  let contextualWinner = contextualEvidence.LONG.ready && contextualEvidence.SHORT.ready &&
-    contextualEvidence.LONG.edge - contextualEvidence.SHORT.edge >= 8 && contextualEvidence.LONG.meanR > 0
-      ? "LONG"
-      : contextualEvidence.LONG.ready && contextualEvidence.SHORT.ready &&
-        contextualEvidence.SHORT.edge - contextualEvidence.LONG.edge >= 8 && contextualEvidence.SHORT.meanR > 0
-        ? "SHORT" : null;
+  // Context expectancy is already shrunk by sample reliability. Compare learned
+  // edge and observed meanR directly instead of requiring a hand-written edge gap.
+  let contextualWinner = null;
+  if (contextualEvidence.LONG.ready && contextualEvidence.SHORT.ready) {
+    const longEvidence = contextualEvidence.LONG;
+    const shortEvidence = contextualEvidence.SHORT;
+    if (longEvidence.meanR > 0 && longEvidence.edge > shortEvidence.edge && longEvidence.meanR >= shortEvidence.meanR) {
+      contextualWinner = "LONG";
+    } else if (shortEvidence.meanR > 0 && shortEvidence.edge > longEvidence.edge && shortEvidence.meanR >= longEvidence.meanR) {
+      contextualWinner = "SHORT";
+    }
+  }
   const counterfactualAdvice = counterfactualResearch.advice({
     side: contextualWinner || (contextualEvidence.LONG.edge >= contextualEvidence.SHORT.edge ? "LONG" : "SHORT"),
-    regime: String(f.marketRegime || learnedFeatures.marketRegime || "UNKNOWN")
+    regime: String(f.marketRegime || learnedFeatures.marketRegime || "UNKNOWN"),
+    features: { ...learnedFeatures, marketRegime: f.marketRegime, rsi14: f.rsi,
+      extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
+      falseBreakoutRisk: f.falseBreakoutRisk }
   });
-  // A sufficiently sampled chronological result may nudge the direction; it never forces a reversal.
+  // Only a context-matched alternative whose paired uplift exceeds its own
+  // observed uncertainty can change the direction. No blanket "loss => reverse".
   const validatedFlip = counterfactualAdvice.validatedSuggestions.find(s =>
-    s.variant === "OPPOSITE_SIDE" && s.testSamples >= 15 && s.testUpliftR >= 0.2 && s.testMeanR > 0.05);
+    s.variant === "OPPOSITE_SIDE" && s.side && s.testUpliftR > Number(s.standardError || 0) && s.testMeanR > 0);
   if (validatedFlip) contextualWinner = validatedFlip.side;
   const learned = learningMemory.predict(learnedFeatures);
   const independent = new Map(independentModels.predictAll(learnedFeatures)
