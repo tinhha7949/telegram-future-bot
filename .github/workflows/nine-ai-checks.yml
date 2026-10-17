@@ -27,3 +27,5 @@ jobs:
       - run: node ai-trading/nine-ai-independent-models.test.js
       - run: node --check ai-trading/nine-ai-autonomous-research.js
       - run: node ai-trading/nine-ai-autonomous-research.test.js
+      - run: node --check ai-trading/nine-ai-strategy-evolution.js
+      - run: node ai-trading/nine-ai-strategy-evolution.test.js
