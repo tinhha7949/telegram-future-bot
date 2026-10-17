@@ -72,6 +72,8 @@ function ruleCandidates() {
           description: `${spec.label} < ${-Math.abs(threshold)}` });
       } else {
         result.push({ path, operator: spec.direction, threshold,
+          ...(path === "features.longEntryQuality" ? { side: "LONG" } : {}),
+          ...(path === "features.shortEntryQuality" ? { side: "SHORT" } : {}),
           description: `${spec.label} ${spec.direction === "gte" ? ">=" : "<="} ${threshold}` });
       }
     }
