@@ -4678,7 +4678,8 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
                 researchPolicy: t.nineAiResearchPolicy || null,
                 side: t.side,
                 realizedR: closed.pnl / riskBudget,
-                closed: true
+                closed: true,
+                closedAt: closed.closedAt
             });
             if (learning.updated) {
                 console.log(`🧠 NINE-AI MEMORY UPDATED: samples=${learning.samples} trade=${t.symbol}`);
