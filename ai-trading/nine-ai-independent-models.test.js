@@ -20,6 +20,7 @@ function collection() {
       if (!existing && !options.upsert) return { matchedCount: 0 };
       const id = existing?._id ?? query._id ?? nextId++;
       const next = { ...(existing || {}), ...(update.$set || {}) };
+      for (const key of Object.keys(update.$unset || {})) delete next[key];
       if (!existing) Object.assign(next, update.$setOnInsert || {});
       next._id = id;
       docs.set(String(id), next);
@@ -41,6 +42,7 @@ function collection() {
           rows = rows.sort((a, b) => (new Date(a[key] || 0) - new Date(b[key] || 0)) * direction);
           return this;
         },
+        limit(n) { rows = rows.slice(0, n); return this; },
         async toArray() { return rows; }
       };
     },
@@ -78,7 +80,8 @@ function collection() {
     longEntryQuality: 81, shortEntryQuality: 32
   };
   assert.equal(ml.vector(features, ml.MODEL_CONFIGS[0]).length, 18);
-  assert.equal(ml.fresh(ml.MODEL_CONFIGS[0]).version, 2);
+  assert.equal(ml.fresh(ml.MODEL_CONFIGS[0]).version, 3);
+  assert.equal(Object.hasOwn(ml.fresh(ml.MODEL_CONFIGS[0]), "recent"), false);
   assert.equal(ml.fresh(ml.MODEL_CONFIGS[0]).weights.length, 18);
   for (let i = 0; i < 25; i++) {
     await ml.learnClosedTrade({
@@ -133,7 +136,8 @@ function collection() {
   assert.ok(ml.status().every(model => model.samples === 4));
   for (const config of ml.MODEL_CONFIGS) {
     const saved = migrationCollections.get(`nine_ai_ml_${config.id}_state`).docs.get("model");
-    assert.equal(saved.version, 2);
+    assert.equal(saved.version, 3);
+    assert.equal(Object.hasOwn(saved, "recent"), false, "persisted model state must not embed outcome history");
     assert.equal(saved.weights.length, 18);
     assert.deepEqual(saved.weights.slice(0, 6), [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
     assert.ok(saved.weights.slice(6).every(weight => weight === 0));
