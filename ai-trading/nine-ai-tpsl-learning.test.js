@@ -60,7 +60,7 @@ const trailBetterEvidence = summarizeOutcomes([
   { action: "HOLD", regime: "TRANSITION", realizedR: -1.0 }
 ]);
 const learnedTrailAction = chooseManagementAction({
-  ...reversalInput, oldSL: 95,
+  ...reversalInput, decisionSide: "LONG", oldSL: 95,
   features: { ...reversalInput.features, atr14: 2 }
 }, trailBetterEvidence);
 assert.equal(learnedTrailAction.action, "TRAIL_SL",
@@ -71,7 +71,7 @@ const trailWorseEvidence = summarizeOutcomes([
   { action: "HOLD", regime: "TRANSITION", realizedR: 2.0 }
 ]);
 const rejectedTrailAction = chooseManagementAction({
-  ...reversalInput, oldSL: 95,
+  ...reversalInput, decisionSide: "LONG", oldSL: 95,
   features: { ...reversalInput.features, atr14: 2 }
 }, trailWorseEvidence);
 assert.notEqual(rejectedTrailAction.action, "TRAIL_SL",
