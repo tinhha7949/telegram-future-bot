@@ -1,7 +1,7 @@
 "use strict";
 
-// MongoDB-backed online learner. RAM holds only the compact model currently
-// needed for prediction; decisions/outcomes and model state persist in MongoDB.
+// MongoDB is the durable source of truth. RAM holds only compact coefficients
+// needed by synchronous prediction; outcome history and duplicate ledgers stay in MongoDB.
 // No local JSON state file and no hosted AI/API are used.
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 let stateCollection = null;
@@ -38,10 +38,10 @@ function normalizeRoleWeights(weights) {
 }
 function fresh() {
   return {
-    _id: "main", version: 3, samples: 0,
+    _id: "main", version: 4, samples: 0,
     weights: [0, 0.35, 0.25, 0.15, 0.1, -0.1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     bias: 0, decisionWeights: { ...BASE_DECISION_WEIGHTS },
-    roleWeights: { ...BASE_ROLE_WEIGHTS }, recent: [], updatedAt: null
+    roleWeights: { ...BASE_ROLE_WEIGHTS }, lastAppliedTradeId: null, updatedAt: null
   };
 }
 
@@ -51,19 +51,23 @@ function validState(state) {
   const v1 = state?.version === 1 && Array.isArray(state.weights) && state.weights.length === 6;
   const v2 = state?.version === 2 && Array.isArray(state.weights) && state.weights.length === 18;
   const v3 = state?.version === 3 && Array.isArray(state.weights) && state.weights.length === 18;
-  return Boolean(state && (v1 || v2 || v3) && Number.isInteger(state.samples) && state.samples >= 0 &&
-    state.weights.every(Number.isFinite) && Number.isFinite(state.bias) && Array.isArray(state.recent) &&
+  const v4 = state?.version === 4 && Array.isArray(state.weights) && state.weights.length === 18;
+  return Boolean(state && (v1 || v2 || v3 || v4) && Number.isInteger(state.samples) && state.samples >= 0 &&
+    state.weights.every(Number.isFinite) && Number.isFinite(state.bias) &&
+    (state.version >= 4 || Array.isArray(state.recent)) &&
     (state.version < 3 || (state.decisionWeights && state.roleWeights)));
 }
 function upgradeState(state) {
   if (!validState(state)) return fresh();
-  if (state.version === 3) return state;
+  if (state.version === 4) return state;
+  const recent = Array.isArray(state.recent) ? state.recent : [];
+  const { recent: _recent, ...persistedFields } = state;
   return {
-    ...state, version: 3,
+    ...persistedFields, version: 4,
     weights: state.version === 1 ? [...state.weights, ...Array(12).fill(0)] : [...state.weights],
     decisionWeights: normalizeDecisionWeights(state.decisionWeights || BASE_DECISION_WEIGHTS),
     roleWeights: normalizeRoleWeights(state.roleWeights || BASE_ROLE_WEIGHTS),
-    recent: [...state.recent]
+    lastAppliedTradeId: recent.length ? String(recent[recent.length - 1].tradeId || "") || null : (state.lastAppliedTradeId || null)
   };
 }
 function decisionPolicy(state = stateCache) {
@@ -151,7 +155,7 @@ async function persistState(state) {
   const { _id, ...fields } = state;
   await stateCollection.updateOne(
     { _id: "main" },
-    { $set: fields, $setOnInsert: { _id: "main" } },
+    { $set: fields, $unset: { recent: "" }, $setOnInsert: { _id: "main" } },
     { upsert: true }
   );
   stateCache = state;
@@ -161,7 +165,7 @@ async function applyOutcome(outcome) {
   if (outcome.applied) return false;
   // If the model was saved but marking the event applied was interrupted,
   // the recent model ledger prevents replaying the same outcome twice.
-  if (stateCache.recent.some(item => item.tradeId === String(outcome.tradeId))) {
+  if (stateCache.lastAppliedTradeId === String(outcome.tradeId)) {
     await outcomesCollection.updateOne(
       { _id: outcome._id, applied: { $ne: true } },
       { $set: { applied: true, appliedAt: new Date() } }
@@ -169,8 +173,7 @@ async function applyOutcome(outcome) {
     return false;
   }
   const state = { ...stateCache, weights: [...stateCache.weights],
-    decisionWeights: { ...stateCache.decisionWeights }, roleWeights: { ...stateCache.roleWeights },
-    recent: [...stateCache.recent] };
+    decisionWeights: { ...stateCache.decisionWeights }, roleWeights: { ...stateCache.roleWeights } };
   adaptDecisionPolicy(state, outcome);
   const x = vector(outcome.features);
   const reward = clamp(Number(outcome.realizedR), -5, 5);
@@ -186,14 +189,7 @@ async function applyOutcome(outcome) {
   }
   state.bias = clamp(state.bias + learningRate * error, -4, 4);
   state.samples++;
-  state.recent.push({
-    tradeId: String(outcome.tradeId),
-    realizedR: reward,
-    side: outcome.side,
-    context: outcome.context || null,
-    closedAt: Number(outcome.closedAt || Date.now())
-  });
-  state.recent = state.recent.slice(-100);
+  state.lastAppliedTradeId = String(outcome.tradeId);
   state.updatedAt = new Date().toISOString();
 
   await persistState(state);
@@ -219,8 +215,13 @@ async function initialize(db) {
   }
 
   // Recover outcomes recorded before a process interruption but not yet applied.
-  const pending = await outcomesCollection.find({ applied: { $ne: true } }).sort({ closedAt: 1 }).toArray();
-  for (const outcome of pending) await applyOutcome(outcome);
+  // Drain a bounded batch at a time. Never materialize the full learning backlog in RAM.
+  while (true) {
+    const pending = await outcomesCollection.find({ applied: { $ne: true } })
+      .sort({ closedAt: 1 }).limit(100).toArray();
+    if (!pending.length) break;
+    for (const outcome of pending) await applyOutcome(outcome);
+  }
   return { samples: stateCache.samples, trained: stateCache.samples >= 20 };
 }
 
