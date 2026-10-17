@@ -51,6 +51,7 @@ const nineAiLossDiagnosis = require("./ai-trading/nine-ai-loss-diagnosis")
 const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
 const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
 const nineAiTpslLearning = require("./ai-trading/nine-ai-tpsl-learning")
+const nineAiRewardModel = require("./ai-trading/nine-ai-reward-model")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const { reachedProtectionTrigger } = require("./ai-trading/tpsl-safety")
 const { TpslLogThrottle } = require("./ai-trading/tpsl-log-throttle")
@@ -310,10 +311,11 @@ const exits = trades.filter(x =>
         // Gom toàn bộ fill của cùng order đó
         const fills = exits.filter(x => x.orderId === latestOrderId)
 
-        const pnl = fills.reduce(
-            (sum, x) => sum + Number(x.realizedPnl || 0),
-            0
-        )
+        const realizedPnl = exits.reduce((sum, x) => sum + Number(x.realizedPnl || 0), 0)
+        // Include commissions for every fill after entry in the learning reward.
+        const tradeFills = trades.filter(x => Number(x.time || 0) >= openTime)
+        const commissions = tradeFills.reduce((sum, x) => sum + Math.abs(Number(x.commission || 0)), 0)
+        const pnl = realizedPnl - commissions
 
         const lastFill = fills.at(-1)
 
@@ -4684,6 +4686,20 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
         console.error(`⚠️ NINE-AI MEMORY UPDATE FAILED ${t.symbol}:`, learningError?.message || learningError);
     }
 
+    // General reward learner trains on realized net-R and full entry-time context.
+    try {
+        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        if (riskBudget > 0 && Number.isFinite(closed.pnl) && t.nineAiLearningFeatures) {
+            const rewardLearning = await nineAiRewardModel.recordClosedTrade({
+                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
+                features: t.nineAiLearningFeatures, context: t.nineAiLearningContext || null,
+                side: t.side, realizedR: closed.pnl / riskBudget, closed: true, closedAt: closed.closedAt
+            });
+            if (rewardLearning.updated) console.log("🧠 NINE-AI REWARD MODEL UPDATED: long=" + rewardLearning.longSamples + " short=" + rewardLearning.shortSamples + " " + t.symbol);
+        }
+    } catch (rewardLearningError) {
+        console.error("⚠️ NINE-AI REWARD MODEL UPDATE FAILED " + t.symbol + ":", rewardLearningError?.message || rewardLearningError);
+    }
     // Every independent model learns separately from this confirmed closed trade.
     try {
         const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
@@ -5518,6 +5534,8 @@ await signalClaims.createIndex(
 
 // Load all learning state before scan loops. Each of the nine models owns
 // separate MongoDB state/outcome collections; no paid API is used.
+const rewardModelStatus = await nineAiRewardModel.initialize(db);
+console.log("🧠 NINE-AI GENERAL REWARD MODEL READY: long=" + rewardModelStatus.longSamples + " short=" + rewardModelStatus.shortSamples);
 const learningStatus = await nineAiLearningMemory.initialize(db);
 console.log(`🧠 NINE-AI LEGACY MEMORY READY: samples=${learningStatus.samples} trained=${learningStatus.trained}`);
 const independentModelStatus = await nineAiIndependentModels.initialize(
