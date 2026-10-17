@@ -3030,6 +3030,16 @@ async function scan(symbol){
             decision.authorizedForExecution !== true ||
             !["LONG", "SHORT"].includes(decision.side)
         ) return null;
+        try {
+            const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
+            const policyCheck = nineAiAutonomousResearch.evaluateLiveDecision(decision, activePolicy);
+            if (!policyCheck.allowed) {
+                console.log("🧠 NINE-AI AUTO-LEARNED RULE BLOCKED " + symbol + " | " + policyCheck.description + " | policy=" + policyCheck.policyId);
+                return null;
+            }
+        } catch (policyError) {
+            console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
+        }
         console.log(
             `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
         );
