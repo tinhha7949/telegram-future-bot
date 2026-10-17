@@ -46,6 +46,15 @@ const reversalInput = {
 assert.equal(chooseManagementAction(reversalInput, stopEarlyEvidence).action, "CLOSE_EARLY",
   "losses during reversal context must teach the next position to exit earlier");
 
+const trailAction = chooseManagementAction({
+  ...reversalInput, oldSL: 95,
+  features: { ...reversalInput.features, atr14: 2 }
+}, {});
+assert.equal(trailAction.action, "TRAIL_SL",
+  "15m reversal evidence must protect open profit by moving SL, not merely changing TP");
+assert.ok(trailAction.sl > 95 && trailAction.sl < 104,
+  "learned stop trailing must be monotonic and remain behind current price");
+
 const vector = featureVector(reversalInput);
 assert.ok(vector.opposingDirection > 0);
 assert.ok(vector.momentum < 0, "adverse momentum must be represented relative to the held side");
