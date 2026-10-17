@@ -155,6 +155,63 @@ function buildVariants(trade, rawCandles) {
 }
 
 function groupKey(row) { return row.side + "|" + (row.regime || "UNKNOWN"); }
+
+// Tags describe observed setup context, not hard-coded entry vetoes. They let
+// counterfactual results from similar oversized-candle / exhaustion setups
+// inform future decisions without pretending every losing trade should reverse.
+function featureTags(features = {}) {
+  const tags = [];
+  const extension = Math.abs(n(features.extensionAtr ?? features.extension, 0));
+  const body = Math.abs(n(features.candleBody ?? features.candleBodyRatio, 0));
+  const rsi = n(features.rsi14 ?? features.rsi, 50);
+  const momentum = n(features.momentum4 ?? features.momentum, 0);
+  const volume = n(features.volumeRatio ?? features.volume, 1);
+  const falseBreakout = n(features.falseBreakoutRisk, 0);
+  if (extension > 0 && body > 0 && extension >= body) tags.push("EXTENDED_CANDLE");
+  if (extension >= 1.25) tags.push("EXTENDED_ENTRY");
+  if ((rsi >= 65 && momentum > 0) || (rsi <= 35 && momentum < 0)) tags.push("MOMENTUM_EXHAUSTION");
+  if (rsi >= 68) tags.push("RSI_OVERBOUGHT");
+  if (rsi <= 32) tags.push("RSI_OVERSOLD");
+  if (falseBreakout >= 0.5) tags.push("FALSE_BREAKOUT_RISK");
+  if (volume < 0.75) tags.push("LOW_VOLUME");
+  return [...new Set(tags)];
+}
+function pairedVariantEvidence(sourceRows, features = {}, regime = "UNKNOWN") {
+  const wanted = featureTags(features);
+  const scoped = sourceRows.filter(r => r && r.hypothetical && r.variant && r.variant !== "BASELINE" &&
+    (!regime || String(r.regime || "UNKNOWN") === String(regime)) &&
+    Array.isArray(r.features) && (!wanted.length || wanted.some(tag => r.features.includes(tag))));
+  const baselines = new Map(sourceRows.filter(r => r && r.variant === "BASELINE")
+    .map(r => [String(r.tradeId), r]));
+  const byVariant = new Map();
+  for (const row of scoped) {
+    const baseline = baselines.get(String(row.tradeId));
+    if (!baseline || !Number.isFinite(Number(row.netR)) || !Number.isFinite(Number(baseline.netR))) continue;
+    const key = row.variant;
+    if (!byVariant.has(key)) byVariant.set(key, []);
+    byVariant.get(key).push({ row, uplift: Number(row.netR) - Number(baseline.netR) });
+  }
+  const suggestions = [];
+  for (const [variant, pairs] of byVariant) {
+    // Multiple variants from the same trade are not independent observations.
+    const unique = [...new Map(pairs.sort((a,b) => new Date(a.row.closedAt)-new Date(b.row.closedAt))
+      .map(p => [String(p.row.tradeId), p])).values()];
+    if (!unique.length) continue;
+    const uplift = unique.reduce((sum, p) => sum + p.uplift, 0) / unique.length;
+    const meanR = unique.reduce((sum, p) => sum + Number(p.row.netR), 0) / unique.length;
+    const variance = unique.reduce((sum, p) => sum + (p.uplift-uplift) ** 2, 0) / unique.length;
+    const standardError = Math.sqrt(variance / unique.length);
+    // Evidence threshold scales with observed uncertainty rather than a fixed
+    // sample count or fixed R-uplift. Tiny samples with noisy outcomes naturally
+    // fail this comparison; consistent repeated outcomes can qualify earlier.
+    if (uplift > standardError && meanR > 0) suggestions.push({
+      variant, side: unique[0].row.side, testUpliftR: Number(uplift.toFixed(4)),
+      testMeanR: Number(meanR.toFixed(4)), standardError: Number(standardError.toFixed(4)),
+      testSamples: unique.length, contextTags: wanted
+    });
+  }
+  return suggestions.sort((a,b) => (b.testUpliftR-b.standardError)-(a.testUpliftR-a.standardError));
+}
 function stats(list) {
   const mean = list.length ? list.reduce((s,r)=>s+n(r.netR,0),0)/list.length : 0;
   const wins = list.filter(r=>n(r.netR,0)>0).length;
@@ -224,6 +281,7 @@ async function researchClosedTrade(trade, rawCandles) {
     const baselineNetR = Number.isFinite(actualR) ? actualR : v.netR;
     const doc={tradeId:String(trade.tradeId),symbol:String(trade.symbol||""),side:v.side,
       originalSide:trade.side,variant:v.variant,entry:v.entry,sl:v.sl,tp:v.tp,
+      features:featureTags(trade.features || {}),
       grossR:isBaseline ? baselineNetR + FEE_R : v.grossR,
       netR:isBaseline ? baselineNetR : v.netR,exit:isBaseline ? "ACTUAL" : v.exit,
       exitTime:isBaseline ? (trade.closedAt || v.exitTime) : v.exitTime,barsHeld:v.barsHeld,
@@ -245,12 +303,18 @@ async function researchClosedTrade(trade, rawCandles) {
   return {variants:inserted.length,samples:rows.length,candidates:candidates.length,results:inserted.map(r=>({variant:r.variant,side:r.side,netR:r.netR,exit:r.exit}))};
 }
 
-function advice({side,regime="UNKNOWN"}={}) {
+function advice({side,regime="UNKNOWN",features={}}={}) {
+  const contextual = pairedVariantEvidence(rows, features, regime);
   const matching=policies.filter(p=>p.status==="VALIDATED_CANDIDATE"&&p.key.endsWith("|"+regime));
-  const suggestions=matching.filter(p=>p.testUpliftR>=MIN_TEST_UPLIFT_R&&p.testMeanR>0);
-  return {side,validatedSuggestions:suggestions.map(p=>({variant:p.variant,side:p.key.split("|")[1],testUpliftR:p.testUpliftR,testMeanR:p.testMeanR,testSamples:p.testSamples})),
-    samples:rows.length,mode:"RESEARCH_ONLY_UNTIL_EXPLICIT_EXECUTION_RULE"};
+  const legacy = matching.filter(p=>p.testUpliftR>=MIN_TEST_UPLIFT_R&&p.testMeanR>0)
+    .map(p=>({variant:p.variant,side:p.key.split("|")[1],testUpliftR:p.testUpliftR,
+      testMeanR:p.testMeanR,testSamples:p.testSamples,source:"CHRONOLOGICAL_POLICY"}));
+  // Prefer context-matched paired evidence; legacy validated policies remain a
+  // fallback for historical rows created before feature tags were persisted.
+  const suggestions = contextual.length ? contextual.map(p=>({...p,source:"CONTEXTUAL_PAIRED_COUNTERFACTUAL"})) : legacy;
+  return {side,validatedSuggestions:suggestions,samples:rows.length,
+    contextTags:featureTags(features),mode:"CONTINUOUS_CONTEXTUAL_COUNTERFACTUAL_EVIDENCE"};
 }
 function status(){return {samples:rows.length,validatedPolicies:policies.length,minTrain:MIN_TRAIN,minTest:MIN_TEST};}
 
-module.exports={OUTCOME_COLLECTION,POLICY_COLLECTION,MIN_TRAIN,MIN_TEST,normalizeCandles,simulate,validateEarlierSetup,buildVariants,evaluatePolicy,initialize,researchClosedTrade,advice,status};
+module.exports={OUTCOME_COLLECTION,POLICY_COLLECTION,MIN_TRAIN,MIN_TEST,normalizeCandles,simulate,validateEarlierSetup,buildVariants,evaluatePolicy,featureTags,pairedVariantEvidence,initialize,researchClosedTrade,advice,status};
