@@ -99,7 +99,7 @@ function makeCollection() {
   await learner.initialize({
     collection(name) { return name === "nine_ai_learning_state" ? legacyState : legacyOutcomes; }
   });
-  assert.equal(learner.read().version, 3);
+  assert.equal(learner.read().version, 4);
   assert.equal(learner.read().samples, 3);
   assert.ok(learner.read().decisionWeights && learner.read().roleWeights);
   assert.equal(learner.read().weights.length, 18);
