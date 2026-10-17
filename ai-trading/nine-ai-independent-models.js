@@ -29,7 +29,7 @@ function fresh(config) {
     modelId: config.id,
     version: 2,
     samples: 0,
-    weights: Array(16).fill(0),
+    weights: Array(18).fill(0),
     recent: [],
     evaluation: { evaluated: 0, correct: 0, brierSum: 0 },
     updatedAt: null
@@ -38,7 +38,7 @@ function fresh(config) {
 
 function validState(state, config) {
   const legacy = state?.version === 1 && Array.isArray(state.weights) && state.weights.length === 6;
-  const current = state?.version === 2 && Array.isArray(state.weights) && state.weights.length === 16;
+  const current = state?.version === 2 && Array.isArray(state.weights) && state.weights.length === 18;
   return Boolean(state && state._id === "model" && state.modelId === config.id &&
     (legacy || current) && Number.isInteger(state.samples) && state.samples >= 0 &&
     state.weights.every(Number.isFinite) && Array.isArray(state.recent) &&
@@ -52,7 +52,7 @@ function upgradeState(state, config) {
   return {
     ...state,
     version: 2,
-    weights: [...state.weights, ...Array(10).fill(0)],
+    weights: [...state.weights, ...Array(12).fill(0)],
     recent: [...state.recent],
     evaluation: { ...state.evaluation }
   };
@@ -76,7 +76,9 @@ function vector(features, config) {
     clamp((Number(f.roomToResistance) || 0) / 3, -1, 1),
     clamp((Number(f.roomToSupport) || 0) / 3, -1, 1),
     clamp(Number(f.falseBreakoutRisk) || 0, 0, 1),
-    clamp(Number(f.directionalStreak) || 0, -1, 1)
+    clamp(Number(f.directionalStreak) || 0, -1, 1),
+    clamp(((Number.isFinite(Number(f.longEntryQuality)) ? Number(f.longEntryQuality) : 50) - 50) / 50, -1, 1),
+    clamp(((Number.isFinite(Number(f.shortEntryQuality)) ? Number(f.shortEntryQuality) : 50) - 50) / 50, -1, 1)
   ];
   return base.map((value, i) => value * (config.scales[i] ?? 1));
 }
