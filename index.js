@@ -48,6 +48,7 @@ const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models
 const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
 const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
 const nineAiTpslLearning = require("./ai-trading/nine-ai-tpsl-learning")
+const { shouldLogTpslHold } = require("./ai-trading/tpsl-hold-log-deduper")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const { reachedProtectionTrigger } = require("./ai-trading/tpsl-safety")
 
@@ -2671,7 +2672,10 @@ async function manageDynamicTPSL(trade) {
     }
 
     if (!plan) {
-      console.log(`🧠 NINE-AI TPSL HOLD ${symbol} | side=${aiSide || "WAIT"} | score=${aiScore.toFixed(2)} | no safe RR<=${MAX_NINE_AI_RR} plan`);
+      const holdReason = `no safe RR<=${MAX_NINE_AI_RR} plan`;
+      if (shouldLogTpslHold(symbol, aiSide || "WAIT", holdReason)) {
+        console.log(`🧠 NINE-AI TPSL HOLD ${symbol} | side=${aiSide || "WAIT"} | score=${aiScore.toFixed(2)} | ${holdReason}`);
+      }
       return;
     }
 
