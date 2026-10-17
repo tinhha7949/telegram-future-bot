@@ -9,7 +9,7 @@ assert.equal(research.matchesRule({ features: { volume: 0.8 } },
   { path: "features.volume", operator: "gte", threshold: 1.1 }), false);
 assert.equal(research.matchesRule({ side: "SHORT", features: { longEntryQuality: 90 } },
   { path: "features.longEntryQuality", operator: "gte", threshold: 70, side: "LONG" }), false);
-assert.deepEqual(research.stats([]), { n: 0, meanR: null, winRate: null, totalR: 0 });
+assert.deepEqual(research.stats([]), { n: 0, meanR: null, standardDeviation: null, winRate: null, totalR: 0 });
 
 const few = Array.from({ length: 15 }, (_, i) => ({
   closed: true, side: "LONG", realizedR: i % 2 ? 1 : -1,
