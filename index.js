@@ -2691,7 +2691,10 @@ async function manageDynamicTPSL(trade) {
     const featureState = liveDecision?.rankMetrics?.features || {};
     const currentInitialRisk = Number(trade.initialRisk) || Math.abs(entry - oldSL);
     const tpslContext = {
+      side,
       marketRegime: featureState.marketRegime || "UNKNOWN",
+      trendAligned: featureState.trend === (side === "LONG" ? "UP" : "DOWN"),
+      momentumAligned: Number(featureState.momentum12 || 0) * (side === "LONG" ? 1 : -1) > 0,
       trend: featureState.trend || "UNKNOWN",
       momentum12: Number(featureState.momentum12 || 0),
       atrPercent: Number(featureState.atrPercent || 0),
