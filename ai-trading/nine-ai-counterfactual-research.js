@@ -196,18 +196,24 @@ function pairedVariantEvidence(sourceRows, features = {}, regime = "UNKNOWN") {
     // Multiple variants from the same trade are not independent observations.
     const unique = [...new Map(pairs.sort((a,b) => new Date(a.row.closedAt)-new Date(b.row.closedAt))
       .map(p => [String(p.row.tradeId), p])).values()];
-    if (!unique.length) continue;
-    const uplift = unique.reduce((sum, p) => sum + p.uplift, 0) / unique.length;
-    const meanR = unique.reduce((sum, p) => sum + Number(p.row.netR), 0) / unique.length;
-    const variance = unique.reduce((sum, p) => sum + (p.uplift-uplift) ** 2, 0) / unique.length;
-    const standardError = Math.sqrt(variance / unique.length);
+    if (unique.length < 2) continue;
+    // Chronological holdout: the latest 30% of unique closed trades is used
+    // only for evaluation, never to choose the candidate. Avoid training/test
+    // leakage by splitting by trade ID after sorting on actual close time.
+    const splitAt = Math.max(1, Math.floor(unique.length * 0.7));
+    const test = unique.slice(splitAt);
+    if (!test.length) continue;
+    const uplift = test.reduce((sum, p) => sum + p.uplift, 0) / test.length;
+    const meanR = test.reduce((sum, p) => sum + Number(p.row.netR), 0) / test.length;
+    const variance = test.reduce((sum, p) => sum + (p.uplift-uplift) ** 2, 0) / test.length;
+    const standardError = Math.sqrt(variance / test.length);
     // Evidence threshold scales with observed uncertainty rather than a fixed
     // sample count or fixed R-uplift. Tiny samples with noisy outcomes naturally
     // fail this comparison; consistent repeated outcomes can qualify earlier.
     if (uplift > standardError && meanR > 0) suggestions.push({
       variant, side: unique[0].row.side, testUpliftR: Number(uplift.toFixed(4)),
       testMeanR: Number(meanR.toFixed(4)), standardError: Number(standardError.toFixed(4)),
-      testSamples: unique.length, contextTags: wanted
+      testSamples: test.length, contextTags: wanted
     });
   }
   return suggestions.sort((a,b) => (b.testUpliftR-b.standardError)-(a.testUpliftR-a.standardError));
