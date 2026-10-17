@@ -3132,18 +3132,40 @@ async function loadValidFuturesSymbols(){
     }
 }
 // Nine-AI scanner and execution pipeline.
+// Keep abstentions aggregated so a WAIT-heavy scan is diagnosable without
+// printing one noisy line per symbol.
+let NINE_AI_SCAN_REASONS = new Map();
+function recordNineAIAbstention(reason) {
+    const key = String(reason || "UNKNOWN_ABSTENTION");
+    NINE_AI_SCAN_REASONS.set(key, (NINE_AI_SCAN_REASONS.get(key) || 0) + 1);
+}
+function logNineAIScanSummary() {
+    if (!NINE_AI_SCAN_REASONS.size) return;
+    const summary = [...NINE_AI_SCAN_REASONS.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([reason, count]) => `${reason}=${count}`)
+        .join(" | ");
+    console.log(`🧠 NINE-AI SCAN DIAGNOSTIC: ${summary}`);
+}
 // ================= SCAN =================
 async function scan(symbol){
     try {
         // Nine-AI is the only signal source.
         const data15 = await getData(symbol, "15m", 601);
-        if (!Array.isArray(data15)) return null;
+        if (!Array.isArray(data15)) {
+            recordNineAIAbstention("MARKET_DATA_UNAVAILABLE");
+            return null;
+        }
         const decision = analyzeNineAI(data15, symbol);
         if (
             !decision ||
             decision.authorizedForExecution !== true ||
             !["LONG", "SHORT"].includes(decision.side)
-        ) return null;
+        ) {
+            recordNineAIAbstention(decision?.reason || "WAIT_NO_AUTHORIZED_DIRECTION");
+            return null;
+        }
         let researchPolicyAtEntry = null;
         try {
             const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
@@ -3345,6 +3367,7 @@ async function scanner(){
     }
 
     isScanning = true
+    NINE_AI_SCAN_REASONS = new Map()
 
      try{
         const cooldownLeft = NEXT_ENTRY_ALLOWED_AT - Date.now();
@@ -3483,6 +3506,7 @@ let signals = results
     )
     .map(r => r.value)
 
+logNineAIScanSummary()
 if(!signals || signals.length === 0){
     console.log("❌ No signal")
     return

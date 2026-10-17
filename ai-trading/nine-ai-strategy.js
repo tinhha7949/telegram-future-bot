@@ -199,6 +199,10 @@ function resolveModelSide(model, fallback) {
   return model?.trained && ["LONG", "SHORT"].includes(model.side) ? model.side : fallback;
 }
 
+function resolveConsensusSide(consensusSide) {
+  return ["LONG", "SHORT"].includes(consensusSide) ? consensusSide : null;
+}
+
 // Learned loss probability is evidence for ranking, not a standalone order veto.
 // Deterministic market-safety rules below remain in force.
 function assessIndependentRiskModel(riskModel) {
@@ -457,9 +461,12 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const consensusSide = longCount >= 4 && longCount - shortCount >= 2 ? "LONG" :
     shortCount >= 4 && shortCount - longCount >= 2 ? "SHORT" : null;
   const decisionModel = independent.get("decision");
-  const side = decisionModel?.trained && ["LONG", "SHORT"].includes(decisionModel.side)
-    ? (consensusSide && decisionModel.side === consensusSide ? consensusSide : null)
-    : consensusSide;
+  // The learned Decision AI is advisory evidence, not a second hard veto.
+  // At the 20-sample warm-up boundary, a disagreement used to erase an
+  // otherwise valid 4-of-7 rule consensus and could halt all entries. Keep
+  // consensus as the trade-direction authority; record the model in the role
+  // audit trail so its disagreement can still be measured and learned from.
+  const side = resolveConsensusSide(consensusSide);
   const chosenVotes = side === "LONG" ? longVotes : side === "SHORT" ? shortVotes : [];
   const confidence = chosenVotes.length
     ? Math.round(avg(chosenVotes.map(v => v.confidence)) * Math.min(1, chosenVotes.length / 5))
@@ -838,7 +845,7 @@ function compareNineAICandidates(a, b) {
 
 module.exports = {
   ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures,
-  resolveModelSide, assessIndependentRiskModel,
+  resolveModelSide, resolveConsensusSide, assessIndependentRiskModel,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore,
   analyzeNineAI, compareNineAICandidates, deriveNineAIDynamicPlan,
   shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR, MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE

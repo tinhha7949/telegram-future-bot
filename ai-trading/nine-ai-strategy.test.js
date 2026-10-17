@@ -2,7 +2,7 @@
 const assert = require("node:assert/strict");
 const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles, buildFeatures,
-  resolveModelSide, assessIndependentRiskModel,
+  resolveModelSide, resolveConsensusSide, assessIndependentRiskModel,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates,
   deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust,
   MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE, MAX_NINE_AI_RR
@@ -19,6 +19,13 @@ assert.equal(ROLE_WEIGHTS["Contrarian AI"], 0.15);
 assert.equal(resolveModelSide({ trained: true, side: null }, "LONG"), "LONG");
 assert.equal(resolveModelSide({ trained: true, side: "SHORT" }, "LONG"), "SHORT");
 assert.equal(resolveModelSide({ trained: false, side: "SHORT" }, "LONG"), "LONG");
+
+// Regression: once the Decision model reaches its training threshold, a
+// disagreement must not turn a valid rule consensus into WAIT.
+assert.equal(resolveConsensusSide("LONG"), "LONG");
+assert.equal(resolveConsensusSide("SHORT"), "SHORT");
+assert.equal(resolveConsensusSide(null), null);
+assert.equal(resolveConsensusSide("WAIT"), null);
 
 // A high learned loss probability lowers the Risk Manager's ranking confidence
 // but never acts as a standalone veto. Deterministic safety rules remain active.
