@@ -270,6 +270,7 @@ function evaluateLiveDecision(decision, policy) {
 }
 
 module.exports = {
-  FEATURE_RULES, getPath, matchesRule, stats, quantiles, ruleCandidates, evaluateRule,
+  FEATURE_RULES, MIN_RESEARCH_SAMPLES, MIN_TRAIN_MATCHES, MIN_TEST_MATCHES, MIN_TEST_COVERAGE,
+  getPath, matchesRule, stats, quantiles, ruleCandidates, evaluateRule,
   evaluateCandidate, buildResearch, initialize, runResearchCycle, getActivePolicy, decisionToResearchRow, evaluateLiveDecision
 };
