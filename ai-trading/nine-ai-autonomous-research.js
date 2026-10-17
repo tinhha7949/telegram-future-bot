@@ -13,7 +13,7 @@ const MIN_TEST_MEAN_R = 0.05;
 const FEATURE_RULES = Object.freeze({
   "features.volume": { label: "volume ratio", thresholds: [0.7, 0.85, 1, 1.1, 1.25, 1.5], direction: "gte" },
   "features.rsi": { label: "RSI", thresholds: [25, 30, 35, 45, 50, 55, 65, 70, 75], direction: "range" },
-  "features.extension": { label: "EMA extension in ATR", thresholds: [-2, -1.5, -1, -0.5, 0.5, 1, 1.5, 2], direction: "abs_lte" },
+  "features.extension": { label: "EMA extension in ATR", thresholds: [0.5, 1, 1.5, 2], direction: "abs_lte" },
   "features.momentum": { label: "normalized momentum", thresholds: [-1.5, -1, -0.5, 0, 0.5, 1, 1.5], direction: "sign" },
   "features.falseBreakoutRisk": { label: "false-breakout risk", thresholds: [0.5], direction: "lte" },
   "features.longEntryQuality": { label: "long entry quality", thresholds: [40, 50, 60, 70, 80], direction: "gte" },
