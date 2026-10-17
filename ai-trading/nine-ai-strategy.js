@@ -78,6 +78,7 @@ function rsi(values, period = 14) {
 function buildFeatures(candles) {
   const closes = candles.map(c => c.c);
   const last = candles[candles.length - 1];
+  const previous = candles[candles.length - 2];
   const e9 = ema(closes, 9), e21 = ema(closes, 21), e50 = ema(closes, 50);
   const rs = rsi(closes, 14);
   const trueRanges = [];
@@ -99,12 +100,59 @@ function buildFeatures(candles) {
   const swingHigh = Math.max(...structure.map(c => c.h));
   const swingLow = Math.min(...structure.map(c => c.l));
   const atrPct = last.c > 0 ? atr / last.c : 0;
+  const candleRange = Math.max(last.h - last.l, Number.EPSILON);
+  const candleBody = Math.abs(last.c - last.o);
+  const candleBodyRatio = clamp((last.c - last.o) / candleRange, -1, 1);
+  const upperWickRatio = clamp((last.h - Math.max(last.o, last.c)) / candleRange, 0, 1);
+  const lowerWickRatio = clamp((Math.min(last.o, last.c) - last.l) / candleRange, 0, 1);
+  const insideBar = Boolean(previous && last.h <= previous.h && last.l >= previous.l);
+  const bullishEngulfing = Boolean(previous && last.c > last.o && previous.c < previous.o &&
+    last.o <= previous.c && last.c >= previous.o);
+  const bearishEngulfing = Boolean(previous && last.c < last.o && previous.c > previous.o &&
+    last.o >= previous.c && last.c <= previous.o);
+  const brokeAbove = atr > 0 && last.c > high20 + atr * 0.05;
+  const brokeBelow = atr > 0 && last.c < low20 - atr * 0.05;
+  const breakoutStrength = atr > 0
+    ? brokeAbove ? (last.c - high20) / atr : brokeBelow ? (last.c - low20) / atr : 0
+    : 0;
+  const falseBreakoutRisk = Number(
+    (last.h > high20 && last.c < high20 && upperWickRatio >= 0.35) ||
+    (last.l < low20 && last.c > low20 && lowerWickRatio >= 0.35)
+  );
+  const range20 = Math.max(high20 - low20, Number.EPSILON);
+  const structurePosition = clamp((last.c - (high20 + low20) / 2) / (range20 / 2), -1, 1);
+  const roomToResistanceAtr = atr > 0 ? (high20 - last.c) / atr : 0;
+  const roomToSupportAtr = atr > 0 ? (last.c - low20) / atr : 0;
+  const lastSix = candles.slice(-6);
+  const earlierThree = lastSix.slice(0, 3);
+  const laterThree = lastSix.slice(3);
+  const higherHighs = Math.max(...laterThree.map(c => c.h)) > Math.max(...earlierThree.map(c => c.h));
+  const higherLows = Math.min(...laterThree.map(c => c.l)) > Math.min(...earlierThree.map(c => c.l));
+  const lowerHighs = Math.max(...laterThree.map(c => c.h)) < Math.max(...earlierThree.map(c => c.h));
+  const lowerLows = Math.min(...laterThree.map(c => c.l)) < Math.min(...earlierThree.map(c => c.l));
+  const structureTrend = higherHighs && higherLows ? "HIGHER_HIGHS_LOWS"
+    : lowerHighs && lowerLows ? "LOWER_HIGHS_LOWS" : "MIXED";
+  const directionalStreak = clamp(candles.slice(-3).reduce((sum, c) =>
+    sum + (c.c > c.o ? 1 : c.c < c.o ? -1 : 0), 0) / 3, -1, 1);
+  const trend = e9 > e21 && e21 > e50 ? "UP" : e9 < e21 && e21 < e50 ? "DOWN" : "RANGE";
+  const extensionAtr = atr > 0 ? (last.c - e21) / atr : 0;
+  const trendStrengthAtr = atr > 0 ? Math.abs(e9 - e21) / atr : 0;
+  const momentumStrength = Math.abs(mom12) / Math.max(atrPct, 0.0001);
+  const marketRegime = trend !== "RANGE" && trendStrengthAtr >= 0.2 &&
+    Math.sign(mom12) === (trend === "UP" ? 1 : -1)
+      ? (trend === "UP" ? "TREND_UP" : "TREND_DOWN")
+      : trend === "RANGE" && momentumStrength < 0.8 ? "SIDEWAYS" : "TRANSITION";
+  const volatilityRegime = atrPct > 0.015 ? "HIGH" : atrPct < 0.004 ? "LOW" : "NORMAL";
   return {
     last, e9, e21, e50, rsi: rs, atr, atrPct, mom4, mom12,
-    volumeRatio, high20, low20, swingHigh, swingLow,
-    trend: e9 > e21 && e21 > e50 ? "UP" : e9 < e21 && e21 < e50 ? "DOWN" : "RANGE",
-    extensionAtr: atr > 0 ? (last.c - e21) / atr : 0,
-    valid: [e9, e21, e50, rs, atr, high20, low20].every(Number.isFinite) && atr > 0
+    volumeRatio, high20, low20, swingHigh, swingLow, trend, marketRegime,
+    volatilityRegime, candleBodyRatio, candleBody, candleRange,
+    upperWickRatio, lowerWickRatio, insideBar, bullishEngulfing, bearishEngulfing,
+    breakoutStrength, brokeAbove, brokeBelow, falseBreakoutRisk,
+    structurePosition, roomToResistanceAtr, roomToSupportAtr, structureTrend,
+    directionalStreak, trendStrengthAtr, momentumStrength, extensionAtr,
+    valid: [e9, e21, e50, rs, atr, high20, low20, candleBodyRatio,
+      upperWickRatio, lowerWickRatio, breakoutStrength, structurePosition].every(Number.isFinite) && atr > 0
   };
 }
 
@@ -218,9 +266,22 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     if (side === "SHORT") shortVotes.push({ name, confidence });
   };
   const trendSide = f.trend === "UP" ? "LONG" : f.trend === "DOWN" ? "SHORT" : null;
-  const learnedFeatures = { trend: f.trend === "UP" ? 1 : f.trend === "DOWN" ? -1 : 0,
+  const learnedFeatures = {
+    trend: f.trend === "UP" ? 1 : f.trend === "DOWN" ? -1 : 0,
     momentum: f.mom4 / Math.max(f.atrPct, 0.0001), rsi: f.rsi,
-    volume: f.volumeRatio, extension: f.extensionAtr };
+    volume: f.volumeRatio, extension: f.extensionAtr,
+    candleBody: f.candleBodyRatio,
+    wickImbalance: f.lowerWickRatio - f.upperWickRatio,
+    breakoutStrength: f.breakoutStrength,
+    regime: f.marketRegime === "TREND_UP" ? 1 : f.marketRegime === "TREND_DOWN" ? -1 :
+      f.marketRegime === "SIDEWAYS" ? -0.5 : 0,
+    volatilityRegime: f.volatilityRegime === "HIGH" ? 1 : f.volatilityRegime === "LOW" ? -1 : 0,
+    structurePosition: f.structurePosition,
+    roomToResistance: f.roomToResistanceAtr,
+    roomToSupport: f.roomToSupportAtr,
+    falseBreakoutRisk: f.falseBreakoutRisk,
+    directionalStreak: f.directionalStreak
+  };
   const learned = learningMemory.predict(learnedFeatures);
   const independent = new Map(independentModels.predictAll(learnedFeatures)
     .map(model => [model.modelId, model]));
@@ -411,14 +472,44 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const momentumAlignment = momentumMatches * 50;
   const volumeQuality = clamp(f.volumeRatio / 1.5 * 100, 0, 100);
   const extensionQuality = clamp(100 - Math.abs(f.extensionAtr) * 15, 0, 100);
+  const alignedBreakout = side === "LONG" ? f.breakoutStrength > 0 : f.breakoutStrength < 0;
+  const breakoutQuality = f.falseBreakoutRisk
+    ? 15
+    : alignedBreakout
+      ? clamp(55 + Math.abs(f.breakoutStrength) * 20 + (f.volumeRatio >= 1.1 ? 10 : 0) +
+          (Math.abs(f.candleBodyRatio) >= 0.55 ? 10 : 0), 0, 100)
+      : f.breakoutStrength !== 0 ? 30 : 60;
+  const roomToOpposingStructure = side === "LONG" ? f.roomToResistanceAtr : f.roomToSupportAtr;
+  const roomQuality = roomToOpposingStructure < 0
+    ? (alignedBreakout && Math.abs(f.breakoutStrength) >= 0.1 ? 65 : 20)
+    : roomToOpposingStructure < 0.5 ? 25
+      : roomToOpposingStructure < 1 ? 50
+        : roomToOpposingStructure < 1.5 ? 70 : 90;
+  const lateEntryPenalty = Math.abs(f.extensionAtr) > 2.2 &&
+    Math.sign(f.extensionAtr) === (side === "LONG" ? 1 : -1);
+  const entryQuality = Math.round(clamp(
+    roomQuality * 0.45 + breakoutQuality * 0.35 + extensionQuality * 0.20 -
+      (lateEntryPenalty ? 20 : 0), 0, 100
+  ));
   const setupQuality = Math.round(
-    consensusCoverage * 0.30 +
-    marginQuality * 0.20 +
-    trendAlignment * 0.20 +
-    momentumAlignment * 0.15 +
+    consensusCoverage * 0.25 +
+    marginQuality * 0.15 +
+    trendAlignment * 0.15 +
+    momentumAlignment * 0.10 +
     volumeQuality * 0.10 +
-    extensionQuality * 0.05
+    extensionQuality * 0.05 +
+    breakoutQuality * 0.10 +
+    roomQuality * 0.10
   );
+  const configuredCostRate = Number(process.env.NINE_AI_ROUND_TRIP_COST_RATE);
+  const hasCostModel = process.env.NINE_AI_ROUND_TRIP_COST_RATE != null &&
+    String(process.env.NINE_AI_ROUND_TRIP_COST_RATE).trim() !== "" &&
+    Number.isFinite(configuredCostRate) && configuredCostRate >= 0;
+  const estimatedRoundTripCost = hasCostModel ? entry * configuredCostRate : null;
+  const netRR = hasCostModel
+    ? Math.max(0, Math.abs(tp - entry) - estimatedRoundTripCost) /
+      Math.max(Math.abs(entry - sl) + estimatedRoundTripCost, Number.EPSILON)
+    : null;
   const weighted = calculateWeightedRoleScore(roleResults, side);
   const roleScore = weighted.score;
   const rankScore = Math.round(clamp(roleScore * 0.85 + setupQuality * 0.15, 0, 100) * 100) / 100;
@@ -432,6 +523,12 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     desiredRR: targetRR,
     maxRiskReward: 1.8,
     riskPressure,
+    grossRR: rr,
+    netRR,
+    netRRStatus: hasCostModel ? "ESTIMATED_WITH_CONFIGURED_ROUND_TRIP_COST" : "NOT_CONFIGURED",
+    entryQuality,
+    breakoutQuality: Math.round(breakoutQuality),
+    roomQuality: Math.round(roomQuality),
     roleContributions: rankedRoles.map(role => ({
       name: role.name, weight: role.weight, score: role.score,
       weightedContribution: role.weightedContribution, side: role.side
@@ -470,8 +567,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       maxRiskReward: 1.8
     },
     signalAt: f.last.closeTime, setup: "NINE_AI_15M",
-    marketState: f.trend === "RANGE" ? "RANGE" : "TREND_STRONG",
-    volatility: f.atrPct > 0.015 ? "HIGH" : f.atrPct < 0.004 ? "LOW" : "NORMAL",
+    marketState: f.marketRegime,
+    volatility: f.volatilityRegime,
     qualityScore: rankScore, score: rankScore, rankScore,
     rankMetrics,
     roles: rankedRoles, candles: candles.length,
@@ -611,10 +708,20 @@ function deriveNineAIDynamicPlan({
 }
 
 function summarize(f) {
-  return { close: f.last.c, ema9: f.e9, ema21: f.e21, ema50: f.e50,
+  return {
+    close: f.last.c, ema9: f.e9, ema21: f.e21, ema50: f.e50,
     rsi14: f.rsi, atr14: f.atr, atrPercent: f.atrPct, momentum4: f.mom4,
     momentum12: f.mom12, volumeRatio: f.volumeRatio, trend: f.trend,
-    extensionAtr: f.extensionAtr, swingHigh: f.swingHigh, swingLow: f.swingLow };
+    marketRegime: f.marketRegime, volatilityRegime: f.volatilityRegime,
+    extensionAtr: f.extensionAtr, swingHigh: f.swingHigh, swingLow: f.swingLow,
+    high20: f.high20, low20: f.low20, candleBodyRatio: f.candleBodyRatio,
+    upperWickRatio: f.upperWickRatio, lowerWickRatio: f.lowerWickRatio,
+    insideBar: f.insideBar, bullishEngulfing: f.bullishEngulfing,
+    bearishEngulfing: f.bearishEngulfing, breakoutStrength: f.breakoutStrength,
+    falseBreakoutRisk: f.falseBreakoutRisk, structurePosition: f.structurePosition,
+    structureTrend: f.structureTrend, roomToResistanceAtr: f.roomToResistanceAtr,
+    roomToSupportAtr: f.roomToSupportAtr, directionalStreak: f.directionalStreak
+  };
 }
 
 // Higher composite rank wins. The nine-AI confidence remains the first
