@@ -69,11 +69,20 @@ function collection() {
   assert.ok(ml.status().every(model => model.samples === 1));
   assert.ok(ml.status().every(model => model.evaluation.evaluated === 1));
 
-  const features = { trend: 1, momentum: 1.1, rsi: 65, volume: 1.5, extension: 0.2 };
+  const features = {
+    trend: 1, momentum: 1.1, rsi: 65, volume: 1.5, extension: 0.2,
+    candleBody: 0.6, wickImbalance: -0.2, breakoutStrength: 0.7,
+    regime: 1, volatilityRegime: 0, structurePosition: 0.8,
+    roomToResistance: 1.2, roomToSupport: 2.1,
+    falseBreakoutRisk: 0, directionalStreak: 0.67
+  };
+  assert.equal(ml.vector(features, ml.MODEL_CONFIGS[0]).length, 16);
+  assert.equal(ml.fresh(ml.MODEL_CONFIGS[0]).version, 2);
   for (let i = 0; i < 25; i++) {
     await ml.learnClosedTrade({
-      tradeId: `closed-${i}`, features, side: "LONG",
-      realizedR: i % 4 === 0 ? -1 : 1.1, closed: true
+      tradeId: `closed-${i}`, features,
+      context: { marketRegime: "TREND_UP", entryQuality: 81 },
+      side: "LONG", realizedR: i % 4 === 0 ? -1 : 1.1, closed: true
     });
   }
   const models = ml.predictAll(features);
@@ -83,6 +92,12 @@ function collection() {
   assert.ok(models.every(model => model.evaluation.brierScore !== null));
   assert.ok(models.find(model => model.modelId === "risk").pLoss >= 0 &&
     models.find(model => model.modelId === "risk").pLoss <= 1);
+  for (const config of ml.MODEL_CONFIGS) {
+    const saved = [...collections.get(`nine_ai_ml_${config.id}_outcomes`).docs.values()]
+      .find(item => item.tradeId === "closed-24");
+    assert.equal(saved.context.marketRegime, "TREND_UP");
+    assert.equal(saved.context.entryQuality, 81);
+  }
 
   const duplicate = await ml.learnClosedTrade({
     tradeId: "closed-24", features, side: "LONG", realizedR: 1, closed: true
@@ -98,5 +113,28 @@ function collection() {
   const separateCollections = ml.MODEL_CONFIGS.map(config => collections.get(`nine_ai_ml_${config.id}_state`));
   assert.equal(new Set(separateCollections).size, 9);
   assert.ok(before.every(model => model.samples === 26));
-  console.log("PASS: nine independent local ML models persist separate memory and evaluation; closed outcomes deduplicate");
+
+  // Migrate persisted six-feature states while preserving learned history.
+  const migrationCollections = new Map();
+  const migrationDb = { collection(name) {
+    if (!migrationCollections.has(name)) migrationCollections.set(name, collection());
+    return migrationCollections.get(name);
+  } };
+  for (const config of ml.MODEL_CONFIGS) {
+    migrationCollections.get(`nine_ai_ml_${config.id}_state`).docs.set("model", {
+      _id: "model", modelId: config.id, version: 1, samples: 4,
+      weights: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6], recent: [],
+      evaluation: { evaluated: 4, correct: 3, brierSum: 1.2 }, updatedAt: null
+    });
+  }
+  await ml.initialize(migrationDb);
+  assert.ok(ml.status().every(model => model.samples === 4));
+  for (const config of ml.MODEL_CONFIGS) {
+    const saved = migrationCollections.get(`nine_ai_ml_${config.id}_state`).docs.get("model");
+    assert.equal(saved.version, 2);
+    assert.equal(saved.weights.length, 16);
+    assert.deepEqual(saved.weights.slice(0, 6), [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+    assert.ok(saved.weights.slice(6).every(weight => weight === 0));
+  }
+  console.log("PASS: nine independent contextual models persist context, migrate state, and deduplicate closed outcomes");
 })().catch(error => { console.error(error); process.exitCode = 1; });
