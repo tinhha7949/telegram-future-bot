@@ -33,6 +33,7 @@ function getPath(obj, path) {
   return path.split(".").reduce((value, key) => value == null ? undefined : value[key], obj);
 }
 function matchesRule(row, rule) {
+  if (rule.side && row.side !== rule.side) return false;
   const value = Number(getPath(row, rule.path));
   if (!Number.isFinite(value)) return false;
   if (rule.operator === "gte") return value >= rule.threshold;
