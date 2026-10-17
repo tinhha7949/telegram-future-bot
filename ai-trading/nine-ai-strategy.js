@@ -485,11 +485,23 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     : roomToOpposingStructure < 0.5 ? 25
       : roomToOpposingStructure < 1 ? 50
         : roomToOpposingStructure < 1.5 ? 70 : 90;
+  const configuredCostRate = Number(process.env.NINE_AI_ROUND_TRIP_COST_RATE);
+  const hasCostModel = process.env.NINE_AI_ROUND_TRIP_COST_RATE != null &&
+    String(process.env.NINE_AI_ROUND_TRIP_COST_RATE).trim() !== "" &&
+    Number.isFinite(configuredCostRate) && configuredCostRate >= 0;
+  const estimatedRoundTripCost = hasCostModel ? entry * configuredCostRate : null;
+  const netRR = hasCostModel
+    ? Math.max(0, Math.abs(tp - entry) - estimatedRoundTripCost) /
+      Math.max(Math.abs(entry - sl) + estimatedRoundTripCost, Number.EPSILON)
+    : null;
+  const rewardQuality = clamp(
+    (hasCostModel ? netRR : rr) / MAX_NINE_AI_RR * 100, 0, 100
+  );
   const lateEntryPenalty = Math.abs(f.extensionAtr) > 2.2 &&
     Math.sign(f.extensionAtr) === (side === "LONG" ? 1 : -1);
   const entryQuality = Math.round(clamp(
-    roomQuality * 0.45 + breakoutQuality * 0.35 + extensionQuality * 0.20 -
-      (lateEntryPenalty ? 20 : 0), 0, 100
+    roomQuality * 0.35 + breakoutQuality * 0.25 + extensionQuality * 0.15 +
+      rewardQuality * 0.25 - (lateEntryPenalty ? 20 : 0), 0, 100
   ));
   const setupQuality = Math.round(
     consensusCoverage * 0.25 +
@@ -501,15 +513,6 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     breakoutQuality * 0.10 +
     roomQuality * 0.10
   );
-  const configuredCostRate = Number(process.env.NINE_AI_ROUND_TRIP_COST_RATE);
-  const hasCostModel = process.env.NINE_AI_ROUND_TRIP_COST_RATE != null &&
-    String(process.env.NINE_AI_ROUND_TRIP_COST_RATE).trim() !== "" &&
-    Number.isFinite(configuredCostRate) && configuredCostRate >= 0;
-  const estimatedRoundTripCost = hasCostModel ? entry * configuredCostRate : null;
-  const netRR = hasCostModel
-    ? Math.max(0, Math.abs(tp - entry) - estimatedRoundTripCost) /
-      Math.max(Math.abs(entry - sl) + estimatedRoundTripCost, Number.EPSILON)
-    : null;
   const weighted = calculateWeightedRoleScore(roleResults, side);
   const roleScore = weighted.score;
   const rankScore = Math.round(clamp(roleScore * 0.85 + setupQuality * 0.15, 0, 100) * 100) / 100;
@@ -527,6 +530,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     netRR,
     netRRStatus: hasCostModel ? "ESTIMATED_WITH_CONFIGURED_ROUND_TRIP_COST" : "NOT_CONFIGURED",
     entryQuality,
+    rewardQuality: Math.round(rewardQuality),
     breakoutQuality: Math.round(breakoutQuality),
     roomQuality: Math.round(roomQuality),
     roleContributions: rankedRoles.map(role => ({
