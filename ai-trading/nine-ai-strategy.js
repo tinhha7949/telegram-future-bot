@@ -10,6 +10,7 @@
 const learningMemory = require("./nine-ai-learning-memory");
 const independentModels = require("./nine-ai-independent-models");
 const contextualLearning = require("./nine-ai-contextual-learning");
+const counterfactualResearch = require("./nine-ai-counterfactual-research");
 
 const ROLE_NAMES = [
   "Technical Analyst AI",
@@ -343,12 +344,20 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
     breakoutStrength: f.breakoutStrength, falseBreakoutRisk: f.falseBreakoutRisk
   });
-  const contextualWinner = contextualEvidence.LONG.ready && contextualEvidence.SHORT.ready &&
+  let contextualWinner = contextualEvidence.LONG.ready && contextualEvidence.SHORT.ready &&
     contextualEvidence.LONG.edge - contextualEvidence.SHORT.edge >= 8 && contextualEvidence.LONG.meanR > 0
       ? "LONG"
       : contextualEvidence.LONG.ready && contextualEvidence.SHORT.ready &&
         contextualEvidence.SHORT.edge - contextualEvidence.LONG.edge >= 8 && contextualEvidence.SHORT.meanR > 0
         ? "SHORT" : null;
+  const counterfactualAdvice = counterfactualResearch.advice({
+    side: contextualWinner || (contextualEvidence.LONG.edge >= contextualEvidence.SHORT.edge ? "LONG" : "SHORT"),
+    regime: String(f.marketRegime || learnedFeatures.marketRegime || "UNKNOWN")
+  });
+  // A sufficiently sampled chronological result may nudge the direction; it never forces a reversal.
+  const validatedFlip = counterfactualAdvice.validatedSuggestions.find(s =>
+    s.variant === "OPPOSITE_SIDE" && s.testSamples >= 15 && s.testUpliftR >= 0.2 && s.testMeanR > 0.05);
+  if (validatedFlip) contextualWinner = validatedFlip.side;
   const learned = learningMemory.predict(learnedFeatures);
   const independent = new Map(independentModels.predictAll(learnedFeatures)
     .map(model => [model.modelId, model]));
@@ -600,6 +609,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     entryQualityWeight: adaptiveDecisionWeights.entry, adaptivePolicySamples: policy.samples,
     roleWeights: policy.roleWeights,
     contextualLearning: { long: contextualEvidence.LONG, short: contextualEvidence.SHORT, tags: contextualEvidence.LONG.tags, winner: contextualWinner },
+    counterfactualResearch: counterfactualAdvice,
     desiredRR: targetRR,
     maxRiskReward: 1.8,
     riskPressure,
