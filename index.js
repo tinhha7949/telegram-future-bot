@@ -4411,7 +4411,6 @@ activeTrades.push(trade)
 `🟢 TP: ${trade.tp}\n` +
 `🔴 SL: ${trade.sl}\n` +
 `⚖️ RR: ${safeFixed(trade.rr, 2)}\n` +
-`🧭 Mode: NINE_AI_PRIMARY\n` +
 `🧠 Score: ${safeFixed(best.rankScore, 1)}\n` +
 `💰 Risk: ${safeFixed(trade.risk, 4)}`
 
