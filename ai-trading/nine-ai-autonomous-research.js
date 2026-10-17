@@ -2,8 +2,8 @@
 
 // Autonomous, zero-API strategy research. It mines closed-trade memory for
 // candidate entry filters, validates them on a chronological holdout, and
-// stores versioned candidates. This module never edits source code or changes
-// live execution; promotion remains shadow-only until separately gated.
+// stores versioned candidates. Qualified rules are automatically promoted to
+// live signal eligibility, attributed to trades, and rolled back on poor results.
 const MIN_SAMPLES = 100;
 const MAX_OUTCOMES = 2000;
 const MIN_TRAIN_MATCHES = 20;
@@ -132,7 +132,7 @@ function buildResearch(rows, now = new Date()) {
       candidateId: `nine-ai-rule-${new Date(now).getTime()}-${index + 1}`,
       createdAt: new Date(now),
       source: "AUTONOMOUS_MEMORY_MINING",
-      activation: "SHADOW_ONLY"
+      activation: "AUTO_PROMOTE_IF_VALIDATED"
     })),
     rejectedCount: candidates.length - accepted.length
   };
