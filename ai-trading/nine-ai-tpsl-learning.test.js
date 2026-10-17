@@ -48,6 +48,6 @@ assert.equal(chooseManagementAction(reversalInput, stopEarlyEvidence).action, "C
 
 const vector = featureVector(reversalInput);
 assert.ok(vector.opposingDirection > 0);
-assert.ok(vector.momentum > 0);
+assert.ok(vector.momentum < 0, "adverse momentum must be represented relative to the held side");
 assert.ok(vector.reversalStructure > 0);
 console.log("PASS: continuous TPSL expectancy learning uses wins and losses without fixed sample gates");
