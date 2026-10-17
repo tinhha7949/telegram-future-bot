@@ -2,7 +2,7 @@
 const assert = require("node:assert/strict");
 const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles, buildFeatures,
-  resolveModelSide, resolveConsensusSide, assessIndependentRiskModel,
+  resolveModelSide, resolveConsensusSide, assessIndependentRiskModel, assessEntryRiskEvidence,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates,
   deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust,
   MIN_NINE_AI_FAVORABLE_R_FOR_TPSL_UPDATE, NINE_AI_STRONG_OPPOSITE_EXIT_SCORE, MAX_NINE_AI_RR
@@ -33,7 +33,23 @@ const highLossAssessment = assessIndependentRiskModel({ trained: true, pLoss: 0.
 assert.equal(highLossAssessment.veto, false);
 assert.equal(highLossAssessment.confidence, 10);
 assert.equal(highLossAssessment.reason, "HIGH_LOSS_RISK_SOFT_PENALTY");
+
 assert.equal(assessIndependentRiskModel({ trained: false }).veto, false);
+
+// Market observations formerly used as fixed hard vetoes are now evidence only.
+// A low confidence, unusual ATR, extreme RSI, EMA mismatch, or opposing trap
+// cannot independently suppress an otherwise valid directional candidate.
+const lowRankButDirectional = assessEntryRiskEvidence({
+  side: "LONG",
+  features: { atrPct: 0.0004, rsi: 91, last: { c: 99 }, e21: 100 },
+  contrarian: { side: "SHORT", strength: 90 }
+});
+assert.equal(lowRankButDirectional.allowed, true);
+assert.ok(lowRankButDirectional.evidence.includes("opposingTrapEvidence"));
+assert.ok(lowRankButDirectional.evidence.some(item => item.startsWith("atrPct=")));
+assert.ok(lowRankButDirectional.evidence.some(item => item.startsWith("rsi=")));
+assert.equal(assessEntryRiskEvidence({ side: "SHORT", features: { atrPct: 0.08, rsi: 5 } }).allowed, true);
+assert.equal(assessEntryRiskEvidence({ side: null, features: {} }).allowed, false);
 
 const now = Date.now();
 const rows = [];
