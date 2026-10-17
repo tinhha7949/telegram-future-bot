@@ -31,7 +31,7 @@ for (let i = 0; i < 100; i++) {
 }
 const result = research.buildResearch(rows, new Date("2026-10-17T00:00:00Z"));
 assert.equal(result.sampleCount, 100);
-assert.equal(result.split, "chronological_70_30");
+assert.equal(result.split, "chronological_70_30_thresholds_mined_from_train_only");
 assert.ok(result.evaluatedRules > 0);
 assert.ok(result.candidates.every(candidate => candidate.activation === "AUTO_PROMOTE_IF_VALIDATED"));
 assert.ok(result.candidates.every(candidate => candidate.test.candidate.n > 0));
@@ -53,4 +53,23 @@ assert.equal(activePolicyResult.matched, false);
 assert.equal(activePolicyResult.scoreEvidence, -0.3);
 assert.equal(activePolicyResult.reason, "ACTIVE_RESEARCH_RULE_MISMATCH_SOFT_EVIDENCE");
 assert.equal(research.evaluateLiveDecision(liveDecision, null).reason, "NO_ACTIVE_RESEARCH_POLICY");
+
+const small = research.buildResearch(rows.slice(0, 40));
+assert.equal(small.status, "COLLECTING_OUTCOMES", "small samples must never promote a live strategy");
+assert.equal(small.requiredSamples, research.MIN_RESEARCH_SAMPLES);
+
+// Threshold candidates must be derived from the first 70% only, not from
+// extreme feature values that appear exclusively in the held-out future.
+const leakageRows = Array.from({ length: 100 }, (_, i) => ({
+  closed: true, side: "LONG", realizedR: i < 70 ? (i % 2 ? 0.2 : -0.1) : 0.3,
+  features: { volume: i < 70 ? 1 + (i % 5) * 0.1 : 99, rsi: 50,
+    extension: 0.2, momentum: 0.1, falseBreakoutRisk: 0.2,
+    longEntryQuality: 60, shortEntryQuality: 40 },
+  closedAt: new Date(1700000000000 + i * 1000)
+}));
+const leakageResearch = research.buildResearch(leakageRows);
+assert.ok(leakageResearch.evaluatedRules > 0);
+assert.ok(!research.ruleCandidates(leakageRows.slice(0, 70)).some(rule => rule.threshold === 99),
+  "held-out future values must not be used to mine candidate thresholds");
+
 console.log("nine-ai-autonomous-research tests passed");
