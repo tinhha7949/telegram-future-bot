@@ -47,6 +47,7 @@ const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
 const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
 const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
+const nineAiTpslLearning = require("./ai-trading/nine-ai-tpsl-learning")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const { reachedProtectionTrigger } = require("./ai-trading/tpsl-safety")
 
@@ -2554,9 +2555,16 @@ async function manageDynamicTPSL(trade) {
     const tickSize = Number(info?.filters?.find(f => f.filterType === "PRICE_FILTER")?.tickSize);
     if (!(tickSize > 0)) return;
 
-    // Always check the currently armed exchange triggers before any AI update
-    // throttle. A hit target must never be moved farther away, and a hit stop
-    // must exit immediately rather than wait for the next TPSL replacement.
+    // Re-evaluate Nine-AI before handling a target touch. The exchange TP
+    // remains armed, so a fast move may fill it before this loop can react.
+    const liveDecision = analyzeNineAI(data15, symbol);
+    const plan = deriveNineAIDynamicPlan({
+      decision: liveDecision, side, entry, current, oldSL, oldTP, tickSize
+    });
+
+    // SL is always checked first and can never be widened. If TP was crossed
+    // but Binance still reports an open position, take the confirmed profit
+    // rather than race an already-triggered exchange order.
     const liveTrigger = reachedProtectionTrigger({
       side,
       price: current,
@@ -2564,6 +2572,18 @@ async function manageDynamicTPSL(trade) {
       targetPrices: [oldTP]
     });
     if (liveTrigger.reached) {
+      const isProfitExit = liveTrigger.reason === "TP_TRIGGER_REACHED";
+      trade.nineAiTpslLastAction = isProfitExit ? "CLOSE_PROFIT" : "CLOSE_EARLY";
+      trade.nineAiTpslRegime = liveDecision?.rankMetrics?.features?.marketRegime || "UNKNOWN";
+      await trades.updateOne(
+        { symbol, result: "PENDING" },
+        { $set: {
+          nineAiTpslLastAction: trade.nineAiTpslLastAction,
+          nineAiTpslRegime: trade.nineAiTpslRegime,
+          nineAiTpslLastReason: liveTrigger.reason,
+          nineAiTpslDecisionAt: Date.now()
+        } }
+      );
       console.log(`🚨 NINE-AI LIVE TRIGGER ${symbol} | ${liveTrigger.reason} | mark=${current}; closing at market`);
       const closed = await closePosition(symbol, side, amount);
       if (closed && !(await hasPosition(symbol))) {
@@ -2577,14 +2597,6 @@ async function manageDynamicTPSL(trade) {
       return;
     }
 
-    // Re-evaluate the nine-role ensemble every management cycle. Its weighted
-    // decision owns target RR and proposed protection; this function only
-    // validates exchange geometry and the immutable no-widen-SL invariant.
-    const liveDecision = analyzeNineAI(data15, symbol);
-    const plan = deriveNineAIDynamicPlan({
-      decision: liveDecision, side, entry, current, oldSL, oldTP, tickSize
-    });
-
     const aiSide = ["LONG", "SHORT"].includes(liveDecision?.side) ? liveDecision.side : null;
     const aiScore = Number(liveDecision?.rankMetrics?.roleScore ?? liveDecision?.rankScore ?? liveDecision?.confidence ?? 0);
     const aiExit = shouldNineAIExitPosition(liveDecision, side);
@@ -2592,6 +2604,17 @@ async function manageDynamicTPSL(trade) {
     // Nine-AI itself decides whether the opposite signal is decisive.
     // The execution layer only carries out and verifies the approved exit.
     if (aiExit) {
+      trade.nineAiTpslLastAction = "CLOSE_EARLY";
+      trade.nineAiTpslRegime = liveDecision?.rankMetrics?.features?.marketRegime || "UNKNOWN";
+      await trades.updateOne(
+        { symbol, result: "PENDING" },
+        { $set: {
+          nineAiTpslLastAction: trade.nineAiTpslLastAction,
+          nineAiTpslRegime: trade.nineAiTpslRegime,
+          nineAiTpslLastReason: "STRONG_OPPOSITE_NINE_AI",
+          nineAiTpslDecisionAt: Date.now()
+        } }
+      );
       console.log(`🧠 NINE-AI EXIT ${symbol} | held=${side} | new=${aiSide} | roleScore=${aiScore.toFixed(2)}`);
       const closed = await closePosition(symbol, side, amount);
       if (closed) {
@@ -2623,6 +2646,17 @@ async function manageDynamicTPSL(trade) {
     }
 
     if (plan?.action === "CLOSE_TARGET_REACHED") {
+      trade.nineAiTpslLastAction = "CLOSE_PROFIT";
+      trade.nineAiTpslRegime = liveDecision?.rankMetrics?.features?.marketRegime || "UNKNOWN";
+      await trades.updateOne(
+        { symbol, result: "PENDING" },
+        { $set: {
+          nineAiTpslLastAction: trade.nineAiTpslLastAction,
+          nineAiTpslRegime: trade.nineAiTpslRegime,
+          nineAiTpslLastReason: "MAX_RR_TARGET_ALREADY_CROSSED",
+          nineAiTpslDecisionAt: Date.now()
+        } }
+      );
       console.log(`🧠 NINE-AI MAX-RR TARGET HIT ${symbol} | closing at market to preserve RR<=${MAX_NINE_AI_RR}`);
       const closed = await closePosition(symbol, side, amount);
       if (closed && !(await hasPosition(symbol))) {
@@ -2639,6 +2673,51 @@ async function manageDynamicTPSL(trade) {
     if (!plan) {
       console.log(`🧠 NINE-AI TPSL HOLD ${symbol} | side=${aiSide || "WAIT"} | score=${aiScore.toFixed(2)} | no safe RR<=${MAX_NINE_AI_RR} plan`);
       return;
+    }
+
+    // TP can move in either direction. SL safety remains a separate invariant.
+    const featureState = liveDecision?.rankMetrics?.features || {};
+    const currentInitialRisk = Number(trade.initialRisk) || Math.abs(entry - oldSL);
+    const tpslAction = nineAiTpslLearning.chooseManagementAction({
+      side, entry, current, oldTP, initialRisk: currentInitialRisk,
+      targetRisk: Math.abs(entry - oldSL), tickSize, maxRR: MAX_NINE_AI_RR,
+      score: aiScore, decisionSide: aiSide,
+      trendAligned: featureState.trend === (side === "LONG" ? "UP" : "DOWN"),
+      momentumAligned: Number(featureState.momentum12 || 0) * (side === "LONG" ? 1 : -1) > 0,
+      regime: featureState.marketRegime || "UNKNOWN"
+    }, nineAiTpslLearning.getPolicyStats());
+
+    if (tpslAction.action === "CLOSE_PROFIT" || tpslAction.action === "CLOSE_EARLY") {
+      trade.nineAiTpslLastAction = tpslAction.action;
+      trade.nineAiTpslRegime = featureState.marketRegime || "UNKNOWN";
+      await trades.updateOne(
+        { symbol, result: "PENDING" },
+        { $set: {
+          nineAiTpslLastAction: trade.nineAiTpslLastAction,
+          nineAiTpslRegime: trade.nineAiTpslRegime,
+          nineAiTpslLastReason: tpslAction.reason,
+          nineAiTpslDecisionAt: Date.now()
+        } }
+      );
+      console.log(`🧠 NINE-AI TPSL ${tpslAction.action} ${symbol} | ${tpslAction.reason}`);
+      const closed = await closePosition(symbol, side, amount);
+      if (closed && !(await hasPosition(symbol))) {
+        const cleaned = await cancelAllOrders(symbol);
+        console.log(cleaned
+          ? `✅ NINE-AI TPSL EXIT VERIFIED ${symbol}`
+          : `⚠️ NINE-AI TPSL EXIT FLAT BUT ORDER CLEANUP NEEDS RECONCILIATION ${symbol}`);
+      } else {
+        console.log(`🚨 NINE-AI TPSL EXIT NOT VERIFIED ${symbol}; protection retained`);
+      }
+      return;
+    }
+
+    if (tpslAction.action === "EXTEND_TP" || tpslAction.action === "TIGHTEN_TP") {
+      plan.tp = Number(tpslAction.tp);
+      plan.action = tpslAction.action;
+      plan.reason = tpslAction.reason;
+      trade.nineAiTpslLastAction = tpslAction.action;
+      trade.nineAiTpslRegime = featureState.marketRegime || "UNKNOWN";
     }
 
     const minimumChange = Math.max(entry * 0.00002, tickSize * 2);
@@ -2691,6 +2770,10 @@ async function manageDynamicTPSL(trade) {
           stronglyOpposes: plan.stronglyOpposes, desiredRR: plan.desiredRR,
           reason: plan.reason, evaluatedAt: now
         },
+        nineAiTpslLastAction: trade.nineAiTpslLastAction || "HOLD",
+        nineAiTpslRegime: featureState.marketRegime || "UNKNOWN",
+        nineAiTpslLastReason: tpslAction.reason || plan.reason,
+        nineAiTpslDecisionAt: now,
         updatedAt: now
       } }
     );
@@ -4510,6 +4593,25 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
     }
 }
 
+        // Train the TPSL policy only after Binance confirms a close and realized PnL exists.
+        try {
+            const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+            if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
+                const tpslLearning = await nineAiTpslLearning.recordClosedTrade({
+                    tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
+                    action: t.nineAiTpslLastAction,
+                    regime: t.nineAiTpslRegime || t.marketState || "UNKNOWN",
+                    realizedR: closed.pnl / riskBudget,
+                    closedAt: closed.closedAt
+                });
+                if (tpslLearning.updated) {
+                    console.log(`🧠 NINE-AI TPSL POLICY LEARNED: action=${t.nineAiTpslLastAction} ${t.symbol}`);
+                }
+            }
+        } catch (tpslLearningError) {
+            console.error(`⚠️ NINE-AI TPSL LEARNING FAILED ${t.symbol}:`, tpslLearningError?.message || tpslLearningError);
+        }
+
         const latestBalance = await updateBalance()
 
         if(latestBalance > 0){
@@ -5214,6 +5316,13 @@ try {
 
 // Initialize the regime-aware strategy selector before scanner loops. It learns
 // family/regime expectancy from confirmed closed outcomes; score is a tie-breaker.
+try {
+    const tpslLearningStatus = await nineAiTpslLearning.initialize(db.collection("nine_ai_tpsl_outcomes"));
+    console.log(`🧠 NINE-AI TPSL LEARNING READY: samples=${tpslLearningStatus.samples}`);
+} catch (tpslLearningError) {
+    console.error("⚠️ NINE-AI TPSL LEARNING INIT FAILED:", tpslLearningError?.message || tpslLearningError);
+}
+
 try {
     const evolutionStatus = await nineAiStrategyEvolution.initialize(db);
     console.log(`🧬 NINE-AI STRATEGY EVOLUTION READY: groups=${evolutionStatus.familyGroups} families=${evolutionStatus.families.join(",")}`);
