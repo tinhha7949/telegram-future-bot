@@ -163,7 +163,7 @@ function chooseManagementAction(input, policyStats = cachedStats) {
   const oldSL = Number(input?.oldSL);
   const atr = num(f.atr14, initialRisk);
   if (favorableR > 0 && adverseEvidence > 0 && oldSL > 0 &&
-      (actionValues.TRAIL_SL.meanR >= baseline.meanR || adverseEvidence > 0)) {
+      actionValues.TRAIL_SL.meanR >= baseline.meanR) {
     const distance = Math.max(tickSize * 2, atr / (1 + adverseEvidence));
     const proposedSL = side === "LONG"
       ? Math.max(oldSL, current - distance)
