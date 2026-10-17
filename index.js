@@ -3119,7 +3119,11 @@ function buildTradeFromNineAISignal(best, riskBudget) {
         roomToResistance: Number(strategyFeatures.roomToResistanceAtr) || 0,
         roomToSupport: Number(strategyFeatures.roomToSupportAtr) || 0,
         falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
-        directionalStreak: Number(strategyFeatures.directionalStreak) || 0
+        directionalStreak: Number(strategyFeatures.directionalStreak) || 0,
+        longEntryQuality: Number.isFinite(Number(strategyFeatures.longEntryQuality))
+          ? Number(strategyFeatures.longEntryQuality) : 50,
+        shortEntryQuality: Number.isFinite(Number(strategyFeatures.shortEntryQuality))
+          ? Number(strategyFeatures.shortEntryQuality) : 50
       }
     : null;
   const nineAiLearningContext = best?.setup === "NINE_AI_15M" && strategyFeatures
