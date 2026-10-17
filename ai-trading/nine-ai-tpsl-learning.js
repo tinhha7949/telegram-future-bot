@@ -75,7 +75,8 @@ function chooseManagementAction(input, policyStats = cachedStats) {
   const targetNear = targetDistanceR > 0 && targetDistanceR <= 0.30;
   const aligned = decisionSide === side && score >= 72 &&
     input?.trendAligned === true && input?.momentumAligned === true;
-  const cap = entry + direction * initialRisk * maxRR;
+  const targetRisk = Number(input?.targetRisk) > 0 ? Number(input.targetRisk) : initialRisk;
+  const cap = entry + direction * targetRisk * maxRR;
   const capRemaining = direction * (cap - current);
   const extendStats = policyStats?.regimes?.[`${regime}:EXTEND_TP`] || policyStats?.actions?.EXTEND_TP;
   const closeStats = policyStats?.regimes?.[`${regime}:CLOSE_PROFIT`] || policyStats?.actions?.CLOSE_PROFIT;
@@ -108,7 +109,8 @@ function chooseManagementAction(input, policyStats = cachedStats) {
     const distance = Math.max(tickSize * 3, initialRisk * 0.15);
     const tp = current + direction * distance;
     if (direction * (tp - current) > tickSize &&
-        direction * (oldTP - tp) > 0) {
+        direction * (oldTP - tp) > 0 &&
+        direction * (tp - entry) <= targetRisk * maxRR + tickSize) {
       return { action: "TIGHTEN_TP", reason: "WEAKENING_SIGNAL_LOCK_PROFIT", tp, favorableR };
     }
   }
