@@ -40,3 +40,18 @@ assert(specs.find(s => s.name === "trades").priority > specs.find(s => s.name ==
 assert.deepStrictEqual(specs.find(s => s.name === "trades").filter, { result: { $in: ["WIN", "LOSS", "CLOSED"] } });
 
 console.log("NINE-AI DB RETENTION TESTS PASSED");
+
+const safeSpec = { dateFields: ["closedAt", "createdAt"], filter: { outcomeStatus: "EVALUATED" } };
+const safeDelete = retention.makeSafeDeleteQuery(["id-1"], safeSpec, 5000);
+assert.deepStrictEqual(safeDelete.$and[0], { _id: { $in: ["id-1"] } });
+assert.deepStrictEqual(safeDelete.$and[1], { outcomeStatus: "EVALUATED" });
+assert.deepStrictEqual(safeDelete.$and[2].$expr.$lt[0], {
+  $convert: {
+    input: { $ifNull: ["$closedAt", "$createdAt"] },
+    to: "date", onError: null, onNull: null
+  }
+});
+assert.strictEqual(safeDelete.$and[2].$expr.$lt[1].getTime(), 5000);
+assert.deepStrictEqual(retention.makeRetentionDateExpression(["createdAt"]), {
+  $convert: { input: "$createdAt", to: "date", onError: null, onNull: null }
+});
