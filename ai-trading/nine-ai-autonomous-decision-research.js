@@ -170,7 +170,7 @@ async function runResearchCycle({ now = new Date() } = {}) {
     };
     await reports.insertOne(report);
     return { status: report.status, usableRows: usable.length, groups: results.length,
-      activatedPolicies: newlyValidated.length, activePolicy: activePolicy?.policyId || null };
+      activatedPolicies: newlyValidated.length, activePolicies: activePolicies.length };
   } finally {
     running = false;
   }
