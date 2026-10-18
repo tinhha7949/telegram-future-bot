@@ -47,6 +47,7 @@ const nineAiLossDiagnosis = require("./ai-trading/nine-ai-loss-diagnosis")
 const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
 const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
 const nineAiRewardModel = require("./ai-trading/nine-ai-reward-model")
+const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 
 // Use a machine-local lock keyed to this script, independent of the launch
@@ -2314,19 +2315,67 @@ async function scan(symbol){
     try {
         // Nine-AI is the only signal source.
         const data15 = await getData(symbol, "15m", 601);
+        const scanAt = Date.now();
         if (!Array.isArray(data15)) {
             recordNineAIAbstention("MARKET_DATA_UNAVAILABLE");
+            try {
+                await nineAiDecisionJournal.recordDecision({
+                    symbol,
+                    signalTime: Math.floor(scanAt / 900000) * 900000,
+                    scannedAt: scanAt,
+                    decision: { side: "WAIT", action: "WAIT", reason: "MARKET_DATA_UNAVAILABLE",
+                        authorizedForExecution: false, roles: [], rankMetrics: {} }
+                });
+            } catch (journalError) {
+                console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":", journalError?.message || journalError);
+            }
             return null;
         }
-        const decision = analyzeNineAI(data15, symbol);
+        try {
+            await nineAiDecisionJournal.settleMatured(symbol, data15);
+        } catch (settleError) {
+            console.error("⚠️ NINE-AI OPPORTUNITY SETTLEMENT FAILED " + symbol + ":", settleError?.message || settleError);
+        }
+        const decision = analyzeNineAI(data15, symbol) || {
+            symbol, side: null, action: "WAIT", reason: "NO_DECISION_RETURNED",
+            authorizedForExecution: false, roles: [], rankMetrics: {}
+        };
         if (
-            !decision ||
             decision.authorizedForExecution !== true ||
             !["LONG", "SHORT"].includes(decision.side)
         ) {
-            recordNineAIAbstention(decision?.reason || "WAIT_NO_AUTHORIZED_DIRECTION");
+            recordNineAIAbstention(decision.reason || "WAIT_NO_AUTHORIZED_DIRECTION");
+            try {
+                const journalResult = await nineAiDecisionJournal.recordDecision({
+                    symbol,
+                    decision,
+                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                    scannedAt: scanAt
+                });
+                if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
+            } catch (journalError) {
+                console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":", journalError?.message || journalError);
+            }
             return null;
         }
+
+        // Opportunity learning can only add a small positive ranking bonus after
+        // enough forward outcomes and a positive lower-confidence-bound estimate.
+        // Loss evidence is stored and learned elsewhere; it never vetoes a live entry.
+        const originalRankScore = Number(decision.rankScore ?? decision.confidence ?? 0);
+        const opportunityEvidence = nineAiDecisionJournal.assess(
+            decision.rankMetrics?.features || decision.features || {},
+            decision.side
+        );
+        decision.originalRankScore = originalRankScore;
+        decision.liveOpportunityBonus = Number(opportunityEvidence.bonus) || 0;
+        decision.rankScore = Math.max(0, Math.min(100, originalRankScore + decision.liveOpportunityBonus));
+        decision.qualityScore = decision.rankScore;
+        decision.rankMetrics = {
+            ...(decision.rankMetrics || {}),
+            score: decision.rankScore,
+            liveOpportunityLearning: opportunityEvidence
+        };
         let researchPolicyAtEntry = null;
         try {
             const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
@@ -2350,11 +2399,23 @@ async function scan(symbol){
         } catch (policyError) {
             console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
         }
+        try {
+            const journalResult = await nineAiDecisionJournal.recordDecision({
+                symbol, decision,
+                signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                scannedAt: scanAt,
+                learningEvidence: opportunityEvidence
+            });
+            if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
+        } catch (journalError) {
+            console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":", journalError?.message || journalError);
+        }
         console.log(
-            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
+            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | OPPORTUNITY_BONUS=${safeFixed(decision.liveOpportunityBonus, 3)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
         );
         return {
             ...decision,
+            nineAiDecisionKey: decision.nineAiDecisionKey || null,
             nineAiResearchPolicy: researchPolicyAtEntry,
             symbol,
             setup: "NINE_AI_15M",
@@ -2497,6 +2558,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     nineAiLearningContext,
     nineAiStrategyFamily: String(best?.strategyClassification?.family || "CONSENSUS_FALLBACK"),
     nineAiResearchPolicy: best.nineAiResearchPolicy ?? null,
+    nineAiDecisionKey: best.nineAiDecisionKey ?? null,
 
     // `risk` remains the monetary sizing budget expected by the execution code.
     risk: budget,
@@ -3768,6 +3830,21 @@ await trades.updateOne(
     }
 )
 
+if (t.nineAiDecisionKey) {
+    try {
+        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        await nineAiDecisionJournal.recordActualOutcome({
+            decisionKey: t.nineAiDecisionKey,
+            tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
+            realizedR: riskBudget > 0 ? closed.pnl / riskBudget : NaN,
+            pnl: closed.pnl,
+            closedAt: closed.closedAt
+        });
+    } catch (journalOutcomeError) {
+        console.error("⚠️ NINE-AI ACTUAL OUTCOME JOURNAL FAILED " + t.symbol + ":", journalOutcomeError?.message || journalOutcomeError);
+    }
+}
+
 // Train only after Binance confirms the position is closed and the realized PnL
 // has been saved. Learning failures must never interrupt trade reconciliation.
 if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
@@ -4615,6 +4692,8 @@ await signalClaims.createIndex(
 // separate MongoDB state/outcome collections; no paid API is used.
 const rewardModelStatus = await nineAiRewardModel.initialize(db);
 console.log("🧠 NINE-AI GENERAL REWARD MODEL READY: long=" + rewardModelStatus.longSamples + " short=" + rewardModelStatus.shortSamples);
+const decisionJournalStatus = await nineAiDecisionJournal.initialize(db);
+console.log("🧠 NINE-AI DECISION JOURNAL READY: samples=" + decisionJournalStatus.samples + " pending=" + decisionJournalStatus.pending);
 const learningStatus = await nineAiLearningMemory.initialize(db);
 console.log(`🧠 NINE-AI LEGACY MEMORY READY: samples=${learningStatus.samples} trained=${learningStatus.trained}`);
 const independentModelStatus = await nineAiIndependentModels.initialize(
