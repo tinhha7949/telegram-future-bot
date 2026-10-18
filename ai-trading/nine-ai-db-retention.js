@@ -46,6 +46,16 @@ function buildCollectionSpec(name) {
     name,
     dateFields: DEFAULT_DATE_FIELDS,
     days: DEFAULT_RETENTION_DAYS,
+    // Never delete records that still advertise a live/in-flight state, regardless
+    // of how old their creation timestamp is.
+    filter: {
+      $nor: [
+        { status: { $in: ["active", "open", "pending", "running", "queued", "processing", "new", "in_progress"] } },
+        { state: { $in: ["active", "open", "pending", "running", "queued", "processing", "new", "in_progress"] } },
+        { status: { $regex: /^(active|open|pending|running|queued|processing|new|in.progress)$/i } },
+        { state: { $regex: /^(active|open|pending|running|queued|processing|new|in.progress)$/i } }
+      ]
+    },
     category: "stale_non_core_data",
     priority: 10
   };
