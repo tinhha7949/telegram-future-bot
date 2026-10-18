@@ -162,9 +162,7 @@ function createRetention(db, overrides = {}) {
       const dateInput = makeRetentionDateExpression(spec.dateFields);
       const docs = await db.collection(spec.name).aggregate([
         { $match: spec.filter || {} },
-        { $addFields: { _retentionDate: {
-          $convert: { input: dateInput, to: "date", onError: null, onNull: null }
-        } } },
+        { $addFields: { _retentionDate: dateInput } },
         { $match: { _retentionDate: { $lt: new Date(cutoffMs) } } },
         { $sort: { _retentionDate: 1, _id: 1 } },
         { $limit: config.batchSize },
