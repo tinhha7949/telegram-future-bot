@@ -2463,6 +2463,7 @@ async function scan(symbol){
         } catch (journalError) {
             console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":", journalError?.message || journalError);
         }
+        if (decision.authorizedForExecution !== true) return null;
         console.log(
             `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | OPPORTUNITY_BONUS=${safeFixed(decision.liveOpportunityBonus, 3)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
         );
