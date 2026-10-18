@@ -49,6 +49,7 @@ const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution
 const nineAiRewardModel = require("./ai-trading/nine-ai-reward-model")
 const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
 const nineAiAutonomousDecisionResearch = require("./ai-trading/nine-ai-autonomous-decision-research")
+const nineAiAutonomousDeployment = require("./ai-trading/nine-ai-autonomous-deployment")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 
 // Use a machine-local lock keyed to this script, independent of the launch
@@ -4762,6 +4763,25 @@ try {
     console.log("NINE-AI COUNTERFACTUAL RESEARCH READY: samples=" + counterfactualStatus.samples + " validatedPolicies=" + counterfactualStatus.policies);
 } catch (counterfactualError) {
     console.error("NINE-AI COUNTERFACTUAL RESEARCH INIT FAILED:", counterfactualError?.message || counterfactualError);
+}
+
+try {
+    const deploymentStatus = await nineAiAutonomousDeployment.initialize(db);
+    console.log("🚀 NINE-AI AUTONOMOUS TIMING DEPLOYMENT READY: activePolicies=" + deploymentStatus.activePolicies);
+    const runTimingDeployment = async () => {
+        try {
+            const result = await nineAiAutonomousDeployment.runResearchCycle();
+            console.log("🚀 NINE-AI TIMING POLICY CYCLE: status=" + result.status +
+                " outcomes=" + (result.rows ?? 0) + " candidates=" + (result.candidates ?? 0) +
+                " active=" + (result.activePolicies ?? 0));
+        } catch (error) {
+            console.error("⚠️ NINE-AI TIMING POLICY CYCLE FAILED:", error?.message || error);
+        }
+    };
+    void runTimingDeployment();
+    setInterval(runTimingDeployment, 6 * 60 * 60 * 1000);
+} catch (deploymentInitError) {
+    console.error("⚠️ NINE-AI AUTONOMOUS DEPLOYMENT INIT FAILED:", deploymentInitError?.message || deploymentInitError);
 }
 
 try {
