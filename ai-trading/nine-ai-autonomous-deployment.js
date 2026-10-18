@@ -20,7 +20,7 @@ let pendingEntries = null;
 let active = [];
 let running = false;
 
-const n = v => Number.isFinite(Number(v)) ? Number(v) : null;
+const n = v => v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const mean = xs => xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : null;
 const se = xs => {
   if (!xs.length) return null;
