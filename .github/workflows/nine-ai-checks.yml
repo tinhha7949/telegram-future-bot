@@ -35,3 +35,5 @@ jobs:
       - run: node ai-trading/nine-ai-loss-diagnosis.test.js
       - run: node --check ai-trading/nine-ai-decision-journal.js
       - run: node ai-trading/nine-ai-decision-journal.test.js
+      - run: node --check ai-trading/nine-ai-autonomous-decision-research.js
+      - run: node ai-trading/nine-ai-autonomous-decision-research.test.js
