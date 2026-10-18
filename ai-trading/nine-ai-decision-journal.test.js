@@ -35,6 +35,10 @@ assert.equal(evaluations.evaluations["4"].source, "HYPOTHETICAL_FORWARD_CLOSES_N
 assert.ok(Number.isFinite(evaluations.evaluations["4"].longNetR));
 assert.ok(Number.isFinite(evaluations.evaluations["4"].shortNetR));
 assert.ok(evaluations.evaluations["4"].feeR >= 0);
+assert.ok(evaluations.researchVariants.now_4);
+assert.ok(evaluations.researchVariants.wait1_4);
+assert.ok(evaluations.researchVariants.wait2_16);
+assert.equal(evaluations.researchVariants.wait1_4.source, "HYPOTHETICAL_ENTRY_TIMING_RESEARCH_NOT_EXECUTED_PNL");
 
 // A losing context must never create a negative bonus or veto the next entry.
 assert.equal(journal.positiveEvidenceBonus(-1, 0.1, 100), 0);
