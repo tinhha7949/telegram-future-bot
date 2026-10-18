@@ -1,38 +1,51 @@
 # NINE-AI MongoDB capacity-aware retention
 
-The retention controller is a **last-resort space-management mechanism**, not a way to age out AI learning history. It estimates logical data plus indexes in each MongoDB collection; this is not the same as the provider's billed quota or allocated disk.
+The retention controller manages high-volume historical records without treating all old data as disposable. It uses explicit per-collection retention windows, oldest-first selection, a bounded delete budget, and a dry-run default.
 
-## Safe defaults
+## Capacity behavior
 
-- Assumed budget: `DB_STORAGE_LIMIT_MB=5120`; set it to the actual database budget.
-- Preview threshold: 80% (4,096 MB by default); target: 60% (3,072 MB).
-- Starts at boot and repeats every 6 hours.
-- **Dry-run is enabled by default.** It reports eligible candidates and deletes nothing until `DB_RETENTION_DRY_RUN=false` is explicitly configured.
-- Batch size defaults to 100 and is bounded to 10–500 documents.
-- Hard cap defaults to 500 actual deletions per run, bounded to 10–2,000 using `DB_RETENTION_MAX_DELETES_PER_RUN`.
-- Candidate ordering is oldest-first across the approved collections.
-- One strict retention age is used. There is **no emergency mode that shortens retention windows** to chase a storage target.
+- Assumed database budget: `DB_STORAGE_LIMIT_MB=5120`; set this to the actual configured database budget.
+- Cleanup preview starts at 80% of the configured budget and targets 60%.
+- Runs at startup and every 6 hours.
+- Dry-run is enabled by default. Real deletion requires the explicit setting `DB_RETENTION_DRY_RUN=false`.
+- Batch size defaults to 100 (bounded 10–500); actual deletion is capped at 500 documents per run by default (bounded 10–2,000).
+- Records are selected oldest-first across eligible collections. The worker rechecks age and collection-specific filters immediately before deletion.
+- There is no emergency mode that shortens a collection's minimum age to chase a space target.
 
-## What may be deleted automatically
+## Retention tiers
 
-Only these report-artifact collections are eligible, and only after their `createdAt` timestamp is at least 365 days old:
+| Collection | Minimum age | Conditions / purpose |
+|---|---:|---|
+| `nine_ai_decision_journal` | 90 days | Only `outcomeStatus: "EVALUATED"`; unresolved journal rows are protected |
+| `nine_ai_strategy_lab_reports` | 90 days | Generated analysis reports |
+| `nine_ai_autonomous_decision_reports` | 90 days | Generated decision-research reports |
+| `nine_ai_loss_diagnoses` | 180 days | Derived diagnoses, retained longer for review |
+| `nine_ai_counterfactual_outcomes` | 365 days | Learning evidence |
+| `nine_ai_contextual_outcomes` | 365 days | Learning evidence |
+| `nine_ai_learning_outcomes` | 365 days | Strategy-learning evidence |
+| `nine_ai_reward_model_outcomes` | 365 days | Reward-model training evidence |
+| `nine_ai_strategy_evolution_outcomes` | 365 days | Strategy-family performance evidence |
+| `nine_ai_ml_technical_outcomes` | 365 days | ML training/evaluation evidence |
+| `nine_ai_ml_signal_outcomes` | 365 days | ML training/evaluation evidence |
+| `nine_ai_ml_memory_outcomes` | 365 days | ML training/evaluation evidence |
+| `nine_ai_ml_bull_outcomes` | 365 days | ML training/evaluation evidence |
+| `nine_ai_ml_bear_outcomes` | 365 days | ML training/evaluation evidence |
+| `nine_ai_ml_contrarian_outcomes` | 365 days | ML training/evaluation evidence |
+| `nine_ai_ml_analyst_outcomes` | 365 days | ML training/evaluation evidence |
+| `nine_ai_ml_decision_outcomes` | 365 days | ML training/evaluation evidence |
+| `nine_ai_ml_risk_outcomes` | 365 days | ML training/evaluation evidence |
 
-- `nine_ai_strategy_lab_reports`
-- `nine_ai_autonomous_decision_reports`
+The full allow-list is explicit in code. An unknown collection is never automatically cleaned. A missing or invalid timestamp is not eligible. If an earlier-priority timestamp is malformed, the date parser falls back to the next valid timestamp field.
 
-At selection and immediately before deletion, the worker checks that the record still meets the age rule. A missing or unparseable timestamp is not eligible. Each run is bounded by the configured batch size and deletion cap.
+## Never automatically deleted
 
-## What is explicitly protected
+- Any trade history, including closed trades; pending/live trades are especially protected.
+- Mutable model/learning state, active policies, strategy versions, deployment status, pending timing entries, and deduplication/claim ledgers.
+- Unresolved decision-journal rows.
+- Any collection not explicitly allow-listed above.
+- Collections, indexes, or entire databases.
 
-The automatic cleaner does not delete these categories, regardless of storage pressure:
-
-- AI learning, reward-model, contextual-learning, counterfactual, and ML outcome records.
-- Decision journal entries and loss diagnoses.
-- Trade history, including closed trades; all active/pending trades remain untouched.
-- Model/learning state, strategy state, deployment policies, and other unlisted collections.
-- Collections, indexes, or whole databases.
-
-If storage is still over target after eligible old reports are exhausted, the worker reports that the target was not reached. It must not sacrifice training outcomes or shorten retention to force the target.
+Long-term learning outcomes are not eligible before 365 days, even when database usage exceeds the target. If the database is only seven months old, only the 90/180-day tiers may be candidates. The 365-day training evidence is not deleted to make the storage graph look better.
 
 ## Configuration
 
@@ -44,8 +57,8 @@ If storage is still over target after eligible old reports are exhausted, the wo
 - `DB_RETENTION_INTERVAL_HOURS`
 - `DB_RETENTION_DRY_RUN`
 
-Review dry-run summaries before deliberately enabling deletion. Do not switch dry-run off until the actual collection names and timestamp schema have been checked against the production database.
+Review dry-run summaries before explicitly enabling real deletion. Check collection names and timestamp fields against the actual production database first.
 
-## MongoDB/Atlas limitation
+## Storage measurement limitations
 
-Per-collection stats are only an estimate and may not match Atlas account-level quota, overhead, or allocated disk. Deleting documents also may not immediately reduce allocated disk size. If the database remains over quota, investigate actual indexes, duplicate/rebuildable artifacts, and Atlas metrics instead of deleting AI learning history blindly.
+Per-collection logical size plus indexes is an estimate, not a guaranteed reading of provider-level quota, overhead, or allocated disk. Deletes may not immediately reduce allocated disk. If the target is still not reached after eligible records are exhausted, the controller reports that instead of deleting protected training data.
