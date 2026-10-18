@@ -1,65 +1,45 @@
 # NINE-AI MongoDB capacity-aware retention
 
-The retention controller manages high-volume historical records without treating all old data as disposable. It uses explicit per-collection retention windows, oldest-first selection, a bounded delete budget, and autonomous real cleanup by default.
+## Safety contract
+
+The goal is controlled storage reduction without destroying experience NINE-AI may need to analyze outcomes, evaluate strategies, or improve its decisions. **Age alone is not evidence that a record is disposable.**
+
+The current automatic deletion allowlist is intentionally narrow. It contains only:
+- `nine_ai_strategy_lab_reports`: generated reports older than 90 days.
+- `nine_ai_autonomous_decision_reports`: generated reports older than 90 days.
+
+Raw trades and all decision, diagnosis, counterfactual, contextual, reward-model, strategy-evolution, and ML outcome evidence are preserved. The repository has not yet established a durable compact replacement for every field those records contain or proven that every consumer reads such a replacement. Those collections must not be added to automatic deletion until that preservation path and its integration tests exist.
+
+This means cleanup may stop above the target when report data is insufficient to reduce usage. That is the correct safe outcome, not permission to delete training evidence.
 
 ## Capacity behavior
 
-- Assumed database budget: `DB_STORAGE_LIMIT_MB=5120`; set this to the actual configured database budget.
-- Cleanup preview starts at 80% of the configured budget and targets 60%.
-- Runs at startup and every 6 hours.
-- Real bounded deletion is enabled by default. Set `DB_RETENTION_DRY_RUN=true` only to pause deletion and preview eligible records.
-- Batch size defaults to 100 (bounded 10–500); actual deletion is capped at 500 documents per run by default (bounded 10–2,000).
-- Records are selected oldest-first across eligible collections. The worker rechecks age and collection-specific filters immediately before deletion.
-- There is no emergency mode that shortens a collection's minimum age to chase a space target.
-
-## Retention tiers
-
-| Collection | Minimum age | Conditions / purpose |
-|---|---:|---|
-| `trades` | 90 days | Only terminal `result: "WIN"` or `result: "LOSS"`; `PENDING` and unknown statuses never match. The newest valid lifecycle timestamp controls age. |
-| `nine_ai_decision_journal` | 90 days | Only `outcomeStatus: "EVALUATED"`; unresolved journal rows are protected |
-| `nine_ai_strategy_lab_reports` | 90 days | Generated analysis reports |
-| `nine_ai_autonomous_decision_reports` | 90 days | Generated decision-research reports |
-| `nine_ai_loss_diagnoses` | 180 days | Derived diagnoses, retained longer for review |
-| `nine_ai_counterfactual_outcomes` | 365 days | Learning evidence |
-| `nine_ai_contextual_outcomes` | 365 days | Only `closed: true`; learning evidence |
-| `nine_ai_learning_outcomes` | 365 days | Only `closed: true` and `applied: true`; unapplied outcomes are protected |
-| `nine_ai_reward_model_outcomes` | 365 days | Only `closed: true` and `applied: true`; unapplied outcomes are protected |
-| `nine_ai_strategy_evolution_outcomes` | 365 days | Only `closed: true` and `applied: true`; unapplied outcomes are protected |
-| `nine_ai_ml_technical_outcomes` | 365 days | ML training/evaluation evidence |
-| `nine_ai_ml_signal_outcomes` | 365 days | ML training/evaluation evidence |
-| `nine_ai_ml_memory_outcomes` | 365 days | ML training/evaluation evidence |
-| `nine_ai_ml_bull_outcomes` | 365 days | ML training/evaluation evidence |
-| `nine_ai_ml_bear_outcomes` | 365 days | ML training/evaluation evidence |
-| `nine_ai_ml_contrarian_outcomes` | 365 days | ML training/evaluation evidence |
-| `nine_ai_ml_analyst_outcomes` | 365 days | ML training/evaluation evidence |
-| `nine_ai_ml_decision_outcomes` | 365 days | ML training/evaluation evidence |
-| `nine_ai_ml_risk_outcomes` | 365 days | ML training/evaluation evidence |
-
-The full allow-list is explicit in code. An unknown collection is never automatically cleaned. A missing or invalid timestamp is not eligible. The newest valid lifecycle timestamp is used, so a recent `updatedAt` or `closedAt` protects a record even if `createdAt` is old. ML outcome collections also require `closed: true` and `applied: true`.
-
-## Never automatically deleted
-
-- Pending/live trades, trades with unknown status, and records without a safely parseable lifecycle timestamp.
-- Mutable model/learning state, active policies, strategy versions, deployment status, pending timing entries, and deduplication/claim ledgers.
-- Unresolved decision-journal rows.
-- Any collection not explicitly allow-listed above.
-- Collections, indexes, or entire databases.
-
-Learning evidence is not eligible before 365 days, even when database usage exceeds the target. Outcome records with an explicit `applied: false` or missing `applied: true` marker remain protected. If the database is only seven months old, only the 90/180-day tiers and 90-day closed trade history may be candidates. Training evidence is never deleted merely to make the storage graph look better.
+- Estimated logical usage is calculated from each collection's data size plus indexes.
+- Default configured limit: 5,120 MB.
+- Cleanup starts at 80% of that limit (4,096 MB).
+- Target is 60% (3,072 MB).
+- The controller checks at startup and every 6 hours.
+- Each deletion batch is at most 100 documents by default.
+- A run deletes at most 500 documents by default.
+- The process deletes only from the two allowlisted report collections, oldest first.
+- Each candidate is rechecked against its age and allowlist before deletion.
+- Collections, indexes, databases, active trades, and all learning/research evidence are never dropped by this controller.
+- Collections not on the allowlist are reported as unreviewed and are never automatically mutated.
 
 ## Configuration
 
-- `DB_STORAGE_LIMIT_MB`
-- `DB_STORAGE_TRIGGER_RATIO`
-- `DB_STORAGE_TARGET_RATIO`
-- `DB_RETENTION_BATCH_SIZE`
-- `DB_RETENTION_MAX_DELETES_PER_RUN`
-- `DB_RETENTION_INTERVAL_HOURS`
-- `DB_RETENTION_DRY_RUN`
+- `DB_STORAGE_LIMIT_MB`: storage limit in MB (default `5120`).
+- `DB_STORAGE_TRIGGER_RATIO`: trigger ratio (default `0.80`).
+- `DB_STORAGE_TARGET_RATIO`: target ratio (default `0.60`, always kept below the trigger).
+- `DB_RETENTION_BATCH_SIZE`: batch size (default `100`, bounded).
+- `DB_RETENTION_MAX_DELETES_PER_RUN`: run cap (default `500`, bounded).
+- `DB_RETENTION_INTERVAL_HOURS`: cycle interval (default `6`, bounded).
+- `DB_RETENTION_DRY_RUN=true`: preview eligible report deletions without deleting them. Real bounded report cleanup is the default.
 
-Real deletion is enabled by default. Set `DB_RETENTION_DRY_RUN=true` to preview instead. The allow-list is intentionally fail-closed: unknown collections remain untouched and are reported in the cleanup summary.
+## Measurement limitation
 
-## Storage measurement limitations
+This is a per-collection logical-size estimate, not a guaranteed measurement of provider-level quota, overhead, or allocated disk. MongoDB may retain allocated storage after documents are deleted, so physical storage may not immediately shrink. If eligible reports are exhausted before the target is reached, the controller reports that fact and preserves protected data.
 
-Per-collection logical size plus indexes is an estimate, not a guaranteed reading of provider-level quota, overhead, or allocated disk. Deletes may not immediately reduce allocated disk. If the target is still not reached after eligible records are exhausted, the controller reports that instead of deleting protected training data.
+## What remains intentionally unclaimed
+
+This module does not yet compact raw trades or learning evidence into a durable, tested learning archive. It therefore does not claim that the full long-term storage optimization goal is complete. The safe current behavior is to delete only generated reports and preserve records whose learning value has not been proven redundant.
