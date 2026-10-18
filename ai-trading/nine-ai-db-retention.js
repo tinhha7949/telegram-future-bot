@@ -16,9 +16,37 @@ const DEFAULTS = Object.freeze({
 // Automatic deletion is deliberately restricted to old report artifacts.
 // Outcome ledgers, learning data, decision journals, diagnoses, model state,
 // policies, and trades are not automatically deleted by this worker.
+// Tiered retention based on the role of each collection. High-volume evaluated
+// research artifacts can age out sooner; actual learning evidence stays >= 365d.
+// Mutable policies, model state, active trades, and unknown collections are excluded.
 const SPECS = Object.freeze([
-  { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 365, priority: 10 },
-  { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 365, priority: 10 }
+  { name: "nine_ai_decision_journal", dateFields: ["createdAt", "scannedAt"], days: 90,
+    filter: { outcomeStatus: "EVALUATED" }, category: "evaluated_research", priority: 10 },
+  { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90,
+    category: "generated_report", priority: 20 },
+  { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 90,
+    category: "generated_report", priority: 20 },
+  { name: "nine_ai_loss_diagnoses", dateFields: ["closedAt", "createdAt", "diagnosedAt"], days: 180,
+    category: "derived_diagnosis", priority: 30 },
+  { name: "nine_ai_counterfactual_outcomes", dateFields: ["closedAt", "createdAt"], days: 365,
+    category: "learning_evidence", priority: 40 },
+  { name: "nine_ai_contextual_outcomes", dateFields: ["closedAt", "createdAt"], days: 365,
+    category: "learning_evidence", priority: 50 },
+  { name: "nine_ai_learning_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365,
+    category: "learning_evidence", priority: 50 },
+  { name: "nine_ai_reward_model_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365,
+    category: "learning_evidence", priority: 50 },
+  { name: "nine_ai_strategy_evolution_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365,
+    category: "learning_evidence", priority: 50 },
+  ...[
+    "technical", "signal", "memory", "bull", "bear", "contrarian", "analyst", "decision", "risk"
+  ].map(id => ({
+    name: "nine_ai_ml_" + id + "_outcomes",
+    dateFields: ["closedAt", "createdAt", "updatedAt"],
+    days: 365,
+    category: "learning_evidence",
+    priority: 50
+  }))
 ]);
 
 function boundedNumber(env, fallback, min, max) {
@@ -64,12 +92,16 @@ function makeCutoffQuery(dateField, cutoffDate, cutoffMs, filter = {}) {
   };
 }
 function makeRetentionDateExpression(dateFields) {
+  // Convert each candidate independently before falling back. A malformed
+  // preferred field must not hide a valid later timestamp.
   let dateInput = null;
   for (let i = dateFields.length - 1; i >= 0; i--) {
-    const field = "$" + dateFields[i];
-    dateInput = dateInput === null ? field : { $ifNull: [field, dateInput] };
+    const converted = {
+      $convert: { input: "$" + dateFields[i], to: "date", onError: null, onNull: null }
+    };
+    dateInput = dateInput === null ? converted : { $ifNull: [converted, dateInput] };
   }
-  return { $convert: { input: dateInput, to: "date", onError: null, onNull: null } };
+  return dateInput;
 }
 function makeSafeDeleteQuery(ids, spec, cutoffMs) {
   const cutoffDate = new Date(cutoffMs);
@@ -83,7 +115,7 @@ function makeSafeDeleteQuery(ids, spec, cutoffMs) {
 }
 function getSpecs(collectionNames) {
   const present = new Set(collectionNames);
-  // Fail closed: only explicitly reviewed, non-outcome report collections are eligible.
+  // Fail closed: only explicitly reviewed collections are eligible.
   return SPECS.filter(spec => present.has(spec.name)).map(spec => ({ ...spec }));
 }
 function toTimestamp(value) {
@@ -235,7 +267,7 @@ function createRetention(db, overrides = {}) {
         targetMB: Number(targetMB.toFixed(2)),
         limitMB: config.limitMB,
         maxDeletesPerRun: config.maxDeletesPerRun,
-        eligibleCollections: specs.map(spec => spec.name),
+        eligibleCollections: specs.map(spec => ({ name: spec.name, days: spec.days, category: spec.category })),
         deleted: totalDeleted,
         candidates: totalCandidates,
         perCollection,
