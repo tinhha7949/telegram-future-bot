@@ -17,7 +17,6 @@ The retention controller manages high-volume historical records without treating
 | Collection | Minimum age | Conditions / purpose |
 |---|---:|---|
 | `trades` | 90 days | Only terminal `result: "WIN"` or `result: "LOSS"`; `PENDING` and unknown statuses never match. The newest valid lifecycle timestamp controls age. |
-|---|---:|---|
 | `nine_ai_decision_journal` | 90 days | Only `outcomeStatus: "EVALUATED"`; unresolved journal rows are protected |
 | `nine_ai_strategy_lab_reports` | 90 days | Generated analysis reports |
 | `nine_ai_autonomous_decision_reports` | 90 days | Generated decision-research reports |
