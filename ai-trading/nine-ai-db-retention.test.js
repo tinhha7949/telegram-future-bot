@@ -51,35 +51,23 @@ const names = [
 ];
 const specs = retention.getSpecs(names);
 const byName = Object.fromEntries(specs.map(s => [s.name, s]));
-assert.strictEqual(specs.length, 13, "all approved data-retention tiers, including closed trade history, must be available");
-assert.strictEqual(byName.trades.days, 90, "closed trade history must have a bounded retention window");
-assert.deepStrictEqual(byName.trades.filter, { result: { $in: ["WIN", "LOSS"] } }, "only terminal WIN/LOSS trades are eligible");
-assert.deepStrictEqual(byName.trades.dateFields, ["closedAt", "updatedAt", "createdAt"]);
-assert.strictEqual(byName.nine_ai_decision_journal.days, 90);
-assert.deepStrictEqual(byName.nine_ai_decision_journal.filter, { outcomeStatus: "EVALUATED" });
+assert.strictEqual(specs.length, 2, "only disposable generated reports may be automatically deleted until learning preservation is proven");
 assert.strictEqual(byName.nine_ai_strategy_lab_reports.days, 90);
 assert.strictEqual(byName.nine_ai_autonomous_decision_reports.days, 90);
-assert.strictEqual(byName.nine_ai_loss_diagnoses.days, 180);
-assert.deepStrictEqual(byName.nine_ai_contextual_outcomes.filter, { closed: true },
-  "only completed contextual outcomes are eligible");
-for (const name of [
-  "nine_ai_learning_outcomes", "nine_ai_reward_model_outcomes",
-  "nine_ai_strategy_evolution_outcomes", "nine_ai_ml_signal_outcomes",
-  "nine_ai_ml_technical_outcomes", "nine_ai_ml_memory_outcomes"
-]) {
-  assert.deepStrictEqual(byName[name].filter, { closed: true, applied: true },
-    name + " must not delete outcomes until learning has been applied");
-}
-for (const name of [
+for (const protectedCollection of [
+  "trades", "nine_ai_decision_journal", "nine_ai_loss_diagnoses",
   "nine_ai_counterfactual_outcomes", "nine_ai_contextual_outcomes",
   "nine_ai_learning_outcomes", "nine_ai_reward_model_outcomes",
-  "nine_ai_strategy_evolution_outcomes", "nine_ai_ml_signal_outcomes",
-  "nine_ai_ml_technical_outcomes", "nine_ai_ml_memory_outcomes"
+  "nine_ai_strategy_evolution_outcomes", "nine_ai_ml_technical_outcomes",
+  "nine_ai_ml_signal_outcomes", "nine_ai_ml_memory_outcomes",
+  "nine_ai_ml_bull_outcomes", "nine_ai_ml_bear_outcomes",
+  "nine_ai_ml_contrarian_outcomes", "nine_ai_ml_analyst_outcomes",
+  "nine_ai_ml_decision_outcomes", "nine_ai_ml_risk_outcomes",
+  "nine_ai_learning_state", "nine_ai_timing_deployment_policies"
 ]) {
-  assert.strictEqual(byName[name].days, 365, name + " must retain learning evidence for at least 365 days");
+  assert(!specs.some(s => s.name === protectedCollection),
+    protectedCollection + " must be preserved until durable compact learning memory is implemented and verified");
 }
-assert(!specs.some(s => ["nine_ai_learning_state", "nine_ai_timing_deployment_policies"].includes(s.name)),
-  "mutable model/policy state must never be automatically deleted");
 assert(!retention.getSpecs(["future_unknown_collection"]).length,
   "unknown collections must fail closed and remain untouched");
 assert(!specs.some(s => Object.hasOwn(s, "emergencyDays")), "no emergency path may shorten age limits");
