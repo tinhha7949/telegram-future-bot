@@ -142,15 +142,6 @@ function buildVariants(trade, rawCandles) {
         signalGate: gate.reason, entryTime: candles[entryIdx].time });
     }
   }
-  // Tight/loose risk and reward alternatives at the same entry, bounded by the
-  // original stop direction and original RR.
-  for (const mult of [0.75,1.25]) {
-    const r = risk*mult;
-    const reward = r*clamp(rr,0.8,2.5);
-    const stop = trade.side === "LONG" ? entry-r : entry+r;
-    const target = trade.side === "LONG" ? entry+reward : entry-reward;
-    add("RISK_SCALE_"+String(mult).replace(".","_"),trade.side,entryIndex + 1,entry,stop,target,0);
-  }
   return result;
 }
 
@@ -179,6 +170,7 @@ function featureTags(features = {}) {
 function pairedVariantEvidence(sourceRows, features = {}, regime = "UNKNOWN") {
   const wanted = featureTags(features);
   const scoped = sourceRows.filter(r => r && r.hypothetical && r.variant && r.variant !== "BASELINE" &&
+    !String(r.variant).startsWith("RISK_SCALE_") &&
     (!regime || String(r.regime || "UNKNOWN") === String(regime)) &&
     Array.isArray(r.features) && (!wanted.length || wanted.some(tag => r.features.includes(tag))));
   const baselines = new Map(sourceRows.filter(r => r && r.variant === "BASELINE")
@@ -241,6 +233,7 @@ function evaluatePolicy(rowsToCheck = rows) {
     for(const r of alternatives){ if(!byVariant.has(r.variant+"|"+r.side))byVariant.set(r.variant+"|"+r.side,[]); byVariant.get(r.variant+"|"+r.side).push(r); }
     for(const [variantKey, all] of byVariant){
       const variant = variantKey.split("|")[0];
+      if (variant.startsWith("RISK_SCALE_")) continue;
       const ordered=all.slice().sort((a,b)=>a.closedAt-b.closedAt);
       const unique=[]; const ids=new Set();
       for(const r of ordered) if(!ids.has(r.tradeId)){ids.add(r.tradeId);unique.push(r);}
@@ -267,6 +260,10 @@ async function initialize(db) {
   if(!db||typeof db.collection!=="function")throw new Error("NINE_AI_MONGODB_REQUIRED");
   outcomeCollection=db.collection(OUTCOME_COLLECTION);
   policyCollection=db.collection(POLICY_COLLECTION);
+  // Purge legacy experiments that learned alternative SL/TP distances.
+  // Entry research keeps only timing/direction variants with the original risk geometry.
+  await outcomeCollection.deleteMany({variant:/^RISK_SCALE_/});
+  await policyCollection.deleteMany({variant:/^RISK_SCALE_/});
   await outcomeCollection.createIndex({tradeId:1,variant:1},{unique:true,name:"uniq_nine_ai_counterfactual_trade_variant"});
   const recent=await outcomeCollection.find({}).sort({closedAt:-1}).limit(MAX_ROWS).toArray();
   rows=recent.filter(r=>r&&r.tradeId&&r.variant&&Number.isFinite(Number(r.netR)));
@@ -313,7 +310,7 @@ async function researchClosedTrade(trade, rawCandles) {
 function advice({side,regime="UNKNOWN",features={}}={}) {
   const contextual = pairedVariantEvidence(rows, features, regime);
   const matching=policies.filter(p=>p.status==="VALIDATED_CANDIDATE"&&p.key.endsWith("|"+regime));
-  const legacy = matching.filter(p=>p.testUpliftR>=MIN_TEST_UPLIFT_R&&p.testMeanR>0)
+  const legacy = matching.filter(p=>!String(p.variant).startsWith("RISK_SCALE_")&&p.testUpliftR>=MIN_TEST_UPLIFT_R&&p.testMeanR>0)
     .map(p=>({variant:p.variant,side:p.key.split("|")[1],testUpliftR:p.testUpliftR,
       testMeanR:p.testMeanR,testSamples:p.testSamples,source:"CHRONOLOGICAL_POLICY"}));
   // Prefer context-matched paired evidence; legacy validated policies remain a
