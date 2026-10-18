@@ -180,6 +180,32 @@ async function settleMatured(symbol, rawCandles) {
   return { evaluated };
 }
 
+function positiveEvidenceBonus(meanR, standardError, sampleCount) {
+  if (!Number.isFinite(meanR) || !Number.isFinite(standardError) ||
+      !Number.isFinite(sampleCount) || sampleCount < MIN_SAMPLES) return 0;
+  const lowerConfidenceBound = meanR - standardError;
+  if (lowerConfidenceBound <= 0) return 0;
+  return Number(clamp(lowerConfidenceBound * 1.5 * sampleCount / (sampleCount + MIN_SAMPLES), 0, MAX_LIVE_BONUS).toFixed(3));
+}
+
+async function recordActualOutcome({ decisionKey, tradeId, realizedR, pnl, closedAt }) {
+  if (!collection) throw new Error("NINE_AI_DECISION_JOURNAL_NOT_INITIALIZED");
+  if (!decisionKey || !Number.isFinite(Number(realizedR))) return { updated: false, reason: "INVALID_ACTUAL_OUTCOME" };
+  const actualOutcome = {
+    tradeId: String(tradeId || ""),
+    realizedR: Number(realizedR),
+    pnl: Number.isFinite(Number(pnl)) ? Number(pnl) : null,
+    closedAt: closedAt ? new Date(closedAt) : new Date(),
+    source: "CONFIRMED_CLOSED_EXCHANGE_TRADE"
+  };
+  const result = await collection.updateOne({ decisionKey: String(decisionKey) }, {
+    $set: { actualTrade: true, actualOutcome, actualOutcomeRecordedAt: new Date() }
+  });
+  const record = records.find(r => r.decisionKey === String(decisionKey));
+  if (record) { record.actualTrade = true; record.actualOutcome = actualOutcome; }
+  return { updated: result.modifiedCount > 0, matched: result.matchedCount > 0 };
+}
+
 function assess(features = {}, side) {
   const wantedSide = String(side || "").toUpperCase();
   if (!["LONG", "SHORT"].includes(wantedSide)) return { ready: false, bonus: 0, reason: "NO_DIRECTION" };
@@ -197,9 +223,7 @@ function assess(features = {}, side) {
   // Loss evidence is retained in the journal and existing outcome learners.
   // This layer never penalizes or vetoes entries; only robust positive evidence
   // can modestly improve ranking, preventing a losing streak from forcing WAIT.
-  const bonus = lowerConfidenceBound > 0
-    ? Number(clamp(lowerConfidenceBound * 1.5 * sampleCount / (sampleCount + MIN_SAMPLES), 0, MAX_LIVE_BONUS).toFixed(3))
-    : 0;
+  const bonus = positiveEvidenceBonus(meanR, standardError, sampleCount);
   return { ready: true, samples: sampleCount, meanR: Number(meanR.toFixed(4)),
     standardError: Number(standardError.toFixed(4)), lowerConfidenceBound: Number(lowerConfidenceBound.toFixed(4)),
     bonus, regime, side: wantedSide, horizonBars: 4, source: "HYPOTHETICAL_SKIPPED_AND_TAKEN_SIGNALS" };
@@ -212,4 +236,4 @@ function status() {
 }
 
 module.exports = { COLLECTION, MAX_RECORDS, HORIZONS, MIN_SAMPLES, normalizeCandles,
-  snapshotDecision, initialize, recordDecision, settleMatured, computeEvaluations, assess, status };
+  snapshotDecision, initialize, recordDecision, settleMatured, computeEvaluations, positiveEvidenceBonus, recordActualOutcome, assess, status };
