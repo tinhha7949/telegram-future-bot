@@ -11,7 +11,7 @@ const candles = [
 const baseline = research.simulate({candles,entryIndex:1,side:"LONG",entry:100,sl:98,tp:103,risk:2});
 assert.equal(baseline.valid,true);
 assert.equal(baseline.exit,"TP");
-const conservative = research.simulate({candles:[[0,100,103,97,100,1,899999]],entryIndex:0,side:"LONG",entry:100,sl:98,tp:102,risk:2});
+const conservative = research.simulate({candles:[[0,100,100.5,99.5,100,1,899999],[900000,100,103,97,100,1,1799999]],entryIndex:0,side:"LONG",entry:100,sl:98,tp:102,risk:2});
 assert.equal(conservative.valid,true);
 assert.equal(conservative.exit,"SL"); // both SL and TP touched, assume stop first
 const variants = research.buildVariants({tradeId:"t1",side:"LONG",entry:100,sl:98,tp:104,entryTime:900000,realizedR:-1},candles);
