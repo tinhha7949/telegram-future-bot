@@ -239,7 +239,8 @@ function evaluatePolicy(rowsToCheck = rows) {
     // so one closed trade cannot inflate the sample count.
     const byVariant=new Map();
     for(const r of alternatives){ if(!byVariant.has(r.variant+"|"+r.side))byVariant.set(r.variant+"|"+r.side,[]); byVariant.get(r.variant+"|"+r.side).push(r); }
-    for(const [variant, all] of byVariant){
+    for(const [variantKey, all] of byVariant){
+      const variant = variantKey.split("|")[0];
       const ordered=all.slice().sort((a,b)=>a.closedAt-b.closedAt);
       const unique=[]; const ids=new Set();
       for(const r of ordered) if(!ids.has(r.tradeId)){ids.add(r.tradeId);unique.push(r);}

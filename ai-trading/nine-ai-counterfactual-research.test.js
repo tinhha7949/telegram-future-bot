@@ -11,7 +11,7 @@ const candles = [
 const baseline = research.simulate({candles,entryIndex:1,side:"LONG",entry:100,sl:98,tp:103,risk:2});
 assert.equal(baseline.valid,true);
 assert.equal(baseline.exit,"TP");
-const conservative = research.simulate({candles:[[0,100,103,97,100,1,899999]],entryIndex:0,side:"LONG",entry:100,sl:98,tp:102,risk:2});
+const conservative = research.simulate({candles:[[0,100,100.5,99.5,100,1,899999],[900000,100,103,97,100,1,1799999]],entryIndex:0,side:"LONG",entry:100,sl:98,tp:102,risk:2});
 assert.equal(conservative.valid,true);
 assert.equal(conservative.exit,"SL"); // both SL and TP touched, assume stop first
 const variants = research.buildVariants({tradeId:"t1",side:"LONG",entry:100,sl:98,tp:104,entryTime:900000,realizedR:-1},candles);
@@ -43,7 +43,7 @@ assert.ok(earlyVariants.some(v => v.variant === "EARLIER_2_BAR" && v.signalIndex
 const flat = Array.from({length: 50}, (_, i) => [i*900000,100,100.2,99.8,100,10,(i+1)*900000-1]);
 const flatVariants = research.buildVariants({tradeId:"flat-test",side:"LONG",entry:100,sl:98,tp:104,entryTime:35*900000,realizedR:0},flat);
 assert.ok(!flatVariants.some(v => v.variant === "EARLIER_1_BAR" || v.variant === "EARLIER_2_BAR"));
-\n
+
 const tags = research.featureTags({extensionAtr:2.1, rsi14:72, momentum4:0.03, falseBreakoutRisk:0.7, volumeRatio:0.6});
 assert.ok(tags.includes("EXTENDED_ENTRY"));
 assert.ok(tags.includes("MOMENTUM_EXHAUSTION"));

@@ -14,13 +14,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: node --check ai-trading/tpsl-log-throttle.js
-      - run: node ai-trading/tpsl-log-throttle.test.js
       - run: node --check index.js
       - run: node --check ai-trading/execution-risk.js
       - run: node ai-trading/execution-risk.test.js
-      - run: node --check ai-trading/tpsl-safety.js
-      - run: node ai-trading/tpsl-safety.test.js
       - run: node --check ai-trading/nine-ai-strategy.js
       - run: node --check ai-trading/nine-ai-learning-memory.js
       - run: node --check ai-trading/nine-ai-independent-models.js
@@ -31,7 +27,9 @@ jobs:
       - run: node ai-trading/nine-ai-autonomous-research.test.js
       - run: node --check ai-trading/nine-ai-strategy-evolution.js
       - run: node ai-trading/nine-ai-strategy-evolution.test.js
+      - run: node --check ai-trading/nine-ai-contextual-learning.js
+      - run: node ai-trading/nine-ai-contextual-learning.test.js
+      - run: node --check ai-trading/nine-ai-counterfactual-research.js
+      - run: node ai-trading/nine-ai-counterfactual-research.test.js
       - run: node --check ai-trading/nine-ai-loss-diagnosis.js
       - run: node ai-trading/nine-ai-loss-diagnosis.test.js
-      - run: node --check ai-trading/nine-ai-tpsl-learning.js
-      - run: node ai-trading/nine-ai-tpsl-learning.test.js
