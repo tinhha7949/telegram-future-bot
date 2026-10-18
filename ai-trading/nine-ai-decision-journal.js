@@ -215,7 +215,7 @@ async function settleMatured(symbol, rawCandles) {
   if (!collection) throw new Error("NINE_AI_DECISION_JOURNAL_NOT_INITIALIZED");
   const candles = normalizeCandles(rawCandles);
   if (candles.length < 18) return { evaluated: 0 };
-  const pending = records.filter(r => r.symbol === String(symbol) && r.outcomeStatus !== "EVALUATED");
+  const pending = records.filter(r => r.symbol === String(symbol) && (r.outcomeStatus !== "EVALUATED" || !r.researchVariants?.now_4 || !r.researchVariants?.wait1_4 || !r.researchVariants?.wait2_16));
   let evaluated = 0;
   for (const record of pending) {
     const result = computeEvaluations(record, candles);
