@@ -18,6 +18,7 @@ const variants = research.buildVariants({tradeId:"t1",side:"LONG",entry:100,sl:9
 assert.ok(variants.some(v=>v.variant==="BASELINE"));
 assert.ok(variants.some(v=>v.variant==="OPPOSITE_SIDE"&&v.side==="SHORT"));
 assert.ok(variants.some(v=>v.variant==="DELAY_1_BAR"));
+assert.ok(!variants.some(v=>v.variant.startsWith("RISK_SCALE_")), "entry research must not learn alternative SL/TP distances");
 const rows=[];
 for(let i=0;i<50;i++){
   const id="trade-"+i;
