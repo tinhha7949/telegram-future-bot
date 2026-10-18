@@ -145,26 +145,29 @@ async function recordDecision(args) {
 function computeEvaluations(record, candles) {
   const idx = signalCandleIndex(candles, num(record.signalTime));
   if (idx < 0) return null;
-  const entry = num(record.features?.close, candles[idx].close);
+  const baseEntry = num(record.features?.close, candles[idx].close);
   const atr = num(record.features?.atr14, atrAt(candles, idx));
-  if (!(entry > 0 && atr > 0)) return null;
+  if (!(baseEntry > 0 && atr > 0)) return null;
   const configuredCost = num(process.env.NINE_AI_ROUND_TRIP_COST_RATE, DEFAULT_ROUND_TRIP_COST_RATE);
   const costRate = clamp(configuredCost, 0, 0.02);
-  const feeR = entry * costRate / atr;
   const evaluations = { ...(record.evaluations || {}) };
+  const researchVariants = { ...(record.researchVariants || {}) };
   let changed = false;
+
+  // Fixed risk scale is the ATR known at signal time. Entry delays use only
+  // candles that close after the original decision; no future data leaks into
+  // features, and every result is explicitly hypothetical.
   for (const horizon of HORIZONS) {
     const key = String(horizon);
     if (evaluations[key]) continue;
     const targetIndex = idx + horizon;
     if (targetIndex >= candles.length) continue;
     const exit = candles[targetIndex].close;
-    const moveR = (exit - entry) / atr;
+    const moveR = (exit - baseEntry) / atr;
+    const feeR = baseEntry * costRate / atr;
     evaluations[key] = {
-      horizonBars: horizon,
-      evaluatedAt: new Date(candles[targetIndex].closeTime),
-      exitPrice: exit,
-      longGrossR: Number(moveR.toFixed(6)),
+      horizonBars: horizon, evaluatedAt: new Date(candles[targetIndex].closeTime),
+      exitPrice: exit, longGrossR: Number(moveR.toFixed(6)),
       shortGrossR: Number((-moveR).toFixed(6)),
       longNetR: Number((moveR - feeR).toFixed(6)),
       shortNetR: Number((-moveR - feeR).toFixed(6)),
@@ -173,15 +176,46 @@ function computeEvaluations(record, candles) {
     };
     changed = true;
   }
-  if (!changed) return null;
-  return { evaluations, outcomeStatus: HORIZONS.every(h => evaluations[String(h)]) ? "EVALUATED" : "PARTIALLY_EVALUATED" };
-}
 
+  for (const delayBars of [0, 1, 2]) {
+    for (const horizon of HORIZONS) {
+      const key = (delayBars === 0 ? "now" : "wait" + delayBars) + "_" + horizon;
+      if (researchVariants[key]) continue;
+      const entryIndex = idx + delayBars;
+      const exitIndex = entryIndex + horizon;
+      if (exitIndex >= candles.length) continue;
+      const entryPrice = delayBars === 0 ? baseEntry : candles[entryIndex].close;
+      const exitPrice = candles[exitIndex].close;
+      if (!(entryPrice > 0 && exitPrice > 0)) continue;
+      const moveR = (exitPrice - entryPrice) / atr;
+      const feeR = entryPrice * costRate / atr;
+      researchVariants[key] = {
+        entryDelayBars: delayBars, horizonBars: horizon,
+        entryPrice, exitPrice, evaluatedAt: new Date(candles[exitIndex].closeTime),
+        longGrossR: Number(moveR.toFixed(6)), shortGrossR: Number((-moveR).toFixed(6)),
+        longNetR: Number((moveR - feeR).toFixed(6)),
+        shortNetR: Number((-moveR - feeR).toFixed(6)), feeR: Number(feeR.toFixed(6)),
+        source: "HYPOTHETICAL_ENTRY_TIMING_RESEARCH_NOT_EXECUTED_PNL"
+      };
+      changed = true;
+    }
+  }
+
+  if (!changed) return null;
+  const allHorizonsMature = HORIZONS.every(h => evaluations[String(h)]);
+  const allResearchMature = [0,1,2].every(delay => HORIZONS.every(h =>
+    researchVariants[(delay === 0 ? "now" : "wait" + delay) + "_" + h]));
+  return {
+    evaluations, researchVariants,
+    outcomeStatus: allHorizonsMature && allResearchMature ? "EVALUATED" :
+      Object.keys(evaluations).length || Object.keys(researchVariants).length ? "PARTIALLY_EVALUATED" : "PENDING_HORIZON_EVALUATION"
+  };
+}
 async function settleMatured(symbol, rawCandles) {
   if (!collection) throw new Error("NINE_AI_DECISION_JOURNAL_NOT_INITIALIZED");
   const candles = normalizeCandles(rawCandles);
   if (candles.length < 18) return { evaluated: 0 };
-  const pending = records.filter(r => r.symbol === String(symbol) && r.outcomeStatus !== "EVALUATED");
+  const pending = records.filter(r => r.symbol === String(symbol) && (r.outcomeStatus !== "EVALUATED" || !r.researchVariants?.now_4 || !r.researchVariants?.wait1_4 || !r.researchVariants?.wait2_16));
   let evaluated = 0;
   for (const record of pending) {
     const result = computeEvaluations(record, candles);
