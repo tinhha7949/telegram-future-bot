@@ -48,6 +48,7 @@ const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-resear
 const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
 const nineAiRewardModel = require("./ai-trading/nine-ai-reward-model")
 const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
+const nineAiAutonomousDecisionResearch = require("./ai-trading/nine-ai-autonomous-decision-research")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 
 // Use a machine-local lock keyed to this script, independent of the launch
@@ -2376,6 +2377,31 @@ async function scan(symbol){
             score: decision.rankScore,
             liveOpportunityLearning: opportunityEvidence
         };
+        // Apply only a separately validated out-of-sample side/regime edge.
+        // This overlay adds a bounded bonus; it never authorizes, vetoes, sizes,
+        // or changes the initial SL/TP of a trade.
+        let decisionResearchEvidence = { bonus: 0, reason: "NOT_INITIALIZED" };
+        try {
+            decisionResearchEvidence = nineAiAutonomousDecisionResearch.assessLive(
+                decision.rankMetrics?.features || decision.features || {},
+                decision.side
+            );
+            const researchBonus = Number(decisionResearchEvidence.bonus) || 0;
+            decision.rankScore = Math.max(0, Math.min(100, Number(decision.rankScore || 0) + researchBonus));
+            decision.qualityScore = decision.rankScore;
+            decision.rankMetrics = {
+                ...(decision.rankMetrics || {}),
+                score: decision.rankScore,
+                autonomousDecisionResearch: decisionResearchEvidence
+            };
+            if (researchBonus > 0) console.log("🧠 NINE-AI OOS EDGE BONUS " + symbol +
+                " | side=" + decision.side + " | bonus=" + researchBonus +
+                " | policy=" + (decisionResearchEvidence.policyId || "N/A") +
+                " | testExpectancyR=" + decisionResearchEvidence.testExpectancyR);
+        } catch (decisionResearchError) {
+            console.error("⚠️ NINE-AI OOS DECISION RESEARCH UNAVAILABLE " + symbol + ":",
+                decisionResearchError?.message || decisionResearchError);
+        }
         let researchPolicyAtEntry = null;
         try {
             const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
@@ -4694,6 +4720,25 @@ const rewardModelStatus = await nineAiRewardModel.initialize(db);
 console.log("🧠 NINE-AI GENERAL REWARD MODEL READY: long=" + rewardModelStatus.longSamples + " short=" + rewardModelStatus.shortSamples);
 const decisionJournalStatus = await nineAiDecisionJournal.initialize(db);
 console.log("🧠 NINE-AI DECISION JOURNAL READY: samples=" + decisionJournalStatus.samples + " pending=" + decisionJournalStatus.pending);
+try {
+    const decisionResearchStatus = await nineAiAutonomousDecisionResearch.initialize(db);
+    console.log("🧪 NINE-AI AUTONOMOUS DECISION RESEARCH READY: activePolicies=" + decisionResearchStatus.activePolicies);
+    const runDecisionResearch = async () => {
+        try {
+            const result = await nineAiAutonomousDecisionResearch.runResearchCycle();
+            console.log("🧪 NINE-AI DECISION RESEARCH: status=" + result.status +
+                " rows=" + result.usableRows + " groups=" + result.groups +
+                " validatedPolicies=" + result.activatedPolicies);
+        } catch (error) {
+            console.error("⚠️ NINE-AI DECISION RESEARCH CYCLE FAILED:", error?.message || error);
+        }
+    };
+    void runDecisionResearch();
+    setInterval(runDecisionResearch, 6 * 60 * 60 * 1000);
+} catch (decisionResearchInitError) {
+    console.error("⚠️ NINE-AI AUTONOMOUS DECISION RESEARCH INIT FAILED:",
+        decisionResearchInitError?.message || decisionResearchInitError);
+}
 const learningStatus = await nineAiLearningMemory.initialize(db);
 console.log(`🧠 NINE-AI LEGACY MEMORY READY: samples=${learningStatus.samples} trained=${learningStatus.trained}`);
 const independentModelStatus = await nineAiIndependentModels.initialize(
