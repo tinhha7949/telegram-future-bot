@@ -19,6 +19,11 @@ const DEFAULTS = Object.freeze({
 // research artifacts can age out sooner; actual learning evidence stays >= 365d.
 // Mutable policies, model state, active trades, and unknown collections are excluded.
 const SPECS = Object.freeze([
+  // Completed trades only. "result" is the source-of-truth terminal state in index.js;
+  // PENDING/unknown statuses never match. Keep 90 days because recent trade history
+  // feeds live performance statistics; older closed records are outside the live window.
+  { name: "trades", dateFields: ["closedAt", "updatedAt", "createdAt"], days: 90,
+    filter: { result: { $in: ["WIN", "LOSS"] } }, category: "closed_trade_history", priority: 5 },
   { name: "nine_ai_decision_journal", dateFields: ["createdAt", "scannedAt"], days: 90,
     filter: { outcomeStatus: "EVALUATED" }, category: "evaluated_research", priority: 10 },
   { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90,
@@ -92,16 +97,13 @@ function makeCutoffQuery(dateField, cutoffDate, cutoffMs, filter = {}) {
   };
 }
 function makeRetentionDateExpression(dateFields) {
-  // Convert each candidate independently before falling back. A malformed
-  // preferred field must not hide a valid later timestamp.
-  let dateInput = null;
-  for (let i = dateFields.length - 1; i >= 0; i--) {
-    const converted = {
-      $convert: { input: "$" + dateFields[i], to: "date", onError: null, onNull: null }
-    };
-    dateInput = dateInput === null ? converted : { $ifNull: [converted, dateInput] };
-  }
-  return dateInput;
+  // Safety rule: the newest valid timestamp wins. A recent close/update must
+  // protect a document even when createdAt/closedAt is old. Invalid fields
+  // become null and are ignored by $max; all-invalid dates remain ineligible.
+  const convertedDates = dateFields.map(field => ({
+    $convert: { input: "$" + field, to: "date", onError: null, onNull: null }
+  }));
+  return { $max: convertedDates };
 }
 function makeSafeDeleteQuery(ids, spec, cutoffMs) {
   const cutoffDate = new Date(cutoffMs);
@@ -268,6 +270,8 @@ function createRetention(db, overrides = {}) {
         limitMB: config.limitMB,
         maxDeletesPerRun: config.maxDeletesPerRun,
         eligibleCollections: specs.map(spec => ({ name: spec.name, days: spec.days, category: spec.category })),
+        // Report but never mutate collections outside the explicit reviewed allowlist.
+        preservedUnreviewedCollections: before.names.filter(name => !specs.some(spec => spec.name === name)),
         deleted: totalDeleted,
         candidates: totalCandidates,
         perCollection,
