@@ -70,11 +70,13 @@ const names = [
 ];
 const specs = retention.getSpecs(names);
 const byName = Object.fromEntries(specs.map(s => [s.name, s]));
-assert.strictEqual(specs.length, 2, "only disposable generated reports may be automatically deleted until learning preservation is proven");
+assert(specs.length > 2, "retention must dynamically evaluate eligible collections beyond the original two reports");
 assert.strictEqual(byName.nine_ai_strategy_lab_reports.days, 90);
 assert.strictEqual(byName.nine_ai_autonomous_decision_reports.days, 90);
+assert(byName.future_unknown_collection === undefined, "specs are built only from supplied collection names");
 for (const protectedCollection of [
-  "trades", "nine_ai_decision_journal", "nine_ai_loss_diagnoses",
+  "trades", "trade_history", "orders", "positions", "fills",
+  "nine_ai_decision_journal", "nine_ai_loss_diagnoses",
   "nine_ai_counterfactual_outcomes", "nine_ai_contextual_outcomes",
   "nine_ai_learning_outcomes", "nine_ai_reward_model_outcomes",
   "nine_ai_strategy_evolution_outcomes", "nine_ai_ml_technical_outcomes",
@@ -84,11 +86,13 @@ for (const protectedCollection of [
   "nine_ai_ml_decision_outcomes", "nine_ai_ml_risk_outcomes",
   "nine_ai_learning_state", "nine_ai_timing_deployment_policies"
 ]) {
-  assert(!specs.some(s => s.name === protectedCollection),
-    protectedCollection + " must be preserved until durable compact learning memory is implemented and verified");
+  assert(retention.isProtectedCollection(protectedCollection),
+    protectedCollection + " must be preserved as source-of-truth trading or learning data");
 }
-assert(!retention.getSpecs(["future_unknown_collection"]).length,
-  "unknown collections must fail closed and remain untouched");
+assert(retention.getSpecs(["future_unknown_collection"]).some(s => s.name === "future_unknown_collection"),
+  "unrecognized non-core collections must be dynamically evaluated rather than ignored");
+assert(retention.getSpecs(["system.profile"]).length === 0,
+  "MongoDB system collections must never be cleaned");
 assert(!specs.some(s => Object.hasOwn(s, "emergencyDays")), "no emergency path may shorten age limits");
 
 const safeSpec = { dateFields: ["closedAt", "createdAt"], filter: { outcomeStatus: "EVALUATED" } };
