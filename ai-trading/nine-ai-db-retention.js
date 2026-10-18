@@ -39,7 +39,6 @@ function configFromEnv() {
   const dryRunEnv = process.env.DB_RETENTION_DRY_RUN;
   const enabledEnv = process.env.DB_RETENTION_ENABLE_DELETE;
   const enabled = enabledEnv != null && /^(1|true|yes)$/i.test(String(enabledEnv));
-  const requestedDryRun = dryRunEnv != null && /^(1|true|yes)$/i.test(String(dryRunEnv));
   const triggerRatio = boundedNumber("DB_STORAGE_TRIGGER_RATIO", DEFAULTS.triggerRatio, 0.50, 0.95);
   return {
     limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 512, 1024 * 1024),
@@ -54,7 +53,7 @@ function configFromEnv() {
     // Fail closed: deletion requires DB_RETENTION_ENABLE_DELETE=true AND an explicit
     // DB_RETENTION_DRY_RUN=false. Missing/unknown values always preview only.
     enabled,
-    dryRun: !enabled || dryRunEnv == null || requestedDryRun || /^(false|0|no)$/i.test(String(dryRunEnv)) === false ? true : false
+    dryRun: !enabled || dryRunEnv == null || !/^(false|0|no)$/i.test(String(dryRunEnv))
   };
 }
 function estimateUsageMB(collectionStats) {
