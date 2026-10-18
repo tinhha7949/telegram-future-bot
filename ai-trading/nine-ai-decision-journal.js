@@ -1,4 +1,5 @@
 "use strict";
+const crypto = require("crypto");
 
 // Durable journal for every Nine-AI scan decision, including WAIT/abstentions.
 // Hypothetical forward outcomes are explicitly separate from actual trade PnL.
@@ -75,7 +76,7 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
     authorizedForExecution: d.authorizedForExecution === true,
     signalTime: num(signalTime, Math.floor(scannedAt / 900000) * 900000),
     scannedAt: new Date(scannedAt),
-    decisionKey: String(symbol || d.symbol || "UNKNOWN") + ":" + String(num(signalTime, Math.floor(scannedAt / 900000) * 900000)),
+    decisionKey: "",
     rankScore: num(d.rankScore ?? metrics.score, null),
     originalRankScore: num(d.originalRankScore ?? d.rankScore ?? metrics.score, null),
     confidence: num(d.confidence, null),
@@ -93,6 +94,14 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
     actualTrade: false,
     createdAt: new Date(scannedAt)
   };
+  const signature = JSON.stringify({
+    side: snapshot.side, reason: snapshot.reason, rankScore: snapshot.rankScore,
+    confidence: snapshot.confidence, roles: snapshot.roles, features: snapshot.features,
+    learningEvidence: snapshot.learningEvidence
+  });
+  const digest = crypto.createHash("sha256").update(signature).digest("hex").slice(0, 12);
+  snapshot.decisionKey = snapshot.symbol + ":" + String(snapshot.signalTime) + ":" + digest;
+  return snapshot;
 }
 
 async function initialize(db) {
@@ -101,7 +110,7 @@ async function initialize(db) {
   await collection.createIndex({ decisionKey: 1 }, { unique: true, name: "uniq_nine_ai_decision_key" });
   await collection.createIndex({ symbol: 1, signalTime: -1 }, { name: "nine_ai_decision_symbol_time" });
   await collection.createIndex({ outcomeStatus: 1, symbol: 1 }, { name: "nine_ai_decision_pending" });
-  records = await collection.find({}).sort({ signalTime: -1 }).limit(MAX_RECORDS).toArray();
+  records = await collection.find({}).sort({ signalTime: -1, scannedAt: -1 }).limit(MAX_RECORDS).toArray();
   records = records.filter(r => r && r.decisionKey && r.symbol);
   records.reverse();
   seen.clear();
@@ -125,7 +134,11 @@ async function recordDecision(args) {
   }
   records.push(snapshot);
   seen.add(snapshot.decisionKey);
-  if (records.length > MAX_RECORDS) records = records.slice(-MAX_RECORDS);
+  if (records.length > MAX_RECORDS) {
+    records = records.slice(-MAX_RECORDS);
+    seen.clear();
+    for (const row of records) seen.add(String(row.decisionKey));
+  }
   return { recorded: true, decisionKey: snapshot.decisionKey, side: snapshot.side };
 }
 
@@ -210,9 +223,18 @@ function assess(features = {}, side) {
   const wantedSide = String(side || "").toUpperCase();
   if (!["LONG", "SHORT"].includes(wantedSide)) return { ready: false, bonus: 0, reason: "NO_DIRECTION" };
   const regime = regimeOf(features);
-  const eligible = records.filter(r => r.outcomeStatus === "EVALUATED" &&
-    (r.marketRegime === regime || r.marketRegime === "UNKNOWN") &&
-    r.evaluations?.["4"] && Number.isFinite(Number(r.evaluations["4"][wantedSide.toLowerCase() + "NetR"])));
+  // Multiple snapshots can exist for one symbol/candle if learning changed
+  // the decision during that scan window. Keep the latest snapshot per candle
+  // for statistical evaluation so correlated repeats cannot inflate samples.
+  const latestByCandle = new Map();
+  for (const row of records) {
+    if (row.outcomeStatus !== "EVALUATED" || !row.evaluations?.["4"] ||
+        !Number.isFinite(Number(row.evaluations["4"][wantedSide.toLowerCase() + "NetR"]))) continue;
+    const key = String(row.symbol) + ":" + String(row.signalTime);
+    latestByCandle.set(key, row);
+  }
+  const eligible = [...latestByCandle.values()].filter(r =>
+    (r.marketRegime === regime || r.marketRegime === "UNKNOWN"));
   const sampleCount = eligible.length;
   if (sampleCount < MIN_SAMPLES) return { ready: false, bonus: 0, samples: sampleCount, reason: "INSUFFICIENT_SAMPLE" };
   const values = eligible.map(r => Number(r.evaluations["4"][wantedSide.toLowerCase() + "NetR"]));
