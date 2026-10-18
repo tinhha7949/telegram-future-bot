@@ -113,4 +113,73 @@ assert.deepStrictEqual(retention.makeRetentionDateExpression(["closedAt", "updat
   ]
 }, "any recent valid lifecycle timestamp must protect a document");
 
-console.log("NINE-AI DB RETENTION TESTS PASSED");
+
+
+
+async function testAutomaticCleanupActuallyDeletesOnlyEligibleReports() {
+  const originalEnable = process.env.DB_RETENTION_ENABLE_DELETE;
+  const originalDryRun = process.env.DB_RETENTION_DRY_RUN;
+  delete process.env.DB_RETENTION_ENABLE_DELETE;
+  delete process.env.DB_RETENTION_DRY_RUN;
+
+  let reportUsageMB = 4100;
+  let deleteCalls = 0;
+  const db = {
+    listCollections() {
+      return { toArray: async () => [
+        { name: "nine_ai_strategy_lab_reports" },
+        { name: "nine_ai_autonomous_decision_reports" },
+        { name: "trades" }
+      ] };
+    },
+    collection(name) {
+      return {
+        stats: async () => ({
+          size: name === "nine_ai_strategy_lab_reports" ? reportUsageMB : 0,
+          totalIndexSize: 0,
+          storageSize: 0
+        }),
+        aggregate() {
+          return {
+            toArray: async () => name === "nine_ai_strategy_lab_reports" && reportUsageMB > 4000
+              ? [{ _id: "old-report-1", _retentionDate: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000) }]
+              : []
+          };
+        },
+        deleteMany: async query => {
+          assert.strictEqual(name, "nine_ai_strategy_lab_reports",
+            "only allowlisted generated reports may be deleted");
+          assert.deepStrictEqual(query.$and[0], { _id: { $in: ["old-report-1"] } });
+          assert(query.$and[2].$expr, "delete must recheck the candidate's retention date");
+          deleteCalls += 1;
+          reportUsageMB = 3000;
+          return { deletedCount: 1 };
+        }
+      };
+    }
+  };
+
+  try {
+    const controller = retention.createRetention(db);
+    assert.strictEqual(controller.config.enabled, true, "default runtime must enable bounded cleanup");
+    assert.strictEqual(controller.config.dryRun, false, "default runtime must perform cleanup");
+    const result = await controller.runCleanup();
+    assert.strictEqual(deleteCalls, 1, "controller must issue a real delete when over threshold");
+    assert.strictEqual(result.status, "COMPLETED");
+    assert.strictEqual(result.deleted, 1);
+    assert.strictEqual(result.usageAfterMB, 3000);
+    assert.deepStrictEqual(Object.keys(result.perCollection), ["nine_ai_strategy_lab_reports"]);
+  } finally {
+    if (originalEnable === undefined) delete process.env.DB_RETENTION_ENABLE_DELETE;
+    else process.env.DB_RETENTION_ENABLE_DELETE = originalEnable;
+    if (originalDryRun === undefined) delete process.env.DB_RETENTION_DRY_RUN;
+    else process.env.DB_RETENTION_DRY_RUN = originalDryRun;
+  }
+}
+
+testAutomaticCleanupActuallyDeletesOnlyEligibleReports()
+  .then(() => console.log("NINE-AI DB RETENTION TESTS PASSED"))
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
