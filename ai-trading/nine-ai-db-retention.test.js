@@ -49,7 +49,7 @@ const names = [
 ];
 const specs = retention.getSpecs(names);
 const byName = Object.fromEntries(specs.map(s => [s.name, s]));
-assert.strictEqual(specs.length, 10, "all approved data-retention tiers must be available");
+assert.strictEqual(specs.length, 12, "all approved data-retention tiers must be available");
 assert.strictEqual(byName.nine_ai_decision_journal.days, 90);
 assert.deepStrictEqual(byName.nine_ai_decision_journal.filter, { outcomeStatus: "EVALUATED" });
 assert.strictEqual(byName.nine_ai_strategy_lab_reports.days, 90);
