@@ -60,6 +60,16 @@ assert.deepStrictEqual(byName.nine_ai_decision_journal.filter, { outcomeStatus: 
 assert.strictEqual(byName.nine_ai_strategy_lab_reports.days, 90);
 assert.strictEqual(byName.nine_ai_autonomous_decision_reports.days, 90);
 assert.strictEqual(byName.nine_ai_loss_diagnoses.days, 180);
+assert.deepStrictEqual(byName.nine_ai_contextual_outcomes.filter, { closed: true },
+  "only completed contextual outcomes are eligible");
+for (const name of [
+  "nine_ai_learning_outcomes", "nine_ai_reward_model_outcomes",
+  "nine_ai_strategy_evolution_outcomes", "nine_ai_ml_signal_outcomes",
+  "nine_ai_ml_technical_outcomes", "nine_ai_ml_memory_outcomes"
+]) {
+  assert.deepStrictEqual(byName[name].filter, { closed: true, applied: true },
+    name + " must not delete outcomes until learning has been applied");
+}
 for (const name of [
   "nine_ai_counterfactual_outcomes", "nine_ai_contextual_outcomes",
   "nine_ai_learning_outcomes", "nine_ai_reward_model_outcomes",
