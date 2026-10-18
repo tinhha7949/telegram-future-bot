@@ -39,8 +39,6 @@ assert(!specs.some(s => s.name === "nine_ai_timing_deployment_policies"));
 assert(specs.find(s => s.name === "trades").priority > specs.find(s => s.name === "nine_ai_decision_journal").priority);
 assert.deepStrictEqual(specs.find(s => s.name === "trades").filter, { result: { $in: ["WIN", "LOSS", "CLOSED"] } });
 
-console.log("NINE-AI DB RETENTION TESTS PASSED");
-
 const safeSpec = { dateFields: ["closedAt", "createdAt"], filter: { outcomeStatus: "EVALUATED" } };
 const safeDelete = retention.makeSafeDeleteQuery(["id-1"], safeSpec, 5000);
 assert.deepStrictEqual(safeDelete.$and[0], { _id: { $in: ["id-1"] } });
@@ -55,3 +53,5 @@ assert.strictEqual(safeDelete.$and[2].$expr.$lt[1].getTime(), 5000);
 assert.deepStrictEqual(retention.makeRetentionDateExpression(["createdAt"]), {
   $convert: { input: "$createdAt", to: "date", onError: null, onNull: null }
 });
+
+console.log("NINE-AI DB RETENTION TESTS PASSED");
