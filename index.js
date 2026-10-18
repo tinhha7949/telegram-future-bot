@@ -512,7 +512,7 @@ let lastSymbolsUpdate = 0
 //let lastSignalTime = {}
 let isScanning = false
 let NEXT_ENTRY_ALLOWED_AT = 0;
-const ENTRY_COOLDOWN_MS = 8 * 60 * 1000;
+const ENTRY_COOLDOWN_MS = 1 * 60 * 1000;
 // ===== ACTIVE TRADES =====
 let exchangeInfoTime = 0
 let checkingTrades = false
@@ -2247,7 +2247,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 50)
+        .slice(0, 20)
         .map(candidate => candidate.symbol);
 
       console.log(
