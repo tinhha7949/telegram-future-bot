@@ -4854,10 +4854,7 @@ try {
     const dbRetention = nineAiDbRetention.createRetention(db);
     const runDbRetention = async () => {
         try {
-            const result = await dbRetention.runCleanup();
-            if (result.status === "COMPLETED" || result.status === "DRY_RUN") {
-                console.log("🧹 NINE-AI DB RETENTION RESULT: " + JSON.stringify(result));
-            }
+            await dbRetention.runCleanup();
         } catch (retentionError) {
             console.error("⚠️ NINE-AI DB RETENTION FAILED:", retentionError?.message || retentionError);
         }
