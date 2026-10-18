@@ -66,7 +66,8 @@ const names = [
   "nine_ai_learning_outcomes", "nine_ai_counterfactual_outcomes",
   "nine_ai_contextual_outcomes", "nine_ai_reward_model_outcomes",
   "nine_ai_loss_diagnoses", "nine_ai_strategy_evolution_outcomes",
-  "nine_ai_ml_technical_outcomes", "nine_ai_ml_memory_outcomes"
+  "nine_ai_ml_technical_outcomes", "nine_ai_ml_memory_outcomes",
+  "old_cache_entries", "api_request_logs"
 ];
 const specs = retention.getSpecs(names);
 const byName = Object.fromEntries(specs.map(s => [s.name, s]));
