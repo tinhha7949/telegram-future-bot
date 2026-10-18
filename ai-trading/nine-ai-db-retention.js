@@ -7,27 +7,18 @@ const DEFAULTS = Object.freeze({
   limitMB: 5120,
   triggerRatio: 0.80,
   targetRatio: 0.60,
-  batchSize: 500,
+  batchSize: 100,
+  maxDeletesPerRun: 500,
   intervalMs: 6 * 60 * 60 * 1000,
-  dryRun: false
+  dryRun: true
 });
 
+// Automatic deletion is deliberately restricted to old report artifacts.
+// Outcome ledgers, learning data, decision journals, diagnoses, model state,
+// policies, and trades are not automatically deleted by this worker.
 const SPECS = Object.freeze([
-  { name: "nine_ai_decision_journal", dateFields: ["createdAt", "scannedAt"], days: 45, emergencyDays: 30,
-    filter: { outcomeStatus: "EVALUATED" }, priority: 10 },
-  { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90, emergencyDays: 60, priority: 20 },
-  { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 90, emergencyDays: 60, priority: 20 },
-  { name: "nine_ai_counterfactual_outcomes", dateFields: ["closedAt", "createdAt"], days: 180, emergencyDays: 120, priority: 30 },
-  { name: "nine_ai_contextual_outcomes", dateFields: ["closedAt", "createdAt"], days: 365, emergencyDays: 180, priority: 40 },
-  { name: "nine_ai_learning_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365, emergencyDays: 180, priority: 40 },
-  { name: "nine_ai_reward_model_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365, emergencyDays: 180, priority: 45 },
-  { name: "nine_ai_loss_diagnoses", dateFields: ["closedAt", "createdAt", "diagnosedAt"], days: 180, emergencyDays: 120, priority: 35 }
-]);
-
-const ML_OUTCOME_NAMES = new Set([
-  "nine_ai_ml_technical_outcomes", "nine_ai_ml_signal_outcomes", "nine_ai_ml_memory_outcomes",
-  "nine_ai_ml_bull_outcomes", "nine_ai_ml_bear_outcomes", "nine_ai_ml_contrarian_outcomes",
-  "nine_ai_ml_analyst_outcomes", "nine_ai_ml_decision_outcomes", "nine_ai_ml_risk_outcomes"
+  { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 365, priority: 10 },
+  { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 365, priority: 10 }
 ]);
 
 function boundedNumber(env, fallback, min, max) {
@@ -35,6 +26,7 @@ function boundedNumber(env, fallback, min, max) {
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
 function configFromEnv() {
+  const dryRunEnv = process.env.DB_RETENTION_DRY_RUN;
   const triggerRatio = boundedNumber("DB_STORAGE_TRIGGER_RATIO", DEFAULTS.triggerRatio, 0.50, 0.95);
   return {
     limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 512, 1024 * 1024),
@@ -43,9 +35,10 @@ function configFromEnv() {
       boundedNumber("DB_STORAGE_TARGET_RATIO", DEFAULTS.targetRatio, 0.25, 0.80),
       triggerRatio - 0.05
     ),
-    batchSize: Math.round(boundedNumber("DB_RETENTION_BATCH_SIZE", DEFAULTS.batchSize, 50, 2000)),
+    batchSize: Math.round(boundedNumber("DB_RETENTION_BATCH_SIZE", DEFAULTS.batchSize, 10, 500)),
+    maxDeletesPerRun: Math.round(boundedNumber("DB_RETENTION_MAX_DELETES_PER_RUN", DEFAULTS.maxDeletesPerRun, 10, 2000)),
     intervalMs: Math.round(boundedNumber("DB_RETENTION_INTERVAL_HOURS", 6, 1, 24) * 60 * 60 * 1000),
-    dryRun: /^(1|true|yes)$/i.test(String(process.env.DB_RETENTION_DRY_RUN || "false"))
+    dryRun: dryRunEnv == null ? DEFAULTS.dryRun : /^(1|true|yes)$/i.test(String(dryRunEnv))
   };
 }
 function estimateUsageMB(collectionStats) {
@@ -70,21 +63,28 @@ function makeCutoffQuery(dateField, cutoffDate, cutoffMs, filter = {}) {
     ]
   };
 }
+function makeRetentionDateExpression(dateFields) {
+  let dateInput = null;
+  for (let i = dateFields.length - 1; i >= 0; i--) {
+    const field = "$" + dateFields[i];
+    dateInput = dateInput === null ? field : { $ifNull: [field, dateInput] };
+  }
+  return { $convert: { input: dateInput, to: "date", onError: null, onNull: null } };
+}
+function makeSafeDeleteQuery(ids, spec, cutoffMs) {
+  const cutoffDate = new Date(cutoffMs);
+  return {
+    $and: [
+      { _id: { $in: ids } },
+      spec.filter || {},
+      { $expr: { $lt: [makeRetentionDateExpression(spec.dateFields), cutoffDate] } }
+    ]
+  };
+}
 function getSpecs(collectionNames) {
   const present = new Set(collectionNames);
-  const specs = SPECS.filter(spec => present.has(spec.name));
-  for (const name of ML_OUTCOME_NAMES) {
-    if (present.has(name)) specs.push({
-      name, dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365, emergencyDays: 180, priority: 45
-    });
-  }
-  // Trades are last-resort history only. The query explicitly excludes PENDING.
-  if (present.has("trades")) specs.push({
-    name: "trades", dateFields: ["closedAt", "updatedAt", "createdAt"],
-    days: 730, emergencyDays: 365, priority: 90,
-    filter: { result: { $in: ["WIN", "LOSS", "CLOSED"] } }
-  });
-  return specs.sort((a, b) => a.priority - b.priority);
+  // Fail closed: only explicitly reviewed, non-outcome report collections are eligible.
+  return SPECS.filter(spec => present.has(spec.name)).map(spec => ({ ...spec }));
 }
 function toTimestamp(value) {
   if (value instanceof Date) return value.getTime();
@@ -132,46 +132,40 @@ function createRetention(db, overrides = {}) {
     return { names, stats, usageMB: estimateUsageMB(stats) };
   }
 
-  async function collectOldestCandidates(specs, phase) {
+  async function collectOldestCandidates(specs, limit = config.batchSize) {
     const candidates = [];
     const now = Date.now();
     for (const spec of specs) {
-      const days = phase === "normal" ? spec.days : spec.emergencyDays;
+      const days = spec.days;
       if (!Number.isFinite(days) || days <= 0) continue;
       const cutoffMs = now - days * 24 * 60 * 60 * 1000;
       // Coalesce schema variants in declared preference order, then convert
       // BSON Date, Unix-ms number, or parseable date string into one BSON Date.
-      let dateInput = null;
-      for (let i = spec.dateFields.length - 1; i >= 0; i--) {
-        const field = "$" + spec.dateFields[i];
-        dateInput = dateInput === null ? field : { $ifNull: [field, dateInput] };
-      }
+      const dateInput = makeRetentionDateExpression(spec.dateFields);
       const docs = await db.collection(spec.name).aggregate([
         { $match: spec.filter || {} },
-        { $addFields: { _retentionDate: {
-          $convert: { input: dateInput, to: "date", onError: null, onNull: null }
-        } } },
+        { $addFields: { _retentionDate: dateInput } },
         { $match: { _retentionDate: { $lt: new Date(cutoffMs) } } },
         { $sort: { _retentionDate: 1, _id: 1 } },
-        { $limit: config.batchSize },
+        { $limit: limit },
         { $project: { _id: 1, _retentionDate: 1 } }
       ]).toArray();
       for (const doc of docs) {
         const timestamp = toTimestamp(doc._retentionDate);
         if (timestamp !== null && timestamp < cutoffMs) {
-          candidates.push({ name: spec.name, id: doc._id, timestamp });
+          candidates.push({ name: spec.name, id: doc._id, timestamp, cutoffMs, spec });
         }
       }
     }
     // Taking the first batchSize from each collection is sufficient to find
     // the global oldest batchSize records, then sort the combined candidates.
-    return sortOldestCandidates(candidates, config.batchSize);
+    return sortOldestCandidates(candidates, limit);
   }
 
-  async function pruneOldestBatch(specs, phase, dryRun) {
+  async function pruneOldestBatch(specs, dryRun, limit = config.batchSize) {
     // Select the oldest eligible records across ALL allowed collections, not
     // a collection-priority order.
-    const candidates = await collectOldestCandidates(specs, phase);
+    const candidates = await collectOldestCandidates(specs, limit);
     if (!candidates.length) return { deleted: 0, candidates: 0, perCollection: {} };
     const perCollection = {};
     if (dryRun) {
@@ -180,15 +174,19 @@ function createRetention(db, overrides = {}) {
     }
     const grouped = new Map();
     for (const item of candidates) {
-      if (!grouped.has(item.name)) grouped.set(item.name, []);
-      grouped.get(item.name).push(item.id);
+      const key = item.name + "|" + item.cutoffMs;
+      if (!grouped.has(key)) grouped.set(key, { name: item.name, cutoffMs: item.cutoffMs, spec: item.spec, ids: [] });
+      grouped.get(key).ids.push(item.id);
     }
     let deleted = 0;
-    for (const [name, ids] of grouped) {
-      const result = await db.collection(name).deleteMany({ _id: { $in: ids } });
+    for (const group of grouped.values()) {
+      // Re-check the retention age at delete time. If a record's timestamp or
+      // eligibility status changed after candidate selection, it is not deleted.
+      const safeQuery = makeSafeDeleteQuery(group.ids, group.spec, group.cutoffMs);
+      const result = await db.collection(group.name).deleteMany(safeQuery);
       const count = Number(result.deletedCount || 0);
       deleted += count;
-      perCollection[name] = count;
+      perCollection[group.name] = (perCollection[group.name] || 0) + count;
     }
     return { deleted, candidates: candidates.length, perCollection };
   }
@@ -212,12 +210,12 @@ function createRetention(db, overrides = {}) {
       const perCollection = {};
       const specs = getSpecs(before.names);
 
-      // Normal retention windows first, then emergency windows only if needed.
-      // Within each phase every batch is globally ordered oldest-first.
-      for (const phase of ["normal", "emergency"]) {
-        let guard = 0;
-        while (usageMB > targetMB && guard++ < 100) {
-          const result = await pruneOldestBatch(specs, phase, config.dryRun);
+      // One strict retention policy only. No emergency mode may shorten age limits.
+      // Cap total deletes per run so a bad estimate cannot trigger an unbounded purge.
+      let guard = 0;
+      while (usageMB > targetMB && totalDeleted < config.maxDeletesPerRun && guard++ < 100) {
+          const remaining = config.dryRun ? config.batchSize : Math.min(config.batchSize, config.maxDeletesPerRun - totalDeleted);
+          const result = await pruneOldestBatch(specs, config.dryRun, remaining);
           totalCandidates += result.candidates;
           totalDeleted += result.deleted;
           for (const [name, count] of Object.entries(result.perCollection)) {
@@ -226,8 +224,6 @@ function createRetention(db, overrides = {}) {
           if (!result.candidates || config.dryRun || result.deleted === 0) break;
           const current = await readUsage();
           usageMB = current.usageMB;
-        }
-        if (usageMB <= targetMB || config.dryRun) break;
       }
 
       const after = config.dryRun ? before : await readUsage();
@@ -238,6 +234,8 @@ function createRetention(db, overrides = {}) {
         triggerMB: Number(triggerMB.toFixed(2)),
         targetMB: Number(targetMB.toFixed(2)),
         limitMB: config.limitMB,
+        maxDeletesPerRun: config.maxDeletesPerRun,
+        eligibleCollections: specs.map(spec => spec.name),
         deleted: totalDeleted,
         candidates: totalCandidates,
         perCollection,
@@ -260,5 +258,6 @@ function createRetention(db, overrides = {}) {
 
 module.exports = {
   DEFAULTS, SPECS, configFromEnv, estimateUsageMB, shouldCleanup, makeCutoffQuery,
+  makeRetentionDateExpression, makeSafeDeleteQuery,
   getSpecs, toTimestamp, sortOldestCandidates, createRetention
 };
