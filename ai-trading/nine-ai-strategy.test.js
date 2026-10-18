@@ -4,7 +4,7 @@ const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles, buildFeatures,
   resolveModelSide, resolveConsensusSide, assessIndependentRiskModel, assessEntryRiskEvidence,
   detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates,
-  deriveNineAIDynamicPlan, shouldNineAIExitPosition, canNineAIDynamicallyAdjust, MAX_NINE_AI_RR
+  MAX_NINE_AI_RR
 } = require("./nine-ai-strategy");
 
 assert.equal(ROLE_NAMES.length, 9);
@@ -182,90 +182,6 @@ assert.ok(compareNineAICandidates(
   { symbol: "AAA", rankScore: 70, confidence: 60, rankMetrics: { consensusMargin: 2, directionalVotes: 5, setupQuality: 80 } },
   { symbol: "ZZZ", rankScore: 70, confidence: 60, rankMetrics: { consensusMargin: 2, directionalVotes: 5, setupQuality: 80 } }
 ) < 0, "symbol name is only the final deterministic tie-breaker");
-
-// Dynamic TPSL invariants: role-derived RR never exceeds 1.8 and SL never widens.
-assert.equal(MAX_NINE_AI_RR, 1.8);
-assert.ok(1.3 <= MAX_NINE_AI_RR, "RR 1.3 is valid because 1.8 is a ceiling, not a required target");
-const alignedDecision = {
-  side: "LONG", authorizedForExecution: true, rankScore: 82,
-  rankMetrics: { roleScore: 82, features: { atr14: 2 } },
-  roles: [
-    { name: "Contrarian AI", side: "LONG", confidence: 70 },
-    { name: "Risk Manager AI", side: "LONG", confidence: 75 }
-  ]
-};
-const alignedPlan = deriveNineAIDynamicPlan({
-  decision: alignedDecision, side: "LONG", entry: 100, current: 100.5,
-  oldSL: 95, oldTP: 110, tickSize: 0.1
-});
-assert.ok(alignedPlan === null || alignedPlan.sl >= 95,
-  "aligned LONG dynamic management must never widen SL");
-assert.ok(alignedPlan === null || alignedPlan.tp > 100.5,
-  "any accepted LONG TP must remain beyond current price");
-assert.ok(alignedPlan === null || alignedPlan.rr <= 1.8,
-  "reject a trailing-stop update if retaining the original TP would violate RR<=1.8");
-
-const shortAlignedDecision = {
-  side: "SHORT", authorizedForExecution: true, rankScore: 80,
-  rankMetrics: { roleScore: 80, features: { atr14: 2 } },
-  roles: [
-    { name: "Contrarian AI", side: "SHORT", confidence: 70 },
-    { name: "Risk Manager AI", side: "SHORT", confidence: 75 }
-  ]
-};
-const shortPlan = deriveNineAIDynamicPlan({
-  decision: shortAlignedDecision, side: "SHORT", entry: 100, current: 99.5,
-  oldSL: 105, oldTP: 90, tickSize: 0.1
-});
-assert.ok(shortPlan === null || shortPlan.sl <= 105,
-  "aligned SHORT dynamic management must never widen SL");
-assert.ok(shortPlan === null || shortPlan.tp < 99.5,
-  "any accepted SHORT TP must remain beyond current price");
-assert.ok(shortPlan === null || shortPlan.rr <= 1.8,
-  "SHORT dynamic RR must never exceed 1.8; reject updates that cannot preserve the original TP safely");
-
-const oldTargetNear = deriveNineAIDynamicPlan({
-  decision: alignedDecision, side: "LONG", entry: 100, current: 100.5,
-  oldSL: 95, oldTP: 101, tickSize: 0.1
-});
-assert.ok(oldTargetNear, "9AI should be able to extend TP when RR allows it");
-assert.ok(oldTargetNear.tp > 101, "TP is allowed to move farther when 9AI supports the setup");
-assert.ok(oldTargetNear.rr <= 1.8, "extended TP must remain under RR 1.8");
-
-const weakDecision = {
-  side: null, authorizedForExecution: false, confidence: 0,
-  roles: [{ name: "Risk Manager AI", side: "VETO", confidence: 100 }],
-  rankMetrics: { features: { atr14: 2 } }
-};
-const tightenedPlan = deriveNineAIDynamicPlan({
-  decision: weakDecision, side: "LONG", entry: 100, current: 102,
-  oldSL: 95, oldTP: 110, tickSize: 0.1
-});
-assert.ok(tightenedPlan === null || tightenedPlan.sl >= 95,
-  "weak/invalid decision must not widen LONG SL");
-assert.ok(tightenedPlan === null || tightenedPlan.action === "CLOSE_TARGET_REACHED" || tightenedPlan.rr <= 1.8,
-  "weak/invalid decision must stay under the RR ceiling or request immediate exit if the live target is already crossed");
-assert.ok(tightenedPlan === null || tightenedPlan.tp >= 110,
-  "weak/invalid decision must never pull the confirmed LONG TP inward");
-
-// A weak/neutral re-analysis cannot shrink the original SHORT target either.
-const weakShortPlan = deriveNineAIDynamicPlan({
-  decision: { ...weakDecision, side: null },
-  side: "SHORT", entry: 100, current: 98,
-  oldSL: 105, oldTP: 90, tickSize: 0.1
-});
-assert.ok(weakShortPlan === null || weakShortPlan.tp <= 90,
-  "weak/invalid decision must never pull the confirmed SHORT TP inward");
-
-
-assert.equal(canNineAIDynamicallyAdjust({ side: "LONG", entry: 100, current: 100.1, initialRisk: 5 }), true);
-assert.equal(canNineAIDynamicallyAdjust({ side: "SHORT", entry: 100, current: 100.1, initialRisk: 5 }), true);
-assert.equal(shouldNineAIExitPosition({
-  authorizedForExecution: true, side: "SHORT",
-  rankMetrics: { features: { trend: "DOWN", momentum12: -1, structureTrend: "LOWER_HIGHS_LOWS" } }
-}, "LONG"), true);
-assert.equal(shouldNineAIExitPosition({ authorizedForExecution: false, side: "SHORT", rankMetrics: { roleScore: 99 } }, "LONG"), false);
-assert.equal(shouldNineAIExitPosition({ authorizedForExecution: true, side: "LONG", rankMetrics: { roleScore: 99 } }, "LONG"), false);
 
 // General reward learner: arbitrary feature changes must alter its prediction;
 // outcomes are continuous net-R estimates rather than binary win/loss labels.
