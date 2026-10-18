@@ -10,12 +10,11 @@ const DEFAULTS = Object.freeze({
   batchSize: 100,
   maxDeletesPerRun: 500,
   intervalMs: 6 * 60 * 60 * 1000,
-  dryRun: true
+  // Autonomous cleanup is the default. Set DB_RETENTION_DRY_RUN=true only to pause deletion.
+  dryRun: false
 });
 
-// Automatic deletion is deliberately restricted to old report artifacts.
-// Outcome ledgers, learning data, decision journals, diagnoses, model state,
-// policies, and trades are not automatically deleted by this worker.
+// Automatic cleanup runs for explicitly reviewed, age-bounded collections only.
 // Tiered retention based on the role of each collection. High-volume evaluated
 // research artifacts can age out sooner; actual learning evidence stays >= 365d.
 // Mutable policies, model state, active trades, and unknown collections are excluded.
@@ -66,7 +65,8 @@ function configFromEnv() {
     batchSize: Math.round(boundedNumber("DB_RETENTION_BATCH_SIZE", DEFAULTS.batchSize, 10, 500)),
     maxDeletesPerRun: Math.round(boundedNumber("DB_RETENTION_MAX_DELETES_PER_RUN", DEFAULTS.maxDeletesPerRun, 10, 2000)),
     intervalMs: Math.round(boundedNumber("DB_RETENTION_INTERVAL_HOURS", 6, 1, 24) * 60 * 60 * 1000),
-    dryRun: dryRunEnv == null ? DEFAULTS.dryRun : /^(1|true|yes)$/i.test(String(dryRunEnv))
+    // Default to real bounded cleanup. Dry-run is an explicit operational override.
+    dryRun: dryRunEnv != null && /^(1|true|yes)$/i.test(String(dryRunEnv))
   };
 }
 function estimateUsageMB(collectionStats) {
