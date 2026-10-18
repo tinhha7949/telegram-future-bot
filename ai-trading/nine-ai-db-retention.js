@@ -1,8 +1,9 @@
 "use strict";
 
 // Capacity-aware MongoDB retention. Only runs when estimated collection storage
-// crosses the configured threshold. Never drops collections/indexes or deletes
-// active trades, model state, or strategy policies.
+// crosses the configured threshold. Never drops collections/indexes. Automatic
+// deletion is restricted to disposable generated reports; all raw trade and
+// learning/research evidence is preserved until compact archival is implemented.
 const DEFAULTS = Object.freeze({
   limitMB: 5120,
   triggerRatio: 0.80,
@@ -14,44 +15,19 @@ const DEFAULTS = Object.freeze({
   dryRun: false
 });
 
-// Automatic cleanup runs for explicitly reviewed, age-bounded collections only.
-// Tiered retention based on the role of each collection. High-volume evaluated
-// research artifacts can age out sooner; actual learning evidence stays >= 365d.
-// Mutable policies, model state, active trades, and unknown collections are excluded.
+// Fail-closed policy: only generated reports are currently auto-deleted.
+// Age alone is not proof that training or research evidence is disposable.
+// Do not add trade/outcome collections until durable knowledge preservation and
+// all downstream consumers are verified by integration tests.
 const SPECS = Object.freeze([
-  // Completed trades only. "result" is the source-of-truth terminal state in index.js;
-  // PENDING/unknown statuses never match. Keep 90 days because recent trade history
-  // feeds live performance statistics; older closed records are outside the live window.
-  { name: "trades", dateFields: ["closedAt", "updatedAt", "createdAt"], days: 90,
-    filter: { result: { $in: ["WIN", "LOSS"] } }, category: "closed_trade_history", priority: 5 },
-  { name: "nine_ai_decision_journal", dateFields: ["createdAt", "scannedAt"], days: 90,
-    filter: { outcomeStatus: "EVALUATED" }, category: "evaluated_research", priority: 10 },
+  // Only disposable generated reports are eligible for automatic deletion.
+  // Raw trade records and all research/learning evidence are deliberately
+  // excluded until a durable, tested compact representation exists and every
+  // consumer is proven to use that representation.
   { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90,
     category: "generated_report", priority: 20 },
   { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 90,
-    category: "generated_report", priority: 20 },
-  { name: "nine_ai_loss_diagnoses", dateFields: ["closedAt", "createdAt", "diagnosedAt"], days: 180,
-    category: "derived_diagnosis", priority: 30 },
-  { name: "nine_ai_counterfactual_outcomes", dateFields: ["closedAt", "createdAt"], days: 365,
-    category: "learning_evidence", priority: 40 },
-  { name: "nine_ai_contextual_outcomes", dateFields: ["closedAt", "createdAt"], days: 365,
-    filter: { closed: true }, category: "learning_evidence", priority: 50 },
-  { name: "nine_ai_learning_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365,
-    filter: { closed: true, applied: true }, category: "learning_evidence", priority: 50 },
-  { name: "nine_ai_reward_model_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365,
-    filter: { closed: true, applied: true }, category: "learning_evidence", priority: 50 },
-  { name: "nine_ai_strategy_evolution_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365,
-    filter: { closed: true, applied: true }, category: "learning_evidence", priority: 50 },
-  ...[
-    "technical", "signal", "memory", "bull", "bear", "contrarian", "analyst", "decision", "risk"
-  ].map(id => ({
-    name: "nine_ai_ml_" + id + "_outcomes",
-    dateFields: ["closedAt", "createdAt", "updatedAt"],
-    days: 365,
-    filter: { closed: true, applied: true },
-    category: "learning_evidence",
-    priority: 50
-  }))
+    category: "generated_report", priority: 20 }
 ]);
 
 function boundedNumber(env, fallback, min, max) {
