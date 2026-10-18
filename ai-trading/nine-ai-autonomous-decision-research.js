@@ -20,7 +20,7 @@ let activePolicies = [];
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const finite = n => Number.isFinite(Number(n));
-const round = n => finite(n) ? Number(Number(n).toFixed(4)) : null;
+const round = n => n == null || !finite(n) ? null : Number(Number(n).toFixed(4));
 
 function outcomeValue(row, variant) {
   const value = row?.researchVariants?.[variant]?.netR;
@@ -70,7 +70,7 @@ function evaluateGroup(rows) {
     const enough = trainMetrics.n >= MIN_TRAIN && testMetrics.n >= MIN_TEST;
     const baselineUpper = baseline.expectancyR == null ? -Infinity : baseline.expectancyR + (baseline.standardError || 0) * 1.96;
     const candidateLower = testMetrics.lowerBoundR ?? -Infinity;
-    const validated = enough && candidateLower > 0 &&
+    const validated = enough && (trainMetrics.lowerBoundR ?? -Infinity) > 0 && candidateLower > 0 &&
       (variant === "now_4" || (uplift !== null && uplift > 0 &&
         candidateLower > baselineUpper));
     return { variant, train: trainMetrics, test: testMetrics, upliftVsImmediateR: round(uplift), validated };
@@ -97,7 +97,8 @@ async function runResearchCycle({ now = new Date() } = {}) {
   running = true;
   try {
     const rows = await journal.find({ outcomeStatus: "EVALUATED" })
-      .sort({ signalTime: 1 }).limit(MAX_ROWS).toArray();
+      .sort({ signalTime: -1 }).limit(MAX_ROWS).toArray();
+    rows.sort((a, b) => Number(a.signalTime) - Number(b.signalTime));
     const usable = rows.filter(row => ["LONG","SHORT","WAIT"].includes(row.side) &&
       row.researchVariants && row.marketRegime);
     const groups = new Map();
