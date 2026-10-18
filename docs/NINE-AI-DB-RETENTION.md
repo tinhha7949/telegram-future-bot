@@ -18,7 +18,7 @@ This means cleanup may stop above the target when report data is insufficient to
 - Default configured limit: 5,120 MB.
 - Cleanup starts at 80% of that limit (4,096 MB).
 - Target is 60% (3,072 MB).
-- The controller checks at startup and every 6 hours.
+- The controller checks at startup and every 6 hours. By default it is preview-only and does not delete records.
 - Each deletion batch is at most 100 documents by default.
 - A run deletes at most 500 documents by default.
 - The process deletes only from the two allowlisted report collections, oldest first.
@@ -34,7 +34,10 @@ This means cleanup may stop above the target when report data is insufficient to
 - `DB_RETENTION_BATCH_SIZE`: batch size (default `100`, bounded).
 - `DB_RETENTION_MAX_DELETES_PER_RUN`: run cap (default `500`, bounded).
 - `DB_RETENTION_INTERVAL_HOURS`: cycle interval (default `6`, bounded).
-- `DB_RETENTION_DRY_RUN=true`: preview eligible report deletions without deleting them. Real bounded report cleanup is the default.
+- `DB_RETENTION_ENABLE_DELETE`: deletion kill-switch. Must be explicitly set to `true`, `1`, or `yes` before any delete can occur. Default: disabled.
+- `DB_RETENTION_DRY_RUN`: defaults to preview-only. Even after enabling deletion, real deletes require this variable to be explicitly set to `false`, `0`, or `no`. Setting it to `true` always forces preview-only.
+- **Safe production default:** leave both variables unset. The bot can run normally; retention measures usage and previews eligible report records but cannot delete anything.
+- To authorize bounded deletion of the two generated-report collections only, set `DB_RETENTION_ENABLE_DELETE=true` and `DB_RETENTION_DRY_RUN=false` after reviewing preview logs and confirming a database backup. No other collections become eligible.
 
 ## Measurement limitation
 
