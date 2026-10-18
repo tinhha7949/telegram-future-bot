@@ -49,6 +49,7 @@ const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution
 const nineAiRewardModel = require("./ai-trading/nine-ai-reward-model")
 const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
 const nineAiAutonomousDecisionResearch = require("./ai-trading/nine-ai-autonomous-decision-research")
+const nineAiAutonomousDeployment = require("./ai-trading/nine-ai-autonomous-deployment")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 
 // Use a machine-local lock keyed to this script, independent of the launch
@@ -2425,6 +2426,32 @@ async function scan(symbol){
         } catch (policyError) {
             console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
         }
+        // A validated delay policy is an actual execution timing policy, not a report-only finding.
+        // Persist the pending signal so repeated scans cannot restart the delay indefinitely.
+        try {
+            const timingGate = await nineAiAutonomousDeployment.gateLiveEntry({
+                symbol,
+                side: decision.side,
+                signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                features: decision.rankMetrics?.features || decision.features || {}
+            });
+            decision.rankMetrics = { ...(decision.rankMetrics || {}), autonomousTimingGate: timingGate };
+            if (!timingGate.allowed) {
+                decision.originalSideBeforeTimingGate = decision.side;
+                decision.side = "WAIT";
+                decision.action = "WAIT";
+                decision.authorizedForExecution = false;
+                decision.reason = timingGate.reason;
+                recordNineAIAbstention(timingGate.reason);
+                console.log("⏳ NINE-AI VALIDATED ENTRY TIMING " + symbol +
+                    " | originalSide=" + decision.originalSideBeforeTimingGate +
+                    " | variant=" + (timingGate.variant || "N/A") +
+                    " | bars=" + (timingGate.delayBars ?? timingGate.barsRemaining ?? "N/A") +
+                    " | policy=" + (timingGate.policyId || "N/A"));
+            }
+        } catch (timingGateError) {
+            console.error("⚠️ NINE-AI ENTRY TIMING GATE FAILED " + symbol + ":", timingGateError?.message || timingGateError);
+        }
         try {
             const journalResult = await nineAiDecisionJournal.recordDecision({
                 symbol, decision,
@@ -2436,6 +2463,7 @@ async function scan(symbol){
         } catch (journalError) {
             console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":", journalError?.message || journalError);
         }
+        if (decision.authorizedForExecution !== true) return null;
         console.log(
             `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | OPPORTUNITY_BONUS=${safeFixed(decision.liveOpportunityBonus, 3)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
         );
@@ -4762,6 +4790,25 @@ try {
     console.log("NINE-AI COUNTERFACTUAL RESEARCH READY: samples=" + counterfactualStatus.samples + " validatedPolicies=" + counterfactualStatus.policies);
 } catch (counterfactualError) {
     console.error("NINE-AI COUNTERFACTUAL RESEARCH INIT FAILED:", counterfactualError?.message || counterfactualError);
+}
+
+try {
+    const deploymentStatus = await nineAiAutonomousDeployment.initialize(db);
+    console.log("🚀 NINE-AI AUTONOMOUS TIMING DEPLOYMENT READY: activePolicies=" + deploymentStatus.activePolicies);
+    const runTimingDeployment = async () => {
+        try {
+            const result = await nineAiAutonomousDeployment.runResearchCycle();
+            console.log("🚀 NINE-AI TIMING POLICY CYCLE: status=" + result.status +
+                " outcomes=" + (result.rows ?? 0) + " candidates=" + (result.candidates ?? 0) +
+                " active=" + (result.activePolicies ?? 0));
+        } catch (error) {
+            console.error("⚠️ NINE-AI TIMING POLICY CYCLE FAILED:", error?.message || error);
+        }
+    };
+    void runTimingDeployment();
+    setInterval(runTimingDeployment, 6 * 60 * 60 * 1000);
+} catch (deploymentInitError) {
+    console.error("⚠️ NINE-AI AUTONOMOUS DEPLOYMENT INIT FAILED:", deploymentInitError?.message || deploymentInitError);
 }
 
 try {

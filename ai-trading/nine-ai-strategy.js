@@ -12,6 +12,7 @@ const independentModels = require("./nine-ai-independent-models");
 const contextualLearning = require("./nine-ai-contextual-learning");
 const counterfactualResearch = require("./nine-ai-counterfactual-research");
 const rewardModel = require("./nine-ai-reward-model");
+const autonomousDeployment = require("./nine-ai-autonomous-deployment");
 
 const ROLE_NAMES = [
   "Technical Analyst AI",
@@ -634,10 +635,26 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const adaptiveDecisionWeights = policy.decisionWeights;
   const weighted = calculateWeightedRoleScore(roleResults, side, policy.roleWeights);
   const roleScore = weighted.score;
-  const rankScore = Math.round(clamp(
-    roleScore * adaptiveDecisionWeights.role + setupQuality * adaptiveDecisionWeights.setup +
-    entryQuality * adaptiveDecisionWeights.entry, 0, 100
-  ) * 100) / 100;
+  // Validated counterfactual timing evidence is deployed into ranking. Earlier-entry
+  // policies add a bounded boost; delayed-entry policies penalize immediate-entry
+  // ranking so the scanner prioritizes better-aligned opportunities. Hard execution
+  // risk checks, SL/TP geometry and position sizing remain unchanged.
+  const timingPolicyEvidence = autonomousDeployment.assess({
+    marketRegime: f.marketRegime,
+    extensionAtr: f.extensionAtr,
+    rsi14: f.rsi,
+    momentum4: f.mom4,
+    volumeRatio: f.volumeRatio,
+    falseBreakoutRisk: f.falseBreakoutRisk
+  }, side);
+  const timingVariant = timingPolicyEvidence.policy?.variant || "";
+  const timingAdjustment = timingVariant.startsWith("EARLIER_")
+    ? Math.abs(Number(timingPolicyEvidence.adjustment) || 0)
+    : timingVariant.startsWith("DELAY_")
+      ? -Math.abs(Number(timingPolicyEvidence.adjustment) || 0) : 0;
+  const baseRankScore = roleScore * adaptiveDecisionWeights.role +
+    setupQuality * adaptiveDecisionWeights.setup + entryQuality * adaptiveDecisionWeights.entry;
+  const rankScore = Math.round(clamp(baseRankScore + timingAdjustment, 0, 100) * 100) / 100;
   const rankedRoles = weighted.roles;
   const rankMetrics = {
     score: rankScore, roleScore,
@@ -647,6 +664,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     contextualLearning: { long: contextualEvidence.LONG, short: contextualEvidence.SHORT, tags: contextualEvidence.LONG.tags, winner: contextualWinner },
     rewardModel: { long: rewardEvidence.LONG, short: rewardEvidence.SHORT },
     counterfactualResearch: counterfactualAdvice,
+    autonomousTimingDeployment: { ...timingPolicyEvidence, appliedAdjustment: timingAdjustment, baseRankScore: Math.round(baseRankScore * 100) / 100 },
     desiredRR: targetRR,
     maxRiskReward: 1.8,
     riskPressure,
