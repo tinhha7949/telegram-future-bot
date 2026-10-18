@@ -16,6 +16,7 @@ const ROLLBACK_UPLIFT_R = -0.05;
 const ALLOWED = new Set(["EARLIER_1_BAR", "EARLIER_2_BAR", "DELAY_1_BAR", "DELAY_2_BAR", "OPPOSITE_SIDE"]);
 let outcomes = null;
 let policies = null;
+let pendingEntries = null;
 let active = [];
 let running = false;
 
@@ -65,6 +66,9 @@ async function initialize(db) {
   if (!db || typeof db.collection!=="function") throw new Error("NINE_AI_AUTONOMOUS_DEPLOYMENT_MONGODB_REQUIRED");
   outcomes=db.collection(OUTCOMES);
   policies=db.collection(POLICIES);
+  pendingEntries=db.collection("nine_ai_pending_timing_entries");
+  await pendingEntries.createIndex({symbol:1},{unique:true,name:"uniq_nine_ai_pending_timing_symbol"});
+  await pendingEntries.createIndex({expiresAt:1},{expireAfterSeconds:0,name:"ttl_nine_ai_pending_timing_entries"});
   await policies.createIndex({policyId:1},{unique:true,name:"uniq_nine_ai_timing_deployment_policy"});
   await policies.createIndex({status:1,updatedAt:-1},{name:"nine_ai_timing_deployment_status"});
   active=await policies.find({status:"ACTIVE"}).sort({updatedAt:-1}).toArray();
@@ -125,9 +129,48 @@ function assess(features={}, side) {
     testUpliftR:p.testUpliftR,testMeanR:p.testMeanR,testSamples:p.testSamples},
     reason:"VALIDATED_COUNTERFACTUAL_POLICY_ACTIVE"};
 }
+
+async function gateLiveEntry({symbol,side,signalTime,features={}}={}) {
+  if (!pendingEntries) return {allowed:true,reason:"TIMING_GATE_NOT_INITIALIZED"};
+  const sym=String(symbol||"").toUpperCase();
+  const wanted=String(side||"").toUpperCase();
+  const candleTime=Number(signalTime);
+  if (!sym || !["LONG","SHORT"].includes(wanted) || !Number.isFinite(candleTime)) {
+    return {allowed:false,reason:"INVALID_TIMING_GATE_INPUT"};
+  }
+  const existing=await pendingEntries.findOne({symbol:sym});
+  if (existing) {
+    if (existing.side!==wanted) {
+      await pendingEntries.deleteOne({symbol:sym});
+    } else if (candleTime < Number(existing.dueSignalTime)) {
+      return {allowed:false,reason:"VALIDATED_ENTRY_DELAY_PENDING",variant:existing.variant,
+        barsRemaining:Math.max(1,Math.ceil((Number(existing.dueSignalTime)-candleTime)/(15*60*1000)))};
+    } else {
+      await pendingEntries.deleteOne({symbol:sym});
+      return {allowed:true,reason:"VALIDATED_ENTRY_DELAY_SATISFIED",variant:existing.variant,
+        delayedBars:existing.delayBars,policyId:existing.policyId};
+    }
+  }
+  const regime=String(features.marketRegime||features.regime||"UNKNOWN").toUpperCase();
+  const policy=active.filter(p=>p.status==="ACTIVE" && p.side===wanted &&
+    (p.regime===regime || p.regime==="UNKNOWN") &&
+    ["DELAY_1_BAR","DELAY_2_BAR"].includes(p.variant))
+    .sort((a,b)=>(Number(b.testUpliftR)||0)-(Number(a.testUpliftR)||0))[0];
+  if (!policy) return {allowed:true,reason:"NO_VALIDATED_DELAY_POLICY"};
+  const bars=policy.variant==="DELAY_2_BAR"?2:1;
+  const dueSignalTime=candleTime+bars*15*60*1000;
+  await pendingEntries.updateOne({symbol:sym},{$set:{
+    symbol:sym,side:wanted,regime,variant:policy.variant,policyId:policy.policyId,
+    delayBars:bars,createdSignalTime:candleTime,dueSignalTime,
+    expiresAt:new Date(Date.now()+6*60*60*1000),createdAt:new Date()
+  }},{upsert:true});
+  return {allowed:false,reason:"VALIDATED_ENTRY_DELAY_SCHEDULED",variant:policy.variant,
+    delayBars:bars,dueSignalTime,policyId:policy.policyId};
+}
+
 function status() {
   return {initialized:Boolean(outcomes&&policies),activePolicies:active.length,
     policies:active.map(p=>({policyId:p.policyId,variant:p.variant,side:p.side,regime:p.regime,
       testUpliftR:p.testUpliftR,testMeanR:p.testMeanR,testSamples:p.testSamples}))};
 }
-module.exports={ALLOWED,MIN_TRAIN,MIN_TEST,MIN_UPLIFT_R,evaluateVariant,initialize,runResearchCycle,assess,status};
+module.exports={ALLOWED,MIN_TRAIN,MIN_TEST,MIN_UPLIFT_R,evaluateVariant,initialize,runResearchCycle,assess,gateLiveEntry,status};
