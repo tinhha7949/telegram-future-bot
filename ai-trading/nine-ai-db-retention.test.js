@@ -51,7 +51,10 @@ const names = [
 ];
 const specs = retention.getSpecs(names);
 const byName = Object.fromEntries(specs.map(s => [s.name, s]));
-assert.strictEqual(specs.length, 12, "all approved data-retention tiers must be available");
+assert.strictEqual(specs.length, 13, "all approved data-retention tiers, including closed trade history, must be available");
+assert.strictEqual(byName.trades.days, 90, "closed trade history must have a bounded retention window");
+assert.deepStrictEqual(byName.trades.filter, { result: { $in: ["WIN", "LOSS"] } }, "only terminal WIN/LOSS trades are eligible");
+assert.deepStrictEqual(byName.trades.dateFields, ["closedAt", "updatedAt", "createdAt"]);
 assert.strictEqual(byName.nine_ai_decision_journal.days, 90);
 assert.deepStrictEqual(byName.nine_ai_decision_journal.filter, { outcomeStatus: "EVALUATED" });
 assert.strictEqual(byName.nine_ai_strategy_lab_reports.days, 90);
@@ -65,8 +68,10 @@ for (const name of [
 ]) {
   assert.strictEqual(byName[name].days, 365, name + " must retain learning evidence for at least 365 days");
 }
-assert(!specs.some(s => ["trades", "nine_ai_learning_state", "nine_ai_timing_deployment_policies"].includes(s.name)),
-  "trade history and mutable model/policy state must never be automatically deleted");
+assert(!specs.some(s => ["nine_ai_learning_state", "nine_ai_timing_deployment_policies"].includes(s.name)),
+  "mutable model/policy state must never be automatically deleted");
+assert(!retention.getSpecs(["future_unknown_collection"]).length,
+  "unknown collections must fail closed and remain untouched");
 assert(!specs.some(s => Object.hasOwn(s, "emergencyDays")), "no emergency path may shorten age limits");
 
 const safeSpec = { dateFields: ["closedAt", "createdAt"], filter: { outcomeStatus: "EVALUATED" } };
@@ -74,14 +79,21 @@ const safeDelete = retention.makeSafeDeleteQuery(["id-1"], safeSpec, 5000);
 assert.deepStrictEqual(safeDelete.$and[0], { _id: { $in: ["id-1"] } });
 assert.deepStrictEqual(safeDelete.$and[1], { outcomeStatus: "EVALUATED" });
 assert.deepStrictEqual(safeDelete.$and[2].$expr.$lt[0], {
-  $ifNull: [
+  $max: [
     { $convert: { input: "$closedAt", to: "date", onError: null, onNull: null } },
     { $convert: { input: "$createdAt", to: "date", onError: null, onNull: null } }
   ]
 });
 assert.strictEqual(safeDelete.$and[2].$expr.$lt[1].getTime(), 5000);
 assert.deepStrictEqual(retention.makeRetentionDateExpression(["createdAt"]), {
-  $convert: { input: "$createdAt", to: "date", onError: null, onNull: null }
+  $max: [{ $convert: { input: "$createdAt", to: "date", onError: null, onNull: null } }]
 });
+assert.deepStrictEqual(retention.makeRetentionDateExpression(["closedAt", "updatedAt", "createdAt"]), {
+  $max: [
+    { $convert: { input: "$closedAt", to: "date", onError: null, onNull: null } },
+    { $convert: { input: "$updatedAt", to: "date", onError: null, onNull: null } },
+    { $convert: { input: "$createdAt", to: "date", onError: null, onNull: null } }
+  ]
+}, "any recent valid lifecycle timestamp must protect a document");
 
 console.log("NINE-AI DB RETENTION TESTS PASSED");
