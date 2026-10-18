@@ -33,3 +33,5 @@ jobs:
       - run: node ai-trading/nine-ai-counterfactual-research.test.js
       - run: node --check ai-trading/nine-ai-loss-diagnosis.js
       - run: node ai-trading/nine-ai-loss-diagnosis.test.js
+      - run: node --check ai-trading/nine-ai-decision-journal.js
+      - run: node ai-trading/nine-ai-decision-journal.test.js
