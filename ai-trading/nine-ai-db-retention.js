@@ -21,17 +21,12 @@ const SPECS = Object.freeze([
   { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 365, priority: 10 }
 ]);
 
-const ML_OUTCOME_NAMES = new Set([
-  "nine_ai_ml_technical_outcomes", "nine_ai_ml_signal_outcomes", "nine_ai_ml_memory_outcomes",
-  "nine_ai_ml_bull_outcomes", "nine_ai_ml_bear_outcomes", "nine_ai_ml_contrarian_outcomes",
-  "nine_ai_ml_analyst_outcomes", "nine_ai_ml_decision_outcomes", "nine_ai_ml_risk_outcomes"
-]);
-
 function boundedNumber(env, fallback, min, max) {
   const value = Number(process.env[env]);
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
 function configFromEnv() {
+  const dryRunEnv = process.env.DB_RETENTION_DRY_RUN;
   const triggerRatio = boundedNumber("DB_STORAGE_TRIGGER_RATIO", DEFAULTS.triggerRatio, 0.50, 0.95);
   return {
     limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 512, 1024 * 1024),
@@ -43,7 +38,7 @@ function configFromEnv() {
     batchSize: Math.round(boundedNumber("DB_RETENTION_BATCH_SIZE", DEFAULTS.batchSize, 10, 500)),
     maxDeletesPerRun: Math.round(boundedNumber("DB_RETENTION_MAX_DELETES_PER_RUN", DEFAULTS.maxDeletesPerRun, 10, 2000)),
     intervalMs: Math.round(boundedNumber("DB_RETENTION_INTERVAL_HOURS", 6, 1, 24) * 60 * 60 * 1000),
-    dryRun: /^(1|true|yes)$/i.test(String(process.env.DB_RETENTION_DRY_RUN || "false"))
+    dryRun: dryRunEnv == null ? DEFAULTS.dryRun : /^(1|true|yes)$/i.test(String(dryRunEnv))
   };
 }
 function estimateUsageMB(collectionStats) {
