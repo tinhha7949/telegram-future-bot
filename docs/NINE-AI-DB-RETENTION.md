@@ -1,13 +1,13 @@
 # NINE-AI MongoDB capacity-aware retention
 
-The retention controller manages high-volume historical records without treating all old data as disposable. It uses explicit per-collection retention windows, oldest-first selection, a bounded delete budget, and a dry-run default.
+The retention controller manages high-volume historical records without treating all old data as disposable. It uses explicit per-collection retention windows, oldest-first selection, a bounded delete budget, and autonomous real cleanup by default.
 
 ## Capacity behavior
 
 - Assumed database budget: `DB_STORAGE_LIMIT_MB=5120`; set this to the actual configured database budget.
 - Cleanup preview starts at 80% of the configured budget and targets 60%.
 - Runs at startup and every 6 hours.
-- Dry-run is enabled by default. Real deletion requires the explicit setting `DB_RETENTION_DRY_RUN=false`.
+- Real bounded deletion is enabled by default. Set `DB_RETENTION_DRY_RUN=true` only to pause deletion and preview eligible records.
 - Batch size defaults to 100 (bounded 10–500); actual deletion is capped at 500 documents per run by default (bounded 10–2,000).
 - Records are selected oldest-first across eligible collections. The worker rechecks age and collection-specific filters immediately before deletion.
 - There is no emergency mode that shortens a collection's minimum age to chase a space target.
