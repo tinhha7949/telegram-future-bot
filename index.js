@@ -51,6 +51,7 @@ const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
 const nineAiAutonomousDecisionResearch = require("./ai-trading/nine-ai-autonomous-decision-research")
 const nineAiAutonomousDeployment = require("./ai-trading/nine-ai-autonomous-deployment")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
+const nineAiDbRetention = require("./ai-trading/nine-ai-db-retention")
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -4847,7 +4848,28 @@ try {
     console.error("⚠️ NINE-AI RESEARCH INIT FAILED:", researchError?.message || researchError);
 }
 
-        // TEST DB THỰC SỰ ĐỌC ĐƯỢC
+        // Capacity-aware retention: old evaluated/research history is pruned only after
+// estimated collection storage crosses the configured threshold. Failure is non-fatal.
+try {
+    const dbRetention = nineAiDbRetention.createRetention(db);
+    const runDbRetention = async () => {
+        try {
+            await dbRetention.runCleanup();
+        } catch (retentionError) {
+            console.error("⚠️ NINE-AI DB RETENTION FAILED:", retentionError?.message || retentionError);
+        }
+    };
+    void runDbRetention();
+    setInterval(runDbRetention, dbRetention.config.intervalMs);
+    console.log("🧹 NINE-AI DB RETENTION READY: limitMB=" + dbRetention.config.limitMB +
+        " trigger=" + Math.round(dbRetention.config.triggerRatio * 100) + "%" +
+        " target=" + Math.round(dbRetention.config.targetRatio * 100) + "%" +
+        " dryRun=" + dbRetention.config.dryRun);
+} catch (retentionInitError) {
+    console.error("⚠️ NINE-AI DB RETENTION INIT FAILED:", retentionInitError?.message || retentionInitError);
+}
+
+// TEST DB THỰC SỰ ĐỌC ĐƯỢC
         await trades.findOne(
             {},
             {
