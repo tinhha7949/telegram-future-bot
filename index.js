@@ -4864,6 +4864,7 @@ try {
     console.log("🧹 NINE-AI DB RETENTION READY: limitMB=" + dbRetention.config.limitMB +
         " trigger=" + Math.round(dbRetention.config.triggerRatio * 100) + "%" +
         " target=" + Math.round(dbRetention.config.targetRatio * 100) + "%" +
+        " deletionEnabled=" + dbRetention.config.enabled +
         " dryRun=" + dbRetention.config.dryRun);
 } catch (retentionInitError) {
     console.error("⚠️ NINE-AI DB RETENTION INIT FAILED:", retentionInitError?.message || retentionInitError);
