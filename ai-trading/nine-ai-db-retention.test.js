@@ -5,31 +5,32 @@ const retention = require("./nine-ai-db-retention");
 const config = { limitMB: 5120, triggerRatio: 0.80, targetRatio: 0.60 };
 assert.strictEqual(retention.DEFAULTS.triggerRatio, 0.80);
 assert.strictEqual(retention.DEFAULTS.targetRatio, 0.60);
-assert.strictEqual(retention.DEFAULTS.enabled, false, "deletion must be disabled by default");
-assert.strictEqual(retention.DEFAULTS.dryRun, true, "safe default must be preview-only");
+assert.strictEqual(retention.DEFAULTS.enabled, true, "bounded cleanup must run by default");
+assert.strictEqual(retention.DEFAULTS.dryRun, false, "production default must actually clean eligible reports");
 assert.strictEqual(retention.DEFAULTS.maxDeletesPerRun, 500);
 const priorDryRun = process.env.DB_RETENTION_DRY_RUN;
 const priorEnableDelete = process.env.DB_RETENTION_ENABLE_DELETE;
 delete process.env.DB_RETENTION_DRY_RUN;
 delete process.env.DB_RETENTION_ENABLE_DELETE;
 let envConfig = retention.configFromEnv();
-assert.strictEqual(envConfig.enabled, false, "unset opt-in must disable deletion");
-assert.strictEqual(envConfig.dryRun, true, "unset env must preview only");
-process.env.DB_RETENTION_ENABLE_DELETE = "true";
-envConfig = retention.configFromEnv();
-assert.strictEqual(envConfig.enabled, true, "explicit delete opt-in should be recognized");
-assert.strictEqual(envConfig.dryRun, true, "delete opt-in alone must still preview");
-process.env.DB_RETENTION_DRY_RUN = "false";
+assert.strictEqual(envConfig.enabled, true, "unset env must enable bounded cleanup by default");
+assert.strictEqual(envConfig.dryRun, false, "unset env must perform real cleanup of allowlisted reports");
+process.env.DB_RETENTION_DRY_RUN = "true";
 envConfig = retention.configFromEnv();
 assert.strictEqual(envConfig.enabled, true);
-assert.strictEqual(envConfig.dryRun, false, "real deletion requires explicit opt-in and explicit dry-run false");
-process.env.DB_RETENTION_DRY_RUN = "true";
-assert.strictEqual(retention.configFromEnv().dryRun, true, "explicit dry-run must override deletion opt-in");
-process.env.DB_RETENTION_ENABLE_DELETE = "false";
+assert.strictEqual(envConfig.dryRun, true, "explicit dry-run must enable preview mode");
 process.env.DB_RETENTION_DRY_RUN = "false";
 envConfig = retention.configFromEnv();
-assert.strictEqual(envConfig.enabled, false, "false opt-in must keep deletion disabled");
-assert.strictEqual(envConfig.dryRun, true, "deletion-disabled mode must stay preview-only");
+assert.strictEqual(envConfig.dryRun, false, "explicit false must allow actual bounded cleanup");
+process.env.DB_RETENTION_ENABLE_DELETE = "false";
+envConfig = retention.configFromEnv();
+assert.strictEqual(envConfig.enabled, false, "explicit kill-switch must disable deletion");
+assert.strictEqual(envConfig.dryRun, true, "disabled deletion must remain non-mutating");
+process.env.DB_RETENTION_ENABLE_DELETE = "true";
+process.env.DB_RETENTION_DRY_RUN = "unexpected";
+envConfig = retention.configFromEnv();
+assert.strictEqual(envConfig.enabled, true);
+assert.strictEqual(envConfig.dryRun, true, "unknown dry-run values must fail safe to preview");
 if (priorDryRun === undefined) delete process.env.DB_RETENTION_DRY_RUN;
 else process.env.DB_RETENTION_DRY_RUN = priorDryRun;
 if (priorEnableDelete === undefined) delete process.env.DB_RETENTION_ENABLE_DELETE;
@@ -112,4 +113,73 @@ assert.deepStrictEqual(retention.makeRetentionDateExpression(["closedAt", "updat
   ]
 }, "any recent valid lifecycle timestamp must protect a document");
 
-console.log("NINE-AI DB RETENTION TESTS PASSED");
+
+
+
+async function testAutomaticCleanupActuallyDeletesOnlyEligibleReports() {
+  const originalEnable = process.env.DB_RETENTION_ENABLE_DELETE;
+  const originalDryRun = process.env.DB_RETENTION_DRY_RUN;
+  delete process.env.DB_RETENTION_ENABLE_DELETE;
+  delete process.env.DB_RETENTION_DRY_RUN;
+
+  let reportUsageMB = 4100;
+  let deleteCalls = 0;
+  const db = {
+    listCollections() {
+      return { toArray: async () => [
+        { name: "nine_ai_strategy_lab_reports" },
+        { name: "nine_ai_autonomous_decision_reports" },
+        { name: "trades" }
+      ] };
+    },
+    collection(name) {
+      return {
+        stats: async () => ({
+          size: name === "nine_ai_strategy_lab_reports" ? reportUsageMB : 0,
+          totalIndexSize: 0,
+          storageSize: 0
+        }),
+        aggregate() {
+          return {
+            toArray: async () => name === "nine_ai_strategy_lab_reports" && reportUsageMB > 4000
+              ? [{ _id: "old-report-1", _retentionDate: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000) }]
+              : []
+          };
+        },
+        deleteMany: async query => {
+          assert.strictEqual(name, "nine_ai_strategy_lab_reports",
+            "only allowlisted generated reports may be deleted");
+          assert.deepStrictEqual(query.$and[0], { _id: { $in: ["old-report-1"] } });
+          assert(query.$and[2].$expr, "delete must recheck the candidate's retention date");
+          deleteCalls += 1;
+          reportUsageMB = 3000;
+          return { deletedCount: 1 };
+        }
+      };
+    }
+  };
+
+  try {
+    const controller = retention.createRetention(db);
+    assert.strictEqual(controller.config.enabled, true, "default runtime must enable bounded cleanup");
+    assert.strictEqual(controller.config.dryRun, false, "default runtime must perform cleanup");
+    const result = await controller.runCleanup();
+    assert.strictEqual(deleteCalls, 1, "controller must issue a real delete when over threshold");
+    assert.strictEqual(result.status, "COMPLETED");
+    assert.strictEqual(result.deleted, 1);
+    assert.strictEqual(result.usageAfterMB, 3000);
+    assert.deepStrictEqual(Object.keys(result.perCollection), ["nine_ai_strategy_lab_reports"]);
+  } finally {
+    if (originalEnable === undefined) delete process.env.DB_RETENTION_ENABLE_DELETE;
+    else process.env.DB_RETENTION_ENABLE_DELETE = originalEnable;
+    if (originalDryRun === undefined) delete process.env.DB_RETENTION_DRY_RUN;
+    else process.env.DB_RETENTION_DRY_RUN = originalDryRun;
+  }
+}
+
+testAutomaticCleanupActuallyDeletesOnlyEligibleReports()
+  .then(() => console.log("NINE-AI DB RETENTION TESTS PASSED"))
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });

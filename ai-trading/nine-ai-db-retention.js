@@ -11,9 +11,10 @@ const DEFAULTS = Object.freeze({
   batchSize: 100,
   maxDeletesPerRun: 500,
   intervalMs: 6 * 60 * 60 * 1000,
-  // Safe default: preview only. Real deletion requires an explicit opt-in.
-  enabled: false,
-  dryRun: true
+  // Automatically perform bounded cleanup when the storage threshold is crossed.
+  // The allowlist below contains generated reports only; learning/trade data stays protected.
+  enabled: true,
+  dryRun: false
 });
 
 // Fail-closed policy: only generated reports are currently auto-deleted.
@@ -38,7 +39,11 @@ function boundedNumber(env, fallback, min, max) {
 function configFromEnv() {
   const dryRunEnv = process.env.DB_RETENTION_DRY_RUN;
   const enabledEnv = process.env.DB_RETENTION_ENABLE_DELETE;
-  const enabled = enabledEnv != null && /^(1|true|yes)$/i.test(String(enabledEnv));
+  // Cleanup is enabled by default. Explicit false is the kill-switch; explicit true
+  // can re-enable it after an environment-level override.
+  const enabled = enabledEnv == null
+    ? DEFAULTS.enabled
+    : /^(1|true|yes)$/i.test(String(enabledEnv));
   const triggerRatio = boundedNumber("DB_STORAGE_TRIGGER_RATIO", DEFAULTS.triggerRatio, 0.50, 0.95);
   return {
     limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 512, 1024 * 1024),
@@ -50,10 +55,11 @@ function configFromEnv() {
     batchSize: Math.round(boundedNumber("DB_RETENTION_BATCH_SIZE", DEFAULTS.batchSize, 10, 500)),
     maxDeletesPerRun: Math.round(boundedNumber("DB_RETENTION_MAX_DELETES_PER_RUN", DEFAULTS.maxDeletesPerRun, 10, 2000)),
     intervalMs: Math.round(boundedNumber("DB_RETENTION_INTERVAL_HOURS", 6, 1, 24) * 60 * 60 * 1000),
-    // Fail closed: deletion requires DB_RETENTION_ENABLE_DELETE=true AND an explicit
-    // DB_RETENTION_DRY_RUN=false. Missing/unknown values always preview only.
+    // Default is real bounded cleanup. DB_RETENTION_DRY_RUN=true is the preview
+    // switch; unknown values fail safe to preview. DB_RETENTION_ENABLE_DELETE=false
+    // disables all deletion regardless of dry-run configuration.
     enabled,
-    dryRun: !enabled || dryRunEnv == null || !/^(false|0|no)$/i.test(String(dryRunEnv))
+    dryRun: !enabled || (dryRunEnv != null && !/^(false|0|no)$/i.test(String(dryRunEnv)))
   };
 }
 function estimateUsageMB(collectionStats) {
@@ -208,10 +214,6 @@ function createRetention(db, overrides = {}) {
   }
 
   async function runCleanup({ force = false } = {}) {
-    if (!config.enabled || config.dryRun) {
-      // Preview mode remains useful for measuring eligible reports, but must never
-      // issue deleteMany unless the operator explicitly enables deletion.
-    }
     if (running) return { status: "SKIPPED", reason: "CLEANUP_ALREADY_RUNNING" };
     running = true;
     try {
@@ -263,7 +265,6 @@ function createRetention(db, overrides = {}) {
         candidates: totalCandidates,
         perCollection,
         dryRun: config.dryRun,
-        deletionEnabled: config.enabled,
         note: after.usageMB > targetMB
           ? "Target not reached: no more eligible old records, or Atlas usage differs from per-collection estimates."
           : "Target reached."
