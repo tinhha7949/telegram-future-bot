@@ -17,20 +17,39 @@ const DEFAULTS = Object.freeze({
   dryRun: false
 });
 
-// Fail-closed policy: only generated reports are currently auto-deleted.
-// Age alone is not proof that training or research evidence is disposable.
-// Do not add trade/outcome collections until durable knowledge preservation and
-// all downstream consumers are verified by integration tests.
-const SPECS = Object.freeze([
-  // Only disposable generated reports are eligible for automatic deletion.
-  // Raw trade records and all research/learning evidence are deliberately
-  // excluded until a durable, tested compact representation exists and every
-  // consumer is proven to use that representation.
-  { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90,
-    category: "generated_report", priority: 20 },
-  { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 90,
-    category: "generated_report", priority: 20 }
+// Retention evaluates every existing collection, not a fixed two-collection allowlist.
+// Collections whose records are source-of-truth trading or learning evidence are protected.
+// Other collections are eligible only when they have a recognized timestamp and the
+// newest valid lifecycle timestamp is older than the retention period.
+const PROTECTED_COLLECTION_PATTERNS = Object.freeze([
+  /(^|_)(trade|trades|order|orders|position|positions|fill|fills|execution|executions)(_|$)/i,
+  /(learning|memory|outcome|counterfactual|contextual|reward|diagnos|decision_journal|strategy.*evolution|model.*training|training|policy|deployment)/i,
+  /(wallet|balance|portfolio|risk_state|risk_state|signal_outcome)/i
 ]);
+const DEFAULT_DATE_FIELDS = Object.freeze([
+  "updatedAt", "lastUsedAt", "lastAccessedAt", "closedAt", "completedAt",
+  "createdAt", "timestamp", "date", "updated_at", "created_at", "last_used_at",
+  "time", "ts"
+]);
+const DEFAULT_RETENTION_DAYS = 90;
+const SPECS = Object.freeze([
+  { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90, category: "generated_report", priority: 20 },
+  { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 90, category: "generated_report", priority: 20 }
+]);
+
+function isProtectedCollection(name) {
+  return PROTECTED_COLLECTION_PATTERNS.some(pattern => pattern.test(String(name)));
+}
+function buildCollectionSpec(name) {
+  if (isProtectedCollection(name) || String(name).startsWith("system.")) return null;
+  return {
+    name,
+    dateFields: DEFAULT_DATE_FIELDS,
+    days: DEFAULT_RETENTION_DAYS,
+    category: "stale_non_core_data",
+    priority: 10
+  };
+}
 
 function boundedNumber(env, fallback, min, max) {
   const value = Number(process.env[env]);
@@ -104,9 +123,12 @@ function makeSafeDeleteQuery(ids, spec, cutoffMs) {
   };
 }
 function getSpecs(collectionNames) {
-  const present = new Set(collectionNames);
-  // Fail closed: only explicitly reviewed collections are eligible.
-  return SPECS.filter(spec => present.has(spec.name)).map(spec => ({ ...spec }));
+  // Evaluate every collection at runtime. Source-of-truth trade/learning collections
+  // are explicitly protected; all other collections are candidates only if records
+  // expose at least one recognized date field and pass the stale-record checks.
+  return [...new Set(collectionNames)]
+    .map(buildCollectionSpec)
+    .filter(Boolean);
 }
 function toTimestamp(value) {
   if (value instanceof Date) return value.getTime();
@@ -282,7 +304,8 @@ function createRetention(db, overrides = {}) {
 }
 
 module.exports = {
-  DEFAULTS, SPECS, configFromEnv, estimateUsageMB, shouldCleanup, makeCutoffQuery,
-  makeRetentionDateExpression, makeSafeDeleteQuery,
+  DEFAULTS, SPECS, PROTECTED_COLLECTION_PATTERNS, DEFAULT_DATE_FIELDS,
+  configFromEnv, estimateUsageMB, shouldCleanup, makeCutoffQuery,
+  makeRetentionDateExpression, makeSafeDeleteQuery, isProtectedCollection, buildCollectionSpec,
   getSpecs, toTimestamp, sortOldestCandidates, createRetention
 };
