@@ -2,9 +2,11 @@
 const assert = require("assert");
 const retention = require("./nine-ai-db-retention");
 
-const config = { limitMB: 5120, triggerRatio: 0.70, targetRatio: 0.55 };
-assert.strictEqual(retention.shouldCleanup(3584, config), true);
-assert.strictEqual(retention.shouldCleanup(3583.99, config), false);
+const config = { limitMB: 5120, triggerRatio: 0.80, targetRatio: 0.60 };
+assert.strictEqual(retention.DEFAULTS.triggerRatio, 0.80);
+assert.strictEqual(retention.DEFAULTS.targetRatio, 0.60);
+assert.strictEqual(retention.shouldCleanup(4096, config), true);
+assert.strictEqual(retention.shouldCleanup(4095.99, config), false);
 assert.strictEqual(retention.estimateUsageMB([
   { totalSize: 1024 * 1024 }, { storageSize: 1024 * 1024, totalIndexSize: 512 * 1024 }
 ]), 2.5);
@@ -14,6 +16,18 @@ assert.deepStrictEqual(query.$and[0], { outcomeStatus: "EVALUATED" });
 assert.strictEqual(query.$and[1].$or.length, 2);
 assert.strictEqual(query.$and[1].$or[0].createdAt.$lt.getTime(), 1000);
 assert.strictEqual(query.$and[1].$or[1].createdAt.$lt, 1000);
+
+assert.strictEqual(retention.toTimestamp(new Date(100)), 100);
+assert.strictEqual(retention.toTimestamp(200), 200);
+assert.strictEqual(retention.toTimestamp("1970-01-01T00:00:00.300Z"), 300);
+assert.deepStrictEqual(
+  retention.sortOldestCandidates([
+    { name: "newer", timestamp: 300 },
+    { name: "oldest", timestamp: 100 },
+    { name: "middle", timestamp: 200 }
+  ], 2).map(x => x.name),
+  ["oldest", "middle"]
+);
 
 const names = ["trades", "nine_ai_decision_journal", "nine_ai_learning_state",
   "nine_ai_timing_deployment_policies", "nine_ai_ml_signal_outcomes"];

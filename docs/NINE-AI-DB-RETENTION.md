@@ -1,25 +1,26 @@
 # NINE-AI MongoDB capacity-aware retention
 
-The bot now runs a periodic retention controller. It estimates used storage by summing per-collection logical data size plus indexes and prunes only when the estimate reaches a configurable threshold.
+The bot runs a periodic retention controller. It estimates used storage by summing per-collection logical data size plus indexes and prunes only when the estimate reaches the configured threshold.
 
 ## Defaults
 
-- Assumed database budget: `DB_STORAGE_LIMIT_MB=5120` (5 GiB-style MB budget; set this to the actual Atlas quota you purchased).
-- Start cleanup at 70%: 3,584 MB by default.
-- Aim to return to 55%: 2,816 MB, leaving 45% estimated headroom.
+- Assumed database budget: \`DB_STORAGE_LIMIT_MB=5120\` (5 GiB-style MB budget; set this to the actual Atlas quota you purchased).
+- Start cleanup at **80%**: 4,096 MB by default.
+- Aim to return to **60%**: 3,072 MB, leaving 40% estimated headroom.
 - Run at startup and every 6 hours.
-- Batch deletion: 500 documents.
-- Normal retention priority: evaluated decision journal (45 days), old research reports (90 days), counterfactual outcomes and diagnoses (120–180 days), then learned outcome ledgers (365 days).
-- If the target is still not reached, an emergency pass can retain 30 days of evaluated journal, 60 days of reports, 120 days of counterfactual/diagnosis records, and at least 180 days of learned outcomes. Closed trades are considered last and retain at least 365 days.
+- Batch deletion: 500 documents, selected by timestamp across all eligible collections.
+- **Oldest eligible records are deleted first globally**, not by collection priority. The controller compares candidate timestamps across the allowed collections and removes the oldest batch first.
+- Normal retention windows: evaluated decision journal (45 days), research reports (90 days), counterfactual outcomes and diagnoses (120–180 days), then learned outcome ledgers (365 days).
+- If the target is still not reached, an emergency pass widens eligibility to older records in shorter retention windows: evaluated journal older than 30 days, reports older than 60 days, counterfactual/diagnosis records older than 120 days, and learned outcomes older than 180 days. Closed trades are eligible only as a last-resort history source and retain at least 365 days.
 
 ## Safety guarantees
 
-- Never deletes `PENDING` trades; only closed terminal trade results are eligible, and trades are the last-resort collection.
+- Never deletes \`PENDING\` trades; only closed terminal trade results are eligible, and trades are the last-resort collection.
 - Does not delete learning/model state, active strategy policies, timing deployment policies, collections, or indexes.
 - Decision journal entries are eligible only after their forward outcomes are evaluated.
 - Uses bounded batches, emits a compact summary only when cleanup runs, and does not stop scanning if retention fails during startup.
-- `DB_RETENTION_DRY_RUN=true` lists candidates without deleting them.
-- Configure with `DB_STORAGE_LIMIT_MB`, `DB_STORAGE_TRIGGER_RATIO`, `DB_STORAGE_TARGET_RATIO`, `DB_RETENTION_BATCH_SIZE`, `DB_RETENTION_INTERVAL_HOURS`, and `DB_RETENTION_DRY_RUN`.
+- \`DB_RETENTION_DRY_RUN=true\` lists candidates without deleting them.
+- Configure with \`DB_STORAGE_LIMIT_MB\`, \`DB_STORAGE_TRIGGER_RATIO\`, \`DB_STORAGE_TARGET_RATIO\`, \`DB_RETENTION_BATCH_SIZE\`, \`DB_RETENTION_INTERVAL_HOURS\`, and \`DB_RETENTION_DRY_RUN\`.
 
 ## Important Atlas limitation
 
