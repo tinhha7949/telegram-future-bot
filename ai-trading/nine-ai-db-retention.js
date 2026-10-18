@@ -133,41 +133,39 @@ function createRetention(db, overrides = {}) {
   }
 
   async function collectOldestCandidates(specs, phase) {
-    const candidatesByKey = new Map();
+    const candidates = [];
     const now = Date.now();
     for (const spec of specs) {
       const days = phase === "normal" ? spec.days : spec.emergencyDays;
       if (!Number.isFinite(days) || days <= 0) continue;
       const cutoffMs = now - days * 24 * 60 * 60 * 1000;
-      const cutoffDate = new Date(cutoffMs);
-      for (const field of spec.dateFields) {
-        const query = makeCutoffQuery(field, cutoffDate, cutoffMs, spec.filter || {});
-        const projection = { _id: 1 };
-        for (const dateField of spec.dateFields) projection[dateField] = 1;
-        const docs = await db.collection(spec.name)
-          .find(query, { projection })
-          .sort({ [field]: 1 })
-          .limit(config.batchSize)
-          .toArray();
-        for (const doc of docs) {
-          // Prefer the collection's primary date field; use later fields only
-          // when earlier schema variants are absent.
-          let timestamp = null;
-          for (const dateField of spec.dateFields) {
-            timestamp = toTimestamp(doc[dateField]);
-            if (timestamp !== null) break;
-          }
-          if (timestamp === null || timestamp >= cutoffMs) continue;
-          const key = spec.name + ":" + String(doc._id);
-          if (!candidatesByKey.has(key)) {
-            candidatesByKey.set(key, { name: spec.name, id: doc._id, timestamp });
-          } else if (timestamp < candidatesByKey.get(key).timestamp) {
-            candidatesByKey.get(key).timestamp = timestamp;
-          }
+      // Coalesce schema variants in declared preference order, then convert
+      // BSON Date, Unix-ms number, or parseable date string into one BSON Date.
+      let dateInput = null;
+      for (let i = spec.dateFields.length - 1; i >= 0; i--) {
+        const field = "$" + spec.dateFields[i];
+        dateInput = dateInput === null ? field : { $ifNull: [field, dateInput] };
+      }
+      const docs = await db.collection(spec.name).aggregate([
+        { $match: spec.filter || {} },
+        { $addFields: { _retentionDate: {
+          $convert: { input: dateInput, to: "date", onError: null, onNull: null }
+        } } },
+        { $match: { _retentionDate: { $lt: new Date(cutoffMs) } } },
+        { $sort: { _retentionDate: 1, _id: 1 } },
+        { $limit: config.batchSize },
+        { $project: { _id: 1, _retentionDate: 1 } }
+      ]).toArray();
+      for (const doc of docs) {
+        const timestamp = toTimestamp(doc._retentionDate);
+        if (timestamp !== null && timestamp < cutoffMs) {
+          candidates.push({ name: spec.name, id: doc._id, timestamp });
         }
       }
     }
-    return sortOldestCandidates([...candidatesByKey.values()], config.batchSize);
+    // Taking the first batchSize from each collection is sufficient to find
+    // the global oldest batchSize records, then sort the combined candidates.
+    return sortOldestCandidates(candidates, config.batchSize);
   }
 
   async function pruneOldestBatch(specs, phase, dryRun) {
