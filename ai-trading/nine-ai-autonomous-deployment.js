@@ -142,13 +142,19 @@ async function gateLiveEntry({symbol,side,signalTime,features={}}={}) {
   if (existing) {
     if (existing.side!==wanted) {
       await pendingEntries.deleteOne({symbol:sym});
-    } else if (candleTime < Number(existing.dueSignalTime)) {
+    } else if (existing.status==="RELEASED" && candleTime<=Number(existing.releaseUntilSignalTime)) {
+      return {allowed:true,reason:"VALIDATED_ENTRY_DELAY_ALREADY_RELEASED",variant:existing.variant,
+        delayedBars:existing.delayBars,policyId:existing.policyId};
+    } else if (existing.status==="PENDING" && candleTime < Number(existing.dueSignalTime)) {
       return {allowed:false,reason:"VALIDATED_ENTRY_DELAY_PENDING",variant:existing.variant,
         barsRemaining:Math.max(1,Math.ceil((Number(existing.dueSignalTime)-candleTime)/(15*60*1000)))};
-    } else {
-      await pendingEntries.deleteOne({symbol:sym});
+    } else if (existing.status==="PENDING") {
+      await pendingEntries.updateOne({symbol:sym},{$set:{status:"RELEASED",
+        releaseUntilSignalTime:candleTime,expiresAt:new Date(Date.now()+6*60*60*1000)}});
       return {allowed:true,reason:"VALIDATED_ENTRY_DELAY_SATISFIED",variant:existing.variant,
         delayedBars:existing.delayBars,policyId:existing.policyId};
+    } else {
+      await pendingEntries.deleteOne({symbol:sym});
     }
   }
   const regime=String(features.marketRegime||features.regime||"UNKNOWN").toUpperCase();
@@ -160,7 +166,7 @@ async function gateLiveEntry({symbol,side,signalTime,features={}}={}) {
   const bars=policy.variant==="DELAY_2_BAR"?2:1;
   const dueSignalTime=candleTime+bars*15*60*1000;
   await pendingEntries.updateOne({symbol:sym},{$set:{
-    symbol:sym,side:wanted,regime,variant:policy.variant,policyId:policy.policyId,
+    symbol:sym,side:wanted,regime,variant:policy.variant,policyId:policy.policyId,status:"PENDING",
     delayBars:bars,createdSignalTime:candleTime,dueSignalTime,
     expiresAt:new Date(Date.now()+6*60*60*1000),createdAt:new Date()
   }},{upsert:true});
