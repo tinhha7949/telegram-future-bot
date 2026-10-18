@@ -1,6 +1,6 @@
 # NINE-AI MongoDB capacity-aware retention
 
-The bot now runs a periodic retention controller. It estimates used storage by summing per-collection MongoDB `totalSize` (with storage/index fallback) and prunes only when the estimate reaches a configurable threshold.
+The bot now runs a periodic retention controller. It estimates used storage by summing per-collection logical data size plus indexes and prunes only when the estimate reaches a configurable threshold.
 
 ## Defaults
 
