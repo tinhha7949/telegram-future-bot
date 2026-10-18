@@ -5,6 +5,8 @@ const retention = require("./nine-ai-db-retention");
 const config = { limitMB: 5120, triggerRatio: 0.80, targetRatio: 0.60 };
 assert.strictEqual(retention.DEFAULTS.triggerRatio, 0.80);
 assert.strictEqual(retention.DEFAULTS.targetRatio, 0.60);
+assert.strictEqual(retention.DEFAULTS.dryRun, true, "cleanup must default to non-destructive preview");
+assert.strictEqual(retention.DEFAULTS.maxDeletesPerRun, 500);
 assert.strictEqual(retention.shouldCleanup(4096, config), true);
 assert.strictEqual(retention.shouldCleanup(4095.99, config), false);
 assert.strictEqual(retention.estimateUsageMB([
@@ -30,14 +32,18 @@ assert.deepStrictEqual(
 );
 
 const names = ["trades", "nine_ai_decision_journal", "nine_ai_learning_state",
-  "nine_ai_timing_deployment_policies", "nine_ai_ml_signal_outcomes"];
+  "nine_ai_timing_deployment_policies", "nine_ai_ml_signal_outcomes",
+  "nine_ai_strategy_lab_reports", "nine_ai_autonomous_decision_reports",
+  "nine_ai_learning_outcomes", "nine_ai_counterfactual_outcomes"];
 const specs = retention.getSpecs(names);
-assert(specs.some(s => s.name === "nine_ai_decision_journal"));
-assert(specs.some(s => s.name === "nine_ai_ml_signal_outcomes"));
-assert(!specs.some(s => s.name === "nine_ai_learning_state"));
-assert(!specs.some(s => s.name === "nine_ai_timing_deployment_policies"));
-assert(specs.find(s => s.name === "trades").priority > specs.find(s => s.name === "nine_ai_decision_journal").priority);
-assert.deepStrictEqual(specs.find(s => s.name === "trades").filter, { result: { $in: ["WIN", "LOSS", "CLOSED"] } });
+assert.deepStrictEqual(specs.map(s => s.name), [
+  "nine_ai_strategy_lab_reports", "nine_ai_autonomous_decision_reports"
+], "only explicitly approved old report artifacts may be automatically pruned");
+assert(specs.every(s => s.days >= 365), "minimum retention age must be at least 365 days");
+assert(specs.every(s => !Object.hasOwn(s, "emergencyDays")), "there must be no shorter emergency retention window");
+assert(!specs.some(s => ["trades", "nine_ai_decision_journal", "nine_ai_ml_signal_outcomes",
+  "nine_ai_learning_state", "nine_ai_timing_deployment_policies", "nine_ai_learning_outcomes",
+  "nine_ai_counterfactual_outcomes"].includes(s.name)));
 
 const safeSpec = { dateFields: ["closedAt", "createdAt"], filter: { outcomeStatus: "EVALUATED" } };
 const safeDelete = retention.makeSafeDeleteQuery(["id-1"], safeSpec, 5000);
