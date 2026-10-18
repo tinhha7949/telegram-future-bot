@@ -99,7 +99,15 @@ async function runResearchCycle({ now = new Date() } = {}) {
     const rows = await journal.find({ outcomeStatus: "EVALUATED" })
       .sort({ signalTime: -1 }).limit(MAX_ROWS).toArray();
     rows.sort((a, b) => Number(a.signalTime) - Number(b.signalTime));
-    const usable = rows.filter(row => ["LONG","SHORT","WAIT"].includes(row.side) &&
+    // Keep only the latest decision snapshot per symbol/candle so repeated
+    // scans cannot inflate the apparent sample size or confidence.
+    const latestByCandle = new Map();
+    for (const row of rows) {
+      const key = String(row.symbol) + ":" + String(row.signalTime);
+      const previous = latestByCandle.get(key);
+      if (!previous || new Date(row.scannedAt || 0) > new Date(previous.scannedAt || 0)) latestByCandle.set(key, row);
+    }
+    const usable = [...latestByCandle.values()].filter(row => ["LONG","SHORT","WAIT"].includes(row.side) &&
       row.researchVariants && row.marketRegime);
     const groups = new Map();
     for (const row of usable) {
