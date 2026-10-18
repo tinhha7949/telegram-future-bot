@@ -70,6 +70,24 @@ function makeCutoffQuery(dateField, cutoffDate, cutoffMs, filter = {}) {
     ]
   };
 }
+function makeRetentionDateExpression(dateFields) {
+  let dateInput = null;
+  for (let i = dateFields.length - 1; i >= 0; i--) {
+    const field = "$" + dateFields[i];
+    dateInput = dateInput === null ? field : { $ifNull: [field, dateInput] };
+  }
+  return { $convert: { input: dateInput, to: "date", onError: null, onNull: null } };
+}
+function makeSafeDeleteQuery(ids, spec, cutoffMs) {
+  const cutoffDate = new Date(cutoffMs);
+  return {
+    $and: [
+      { _id: { $in: ids } },
+      spec.filter || {},
+      { $expr: { $lt: [makeRetentionDateExpression(spec.dateFields), cutoffDate] } }
+    ]
+  };
+}
 function getSpecs(collectionNames) {
   const present = new Set(collectionNames);
   const specs = SPECS.filter(spec => present.has(spec.name));
@@ -141,11 +159,7 @@ function createRetention(db, overrides = {}) {
       const cutoffMs = now - days * 24 * 60 * 60 * 1000;
       // Coalesce schema variants in declared preference order, then convert
       // BSON Date, Unix-ms number, or parseable date string into one BSON Date.
-      let dateInput = null;
-      for (let i = spec.dateFields.length - 1; i >= 0; i--) {
-        const field = "$" + spec.dateFields[i];
-        dateInput = dateInput === null ? field : { $ifNull: [field, dateInput] };
-      }
+      const dateInput = makeRetentionDateExpression(spec.dateFields);
       const docs = await db.collection(spec.name).aggregate([
         { $match: spec.filter || {} },
         { $addFields: { _retentionDate: {
@@ -159,7 +173,7 @@ function createRetention(db, overrides = {}) {
       for (const doc of docs) {
         const timestamp = toTimestamp(doc._retentionDate);
         if (timestamp !== null && timestamp < cutoffMs) {
-          candidates.push({ name: spec.name, id: doc._id, timestamp });
+          candidates.push({ name: spec.name, id: doc._id, timestamp, cutoffMs, spec });
         }
       }
     }
@@ -180,15 +194,19 @@ function createRetention(db, overrides = {}) {
     }
     const grouped = new Map();
     for (const item of candidates) {
-      if (!grouped.has(item.name)) grouped.set(item.name, []);
-      grouped.get(item.name).push(item.id);
+      const key = item.name + "|" + item.cutoffMs;
+      if (!grouped.has(key)) grouped.set(key, { name: item.name, cutoffMs: item.cutoffMs, spec: item.spec, ids: [] });
+      grouped.get(key).ids.push(item.id);
     }
     let deleted = 0;
-    for (const [name, ids] of grouped) {
-      const result = await db.collection(name).deleteMany({ _id: { $in: ids } });
+    for (const group of grouped.values()) {
+      // Re-check the retention age at delete time. If a record's timestamp or
+      // eligibility status changed after candidate selection, it is not deleted.
+      const safeQuery = makeSafeDeleteQuery(group.ids, group.spec, group.cutoffMs);
+      const result = await db.collection(group.name).deleteMany(safeQuery);
       const count = Number(result.deletedCount || 0);
       deleted += count;
-      perCollection[name] = count;
+      perCollection[group.name] = (perCollection[group.name] || 0) + count;
     }
     return { deleted, candidates: candidates.length, perCollection };
   }
@@ -260,5 +278,6 @@ function createRetention(db, overrides = {}) {
 
 module.exports = {
   DEFAULTS, SPECS, configFromEnv, estimateUsageMB, shouldCleanup, makeCutoffQuery,
+  makeRetentionDateExpression, makeSafeDeleteQuery,
   getSpecs, toTimestamp, sortOldestCandidates, createRetention
 };
