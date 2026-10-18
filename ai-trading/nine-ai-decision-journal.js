@@ -68,7 +68,7 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
     weightedContribution: num(role?.weightedContribution, null),
     reason: String(role?.reason || "")
   })) : [];
-  return {
+  const snapshot = {
     symbol: String(symbol || d.symbol || "UNKNOWN"),
     side,
     action: String(d.action || side),
