@@ -2426,6 +2426,32 @@ async function scan(symbol){
         } catch (policyError) {
             console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
         }
+        // A validated delay policy is an actual execution timing policy, not a report-only finding.
+        // Persist the pending signal so repeated scans cannot restart the delay indefinitely.
+        try {
+            const timingGate = await nineAiAutonomousDeployment.gateLiveEntry({
+                symbol,
+                side: decision.side,
+                signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                features: decision.rankMetrics?.features || decision.features || {}
+            });
+            decision.rankMetrics = { ...(decision.rankMetrics || {}), autonomousTimingGate: timingGate };
+            if (!timingGate.allowed) {
+                decision.originalSideBeforeTimingGate = decision.side;
+                decision.side = "WAIT";
+                decision.action = "WAIT";
+                decision.authorizedForExecution = false;
+                decision.reason = timingGate.reason;
+                recordNineAIAbstention(timingGate.reason);
+                console.log("⏳ NINE-AI VALIDATED ENTRY TIMING " + symbol +
+                    " | originalSide=" + decision.originalSideBeforeTimingGate +
+                    " | variant=" + (timingGate.variant || "N/A") +
+                    " | bars=" + (timingGate.delayBars ?? timingGate.barsRemaining ?? "N/A") +
+                    " | policy=" + (timingGate.policyId || "N/A"));
+            }
+        } catch (timingGateError) {
+            console.error("⚠️ NINE-AI ENTRY TIMING GATE FAILED " + symbol + ":", timingGateError?.message || timingGateError);
+        }
         try {
             const journalResult = await nineAiDecisionJournal.recordDecision({
                 symbol, decision,
