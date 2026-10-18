@@ -38,7 +38,8 @@ function configFromEnv() {
   return {
     limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 512, 1024 * 1024),
     triggerRatio: boundedNumber("DB_STORAGE_TRIGGER_RATIO", DEFAULTS.triggerRatio, 0.50, 0.95),
-    targetRatio: boundedNumber("DB_STORAGE_TARGET_RATIO", DEFAULTS.targetRatio, 0.25, 0.80),
+    targetRatio: Math.min(boundedNumber("DB_STORAGE_TARGET_RATIO", DEFAULTS.targetRatio, 0.25, 0.80),
+      boundedNumber("DB_STORAGE_TRIGGER_RATIO", DEFAULTS.triggerRatio, 0.50, 0.95) - 0.05),
     batchSize: Math.round(boundedNumber("DB_RETENTION_BATCH_SIZE", DEFAULTS.batchSize, 50, 2000)),
     intervalMs: Math.round(boundedNumber("DB_RETENTION_INTERVAL_HOURS", 6, 1, 24) * 60 * 60 * 1000),
     dryRun: /^(1|true|yes)$/i.test(String(process.env.DB_RETENTION_DRY_RUN || "false"))
@@ -97,7 +98,10 @@ function createRetention(db, overrides = {}) {
     for (const name of names) {
       try {
         const s = await db.collection(name).stats(1024 * 1024);
-        stats.push({ name, totalSize: Number(s.totalSize || 0) * 1024 * 1024,
+        // Use logical data + indexes for the cleanup loop. WiredTiger may keep
+        // allocated storage after deletes, so storageSize can stay flat and cause
+        // an otherwise-safe loop to over-delete eligible history.
+        stats.push({ name, totalSize: (Number(s.size || 0) + Number(s.totalIndexSize || s.indexSize || 0)) * 1024 * 1024,
           storageSize: Number(s.storageSize || 0) * 1024 * 1024,
           totalIndexSize: Number(s.totalIndexSize || s.indexSize || 0) * 1024 * 1024 });
       } catch (error) {
