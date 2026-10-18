@@ -35,19 +35,20 @@ const SPECS = Object.freeze([
   { name: "nine_ai_counterfactual_outcomes", dateFields: ["closedAt", "createdAt"], days: 365,
     category: "learning_evidence", priority: 40 },
   { name: "nine_ai_contextual_outcomes", dateFields: ["closedAt", "createdAt"], days: 365,
-    category: "learning_evidence", priority: 50 },
+    filter: { closed: true }, category: "learning_evidence", priority: 50 },
   { name: "nine_ai_learning_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365,
-    category: "learning_evidence", priority: 50 },
+    filter: { closed: true, applied: true }, category: "learning_evidence", priority: 50 },
   { name: "nine_ai_reward_model_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365,
-    category: "learning_evidence", priority: 50 },
+    filter: { closed: true, applied: true }, category: "learning_evidence", priority: 50 },
   { name: "nine_ai_strategy_evolution_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365,
-    category: "learning_evidence", priority: 50 },
+    filter: { closed: true, applied: true }, category: "learning_evidence", priority: 50 },
   ...[
     "technical", "signal", "memory", "bull", "bear", "contrarian", "analyst", "decision", "risk"
   ].map(id => ({
     name: "nine_ai_ml_" + id + "_outcomes",
     dateFields: ["closedAt", "createdAt", "updatedAt"],
     days: 365,
+    filter: { closed: true, applied: true },
     category: "learning_evidence",
     priority: 50
   }))
