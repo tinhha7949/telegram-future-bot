@@ -18,15 +18,10 @@ const SPECS = Object.freeze([
   { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90, emergencyDays: 60, priority: 20 },
   { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 90, emergencyDays: 60, priority: 20 },
   { name: "nine_ai_counterfactual_outcomes", dateFields: ["closedAt", "createdAt"], days: 180, emergencyDays: 120, priority: 30 },
-  { name: "nine_ai_counterfactual_policies", dateFields: ["updatedAt", "createdAt"], days: 365, emergencyDays: 365, priority: 80,
-    filter: { status: { $ne: "ACTIVE" } } },
   { name: "nine_ai_contextual_outcomes", dateFields: ["closedAt", "createdAt"], days: 365, emergencyDays: 180, priority: 40 },
   { name: "nine_ai_learning_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365, emergencyDays: 180, priority: 40 },
   { name: "nine_ai_reward_model_outcomes", dateFields: ["closedAt", "createdAt", "updatedAt"], days: 365, emergencyDays: 180, priority: 45 },
   { name: "nine_ai_loss_diagnoses", dateFields: ["closedAt", "createdAt", "diagnosedAt"], days: 180, emergencyDays: 120, priority: 35 },
-  { name: "nine_ai_strategy_hypotheses", dateFields: ["updatedAt", "createdAt"], days: 180, emergencyDays: 120, priority: 25,
-    filter: { status: { $nin: ["ACTIVE", "PROMOTED"] } } },
-  { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90, emergencyDays: 60, priority: 20 }
 ]);
 
 const ML_OUTCOME_NAMES = new Set([
