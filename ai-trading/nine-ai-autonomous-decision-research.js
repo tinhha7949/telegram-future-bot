@@ -16,7 +16,7 @@ let journal = null;
 let reports = null;
 let policies = null;
 let running = false;
-let activePolicy = null;
+let activePolicies = [];
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const finite = n => Number.isFinite(Number(n));
@@ -87,8 +87,8 @@ async function initialize(db) {
   policies = db.collection(POLICY_COLLECTION);
   await reports.createIndex({ createdAt: -1 }, { name: "nine_ai_decision_report_time" });
   await policies.createIndex({ status: 1, updatedAt: -1 }, { name: "nine_ai_decision_policy_active" });
-  activePolicy = await policies.findOne({ status: "ACTIVE" }, { sort: { updatedAt: -1 } });
-  return { ready: true, activePolicy: activePolicy?.policyId || null };
+  activePolicies = await policies.find({ status: "ACTIVE" }).sort({ updatedAt: -1 }).toArray();
+  return { ready: true, activePolicies: activePolicies.length };
 }
 
 async function runResearchCycle({ now = new Date() } = {}) {
@@ -159,7 +159,7 @@ async function runResearchCycle({ now = new Date() } = {}) {
     for (const policy of newlyValidated) {
       await policies.updateOne({ policyId: policy.policyId }, { $set: policy }, { upsert: true });
     }
-    activePolicy = newlyValidated.sort((a,b) => (b.testLowerBoundR || 0) - (a.testLowerBoundR || 0))[0] || null;
+    activePolicies = newlyValidated;
     const report = {
       createdAt: new Date(now), status: usable.length < MIN_TOTAL ? "COLLECTING_DECISIONS" : "COMPLETED",
       rowsRead: rows.length, usableRows: usable.length, groupCount: results.length,
@@ -170,7 +170,7 @@ async function runResearchCycle({ now = new Date() } = {}) {
     };
     await reports.insertOne(report);
     return { status: report.status, usableRows: usable.length, groups: results.length,
-      activatedPolicies: newlyValidated.length, activePolicy: activePolicy?.policyId || null };
+      activatedPolicies: newlyValidated.length, activePolicies: activePolicies.length };
   } finally {
     running = false;
   }
@@ -178,27 +178,23 @@ async function runResearchCycle({ now = new Date() } = {}) {
 
 function assessLive(features = {}, side) {
   const wantedSide = String(side || "").toUpperCase();
-  if (!activePolicy || activePolicy.status !== "ACTIVE" || activePolicy.side !== wantedSide) {
-    return { bonus: 0, reason: "NO_VALIDATED_SIDE_REGIME_POLICY" };
-  }
   const regime = String(features.marketRegime || features.regime || "UNKNOWN").toUpperCase();
-  if (regime !== activePolicy.regime && activePolicy.regime !== "UNKNOWN") {
-    return { bonus: 0, reason: "REGIME_MISMATCH", policyId: activePolicy.policyId };
-  }
-  const evidence = Number(activePolicy.testLowerBoundR);
-  if (!(evidence > 0) || Number(activePolicy.sampleCount) < MIN_TOTAL) {
+  const policy = activePolicies.find(p => p.status === "ACTIVE" && p.side === wantedSide &&
+    (p.regime === regime || p.regime === "UNKNOWN"));
+  if (!policy) return { bonus: 0, reason: "NO_VALIDATED_SIDE_REGIME_POLICY" };
+  const evidence = Number(policy.testLowerBoundR);
+  if (!(evidence > 0) || Number(policy.sampleCount) < MIN_TOTAL) {
     return { bonus: 0, reason: "POLICY_EVIDENCE_NOT_POSITIVE" };
   }
   const bonus = Number(clamp(evidence * 1.5, 0, MAX_BONUS).toFixed(3));
-  return { bonus, reason: "VALIDATED_POSITIVE_OUT_OF_SAMPLE_EDGE", policyId: activePolicy.policyId,
-    side: wantedSide, regime, samples: activePolicy.sampleCount,
-    testExpectancyR: activePolicy.testExpectancyR, testLowerBoundR: activePolicy.testLowerBoundR };
+  return { bonus, reason: "VALIDATED_POSITIVE_OUT_OF_SAMPLE_EDGE", policyId: policy.policyId,
+    side: wantedSide, regime, samples: policy.sampleCount,
+    testExpectancyR: policy.testExpectancyR, testLowerBoundR: policy.testLowerBoundR };
 }
 function status() {
-  return { initialized: Boolean(journal), activePolicy: activePolicy?.policyId || null,
-    activePolicyDetails: activePolicy ? { side: activePolicy.side, regime: activePolicy.regime,
-      sampleCount: activePolicy.sampleCount, testExpectancyR: activePolicy.testExpectancyR,
-      testLowerBoundR: activePolicy.testLowerBoundR } : null };
+  return { initialized: Boolean(journal), activePolicies: activePolicies.length,
+    policies: activePolicies.map(p => ({ policyId: p.policyId, side: p.side, regime: p.regime,
+      sampleCount: p.sampleCount, testExpectancyR: p.testExpectancyR, testLowerBoundR: p.testLowerBoundR })) };
 }
 module.exports = { JOURNAL_COLLECTION, REPORT_COLLECTION, POLICY_COLLECTION, MIN_TOTAL, MIN_TRAIN, MIN_TEST,
   metrics, maxDrawdownR, evaluateGroup, initialize, runResearchCycle, assessLive, status };
