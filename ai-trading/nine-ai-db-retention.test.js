@@ -7,6 +7,13 @@ assert.strictEqual(retention.DEFAULTS.triggerRatio, 0.80);
 assert.strictEqual(retention.DEFAULTS.targetRatio, 0.60);
 assert.strictEqual(retention.DEFAULTS.dryRun, true, "cleanup must default to non-destructive preview");
 assert.strictEqual(retention.DEFAULTS.maxDeletesPerRun, 500);
+const priorDryRun = process.env.DB_RETENTION_DRY_RUN;
+delete process.env.DB_RETENTION_DRY_RUN;
+assert.strictEqual(retention.configFromEnv().dryRun, true, "unset env must preserve safe dry-run default");
+process.env.DB_RETENTION_DRY_RUN = "false";
+assert.strictEqual(retention.configFromEnv().dryRun, false, "real deletion requires explicit opt-in");
+if (priorDryRun === undefined) delete process.env.DB_RETENTION_DRY_RUN;
+else process.env.DB_RETENTION_DRY_RUN = priorDryRun;
 assert.strictEqual(retention.shouldCleanup(4096, config), true);
 assert.strictEqual(retention.shouldCleanup(4095.99, config), false);
 assert.strictEqual(retention.estimateUsageMB([
