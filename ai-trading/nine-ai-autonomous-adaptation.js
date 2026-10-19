@@ -61,19 +61,27 @@ function tradeFeatures(trade) {
   };
 }
 
-function ruleMatches(features, rule) {
+function ruleMatches(features, rule, params = {}) {
   const f = features;
   if (rule === "EXTENDED_MOMENTUM_ENTRY") {
-    return f.extension !== null && f.rsi !== null && Math.abs(f.extension) >= 1.5 &&
-      ((f.side === "LONG" && f.extension > 0 && f.rsi >= 65) ||
-       (f.side === "SHORT" && f.extension < 0 && f.rsi <= 35));
+    const extensionThreshold = num(params.extensionThreshold, 1.5);
+    const rsiThreshold = num(params.rsiThreshold, 65);
+    return f.extension !== null && f.rsi !== null && Math.abs(f.extension) >= extensionThreshold &&
+      ((f.side === "LONG" && f.extension > 0 && f.rsi >= rsiThreshold) ||
+       (f.side === "SHORT" && f.extension < 0 && f.rsi <= 100 - rsiThreshold));
   }
+  if (rule === "OVERBOUGHT_LONG") return f.side === "LONG" && f.rsi !== null && f.rsi >= num(params.rsiThreshold, 70);
+  if (rule === "OVERSOLD_SHORT") return f.side === "SHORT" && f.rsi !== null && f.rsi <= 100 - num(params.rsiThreshold, 70);
   if (rule === "WEAK_ENTRY_QUALITY") {
     const q = f.side === "LONG" ? f.longQuality : f.side === "SHORT" ? f.shortQuality : f.entryQuality;
-    return q !== null && q < 50;
+    return q !== null && q < num(params.qualityThreshold, 50);
   }
-  if (rule === "LOW_VOLUME") return f.volume !== null && f.volume < 0.75;
-  if (rule === "LOW_ROOM") return f.roomQuality !== null && f.roomQuality <= 25;
+  if (rule === "LOW_VOLUME") return f.volume !== null && f.volume < num(params.volumeThreshold, 0.75);
+  if (rule === "LOW_ROOM") return f.roomQuality !== null && f.roomQuality <= num(params.roomThreshold, 25);
+  if (rule === "FALSE_BREAKOUT_RISK") {
+    const risk = num(f.raw?.falseBreakoutRisk);
+    return risk !== null && risk >= num(params.falseBreakoutThreshold, 0.6);
+  }
   return false;
 }
 
