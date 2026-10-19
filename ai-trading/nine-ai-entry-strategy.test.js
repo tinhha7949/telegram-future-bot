@@ -48,4 +48,23 @@ assert.equal(nativeNoMatch.source, "NINE_AI_NATIVE");
 assert.equal(nativeNoMatch.side, null);
 assert.equal(nativeNoMatch.reason, "NO_VALIDATED_DATA_DERIVED_POLICY");
 
+const latchedNativeWait = selectEntryDecision({
+  activeNativePolicyCount: 0,
+  nativeHandoffActivated: true,
+  nativePolicyDecision: { ready: false, allowed: false, reason: "NO_VALIDATED_DATA_DERIVED_POLICY" },
+  fenixDecision: { ready: true, side: "LONG", confidence: 90 },
+  features: { rsi: 20, macdHistogram: 1 }
+});
+assert.equal(latchedNativeWait.source, "NINE_AI_NATIVE");
+assert.equal(latchedNativeWait.side, null, "persisted handoff latch must prevent FenixAI fallback after restart");
+assert.equal(latchedNativeWait.reason, "NO_VALIDATED_DATA_DERIVED_POLICY");
+
+const multiAgentBootstrap = selectEntryDecision({
+  activeNativePolicyCount: 0,
+  fenixDecision: { ready: true, side: "SHORT", confidence: 74, reason: "FENIXAI_MULTI_AGENT_FUSION" }
+});
+assert.equal(multiAgentBootstrap.source, "FENIXAI_BOOTSTRAP");
+assert.equal(multiAgentBootstrap.side, "SHORT");
+assert.equal(multiAgentBootstrap.confidence, 74);
+
 console.log("NINE-AI entry strategy bootstrap/native handoff tests passed");
