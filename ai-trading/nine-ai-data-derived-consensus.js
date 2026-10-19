@@ -269,7 +269,16 @@ async function initialize(db) {
   journal = db.collection(JOURNAL);
   policyCollection = db.collection(POLICIES);
   reportCollection = db.collection(REPORTS);
-  await journal.createIndex({ outcomeStatus: 1, signalTime: -1 }, { name: "nine_ai_consensus_journal_scan" });
+  // Reuse an equivalent index regardless of its legacy name. Older deployments
+  // may still have the previous consensus index name, and MongoDB rejects a
+  // second index with the same key pattern under a different name.
+  const journalIndexes = await journal.listIndexes().toArray();
+  const hasJournalScanIndex = journalIndexes.some(index =>
+    JSON.stringify(index.key) === JSON.stringify({ outcomeStatus: 1, signalTime: -1 }));
+  if (!hasJournalScanIndex) {
+    await journal.createIndex({ outcomeStatus: 1, signalTime: -1 },
+      { name: "nine_ai_decision_status_time" });
+  }
   await policyCollection.createIndex({ regime: 1, status: 1 }, { name: "nine_ai_consensus_active" });
   activePolicies = await policyCollection.find({ status: "ACTIVE" }).toArray();
   return { ready: true, activePolicies: activePolicies.length };
@@ -284,14 +293,14 @@ async function runResearchCycle({ now = new Date() } = {}) {
       .sort({ outcomeStatus: 1, signalTime: -1 }).hint({ outcomeStatus: 1, signalTime: -1 })
       .limit(MAX_ROWS).toArray();
     const learned = learnPolicies(sourceRows);
-    await policyCollection.updateMany({ status: "ACTIVE" }, { $set: {
-      status: "RETIRED", retiredAt: new Date(now), retiredReason: "REPLACED_OR_NO_LONGER_VALIDATED"
-    } });
+    // Never retire a live policy merely because this cycle found no replacement.
+    // A policy is replaced only after a new policy for the same regime has passed
+    // the chronological holdout validation above.
     for (const policy of learned.policies) {
       const stored = { ...policy, updatedAt: new Date(now) };
       await policyCollection.updateOne({ policyId: policy.policyId }, { $set: stored }, { upsert: true });
     }
-    activePolicies = learned.policies;
+    activePolicies = await policyCollection.find({ status: "ACTIVE" }).toArray();
     const report = { createdAt: new Date(now), status: "COMPLETED", rows: learned.rows,
       qualifiedPolicies: learned.policies.length, regimes: learned.reports,
       researchSemantics: "HYPOTHETICAL_FORWARD_CLOSES_NOT_EXECUTED_PNL",

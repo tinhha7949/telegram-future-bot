@@ -2144,56 +2144,42 @@ async function getNineAiResearchCandles(symbol, entryTime, closedAt) {
     }
 }
 async function getData(symbol, interval, limit){
-
     const url =
-        `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${encodeURIComponent(limit)}`;
+    let lastError = null;
 
-    try{
-
-        const controller = new AbortController()
-
-        const timeout = setTimeout(
-            () => controller.abort(),
-            10000
-        )
-
-        const res = await safeFetch(
-            url,
-            {
-                headers: {
-                    "User-Agent": "Mozilla/5.0"
-                },
+    // A fresh AbortController is required for every attempt. Reusing the
+    // aborted signal would make retries fail immediately.
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+            const res = await safeFetch(url, {
+                headers: { "User-Agent": "Mozilla/5.0" },
                 signal: controller.signal
-            },
-            1
-        )
+            }, 1);
 
-        clearTimeout(timeout)
-
-        if(!res || !res.ok){
-            return null
+            if (res && res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data) && data.length > 0) return data;
+                lastError = new Error("EMPTY_OR_INVALID_KLINES_RESPONSE");
+            } else {
+                lastError = new Error("BINANCE_KLINES_HTTP_" + (res?.status ?? "NO_RESPONSE"));
+            }
+        } catch (error) {
+            lastError = error;
+        } finally {
+            clearTimeout(timeout);
         }
 
-        const data = await res.json()
-
-        if(
-            Array.isArray(data) &&
-            data.length > 0
-        ){
-            return data
+        if (attempt < 2) {
+            await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
         }
-
-        return null
-
-    }catch(e){
-
-        console.log(
-            `❌ DATA FAIL ${symbol} ${interval}:`,
-            e?.message || e
-        )
-
-        return null
     }
+
+    console.error(`❌ DATA FAIL ${symbol} ${interval} after 3 attempts:`,
+        lastError?.message || lastError || "UNKNOWN_KLINES_ERROR");
+    return null;
 }
 // ================= SYMBOL (PRO) =================
 async function getTopSymbols() {

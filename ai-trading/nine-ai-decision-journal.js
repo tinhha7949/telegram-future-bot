@@ -272,20 +272,44 @@ async function initialize(db) {
     minWindowSamples: MIN_SAMPLES };
 }
 
+function isTransientJournalWriteError(error) {
+  if (typeof error?.hasErrorLabel === "function" && error.hasErrorLabel("RetryableWriteError")) return true;
+  const code = Number(error?.code);
+  if ([6, 7, 89, 91, 11600, 11602, 13435, 13436].includes(code)) return true;
+  const detail = [error?.name, error?.message, error?.cause?.name, error?.cause?.message]
+    .filter(Boolean).join(" ");
+  return /MongoNetwork|MongoServerSelection|MongoOperationTimeout|timed out|timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|network error/i.test(detail);
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function recordDecision(args) {
   if (!collection) throw new Error("NINE_AI_DECISION_JOURNAL_NOT_INITIALIZED");
   const scannedAt = num(args?.scannedAt, Date.now());
   const snapshot = snapshotDecision({ ...args, scannedAt });
   if (seen.has(snapshot.decisionKey)) return { recorded: false, reason: "DUPLICATE_DECISION", decisionKey: snapshot.decisionKey };
-  try {
-    await collection.insertOne(snapshot);
-  } catch (error) {
-    if (error?.code === 11000) {
-      seen.add(snapshot.decisionKey);
-      return { recorded: false, reason: "DUPLICATE_DECISION", decisionKey: snapshot.decisionKey };
+  let lastError = null;
+  // The unique decisionKey index makes retrying an ambiguous network failure
+  // idempotent: if MongoDB committed the first insert but its reply was lost,
+  // the retry becomes a duplicate rather than a second journal row.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await collection.insertOne(snapshot);
+      lastError = null;
+      break;
+    } catch (error) {
+      if (error?.code === 11000) {
+        seen.add(snapshot.decisionKey);
+        return { recorded: false, reason: "DUPLICATE_DECISION", decisionKey: snapshot.decisionKey };
+      }
+      lastError = error;
+      if (!isTransientJournalWriteError(error) || attempt === 2) throw error;
+      await wait(200 * (attempt + 1));
     }
-    throw error;
   }
+  if (lastError) throw lastError;
   records.push(snapshot);
   seen.add(snapshot.decisionKey);
   if (records.length > MAX_RECORDS) {

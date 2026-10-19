@@ -131,4 +131,11 @@ assert.ok(leakageResearch.evaluatedRules > 0);
 assert.ok(!research.ruleCandidates(leakageRows.slice(0, 70)).some(rule => rule.threshold === 99),
   "held-out future values must not be used to mine candidate thresholds");
 
+(async () => {
+  const db = { collection: () => ({ createIndex: async () => ({}) }) };
+  const initialized = await research.initialize(db);
+  assert.equal(initialized.minSamples, research.MIN_RESEARCH_SAMPLES,
+    "startup status must expose the actual minimum sample threshold");
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
 console.log("nine-ai-autonomous-research tests passed");
