@@ -1,11 +1,12 @@
 "use strict";
 
-// Post-close counterfactual research. Simulates explicitly bounded alternatives on
-// closed OHLCV candles only. These are hypothetical outcomes, never relabelled as
-// actual PnL. Promotion requires chronological train/test validation.
+// Post-close counterfactual research. Candidate exit prices come from observed
+// pre-entry market structure, not a list of preset SL/TP multipliers. Simulated
+// outcomes remain hypothetical; promotion requires chronological validation.
 const OUTCOME_COLLECTION = "nine_ai_counterfactual_outcomes";
 const POLICY_COLLECTION = "nine_ai_counterfactual_policies";
-const MAX_ROWS = 5000;
+const MAX_ROWS = 20000;
+const MAX_MARKET_LEVELS_PER_SIDE = 12;
 const MIN_TRAIN = 30;
 const MIN_TEST = 15;
 const MIN_TEST_UPLIFT_R = 0.10;
@@ -63,6 +64,37 @@ function simulate({ candles: raw, entryIndex, side, entry, sl, tp, risk, delay =
     netR:signed/risk-feeR, barsHeld:candles.length-start };
 }
 
+function observedExitDistances(candles, entryIndex, side, entry) {
+  // Only use candles that had closed before the entry. Their actual highs/lows
+  // supply candidate price levels; no future candle can influence a candidate.
+  const history = candles.slice(Math.max(0, entryIndex - 96), entryIndex);
+  const stopDistances = [];
+  const targetDistances = [];
+  for (const candle of history) {
+    if (side === "LONG") {
+      if (candle.low < entry) stopDistances.push(entry - candle.low);
+      if (candle.high > entry) targetDistances.push(candle.high - entry);
+    } else {
+      if (candle.high > entry) stopDistances.push(candle.high - entry);
+      if (candle.low < entry) targetDistances.push(entry - candle.low);
+    }
+  }
+  const selectObservedLevels = values => {
+    const unique = [...new Set(values.filter(v => Number.isFinite(v) && v > 0)
+      .map(v => Number(v.toPrecision(10))))].sort((a, b) => a - b);
+    if (unique.length <= MAX_MARKET_LEVELS_PER_SIDE) return unique;
+    // Keep a spread of the levels actually observed in this market window.
+    // The cap bounds computation and storage; it does not prescribe price levels.
+    const selected = [];
+    for (let i = 0; i < MAX_MARKET_LEVELS_PER_SIDE; i++) {
+      const index = Math.round(i * (unique.length - 1) / (MAX_MARKET_LEVELS_PER_SIDE - 1));
+      if (selected.at(-1) !== unique[index]) selected.push(unique[index]);
+    }
+    return selected;
+  };
+  return { stops: selectObservedLevels(stopDistances), targets: selectObservedLevels(targetDistances) };
+}
+
 // Evaluate an earlier signal using only candles that had closed by signalIndex.
 // This is an explicit, causal proxy (EMA trend + recent directional momentum),
 // not a claim that the original live signal engine ran at that historical time.
@@ -115,22 +147,30 @@ function buildVariants(trade, rawCandles) {
   };
   // Actual-side baseline uses the real levels and actual entry.
   add("BASELINE", trade.side, entryIndex, entry, sl, tp, 0);
-  // Exit geometry alternatives are hypotheses, not fixed trade rules. Stops
-  // only tighten, so they cannot increase the original account-risk budget;
-  // targets and stops are independently validated against paired outcomes.
-  for (const [variant, stopScale, targetScale] of [
-    ["STOP_SCALE_0.75", 0.75, 1],
-    ["STOP_SCALE_0.90", 0.90, 1],
-    ["TARGET_SCALE_0.75", 1, 0.75],
-    ["TARGET_SCALE_0.90", 1, 0.90]
-  ]) {
-    const candidateStopDistance = risk * stopScale;
-    const candidateTargetDistance = Math.abs(tp-entry) * targetScale;
-    const candidateRR = candidateTargetDistance / candidateStopDistance;
-    if (candidateRR < minRR || candidateRR > maxRR) continue;
-    const candidateSL = trade.side === "LONG" ? entry - candidateStopDistance : entry + candidateStopDistance;
-    const candidateTP = trade.side === "LONG" ? entry + candidateTargetDistance : entry - candidateTargetDistance;
-    add(variant, trade.side, entryIndex, entry, candidateSL, candidateTP, 0);
+  // Search actual support/resistance prices observed before entry. The stored
+  // policy records the resulting learned distance ratios so the next live plan
+  // can scale those ratios to its own entry and volatility. No preset SL/TP
+  // multiplier values are enumerated here.
+  const observed = observedExitDistances(candles, entryIndex, trade.side, entry);
+  const baselineReward = Math.abs(tp-entry);
+  const candidateKeys = new Set();
+  for (const stopDistance of observed.stops) {
+    for (const targetDistance of observed.targets) {
+      const candidateRR = targetDistance / stopDistance;
+      if (candidateRR < minRR || candidateRR > maxRR) continue;
+      const stopScale = stopDistance / risk;
+      const targetScale = targetDistance / baselineReward;
+      if (!(Number.isFinite(stopScale) && stopScale > 0 && Number.isFinite(targetScale) && targetScale > 0)) continue;
+      const variant = `EXIT_LEVEL:S${stopScale.toFixed(3)}:T${targetScale.toFixed(3)}`;
+      if (candidateKeys.has(variant)) continue;
+      candidateKeys.add(variant);
+      const candidateSL = trade.side === "LONG" ? entry - stopDistance : entry + stopDistance;
+      const candidateTP = trade.side === "LONG" ? entry + targetDistance : entry - targetDistance;
+      const before = result.length;
+      add(variant, trade.side, entryIndex, entry, candidateSL, candidateTP, 0);
+      if (result.length > before) Object.assign(result[result.length - 1], { stopScale, targetScale,
+        stopDistance, targetDistance, levelSource: "PRE_ENTRY_OBSERVED_MARKET_STRUCTURE" });
+    }
   }
   // Opposite direction is a research hypothesis, not an automatic flip. Mirror
   // the same risk and reward distances around entry and keep the same entry time.
@@ -259,7 +299,8 @@ function evaluatePolicy(rowsToCheck = rows) {
     for(const r of alternatives){ if(!byVariant.has(r.variant+"|"+r.side))byVariant.set(r.variant+"|"+r.side,[]); byVariant.get(r.variant+"|"+r.side).push(r); }
     for(const [variantKey, all] of byVariant){
       const variant = variantKey.split("|")[0];
-      if (variant.startsWith("RISK_SCALE_")) continue;
+      if (variant.startsWith("RISK_SCALE_") || variant.startsWith("EXIT_LEVEL:") ||
+          /^(STOP|TARGET)_SCALE_/.test(variant)) continue;
       const ordered=all.slice().sort((a,b)=>a.closedAt-b.closedAt);
       const unique=[]; const ids=new Set();
       for(const r of ordered) if(!ids.has(r.tradeId)){ids.add(r.tradeId);unique.push(r);}
@@ -282,12 +323,89 @@ function evaluatePolicy(rowsToCheck = rows) {
   return candidates;
 }
 
+function evaluateExitPolicies(rowsToCheck = rows) {
+  const baselines = new Map(rowsToCheck.filter(r => r?.variant === "BASELINE")
+    .map(r => [String(r.tradeId), r]));
+  const contexts = new Map();
+  for (const row of rowsToCheck) {
+    if (!row?.hypothetical || !String(row.variant || "").startsWith("EXIT_LEVEL:") ||
+        !Number.isFinite(Number(row.stopScale)) || !Number.isFinite(Number(row.targetScale))) continue;
+    const key = groupKey(row);
+    if (!contexts.has(key)) contexts.set(key, new Map());
+    const trades = contexts.get(key);
+    const id = String(row.tradeId);
+    if (!trades.has(id)) trades.set(id, { closedAt: new Date(row.closedAt || 0), rows: [] });
+    trades.get(id).rows.push(row);
+  }
+
+  const validated = [];
+  for (const [key, tradeMap] of contexts) {
+    const trades = [...tradeMap.entries()].map(([tradeId, value]) => ({
+      tradeId, ...value, baseline: baselines.get(tradeId)
+    })).filter(trade => trade.baseline && Number.isFinite(Number(trade.baseline.netR)))
+      .sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt));
+    const split = Math.floor(trades.length * 0.7);
+    const train = trades.slice(0, split), test = trades.slice(split);
+    if (train.length < MIN_TRAIN || test.length < MIN_TEST) continue;
+
+    // Candidate pairs come only from training-period market levels. Sampling
+    // bounds computation without prescribing numeric stop/target values.
+    const centers = [...new Map(train.flatMap(trade => trade.rows.map(row => {
+      const stopScale = Number(Number(row.stopScale).toFixed(3));
+      const targetScale = Number(Number(row.targetScale).toFixed(3));
+      return [`${stopScale}|${targetScale}`, { stopScale, targetScale }];
+    }))).values()].sort((a, b) => a.stopScale - b.stopScale || a.targetScale - b.targetScale);
+    const sampledCenters = centers.length <= 64 ? centers : Array.from({ length: 64 }, (_, i) =>
+      centers[Math.round(i * (centers.length - 1) / 63)]);
+    const nearestOutcome = (trade, center) => trade.rows.reduce((best, row) => {
+      const ds = Math.log(Number(row.stopScale) / center.stopScale);
+      const dt = Math.log(Number(row.targetScale) / center.targetScale);
+      const distance = ds * ds + dt * dt;
+      return !best || distance < best.distance ? { row, distance } : best;
+    }, null)?.row;
+
+    let best = null;
+    for (const center of sampledCenters) {
+      const pairedTrain = train.map(trade => ({
+        candidate: nearestOutcome(trade, center)?.netR,
+        base: Number(trade.baseline.netR)
+      })).filter(pair => Number.isFinite(Number(pair.candidate)));
+      if (pairedTrain.length < MIN_TRAIN) continue;
+      const trainUplift = pairedTrain.reduce((sum, pair) => sum + Number(pair.candidate) - pair.base, 0) / pairedTrain.length;
+      if (!best || trainUplift > best.trainUplift) best = { ...center, trainUplift };
+    }
+    if (!best || best.trainUplift <= 0) continue;
+
+    const pairedTest = test.map(trade => ({
+      candidate: nearestOutcome(trade, best)?.netR,
+      base: Number(trade.baseline.netR)
+    })).filter(pair => Number.isFinite(Number(pair.candidate)));
+    if (pairedTest.length < MIN_TEST) continue;
+    const deltas = pairedTest.map(pair => Number(pair.candidate) - pair.base);
+    const uplift = deltas.reduce((sum, value) => sum + value, 0) / deltas.length;
+    const meanR = pairedTest.reduce((sum, pair) => sum + Number(pair.candidate), 0) / pairedTest.length;
+    const variance = deltas.reduce((sum, value) => sum + (value - uplift) ** 2, 0) / deltas.length;
+    const standardError = Math.sqrt(variance / deltas.length);
+    if (uplift < MIN_TEST_UPLIFT_R || uplift <= standardError || meanR < MIN_TEST_MEAN_R) continue;
+    const variant = `EXIT_LEVEL:S${best.stopScale.toFixed(3)}:T${best.targetScale.toFixed(3)}`;
+    validated.push({ key, variant, stopScale: best.stopScale, targetScale: best.targetScale,
+      trainSamples: train.length, testSamples: pairedTest.length,
+      trainUpliftR: Number(best.trainUplift.toFixed(4)), testUpliftR: Number(uplift.toFixed(4)),
+      testMeanR: Number(meanR.toFixed(4)), standardError: Number(standardError.toFixed(4)),
+      status: "VALIDATED_CANDIDATE", validatedAt: new Date(),
+      source: "CHRONOLOGICAL_VALIDATION_OF_OBSERVED_MARKET_LEVELS" });
+  }
+  return validated;
+}
+
 async function initialize(db) {
   if(!db||typeof db.collection!=="function")throw new Error("NINE_AI_MONGODB_REQUIRED");
   outcomeCollection=db.collection(OUTCOME_COLLECTION);
   policyCollection=db.collection(POLICY_COLLECTION);
-  // Purge legacy experiments that learned alternative SL/TP distances.
-  // Entry research keeps only timing/direction variants with the original risk geometry.
+  // Retain historical rows for audit/research, but only new observed-level
+  // exit policies are eligible for live application by the strategy.
+  await policyCollection.updateMany({variant:/^(STOP|TARGET)_SCALE_/,status:"VALIDATED_CANDIDATE"},
+    {$set:{status:"RETIRED",retiredAt:new Date(),retiredReason:"PRESET_EXIT_LEVELS_NO_LONGER_DEPLOYED"}});
   await outcomeCollection.deleteMany({variant:/^RISK_SCALE_/});
   await policyCollection.deleteMany({variant:/^RISK_SCALE_/});
   await outcomeCollection.createIndex({tradeId:1,variant:1},{unique:true,name:"uniq_nine_ai_counterfactual_trade_variant"});
@@ -312,6 +430,9 @@ async function researchClosedTrade(trade, rawCandles) {
     const doc={tradeId:String(trade.tradeId),symbol:String(trade.symbol||""),side:v.side,
       originalSide:trade.side,variant:v.variant,entry:v.entry,sl:v.sl,tp:v.tp,
       features:featureTags(trade.features || {}),
+      stopScale:Number.isFinite(Number(v.stopScale))?Number(v.stopScale):null,
+      targetScale:Number.isFinite(Number(v.targetScale))?Number(v.targetScale):null,
+      levelSource:v.levelSource || null,
       grossR:isBaseline ? baselineNetR + n(trade.feeR, FEE_R) : v.grossR,
       netR:isBaseline ? baselineNetR : v.netR,exit:isBaseline ? "ACTUAL" : v.exit,
       exitTime:isBaseline ? (trade.closedAt || v.exitTime) : v.exitTime,barsHeld:v.barsHeld,
@@ -321,14 +442,20 @@ async function researchClosedTrade(trade, rawCandles) {
     catch(e){if(e?.code===11000){seen.add(key);continue;}throw e;}
   }
   if(rows.length>MAX_ROWS)rows.length=MAX_ROWS;
-  const candidates=evaluatePolicy(rows);
+  const exitCandidates=evaluateExitPolicies(rows);
+  // Revalidate the currently deployed exit policy after every newly closed
+  // trade. If it no longer passes the chronological holdout, it is retired.
+  await policyCollection.updateMany({variant:/^EXIT_LEVEL:/,status:"VALIDATED_CANDIDATE"},
+    {$set:{status:"RETIRED",retiredAt:new Date(),retiredReason:"EXIT_POLICY_REVALIDATED_AFTER_NEW_CLOSE"}});
+  policies=policies.filter(p=>!String(p.variant||"").startsWith("EXIT_LEVEL:"));
+  const candidates=[...evaluatePolicy(rows),...exitCandidates];
   for(const candidate of candidates){
     const key=candidate.key+"|"+candidate.variant;
     const existing=policies.find(p=>p.key+"|"+p.variant===key);
-    if(existing)continue;
     await policyCollection.updateOne({key:candidate.key,variant:candidate.variant},
       {$set:{...candidate,status:"VALIDATED_CANDIDATE"}},{upsert:true});
-    policies.push(candidate);
+    if(existing){ Object.assign(existing,{...candidate,status:"VALIDATED_CANDIDATE"}); }
+    else policies.push(candidate);
   }
   return {variants:inserted.length,samples:rows.length,candidates:candidates.length,results:inserted.map(r=>({variant:r.variant,side:r.side,netR:r.netR,exit:r.exit}))};
 }
@@ -338,13 +465,17 @@ function advice({side,regime="UNKNOWN",features={}}={}) {
   const matching=policies.filter(p=>p.status==="VALIDATED_CANDIDATE"&&p.key.endsWith("|"+regime));
   const legacy = matching.filter(p=>!String(p.variant).startsWith("RISK_SCALE_")&&p.testUpliftR>=MIN_TEST_UPLIFT_R&&p.testMeanR>0)
     .map(p=>({variant:p.variant,side:p.key.split("|")[1],testUpliftR:p.testUpliftR,
-      testMeanR:p.testMeanR,testSamples:p.testSamples,source:"CHRONOLOGICAL_POLICY"}));
+      testMeanR:p.testMeanR,testSamples:p.testSamples,trainSamples:p.trainSamples,
+      standardError:p.standardError,source:p.source||"CHRONOLOGICAL_POLICY"}));
   // Prefer context-matched paired evidence; legacy validated policies remain a
   // fallback for historical rows created before feature tags were persisted.
-  const suggestions = contextual.length ? contextual.map(p=>({...p,source:"CONTEXTUAL_PAIRED_COUNTERFACTUAL"})) : legacy;
+  const robustContextual = contextual.filter(p => Number(p.trainSamples) >= MIN_TRAIN &&
+    Number(p.testSamples) >= MIN_TEST);
+  const suggestions = robustContextual.length
+    ? robustContextual.map(p=>({...p,source:"CONTEXTUAL_PAIRED_COUNTERFACTUAL"})) : legacy;
   return {side,validatedSuggestions:suggestions,samples:rows.length,
     contextTags:featureTags(features),mode:"CONTINUOUS_CONTEXTUAL_COUNTERFACTUAL_EVIDENCE"};
 }
 function status(){return {samples:rows.length,validatedPolicies:policies.length,minTrain:MIN_TRAIN,minTest:MIN_TEST};}
 
-module.exports={OUTCOME_COLLECTION,POLICY_COLLECTION,MIN_TRAIN,MIN_TEST,normalizeCandles,simulate,validateEarlierSetup,buildVariants,evaluatePolicy,featureTags,pairedVariantEvidence,initialize,researchClosedTrade,advice,status};
+module.exports={OUTCOME_COLLECTION,POLICY_COLLECTION,MIN_TRAIN,MIN_TEST,normalizeCandles,simulate,validateEarlierSetup,buildVariants,evaluatePolicy,evaluateExitPolicies,observedExitDistances,featureTags,pairedVariantEvidence,initialize,researchClosedTrade,advice,status};

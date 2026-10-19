@@ -576,7 +576,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   });
   const exitCandidates = (exitPlanAdvice.validatedSuggestions || [])
     .filter(item => item.side === side &&
-      /^(STOP|TARGET)_SCALE_(0\.75|0\.90)$/.test(String(item.variant || "")) &&
+      /^EXIT_LEVEL:S[0-9]+(?:\.[0-9]+)?:T[0-9]+(?:\.[0-9]+)?$/.test(String(item.variant || "")) &&
       Number(item.trainSamples) >= counterfactualResearch.MIN_TRAIN &&
       Number(item.testSamples) >= counterfactualResearch.MIN_TEST &&
       Number(item.testUpliftR) > Number(item.standardError || 0) &&
@@ -584,16 +584,16 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     .sort((a, b) => (Number(b.testUpliftR) - Number(b.standardError || 0)) -
       (Number(a.testUpliftR) - Number(a.standardError || 0)));
   for (const candidate of exitCandidates) {
-    const match = String(candidate.variant).match(/_(0\.75|0\.90)$/);
-    const scale = match ? Number(match[1]) : NaN;
-    if (!Number.isFinite(scale) || scale <= 0) continue;
-    const candidateStopDistance = candidate.variant.startsWith("STOP_SCALE_")
-      ? stopDistance * scale : stopDistance;
-    const candidateTargetDistance = candidate.variant.startsWith("TARGET_SCALE_")
-      ? targetDistance * scale : targetDistance;
+    const match = String(candidate.variant).match(/^EXIT_LEVEL:S([0-9]+(?:\.[0-9]+)?):T([0-9]+(?:\.[0-9]+)?)$/);
+    const stopScale = match ? Number(match[1]) : NaN;
+    const targetScale = match ? Number(match[2]) : NaN;
+    if (![stopScale, targetScale].every(Number.isFinite) || stopScale <= 0 || targetScale <= 0) continue;
+    const candidateStopDistance = stopDistance * stopScale;
+    const candidateTargetDistance = targetDistance * targetScale;
     const candidateRR = candidateTargetDistance / candidateStopDistance;
-    // Preserve the bot's existing trade-geometry bounds and capital-risk
-    // sizing. The learned stop alternative only tightens the stop.
+    // Keep exchange-valid directional geometry and existing RR bounds. Position
+    // sizing is recalculated from the selected stop, so the existing account-risk
+    // budget remains the final bound even when a learned stop is wider.
     if (candidateRR < 0.79 || candidateRR > MAX_NINE_AI_RR) continue;
     stopDistance = candidateStopDistance;
     targetDistance = candidateTargetDistance;
@@ -604,7 +604,9 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       testMeanR: candidate.testMeanR,
       testSamples: candidate.testSamples,
       standardError: candidate.standardError,
-      scale
+      stopScale,
+      targetScale,
+      source: candidate.source || "VALIDATED_OBSERVED_MARKET_LEVELS"
     };
     break;
   }
