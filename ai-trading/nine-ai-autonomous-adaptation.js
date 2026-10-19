@@ -12,17 +12,6 @@ const MAX_ADJUSTMENT = 8;
 const HARD_VETO_MIN_TEST = 40;
 const HARD_VETO_MAX_MEAN_R = -0.15;
 const HARD_VETO_MAX_UPLIFT_R = -0.12;
-const RULE_GRID = [
-  ...[1.0, 1.25, 1.5, 1.75, 2.0].map(extensionThreshold => ({
-    rule: "EXTENDED_MOMENTUM_ENTRY", params: { extensionThreshold, rsiThreshold: 65 }
-  })),
-  ...[60, 65, 68, 70, 75].map(rsiThreshold => ({ rule: "OVERBOUGHT_LONG", params: { rsiThreshold } })),
-  ...[25, 30, 32, 35, 40].map(rsiThreshold => ({ rule: "OVERSOLD_SHORT", params: { rsiThreshold } })),
-  ...[0.55, 0.65, 0.75, 0.85].map(volumeThreshold => ({ rule: "LOW_VOLUME", params: { volumeThreshold } })),
-  ...[35, 40, 45, 50, 55].map(qualityThreshold => ({ rule: "WEAK_ENTRY_QUALITY", params: { qualityThreshold } })),
-  ...[0.5, 0.75, 1.0, 1.25, 1.5].map(roomThreshold => ({ rule: "LOW_ROOM", params: { roomThreshold } })),
-  ...[0.4, 0.5, 0.6, 0.7, 0.8].map(falseBreakoutThreshold => ({ rule: "FALSE_BREAKOUT_RISK", params: { falseBreakoutThreshold } }))
-];
 let tradesCollection = null;
 let stateCollection = null;
 let historyCollection = null;
@@ -107,6 +96,66 @@ function normalizeTrade(t) {
     closedAt, realizedR, features };
 }
 
+// Candidate parameter values come from the observed training distribution,
+// rather than a hand-authored list of RSI/volume/extension cutoffs. The number
+// of cut points grows with the amount of distinct data (approximately sqrt(n))
+// to explore more finely as the ledger grows without evaluating every row
+// against every possible floating-point threshold.
+function observedThresholds(values) {
+  const sorted = [...new Set(values.filter(Number.isFinite))].sort((a, b) => a - b);
+  if (sorted.length <= 8) return sorted;
+  const count = Math.ceil(Math.sqrt(sorted.length));
+  const result = new Set();
+  for (let i = 1; i <= count; i++) {
+    result.add(sorted[Math.floor(i * (sorted.length - 1) / (count + 1))]);
+  }
+  return [...result].sort((a, b) => a - b);
+}
+
+function buildRuleGrid(trainingRows = []) {
+  const result = [];
+  const add = (rule, params) => {
+    if (Object.values(params).some(value => !Number.isFinite(value))) return;
+    result.push({ rule, params });
+  };
+  const features = trainingRows.map(row => row.features || {});
+  const extension = observedThresholds(features.map(f =>
+    f.extension === null ? NaN : Math.abs(f.extension)));
+  const longRsi = observedThresholds(features.filter(f => f.side === "LONG")
+    .map(f => f.rsi).filter(v => v !== null && v >= 50));
+  const shortRsi = observedThresholds(features.filter(f => f.side === "SHORT")
+    .map(f => f.rsi).filter(v => v !== null && v <= 50));
+  const rsi = observedThresholds(features.map(f => f.rsi).filter(v => v !== null));
+  const volume = observedThresholds(features.map(f => f.volume).filter(v => v !== null));
+  const quality = observedThresholds(features.map(f =>
+    f.side === "LONG" ? f.longQuality : f.side === "SHORT" ? f.shortQuality : f.entryQuality
+  ).filter(v => v !== null));
+  const room = observedThresholds(features.map(f => f.roomQuality).filter(v => v !== null));
+  const breakout = observedThresholds(features.map(f =>
+    num(f.raw?.falseBreakoutRisk)).filter(v => v !== null));
+
+  for (const extensionThreshold of extension) {
+    for (const rsiThreshold of longRsi) {
+      add("EXTENDED_MOMENTUM_ENTRY", { extensionThreshold, rsiThreshold });
+    }
+    for (const rsiThreshold of shortRsi) {
+      add("EXTENDED_MOMENTUM_ENTRY", { extensionThreshold, rsiThreshold });
+    }
+  }
+  for (const rsiThreshold of rsi) {
+    if (rsiThreshold >= 50) add("OVERBOUGHT_LONG", { rsiThreshold });
+    if (rsiThreshold <= 50) add("OVERSOLD_SHORT", { rsiThreshold });
+  }
+  for (const volumeThreshold of volume) add("LOW_VOLUME", { volumeThreshold });
+  for (const qualityThreshold of quality) add("WEAK_ENTRY_QUALITY", { qualityThreshold });
+  for (const roomThreshold of room) add("LOW_ROOM", { roomThreshold });
+  for (const falseBreakoutThreshold of breakout) add("FALSE_BREAKOUT_RISK", { falseBreakoutThreshold });
+
+  const unique = new Map(result.map(candidate =>
+    [candidate.rule + ":" + Object.values(candidate.params).join(","), candidate]));
+  return [...unique.values()];
+}
+
 function evaluateRule(rows, rule, params, side, regime) {
   const matching = rows.filter(r => r.features.side === side && r.features.regime === regime &&
     ruleMatches(r.features, rule, params)).sort((a, b) => a.closedAt - b.closedAt);
@@ -163,7 +212,10 @@ function buildPolicies(rawTrades) {
   const contexts = new Set(rows.map(r => r.features.side + "|" + r.features.regime));
   for (const key of contexts) {
     const [side, regime] = key.split("|");
-    for (const candidate of RULE_GRID) {
+    const contextRows = rows.filter(row => row.features.side === side && row.features.regime === regime);
+    const trainingRows = contextRows.slice(0, Math.floor(contextRows.length * 0.7));
+    const candidates = buildRuleGrid(trainingRows);
+    for (const candidate of candidates) {
       const policy = evaluateRule(rows, candidate.rule, candidate.params, side, regime);
       if (policy) policies.push(policy);
     }
@@ -244,5 +296,6 @@ function status() {
       testSamples: p.testSamples, testMeanR: p.testMeanR, upliftR: p.upliftR, adjustment: p.adjustment })) };
 }
 
-module.exports = { COLLECTION, HISTORY_COLLECTION, MIN_TRAIN, MIN_TEST, MAX_ADJUSTMENT, RULE_GRID,
-  tradeFeatures, ruleMatches, normalizeTrade, evaluateRule, buildPolicies, assess, initialize, refresh, status };
+module.exports = { COLLECTION, HISTORY_COLLECTION, MIN_TRAIN, MIN_TEST, MAX_ADJUSTMENT,
+  tradeFeatures, ruleMatches, normalizeTrade, observedThresholds, buildRuleGrid,
+  evaluateRule, buildPolicies, assess, initialize, refresh, status };
