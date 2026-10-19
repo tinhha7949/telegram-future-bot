@@ -85,6 +85,10 @@ async function initialize(db) {
   journal = db.collection(JOURNAL_COLLECTION);
   reports = db.collection(REPORT_COLLECTION);
   policies = db.collection(POLICY_COLLECTION);
+  // The research cycle filters evaluated journal rows then sorts newest-first.
+  // This compound index avoids a collection-wide in-memory sort as the journal grows.
+  await journal.createIndex({ outcomeStatus: 1, signalTime: -1 },
+    { name: "nine_ai_decision_status_time" });
   await reports.createIndex({ createdAt: -1 }, { name: "nine_ai_decision_report_time" });
   await policies.createIndex({ status: 1, updatedAt: -1 }, { name: "nine_ai_decision_policy_active" });
   activePolicies = await policies.find({ status: "ACTIVE" }).sort({ updatedAt: -1 }).toArray();
@@ -97,7 +101,8 @@ async function runResearchCycle({ now = new Date() } = {}) {
   running = true;
   try {
     const rows = await journal.find({ outcomeStatus: "EVALUATED" })
-      .sort({ signalTime: -1 }).limit(MAX_ROWS).toArray();
+      .sort({ signalTime: -1 }).hint({ outcomeStatus: 1, signalTime: -1 })
+      .limit(MAX_ROWS).toArray();
     rows.sort((a, b) => Number(a.signalTime) - Number(b.signalTime));
     // Keep only the latest decision snapshot per symbol/candle so repeated
     // scans cannot inflate the apparent sample size or confidence.

@@ -131,8 +131,13 @@ async function initialize(db) {
   collection = db.collection(COLLECTION);
   await collection.createIndex({ decisionKey: 1 }, { unique: true, name: "uniq_nine_ai_decision_key" });
   await collection.createIndex({ symbol: 1, signalTime: -1 }, { name: "nine_ai_decision_symbol_time" });
+  // Supports the global newest-record scan below. The symbol-prefixed index
+  // cannot serve a sort over the entire collection and caused Mongo's 32 MB
+  // in-memory sort limit to abort startup on a large journal.
+  await collection.createIndex({ signalTime: -1, scannedAt: -1 }, { name: "nine_ai_decision_global_time" });
   await collection.createIndex({ outcomeStatus: 1, symbol: 1 }, { name: "nine_ai_decision_pending" });
-  records = await collection.find({}).sort({ signalTime: -1, scannedAt: -1 }).limit(MAX_RECORDS).toArray();
+  records = await collection.find({}).sort({ signalTime: -1, scannedAt: -1 })
+    .hint({ signalTime: -1, scannedAt: -1 }).limit(MAX_RECORDS).toArray();
   records = records.filter(r => r && r.decisionKey && r.symbol);
   records.reverse();
   seen.clear();
