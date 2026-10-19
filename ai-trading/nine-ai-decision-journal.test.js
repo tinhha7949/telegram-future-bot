@@ -78,25 +78,37 @@ const patternWindow = Array.from({ length: journal.MARKET_WINDOW_BARS }, (_, i) 
   return [time, open, close + 0.02, open - 0.01, close, 100 + i, time + 899_999,
     10_000 + i, 20 + i, 50 + i, 5_000 + i];
 });
-const similarWindowRecords = Array.from({ length: 24 }, (_, i) => ({
-  symbol: `SIM${i}`, signalTime: base + i * 900_000,
-  outcomeStatus: "EVALUATED", marketWindow: patternWindow,
-  evaluations: {
-    "4": { longNetR: 0.5, shortNetR: -0.5 },
-    "16": { longNetR: 0.3, shortNetR: -0.3 }
-  }
-}));
+const patternFeatures = journal.extractWindowFeatures(patternWindow);
+const oppositeFeatures = {
+  ...patternFeatures,
+  return4: -patternFeatures.return4, return16: -patternFeatures.return16,
+  return48: -patternFeatures.return48, return96: -patternFeatures.return96,
+  efficiency16: -patternFeatures.efficiency16, efficiency48: -patternFeatures.efficiency48,
+  efficiency96: -patternFeatures.efficiency96, rangePosition: 1 - patternFeatures.rangePosition,
+  wickBias: -patternFeatures.wickBias, greenRate: 1 - patternFeatures.greenRate
+};
+const similarWindowRecords = Array.from({ length: 48 }, (_, i) => {
+  const positive = i < 24;
+  return {
+    symbol: `SIM${i}`, signalTime: base + i * 900_000,
+    outcomeStatus: "EVALUATED", marketWindow: patternWindow,
+    windowFeatures: positive ? patternFeatures : oppositeFeatures,
+    evaluations: positive
+      ? { "4": { longNetR: 0.5, shortNetR: -0.5 }, "16": { longNetR: 0.3, shortNetR: -0.3 } }
+      : { "4": { longNetR: -0.5, shortNetR: 0.5 }, "16": { longNetR: -0.3, shortNetR: 0.3 } }
+  };
+});
 const learnedWinWindow = journal.assessWindowEvidence(patternWindow, "LONG", similarWindowRecords);
 assert.equal(learnedWinWindow.ready, true);
 assert.ok(learnedWinWindow.adjustment > 0);
 assert.ok(learnedWinWindow.effectiveSamples >= journal.MIN_SAMPLES);
-const similarLossRecords = similarWindowRecords.map(row => ({
-  ...row,
-  evaluations: {
-    "4": { longNetR: -0.5, shortNetR: 0.5 },
-    "16": { longNetR: -0.3, shortNetR: 0.3 }
-  }
-}));
+const similarLossRecords = similarWindowRecords.map(row => {
+  const nearPattern = Number(row.symbol.slice(3)) < 24;
+  return { ...row, evaluations: nearPattern
+    ? { "4": { longNetR: -0.5, shortNetR: 0.5 }, "16": { longNetR: -0.3, shortNetR: 0.3 } }
+    : { "4": { longNetR: 0.5, shortNetR: -0.5 }, "16": { longNetR: 0.3, shortNetR: -0.3 } }
+  };
+});
 const learnedLossWindow = journal.assessWindowEvidence(patternWindow, "LONG", similarLossRecords);
 assert.equal(learnedLossWindow.ready, true);
 assert.ok(learnedLossWindow.adjustment < 0);
