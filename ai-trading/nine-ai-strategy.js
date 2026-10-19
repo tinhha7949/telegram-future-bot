@@ -14,6 +14,7 @@ const counterfactualResearch = require("./nine-ai-counterfactual-research");
 const rewardModel = require("./nine-ai-reward-model");
 const autonomousDeployment = require("./nine-ai-autonomous-deployment");
 const autonomousConsensus = require("./nine-ai-data-derived-consensus");
+const entryStrategy = require("./nine-ai-entry-strategy");
 
 const ROLE_NAMES = [
   "Technical Analyst AI",
@@ -70,6 +71,32 @@ function ema(values, period) {
   return value;
 }
 
+function emaSeries(values, period) {
+  const result = Array(values.length).fill(NaN);
+  if (values.length < period) return result;
+  const k = 2 / (period + 1);
+  let value = avg(values.slice(0, period));
+  result[period - 1] = value;
+  for (let i = period; i < values.length; i++) {
+    value = values[i] * k + value * (1 - k);
+    result[i] = value;
+  }
+  return result;
+}
+
+function calculateMacdHistogram(values) {
+  if (!Array.isArray(values) || values.length < 34) return NaN;
+  const fast = emaSeries(values, 12);
+  const slow = emaSeries(values, 26);
+  const macd = values.map((_, i) => i >= 25 ? fast[i] - slow[i] : NaN);
+  const validMacd = macd.slice(25);
+  const signal = emaSeries(validMacd, 9);
+  const lastMacd = macd[macd.length - 1];
+  const lastSignal = signal[signal.length - 1];
+  return Number.isFinite(lastMacd) && Number.isFinite(lastSignal)
+    ? lastMacd - lastSignal : NaN;
+}
+
 function rsi(values, period = 14) {
   if (values.length <= period) return 50;
   let gains = 0, losses = 0;
@@ -87,6 +114,7 @@ function buildFeatures(candles) {
   const previous = candles[candles.length - 2];
   const e9 = ema(closes, 9), e21 = ema(closes, 21), e50 = ema(closes, 50);
   const rs = rsi(closes, 14);
+  const macdHist = calculateMacdHistogram(closes);
   const trueRanges = [];
   for (let i = Math.max(1, candles.length - 15); i < candles.length; i++) {
     const c = candles[i], prev = candles[i - 1].c;
@@ -179,7 +207,7 @@ function buildFeatures(candles) {
     (extensionAtr < -2.2 ? 20 : 0), 0, 100
   );
   return {
-    last, e9, e21, e50, rsi: rs, atr, atrPct, mom4, mom12,
+    last, e9, e21, e50, rsi: rs, macdHistogram: macdHist, atr, atrPct, mom4, mom12,
     volumeRatio, high20, low20, swingHigh, swingLow, trend, marketRegime,
     volatilityRegime, candleBodyRatio, candleBody, candleRange,
     upperWickRatio, lowerWickRatio, insideBar, bullishEngulfing, bearishEngulfing,
@@ -189,7 +217,7 @@ function buildFeatures(candles) {
     longEntryQuality, shortEntryQuality,
     valid: [e9, e21, e50, rs, atr, high20, low20, candleBodyRatio,
       upperWickRatio, lowerWickRatio, breakoutStrength, structurePosition,
-      longEntryQuality, shortEntryQuality].every(Number.isFinite) && atr > 0
+      macdHist, longEntryQuality, shortEntryQuality].every(Number.isFinite) && atr > 0
   };
 }
 
@@ -536,23 +564,30 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
       falseBreakoutRisk: f.falseBreakoutRisk }
   );
+  const nativePolicyStatus = autonomousConsensus.status();
+  const entryDecision = entryStrategy.selectEntryDecision({
+    activeNativePolicyCount: nativePolicyStatus.activePolicies,
+    nativePolicyDecision: dataDerivedConsensus,
+    features: { rsi: f.rsi, macdHistogram: f.macdHistogram }
+  });
   const consensusSide = dataDerivedConsensus.ready && dataDerivedConsensus.allowed
     ? dataDerivedConsensus.side : null;
   const decisionModel = independent.get("decision");
-  // The data-derived policy selects direction; the Decision AI prediction is
-  // retained as another learned input and audit signal.
-  const side = resolveConsensusSide(consensusSide);
+  // Native NINE-AI policies take exclusive control once any validated policy is
+  // active. Until then, the deterministic FenixAI RSI/MACD entry rule bootstraps
+  // trading while the native research pipeline gathers and validates outcomes.
+  const side = resolveConsensusSide(entryDecision.side);
   const chosenVotes = side === "LONG" ? longVotes : side === "SHORT" ? shortVotes : [];
   const confidence = chosenVotes.length
     ? Math.round(avg(chosenVotes.map(v => v.confidence)) * Math.min(1, chosenVotes.length / 5))
-    : 0;
+    : entryDecision.source === "FENIXAI_BOOTSTRAP" && side ? 60 : 0;
   const decisionConfidence = modelConfidence("decision");
   roleResults.push({ name: ROLE_NAMES[7], side: side || "WAIT",
     confidence: decisionConfidence == null ? confidence : Math.min(confidence || decisionConfidence, decisionConfidence),
     weight: ROLE_WEIGHTS[ROLE_NAMES[7]],
     reason: decisionModel?.trained
       ? `independentDecisionP(long)=${decisionModel.pLong}; consensus=${consensusSide || "WAIT"}; samples=${decisionModel.samples}`
-      : `dataDerivedConsensus=${dataDerivedConsensus.reason}; longVotes=${longCount}; shortVotes=${shortCount}` });
+      : `entrySource=${entryDecision.source}; entryReason=${entryDecision.reason}; longVotes=${longCount}; shortVotes=${shortCount}` });
 
   // 9. Risk Manager AI: learned evidence affects ranking, not entry eligibility.
   // These market observations remain visible to the model and audit trail, but
@@ -569,9 +604,9 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       : "NO_CONSENSUS" });
 
   if (!riskAllowed) return { ...abstain,
-    reason: dataDerivedConsensus.ready ? dataDerivedConsensus.reason : "NO_VALIDATED_DATA_DERIVED_POLICY",
+    reason: entryDecision.reason,
     roles: roleResults, candles: candles.length, features: summarize(f),
-    rankMetrics: { dataDerivedConsensus } };
+    rankMetrics: { dataDerivedConsensus, entryStrategy: entryDecision } };
 
   // Observed pivots from the preceding 96 closed candles define the initial
   // price levels. Validated counterfactual research may replace these levels.
@@ -752,6 +787,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     opposingVotes,
     consensusMargin,
     dataDerivedConsensus,
+    entryStrategy: entryDecision,
     consensusCoverage: Math.round(consensusCoverage),
     trendAlignment,
     momentumAlignment,
@@ -797,7 +833,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
 function summarize(f) {
   return {
     close: f.last.c, ema9: f.e9, ema21: f.e21, ema50: f.e50,
-    rsi14: f.rsi, atr14: f.atr, atrPercent: f.atrPct, momentum4: f.mom4,
+    rsi14: f.rsi, macdHistogram: f.macdHistogram, atr14: f.atr, atrPercent: f.atrPct, momentum4: f.mom4,
     momentum12: f.mom12, volumeRatio: f.volumeRatio, trend: f.trend,
     marketRegime: f.marketRegime, volatilityRegime: f.volatilityRegime,
     extensionAtr: f.extensionAtr, swingHigh: f.swingHigh, swingLow: f.swingLow,
@@ -833,7 +869,7 @@ function compareNineAICandidates(a, b) {
 }
 
 module.exports = {
-  ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures,
+  ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures, calculateMacdHistogram,
   resolveModelSide, resolveConsensusSide, assessIndependentRiskModel, assessEntryRiskEvidence,
   detectContrarianSignal, isContrarianConflict, observedPivotExitDistances, calculateWeightedRoleScore,
   analyzeNineAI, compareNineAICandidates

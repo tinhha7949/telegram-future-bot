@@ -1,10 +1,37 @@
 "use strict";
 const assert = require("node:assert/strict");
+const { fenixBootstrapSide, selectEntryDecision } = require("./nine-ai-entry-strategy");
 const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles, buildFeatures,
   resolveModelSide, resolveConsensusSide, assessIndependentRiskModel, assessEntryRiskEvidence,
   detectContrarianSignal, isContrarianConflict, observedPivotExitDistances, calculateWeightedRoleScore, compareNineAICandidates
 } = require("./nine-ai-strategy");
+
+// FenixAI bootstrap rules are active only before the first native policy.
+assert.equal(fenixBootstrapSide({ rsi: 29.9, macdHistogram: 0.01 }), "LONG");
+assert.equal(fenixBootstrapSide({ rsi: 70.1, macdHistogram: -0.01 }), "SHORT");
+assert.equal(fenixBootstrapSide({ rsi: 30, macdHistogram: 0.01 }), null);
+assert.equal(fenixBootstrapSide({ rsi: 75, macdHistogram: 0 }), null);
+const bootstrapDecision = selectEntryDecision({
+  activeNativePolicyCount: 0, features: { rsi: 25, macdHistogram: 0.5 }
+});
+assert.equal(bootstrapDecision.source, "FENIXAI_BOOTSTRAP");
+assert.equal(bootstrapDecision.side, "LONG");
+const nativeDecision = selectEntryDecision({
+  activeNativePolicyCount: 1,
+  nativePolicyDecision: { ready: true, allowed: true, side: "SHORT", reason: "VALIDATED_DATA_DERIVED_POLICY_MATCH" },
+  // A valid FenixAI LONG setup must not override the native policy.
+  features: { rsi: 25, macdHistogram: 0.5 }
+});
+assert.equal(nativeDecision.source, "NINE_AI_NATIVE");
+assert.equal(nativeDecision.side, "SHORT");
+const nativeWait = selectEntryDecision({
+  activeNativePolicyCount: 1,
+  nativePolicyDecision: { ready: false, allowed: false, reason: "NO_VALIDATED_DATA_DERIVED_POLICY" },
+  features: { rsi: 25, macdHistogram: 0.5 }
+});
+assert.equal(nativeWait.source, "NINE_AI_NATIVE");
+assert.equal(nativeWait.side, null, "never fall back to FenixAI after native activation");
 
 assert.equal(ROLE_NAMES.length, 9);
 assert.equal(new Set(ROLE_NAMES).size, 9);
@@ -68,6 +95,7 @@ assert.ok(contextFeatures.candleBodyRatio >= -1 && contextFeatures.candleBodyRat
 assert.ok(contextFeatures.upperWickRatio >= 0 && contextFeatures.upperWickRatio <= 1);
 assert.ok(contextFeatures.lowerWickRatio >= 0 && contextFeatures.lowerWickRatio <= 1);
 assert.ok(Number.isFinite(contextFeatures.breakoutStrength));
+assert.ok(Number.isFinite(contextFeatures.macdHistogram), "Fenix bootstrap MACD histogram must be available");
 assert.ok(contextFeatures.structurePosition >= -1 && contextFeatures.structurePosition <= 1);
 assert.ok(Number.isFinite(contextFeatures.roomToResistanceAtr));
 assert.ok(Number.isFinite(contextFeatures.roomToSupportAtr));
