@@ -59,6 +59,7 @@ assert.equal(extended.validated, true);
 assert.equal(extended.veto, true);
 assert.ok(extended.testMeanR < 0);
 assert.ok(extended.upliftR < -0.12);
+assert.ok(extended.comparisonCount > 1, "validation must account for the entire generated search family");
 assert.ok(extended.adjustment < 0, "validated harmful strategies must lower live rank by their measured edge");
 
 const insufficient = adaptation.buildPolicies(rows.slice(0, 30));
