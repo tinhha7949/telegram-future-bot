@@ -44,8 +44,8 @@ assert.equal(research.assessLive({ marketRegime: "TREND_UP" }, "LONG").bonus, 0)
   const policies = { async createIndex() {}, find() { return makeCursor([]); } };
   const db = { collection(name) {
     if (name === "nine_ai_decision_journal") return journal;
-    if (name === "nine_ai_decision_research_reports") return reports;
-    if (name === "nine_ai_decision_research_policies") return policies;
+    if (name === "nine_ai_autonomous_decision_reports") return reports;
+    if (name === "nine_ai_decision_policies") return policies;
     throw new Error("Unexpected collection: " + name);
   } };
   await research.initialize(db);
