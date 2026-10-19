@@ -7,6 +7,7 @@
 const JOURNAL = "nine_ai_decision_journal";
 const POLICIES = "nine_ai_data_derived_consensus_policies";
 const REPORTS = "nine_ai_data_derived_consensus_reports";
+const HANDOFF = "nine_ai_strategy_handoff_state";
 const MAX_ROWS = 10000;
 const MIN_TRAIN = 40;
 const MIN_TEST = 20;
@@ -15,6 +16,8 @@ const MAX_ATOMS = 64;
 let journal = null;
 let policyCollection = null;
 let reportCollection = null;
+let handoffCollection = null;
+let handoffActivated = false;
 let activePolicies = [];
 let running = false;
 
@@ -269,6 +272,9 @@ async function initialize(db) {
   journal = db.collection(JOURNAL);
   policyCollection = db.collection(POLICIES);
   reportCollection = db.collection(REPORTS);
+  handoffCollection = db.collection(HANDOFF);
+  const savedHandoff = await handoffCollection.findOne({ _id: "native-policy-handoff" });
+  handoffActivated = Boolean(savedHandoff?.activatedAt);
   // Reuse an equivalent index regardless of its legacy name. Older deployments
   // may still have the previous consensus index name, and MongoDB rejects a
   // second index with the same key pattern under a different name.
@@ -281,7 +287,15 @@ async function initialize(db) {
   }
   await policyCollection.createIndex({ regime: 1, status: 1 }, { name: "nine_ai_consensus_active" });
   activePolicies = await policyCollection.find({ status: "ACTIVE" }).toArray();
-  return { ready: true, activePolicies: activePolicies.length };
+  if (activePolicies.length > 0) {
+    handoffActivated = true;
+    await handoffCollection.updateOne(
+      { _id: "native-policy-handoff" },
+      { $setOnInsert: { activatedAt: new Date(), reason: "ACTIVE_VALIDATED_NATIVE_POLICY_FOUND_AT_STARTUP" } },
+      { upsert: true }
+    );
+  }
+  return { ready: true, activePolicies: activePolicies.length, handoffActivated };
 }
 
 async function runResearchCycle({ now = new Date() } = {}) {
@@ -301,6 +315,14 @@ async function runResearchCycle({ now = new Date() } = {}) {
       await policyCollection.updateOne({ policyId: policy.policyId }, { $set: stored }, { upsert: true });
     }
     activePolicies = await policyCollection.find({ status: "ACTIVE" }).toArray();
+    if (activePolicies.length > 0) {
+      handoffActivated = true;
+      await handoffCollection.updateOne(
+        { _id: "native-policy-handoff" },
+        { $setOnInsert: { activatedAt: new Date(now), reason: "VALIDATED_NATIVE_POLICY_ACTIVATED" } },
+        { upsert: true }
+      );
+    }
     const report = { createdAt: new Date(now), status: "COMPLETED", rows: learned.rows,
       qualifiedPolicies: learned.policies.length, regimes: learned.reports,
       researchSemantics: "HYPOTHETICAL_FORWARD_CLOSES_NOT_EXECUTED_PNL",
@@ -337,7 +359,8 @@ function assessLive(roles, regime, rankScore, features = {}) {
   return assessPolicy(roles, policy, rankScore, features);
 }
 
-function status() { return { initialized: Boolean(journal), activePolicies: activePolicies.length, policies: activePolicies }; }
+function status() { return { initialized: Boolean(journal), activePolicies: activePolicies.length,
+  handoffActivated, policies: activePolicies }; }
 
 module.exports = { MIN_TRAIN, MIN_TEST, MAX_CONDITION_COMPLEXITY, votes, normalizeRows, candidateValues, selectSide,
   evaluate, learnPolicies, initialize, runResearchCycle, assessPolicy, assessLive, status };
