@@ -28,7 +28,7 @@ assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "EXTENDED
 assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "LOW_VOLUME"), true);
 
 const rows = [];
-for (let i = 0; i < 100; i++) {
+for (let i = 0; i < 200; i++) {
   rows.push(trade(i, true, "LOSS"));
   rows.push(trade(1000 + i, false, "WIN"));
 }
