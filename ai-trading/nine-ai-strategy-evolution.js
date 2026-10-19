@@ -189,3 +189,4 @@ module.exports = {
   buildPerformance, estimateEdge, compareCandidates, rankCandidates, initialize,
   refreshPerformance, getStatus
 };
+
