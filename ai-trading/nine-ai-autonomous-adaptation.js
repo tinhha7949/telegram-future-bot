@@ -71,7 +71,7 @@ function ruleMatches(features, rule, params = {}) {
        (f.side === "SHORT" && f.extension < 0 && f.rsi <= 100 - rsiThreshold));
   }
   if (rule === "OVERBOUGHT_LONG") return f.side === "LONG" && f.rsi !== null && f.rsi >= num(params.rsiThreshold, 70);
-  if (rule === "OVERSOLD_SHORT") return f.side === "SHORT" && f.rsi !== null && f.rsi <= 100 - num(params.rsiThreshold, 70);
+  if (rule === "OVERSOLD_SHORT") return f.side === "SHORT" && f.rsi !== null && f.rsi <= num(params.rsiThreshold, 30);
   if (rule === "WEAK_ENTRY_QUALITY") {
     const q = f.side === "LONG" ? f.longQuality : f.side === "SHORT" ? f.shortQuality : f.entryQuality;
     return q !== null && q < num(params.qualityThreshold, 50);
