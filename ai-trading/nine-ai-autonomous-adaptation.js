@@ -101,9 +101,9 @@ function normalizeTrade(t) {
     closedAt, realizedR, features };
 }
 
-function evaluateRule(rows, rule, side, regime) {
+function evaluateRule(rows, rule, params, side, regime) {
   const matching = rows.filter(r => r.features.side === side && r.features.regime === regime &&
-    ruleMatches(r.features, rule)).sort((a, b) => a.closedAt - b.closedAt);
+    ruleMatches(r.features, rule, params)).sort((a, b) => a.closedAt - b.closedAt);
   if (matching.length < MIN_TRAIN + MIN_TEST) return null;
   const split = Math.floor(matching.length * 0.7);
   const train = matching.slice(0, split);
