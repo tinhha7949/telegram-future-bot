@@ -91,7 +91,13 @@ function normalizeTrade(t) {
   if (!["WIN", "LOSS", "BREAKEVEN", "BE"].includes(result)) return null;
   const closedAt = new Date(t.closedAt || t.updatedAt || t.exitTime || 0);
   if (!Number.isFinite(closedAt.getTime()) || closedAt.getTime() <= 0) return null;
-  const riskBudget = num(t.riskDetail?.riskBudget ?? t.risk);
+  const quantity = num(t.quantity);
+  const initialRisk = num(t.initialRisk ?? t.riskDetail?.initialRisk);
+  const stopDefinedRisk = quantity !== null && initialRisk !== null ? quantity * initialRisk : null;
+  const storedActualRisk = num(t.finalRisk);
+  const riskBudget = stopDefinedRisk > 0 ? stopDefinedRisk
+    : storedActualRisk > 0 ? storedActualRisk
+      : num(t.riskDetail?.riskBudget ?? t.risk);
   const pnl = num(t.pnl ?? t.realizedPnl);
   const realizedR = num(t.realizedR, riskBudget > 0 && pnl !== null ? pnl / riskBudget : null);
   if (realizedR === null) return null;
