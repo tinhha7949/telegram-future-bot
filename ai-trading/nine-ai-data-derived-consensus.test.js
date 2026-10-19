@@ -55,4 +55,66 @@ assert.equal(consensus.assessPolicy(featureRows[1].roles, featureLearned.policie
 assert.equal(consensus.assessPolicy(featureRows[0].roles, featureLearned.policies[0],
   featureLearned.policies[0].minimumRank, featureRows[0].features).allowed, false);
 
+const interactionRows = Array.from({ length: 360 }, (_, i) => {
+  const x = i % 2;
+  const y = Math.floor(i / 2) % 2;
+  const winsOnlyWhenBothConditionsMatch = x === 1 && y === 1;
+  const result = winsOnlyWhenBothConditionsMatch ? 1 : -1;
+  return {
+    symbol: "I" + (i % 12), signalTime: Date.UTC(2025, 0, 1) + i * 4 * 60 * 60 * 1000,
+    scannedAt: Date.UTC(2025, 0, 1) + i * 4 * 60 * 60 * 1000,
+    marketRegime: "INTERACTION_REGIME", rankScore: 70, outcomeStatus: "EVALUATED",
+    roles: roleNames.map(name => ({ name, side: "WAIT" })), features: { patternX: x, patternY: y },
+    evaluations: { "4": { longNetR: result, shortNetR: -1 },
+      "16": { longNetR: result, shortNetR: -1 } }
+  };
+});
+const interactionLearned = consensus.learnPolicies(interactionRows);
+assert.equal(interactionLearned.policies.length, 1,
+  "the researcher should discover an out-of-sample profitable multi-feature condition");
+const interactionPolicy = interactionLearned.policies[0];
+assert.equal(interactionPolicy.type, "FEATURE_RULE");
+assert.equal(interactionPolicy.conditions.length, 2,
+  "the learned strategy should combine predicates when neither vote rules nor a single feature is sufficient");
+assert.equal(interactionPolicy.conditionMode, "AND");
+assert.ok(interactionPolicy.test.lowerBoundR > 0);
+assert.equal(consensus.assessPolicy(roleNames.map(name => ({ name, side: "WAIT" })),
+  interactionPolicy, 70, { patternX: 1, patternY: 1 }).side, "LONG");
+assert.equal(consensus.assessPolicy(roleNames.map(name => ({ name, side: "WAIT" })),
+  interactionPolicy, 70, { patternX: 1, patternY: 0 }).allowed, false);
+
+const mixedBooleanPolicy = { type: "FEATURE_RULE", side: "SHORT", minimumRank: -Infinity,
+  conditionTree: { operator: "OR", children: [
+    { operator: "AND", conditions: [
+      { feature: "a", operator: "gte", threshold: 1 },
+      { feature: "b", operator: "gte", threshold: 1 }
+    ] },
+    { operator: "AND", conditions: [{ feature: "c", operator: "lte", threshold: 0 }] }
+  ] } };
+assert.equal(consensus.selectSide({ rank: 50, features: { a: 1, b: 1, c: 1 } }, mixedBooleanPolicy), "SHORT",
+  "live policy evaluation should support nested mixed AND/OR condition trees");
+assert.equal(consensus.selectSide({ rank: 50, features: { a: 1, b: 0, c: 1 } }, mixedBooleanPolicy), null);
+
+const threeWayRows = Array.from({ length: 1200 }, (_, i) => {
+  const a = i % 2;
+  const b = Math.floor(i / 2) % 2;
+  const c = Math.floor(i / 4) % 2;
+  const winsOnlyWhenAllThreeMatch = a === 1 && b === 1 && c === 1;
+  const result = winsOnlyWhenAllThreeMatch ? 1 : -1;
+  return {
+    symbol: "T" + (i % 10), signalTime: Date.UTC(2025, 0, 1) + i * 4 * 60 * 60 * 1000,
+    scannedAt: Date.UTC(2025, 0, 1) + i * 4 * 60 * 60 * 1000,
+    marketRegime: "THREE_WAY_REGIME", rankScore: 70, outcomeStatus: "EVALUATED",
+    roles: roleNames.map(name => ({ name, side: "WAIT" })), features: { regimeA: a, regimeB: b, regimeC: c },
+    evaluations: { "4": { longNetR: result, shortNetR: -1 },
+      "16": { longNetR: result, shortNetR: -1 } }
+  };
+});
+const threeWayLearned = consensus.learnPolicies(threeWayRows);
+assert.equal(threeWayLearned.policies.length, 1,
+  "the search depth should grow with training evidence to discover higher-order setups");
+assert.equal(threeWayLearned.policies[0].conditions.length, 3);
+assert.ok(threeWayLearned.reports[0].maximumConditionComplexitySearched >= 3);
+assert.ok(threeWayLearned.policies[0].test.lowerBoundR > 0);
+
 console.log("nine-ai-data-derived-consensus.test.js: OK");

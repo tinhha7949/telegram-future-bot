@@ -10,6 +10,8 @@ const REPORTS = "nine_ai_data_derived_consensus_reports";
 const MAX_ROWS = 10000;
 const MIN_TRAIN = 40;
 const MIN_TEST = 20;
+const MAX_CONDITION_COMPLEXITY = 8;
+const MAX_ATOMS = 64;
 let journal = null;
 let policyCollection = null;
 let reportCollection = null;
@@ -45,7 +47,9 @@ function normalizeRows(source) {
     const normalized = { symbol: String(row.symbol || "UNKNOWN"), signalTime: time,
       scannedAt: new Date(row.scannedAt || time).getTime(), regime, rank,
       long: counts.LONG, short: counts.SHORT,
-      features: { ...(row.features || {}), ...(row.windowFeatures || {}) },
+      features: { ...(row.features || {}), ...(row.windowFeatures || {}),
+        longVotes: counts.LONG, shortVotes: counts.SHORT,
+        voteMargin: counts.LONG - counts.SHORT },
       longR: average(outcomes.slice(0, 2)), shortR: average(outcomes.slice(2)) };
     const key = normalized.symbol + ":" + time;
     const previous = latest.get(key);
@@ -75,7 +79,9 @@ function candidateValues(sourceValues) {
 
 function selectSide(row, policy) {
   if (policy.type === "FEATURE_RULE") {
-    if (row.rank < policy.minimumRank || !matchesConditions(row.features, policy.conditions)) return null;
+    if (row.rank < policy.minimumRank || !matchesConditionTree(row.features, policy.conditionTree || {
+      operator: policy.conditionMode || "AND", conditions: policy.conditions || []
+    })) return null;
     return policy.side;
   }
   const long = row.long >= policy.minimumVotes && row.long - row.short >= policy.minimumMargin;
@@ -92,6 +98,17 @@ function matchesConditions(features = {}, conditions = []) {
     return condition.operator === "gte" ? value >= condition.threshold :
       condition.operator === "lte" ? value <= condition.threshold : false;
   });
+}
+
+function matchesConditionTree(features = {}, tree = {}) {
+  if (Array.isArray(tree.conditions)) {
+    if (!tree.conditions.length) return false;
+    const results = tree.conditions.map(condition => matchesConditions(features, [condition]));
+    return tree.operator === "OR" ? results.some(Boolean) : results.every(Boolean);
+  }
+  return Array.isArray(tree.children) && tree.children.length > 0 &&
+    (tree.operator === "OR" ? tree.children.some(child => matchesConditionTree(features, child))
+      : tree.children.every(child => matchesConditionTree(features, child)));
 }
 
 function evaluate(rows, policy, confidenceMultiplier = 1.96) {
@@ -136,39 +153,111 @@ function learnPolicies(sourceRows) {
     for (const feature of featureNames) {
       const thresholds = candidateValues(train.map(row => number(row.features[feature])).filter(Number.isFinite));
       for (const threshold of thresholds) for (const operator of ["gte", "lte"])
-        for (const side of ["LONG", "SHORT"]) featureGrid.push({ type: "FEATURE_RULE", side,
-          conditions: [{ feature, operator, threshold }] });
+        featureGrid.push({ feature, operator, threshold });
     }
-    const comparisonCount = Math.max(1, voteLimits.length * margins.length * ranks.length + featureGrid.length * ranks.length);
+    // Keep a deterministic, data-ranked atom pool, then compose those atoms
+    // into multi-condition AND/OR genomes. The grammar is intentionally data
+    // only: it can invent predicates and combinations without executing code.
+    const atomScored = featureGrid.map(atom => {
+      const picked = train.filter(row => matchesConditions(row.features, [atom]));
+      const support = picked.length;
+      // Atom ordering favors features that partition outcomes, including
+      // interactions whose individual edge is weak.
+      const longShift = (average(picked.map(row => row.longR)) || 0) - (average(train.map(row => row.longR)) || 0);
+      const shortShift = (average(picked.map(row => row.shortR)) || 0) - (average(train.map(row => row.shortR)) || 0);
+      const partitionEdge = Math.max(Math.abs(longShift), Math.abs(shortShift));
+      return { atom, support, partitionEdge };
+    }).filter(item => item.support >= MIN_TRAIN && item.support <= train.length * 0.95)
+      .sort((a, b) => b.partitionEdge - a.partitionEdge || b.support - a.support)
+      .slice(0, MAX_ATOMS);
+    const diverseAtoms = [];
+    const perFeature = new Map();
+    for (const item of atomScored) {
+      const count = perFeature.get(item.atom.feature) || 0;
+      if (count >= 3) continue;
+      perFeature.set(item.atom.feature, count + 1);
+      diverseAtoms.push(item);
+    }
+    const atoms = diverseAtoms.slice(0, MAX_ATOMS).map(item => item.atom);
+    const featureGenomes = new Map();
+    const maxConditionsSearched = Math.min(MAX_CONDITION_COMPLEXITY,
+      Math.max(1, Math.floor(Math.log2(train.length / MIN_TRAIN))));
+    const addGenome = (conditions, operator, side, conditionTree = null) => {
+      if (!conditions.length || conditions.length > maxConditionsSearched) return null;
+      const ordered = [...conditions].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      const genome = { type: "FEATURE_RULE", side, minimumRank: -Infinity,
+        conditionMode: operator, conditions: ordered, ...(conditionTree ? { conditionTree } : {}) };
+      const key = JSON.stringify(genome);
+      if (!featureGenomes.has(key)) featureGenomes.set(key, genome);
+      return featureGenomes.get(key);
+    };
+    for (const atom of atoms) for (const side of ["LONG", "SHORT"]) addGenome([atom], "AND", side);
+    // Beam-expand observed predicates into longer, mixed AND/OR genomes.
+    // Search depth grows with the amount of independent training evidence,
+    // up to a compute-bounded maximum; the trading rules themselves come
+    // from observed feature thresholds, not a catalogue of hand-written setups.
+    let beam = [...featureGenomes.values()].map(genome => ({ genome,
+      stats: evaluate(train, genome, 0) }))
+      .filter(item => item.stats.samples >= MIN_TRAIN)
+      .sort((a, b) => b.stats.expectancyR - a.stats.expectancyR).slice(0, 48);
+    for (let depth = 2; depth <= maxConditionsSearched && beam.length; depth++) {
+      const priorSize = featureGenomes.size;
+      for (const { genome } of beam) for (const atom of atoms) {
+        if (genome.conditions.some(condition => JSON.stringify(condition) === JSON.stringify(atom))) continue;
+        const parent = genome.conditionTree || { operator: genome.conditionMode, conditions: genome.conditions };
+        const leaf = { operator: "AND", conditions: [atom] };
+        for (const operator of ["AND", "OR"]) for (const side of ["LONG", "SHORT"])
+          addGenome([...genome.conditions, atom], operator, side,
+            { operator, children: [parent, leaf] });
+      }
+      const generation = [...featureGenomes.values()].slice(priorSize);
+      beam = generation.map(genome => ({ genome, stats: evaluate(train, genome, 0) }))
+        .filter(item => item.stats.samples >= MIN_TRAIN)
+        .sort((a, b) => b.stats.expectancyR - a.stats.expectancyR ||
+          b.stats.totalR - a.stats.totalR).slice(0, 48);
+    }
+    featureGrid.length = 0;
+    featureGrid.push(...featureGenomes.values());
+    const comparisonCount = Math.max(1, voteLimits.length * margins.length * ranks.length + featureGrid.length);
     const confidenceMultiplier = Math.sqrt(2 * Math.log(2 * comparisonCount / 0.01));
     const candidates = [];
     for (const minimumVotes of voteLimits) for (const minimumMargin of margins) for (const minimumRank of ranks) {
       const params = { minimumVotes, minimumMargin, minimumRank };
       const trainResult = evaluate(train, params, confidenceMultiplier);
       if (trainResult.samples < MIN_TRAIN || !(trainResult.lowerBoundR > 0)) continue;
-      const testResult = evaluate(test, params, confidenceMultiplier);
-      if (testResult.samples < MIN_TEST || !(testResult.lowerBoundR > 0)) continue;
-      candidates.push({ regime, ...params, train: trainResult, test: testResult });
+      candidates.push({ regime, type: "VOTE_GATE", ...params, train: trainResult });
     }
-    for (const genome of featureGrid) for (const minimumRank of ranks) {
+    const featureSeeds = featureGrid.map(genome => ({ genome,
+      stats: evaluate(train, { ...genome, minimumRank: -Infinity }, confidenceMultiplier) }))
+      .filter(item => item.stats.samples >= MIN_TRAIN)
+      .sort((a, b) => b.stats.expectancyR - a.stats.expectancyR ||
+        b.stats.lowerBoundR - a.stats.lowerBoundR).slice(0, 32);
+    for (const { genome } of featureSeeds) for (const minimumRank of ranks) {
       const params = { ...genome, minimumRank };
       const trainResult = evaluate(train, params, confidenceMultiplier);
       if (trainResult.samples < MIN_TRAIN || !(trainResult.lowerBoundR > 0)) continue;
-      const testResult = evaluate(test, params, confidenceMultiplier);
-      if (testResult.samples < MIN_TEST || !(testResult.lowerBoundR > 0)) continue;
-      candidates.push({ regime, ...params, train: trainResult, test: testResult });
+      candidates.push({ regime, ...params, train: trainResult });
     }
-    candidates.sort((a, b) => b.test.lowerBoundR - a.test.lowerBoundR ||
-      b.test.totalR - a.test.totalR || a.test.maxDrawdownR - b.test.maxDrawdownR);
-    const selected = candidates[0] || null;
+    candidates.sort((a, b) => b.train.lowerBoundR - a.train.lowerBoundR ||
+      b.train.totalR - a.train.totalR || a.train.maxDrawdownR - b.train.maxDrawdownR);
+    // Select from training data only, then evaluate exactly one winner on the
+    // untouched chronological holdout to avoid repeatedly fishing the test set.
+    const proposed = candidates[0] || null;
+    const testResult = proposed ? evaluate(test, proposed, confidenceMultiplier) : null;
+    const selected = testResult && testResult.samples >= MIN_TEST && testResult.lowerBoundR > 0
+      ? { ...proposed, test: testResult } : null;
     reports.push({ regime, totalRows: group.length, trainRows: train.length,
       testRows: test.length, candidatesTested: comparisonCount,
+      maximumConditionComplexitySearched: maxConditionsSearched,
       qualifiedCandidates: candidates.length, selected });
     if (selected) policies.push({ policyId: "data-consensus:" + regime,
-      mode: selected.type === "FEATURE_RULE" ? "OBSERVED_FEATURE_GENOME_CHRONOLOGICAL_HOLDOUT"
+      mode: selected.type === "FEATURE_RULE" ? "OBSERVED_COMPOSED_FEATURE_GENOME_CHRONOLOGICAL_HOLDOUT"
         : "OBSERVED_VOTE_AND_RANK_THRESHOLDS_CHRONOLOGICAL_HOLDOUT",
       status: "ACTIVE", regime, type: selected.type || "VOTE_GATE", side: selected.side || null,
-      conditions: selected.conditions || [], minimumVotes: selected.minimumVotes ?? null,
+      conditions: selected.conditions || [], conditionMode: selected.conditionMode || null,
+      conditionTree: selected.type === "FEATURE_RULE" ? (selected.conditionTree || {
+        operator: selected.conditionMode || "AND", conditions: selected.conditions || [] }) : null,
+      minimumVotes: selected.minimumVotes ?? null,
       minimumMargin: selected.minimumMargin ?? null, minimumRank: selected.minimumRank,
       train: selected.train, test: selected.test, samples: group.length });
   }
@@ -220,7 +309,9 @@ function assessPolicy(roles, policy, rankScore, features = {}) {
     if (["Decision AI", "Risk Manager AI"].includes(role?.name)) continue;
     if (role?.side === "LONG" || role?.side === "SHORT") row[role.side === "LONG" ? "long" : "short"]++;
   }
-  const side = selectSide({ ...row, rank: policy.minimumRank }, policy);
+  const liveFeatures = { ...features, longVotes: row.long, shortVotes: row.short,
+    voteMargin: row.long - row.short, rankScore: number(rankScore) ?? 0 };
+  const side = selectSide({ ...row, features: liveFeatures, rank: policy.minimumRank }, policy);
   const rankAllowed = rankScore == null ? null : number(rankScore) >= Number(policy.minimumRank);
   return { ready: true, allowed: Boolean(side), side,
     rankAllowed,
@@ -239,5 +330,5 @@ function assessLive(roles, regime, rankScore, features = {}) {
 
 function status() { return { initialized: Boolean(journal), activePolicies: activePolicies.length, policies: activePolicies }; }
 
-module.exports = { MIN_TRAIN, MIN_TEST, votes, normalizeRows, candidateValues, selectSide,
+module.exports = { MIN_TRAIN, MIN_TEST, MAX_CONDITION_COMPLEXITY, votes, normalizeRows, candidateValues, selectSide,
   evaluate, learnPolicies, initialize, runResearchCycle, assessPolicy, assessLive, status };
