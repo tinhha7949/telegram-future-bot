@@ -29,6 +29,17 @@ assert.equal(adaptation.normalizeTrade(matched).realizedR, -0.8,
 assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "EXTENDED_MOMENTUM_ENTRY"), true);
 assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "LOW_VOLUME"), true);
 
+const learnedGrid = adaptation.buildRuleGrid([
+  adaptation.normalizeTrade(trade(10, true, "LOSS")),
+  adaptation.normalizeTrade(trade(11, false, "WIN"))
+]);
+assert.ok(learnedGrid.some(item => item.rule === "EXTENDED_MOMENTUM_ENTRY" &&
+  item.params.extensionThreshold === 2 && item.params.rsiThreshold === 78),
+"candidate thresholds must be mined from observed training values");
+assert.ok(learnedGrid.some(item => item.rule === "LOW_VOLUME" && item.params.volumeThreshold === 1.2));
+assert.ok(!learnedGrid.some(item => Object.values(item.params).includes(65)),
+  "the optimizer must not require the old hand-authored RSI cutoff");
+
 const rows = [];
 for (let i = 0; i < 200; i++) {
   rows.push(trade(i, true, "LOSS"));
@@ -46,4 +57,4 @@ assert.ok(extended.upliftR < -0.12);
 const insufficient = adaptation.buildPolicies(rows.slice(0, 30));
 assert.equal(insufficient.policies.length, 0, "small samples must not create live policies");
 
-console.log("nine-ai-autonomous-adaptation.test.js: OK");
+console.log("nine-ai-autonomous-adaptation.test.js: OK (data-derived thresholds and actual-risk normalization)");
