@@ -66,5 +66,14 @@ const multiAgentBootstrap = selectEntryDecision({
 assert.equal(multiAgentBootstrap.source, "FENIXAI_BOOTSTRAP");
 assert.equal(multiAgentBootstrap.side, "SHORT");
 assert.equal(multiAgentBootstrap.confidence, 74);
+const fullFusionWait = selectEntryDecision({
+  activeNativePolicyCount: 0,
+  fenixDecision: { ready: true, side: null, confidence: 0, reason: "FENIXAI_FUSION_BELOW_THRESHOLD" },
+  // RSI/MACD alone would have produced LONG, but must not bypass the full fusion threshold.
+  features: { rsi: 20, macdHistogram: 1 }
+});
+assert.equal(fullFusionWait.source, "FENIXAI_BOOTSTRAP");
+assert.equal(fullFusionWait.side, null);
+assert.equal(fullFusionWait.reason, "FENIXAI_FUSION_BELOW_THRESHOLD");
 
 console.log("NINE-AI entry strategy bootstrap/native handoff tests passed");
