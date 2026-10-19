@@ -138,13 +138,20 @@ assert.ok(threeWayLearned.policies[0].test.lowerBoundR > 0);
     async updateOne() { retiredOrUpdatedWithoutReplacement = true; }
   };
   const reportsCollection = { async insertOne() {} };
+  const handoffCollection = {
+    async findOne() { return null; },
+    async updateOne() {}
+  };
   const db = { collection(name) {
     if (name === "nine_ai_decision_journal") return journalCollection;
     if (name === "nine_ai_data_derived_consensus_policies") return policyCollection;
     if (name === "nine_ai_data_derived_consensus_reports") return reportsCollection;
+    if (name === "nine_ai_strategy_handoff_state") return handoffCollection;
     throw new Error("Unexpected collection: " + name);
   } };
   await consensus.initialize(db);
+  assert.equal(consensus.status().handoffActivated, true,
+    "an existing active native policy must latch the handoff at startup");
   assert.equal(journalIndexCreateCalls, 0, "an equivalent legacy index must be reused regardless of name");
   const cycle = await consensus.runResearchCycle({ now: new Date("2026-10-19T00:00:00Z") });
   assert.equal(cycle.activePolicies, 1);

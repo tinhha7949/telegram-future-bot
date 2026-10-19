@@ -21,12 +21,17 @@ function fenixBootstrapSide(features = {}) {
 
 function selectEntryDecision({
   activeNativePolicyCount = 0,
+  nativeHandoffActivated = false,
   nativePolicyDecision = {},
+  fenixDecision = null,
   features = {}
 } = {}) {
   const activeCount = Number(activeNativePolicyCount);
-  const nativeMode = Number.isFinite(activeCount) && activeCount > 0;
+  const nativeMode = Boolean(nativeHandoffActivated) ||
+    (Number.isFinite(activeCount) && activeCount > 0);
 
+  // This is deliberately one-way. Once a native policy has ever been active,
+  // a later missing/inapplicable policy means WAIT, never FenixAI fallback.
   if (nativeMode) {
     const side = nativePolicyDecision?.ready && nativePolicyDecision?.allowed &&
       ["LONG", "SHORT"].includes(nativePolicyDecision.side)
@@ -36,17 +41,23 @@ function selectEntryDecision({
       side,
       reason: side
         ? nativePolicyDecision.reason || "NATIVE_POLICY_MATCH"
-        : nativePolicyDecision.reason || "NATIVE_POLICY_NOT_APPLICABLE",
+        : nativePolicyDecision.reason ||
+          (nativeHandoffActivated && !(activeCount > 0)
+            ? "NATIVE_HANDOFF_LATCHED_NO_ACTIVE_POLICY" : "NATIVE_POLICY_NOT_APPLICABLE"),
       policyId: nativePolicyDecision?.policyId || null
     };
   }
 
-  const side = fenixBootstrapSide(features);
+  const side = fenixDecision
+    ? (["LONG", "SHORT"].includes(fenixDecision.side) ? fenixDecision.side : null)
+    : fenixBootstrapSide(features);
   return {
     source: "FENIXAI_BOOTSTRAP",
     side,
-    reason: side ? "FENIXAI_RSI_MACD_ENTRY" : "FENIXAI_NO_ENTRY_SETUP",
-    policyId: null
+    reason: fenixDecision?.reason || (side ? "FENIXAI_RSI_MACD_ENTRY" : "FENIXAI_NO_ENTRY_SETUP"),
+    policyId: null,
+    confidence: Number.isFinite(Number(fenixDecision?.confidence)) ? Number(fenixDecision.confidence) : null,
+    details: fenixDecision || null
   };
 }
 

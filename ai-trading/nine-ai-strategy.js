@@ -15,6 +15,7 @@ const rewardModel = require("./nine-ai-reward-model");
 const autonomousDeployment = require("./nine-ai-autonomous-deployment");
 const autonomousConsensus = require("./nine-ai-data-derived-consensus");
 const entryStrategy = require("./nine-ai-entry-strategy");
+const fenixBootstrap = require("./nine-ai-fenix-bootstrap");
 
 const ROLE_NAMES = [
   "Technical Analyst AI",
@@ -565,22 +566,30 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       falseBreakoutRisk: f.falseBreakoutRisk }
   );
   const nativePolicyStatus = autonomousConsensus.status();
+  const nativeMode = Boolean(nativePolicyStatus.handoffActivated) || nativePolicyStatus.activePolicies > 0;
+  // Critical one-way boundary: do not even calculate FenixAI features/signals
+  // after the persisted NINE-AI native handoff has activated.
+  const fenixDecision = nativeMode ? null : fenixBootstrap.decideFenixBootstrap(candles, f);
   const entryDecision = entryStrategy.selectEntryDecision({
     activeNativePolicyCount: nativePolicyStatus.activePolicies,
+    nativeHandoffActivated: nativePolicyStatus.handoffActivated,
     nativePolicyDecision: dataDerivedConsensus,
+    fenixDecision,
     features: { rsi: f.rsi, macdHistogram: f.macdHistogram }
   });
   const consensusSide = dataDerivedConsensus.ready && dataDerivedConsensus.allowed
     ? dataDerivedConsensus.side : null;
   const decisionModel = independent.get("decision");
-  // Native NINE-AI policies take exclusive control once any validated policy is
-  // active. Until then, the deterministic FenixAI RSI/MACD entry rule bootstraps
-  // trading while the native research pipeline gathers and validates outcomes.
+  // Before native policy activation, FenixAI's multi-component bootstrap is
+  // the sole entry-direction source. After activation, NINE-AI's own policy
+  // is the sole source and FenixAI is not evaluated or used as fallback.
   const side = resolveConsensusSide(entryDecision.side);
   const chosenVotes = side === "LONG" ? longVotes : side === "SHORT" ? shortVotes : [];
-  const confidence = chosenVotes.length
-    ? Math.round(avg(chosenVotes.map(v => v.confidence)) * Math.min(1, chosenVotes.length / 5))
-    : entryDecision.source === "FENIXAI_BOOTSTRAP" && side ? 60 : 0;
+  const confidence = entryDecision.source === "FENIXAI_BOOTSTRAP"
+    ? Math.max(0, Math.min(95, Number(entryDecision.confidence) || 0))
+    : chosenVotes.length
+      ? Math.round(avg(chosenVotes.map(v => v.confidence)) * Math.min(1, chosenVotes.length / 5))
+      : 0;
   const decisionConfidence = modelConfidence("decision");
   roleResults.push({ name: ROLE_NAMES[7], side: side || "WAIT",
     confidence: decisionConfidence == null ? confidence : Math.min(confidence || decisionConfidence, decisionConfidence),
@@ -606,7 +615,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   if (!riskAllowed) return { ...abstain,
     reason: entryDecision.reason,
     roles: roleResults, candles: candles.length, features: summarize(f),
-    rankMetrics: { dataDerivedConsensus, entryStrategy: entryDecision } };
+    rankMetrics: { dataDerivedConsensus, entryStrategy: entryDecision,
+      fenixBootstrap: entryDecision.source === "FENIXAI_BOOTSTRAP" ? entryDecision.details : null } };
 
   // Observed pivots from the preceding 96 closed candles define the initial
   // price levels. Validated counterfactual research may replace these levels.
