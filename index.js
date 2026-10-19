@@ -27,8 +27,8 @@ function envNumber(name, fallback, min, max) {
 const TRADE_CONFIG = Object.freeze({
     riskPerTrade: envNumber("RISK_PER_TRADE", 0.05, 0.0001, 0.10),
     maxRiskPerTrade: envNumber("MAX_RISK_PER_TRADE", 0.05, 0.0001, 0.10),
-    maxPositionPercent: envNumber("MAX_POSITION_PERCENT", 1.0, 0.01, 1),
-    maxActivePositions: Math.round(envNumber("MAX_ACTIVE_POSITIONS", 20, 1, 50))
+    maxPositionPercent: envNumber("MAX_POSITION_PERCENT", 1.5, 0.01, 1),
+    maxActivePositions: Math.round(envNumber("MAX_ACTIVE_POSITIONS", 10, 1, 50))
 })
 let SYNCING_TIME = false
 let LAST_OFFSET_LOG = 0
