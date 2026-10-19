@@ -16,6 +16,10 @@ assert.equal(conservative.valid,true);
 assert.equal(conservative.exit,"SL"); // both SL and TP touched, assume stop first
 const variants = research.buildVariants({tradeId:"t1",side:"LONG",entry:100,sl:98,tp:104,entryTime:900000,realizedR:-1},candles);
 assert.ok(variants.some(v=>v.variant==="BASELINE"));
+assert.ok(variants.some(v=>v.variant==="TARGET_SCALE_0.90"),
+  "counterfactual research must include a tighter target when it remains inside existing RR bounds");
+assert.ok(!variants.some(v=>v.variant.startsWith("STOP_SCALE_")),
+  "a stop candidate outside the existing maximum RR bound must not be researched");
 assert.ok(variants.some(v=>v.variant==="OPPOSITE_SIDE"&&v.side==="SHORT"));
 assert.ok(variants.some(v=>v.variant==="DELAY_1_BAR"));
 assert.ok(!variants.some(v=>v.variant.startsWith("RISK_SCALE_")), "entry research must not learn alternative SL/TP distances");
