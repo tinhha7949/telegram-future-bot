@@ -269,7 +269,16 @@ async function initialize(db) {
   journal = db.collection(JOURNAL);
   policyCollection = db.collection(POLICIES);
   reportCollection = db.collection(REPORTS);
-  await journal.createIndex({ outcomeStatus: 1, signalTime: -1 }, { name: "nine_ai_decision_status_time" });
+  // Reuse an equivalent index regardless of its legacy name. Older deployments
+  // may still have the previous consensus index name, and MongoDB rejects a
+  // second index with the same key pattern under a different name.
+  const journalIndexes = await journal.listIndexes().toArray();
+  const hasJournalScanIndex = journalIndexes.some(index =>
+    JSON.stringify(index.key) === JSON.stringify({ outcomeStatus: 1, signalTime: -1 }));
+  if (!hasJournalScanIndex) {
+    await journal.createIndex({ outcomeStatus: 1, signalTime: -1 },
+      { name: "nine_ai_decision_status_time" });
+  }
   await policyCollection.createIndex({ regime: 1, status: 1 }, { name: "nine_ai_consensus_active" });
   activePolicies = await policyCollection.find({ status: "ACTIVE" }).toArray();
   return { ready: true, activePolicies: activePolicies.length };
