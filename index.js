@@ -4097,11 +4097,11 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
                 symbol: t.symbol, side: t.side, entry: Number(t.entry),
                 sl: Number(t.sl), tp: Number(t.tp), entryTime: Number(t.createdAt),
                 createdAt: Number(t.createdAt), closedAt: closed.closedAt,
-                realizedR: Number.isFinite(Number(closed.pnl)) && Number(t.riskDetail?.riskBudget ?? t.risk ?? 0) > 0 ? Number(closed.pnl) / Number(t.riskDetail?.riskBudget ?? t.risk) : null,
+                realizedR: Number.isFinite(Number(closed.pnl)) && getTradeActualRisk(t) > 0 ? Number(closed.pnl) / getTradeActualRisk(t) : null,
                 features: { ...(t.nineAiLearningFeatures || {}), ...(t.nineAiLearningContext || {}) },
                 feeRate: Number(t.notional) > 0 ? Number(closed.feesUSDT || 0) / Number(t.notional) : null,
-                feeR: Number(t.riskDetail?.riskBudget ?? t.risk ?? 0) > 0
-                    ? Number(closed.feesUSDT || 0) / Number(t.riskDetail?.riskBudget ?? t.risk) : null,
+                feeR: getTradeActualRisk(t) > 0
+                    ? Number(closed.feesUSDT || 0) / getTradeActualRisk(t) : null,
                 maxRR: Number(t.tradePlan?.maxRiskReward ?? MAX_NINE_AI_RR),
                 minRR: 0.79,
                 regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
