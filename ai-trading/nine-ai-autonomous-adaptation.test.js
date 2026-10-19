@@ -26,19 +26,24 @@ function trade(i, matched, outcome) {
 const matched = trade(1, true, "LOSS");
 assert.equal(adaptation.normalizeTrade(matched).realizedR, -0.8,
   "adaptive policy R must use quantity × stop distance, not configured risk budget");
-assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "EXTENDED_MOMENTUM_ENTRY"), true);
-assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "LOW_VOLUME"), true);
+assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "LEARNED_CONJUNCTION", {
+  conditions: [{ feature: "extensionAtr", operator: "gte", threshold: 2 }]
+}), true);
+assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "LEARNED_CONJUNCTION", {
+  conditions: [{ feature: "volumeRatio", operator: "lte", threshold: 0.5 }]
+}), true);
 
-const learnedGrid = adaptation.buildRuleGrid([
-  adaptation.normalizeTrade(trade(10, true, "LOSS")),
-  adaptation.normalizeTrade(trade(11, false, "WIN"))
-]);
-assert.ok(learnedGrid.some(item => item.rule === "EXTENDED_MOMENTUM_ENTRY" &&
-  item.params.extensionThreshold === 2 && item.params.rsiThreshold === 78),
-"candidate thresholds must be mined from observed training values");
-assert.ok(learnedGrid.some(item => item.rule === "LOW_VOLUME" && item.params.volumeThreshold === 1.2));
-assert.ok(!learnedGrid.some(item => Object.values(item.params).includes(65)),
-  "the optimizer must not require the old hand-authored RSI cutoff");
+const learnedGrid = adaptation.buildRuleGrid(Array.from({ length: 40 }, (_, i) =>
+  adaptation.normalizeTrade(trade(i + 10, i % 2 === 0, i % 2 === 0 ? "LOSS" : "WIN"))));
+assert.ok(learnedGrid.some(item => item.rule === "LEARNED_CONJUNCTION" &&
+  item.params.conditions.some(c => c.feature === "extensionAtr" && c.threshold === 2)),
+"candidate strategy predicates must be mined from observed feature values");
+assert.ok(learnedGrid.some(item => item.params.conditions.length === 2),
+  "strategy evolution must combine predicates into newly generated strategies");
+assert.ok(learnedGrid.every(item => item.rule === "LEARNED_CONJUNCTION"),
+  "strategy candidates must use the data-only learned rule grammar");
+assert.ok(adaptation.searchConfidenceZ(500) > adaptation.searchConfidenceZ(1),
+  "larger strategy searches must require stronger out-of-sample evidence");
 
 const rows = [];
 for (let i = 0; i < 200; i++) {
@@ -46,15 +51,18 @@ for (let i = 0; i < 200; i++) {
   rows.push(trade(1000 + i, false, "WIN"));
 }
 const built = adaptation.buildPolicies(rows);
-const extended = built.policies.find(p => p.rule === "EXTENDED_MOMENTUM_ENTRY" &&
-  p.side === "LONG" && p.regime === "TREND_UP");
+const extended = built.policies.find(p => p.rule === "LEARNED_CONJUNCTION" &&
+  p.side === "LONG" && p.regime === "TREND_UP" && p.params.conditions.some(c =>
+    c.feature === "extensionAtr" && c.operator === "gte" && c.threshold === 2));
 assert.ok(extended, "enough chronological samples should produce an evaluated policy");
 assert.equal(extended.validated, true);
 assert.equal(extended.veto, true);
 assert.ok(extended.testMeanR < 0);
 assert.ok(extended.upliftR < -0.12);
+assert.ok(extended.comparisonCount > 1, "validation must account for the entire generated search family");
+assert.ok(extended.adjustment < 0, "validated harmful strategies must lower live rank by their measured edge");
 
 const insufficient = adaptation.buildPolicies(rows.slice(0, 30));
 assert.equal(insufficient.policies.length, 0, "small samples must not create live policies");
 
-console.log("nine-ai-autonomous-adaptation.test.js: OK (data-derived thresholds and actual-risk normalization)");
+console.log("nine-ai-autonomous-adaptation.test.js: OK (evolved feature strategies and actual-risk normalization)");

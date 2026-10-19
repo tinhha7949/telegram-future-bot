@@ -7,6 +7,7 @@ const crypto = require("crypto");
 // veto a trade or trigger a "stand aside" rule.
 const COLLECTION = "nine_ai_decision_journal";
 const MAX_RECORDS = 5000;
+const MARKET_WINDOW_BARS = 96;
 const HORIZONS = [4, 16];
 const MIN_SAMPLES = 20;
 const MAX_LIVE_BONUS = 3;
@@ -34,6 +35,24 @@ function normalizeCandles(raw) {
     .filter((c,i,a) => i === 0 || c.time !== a[i-1].time);
 }
 
+function snapshotMarketWindow(raw, limit = MARKET_WINDOW_BARS, availableAt = Infinity) {
+  const candles = normalizeCandles(raw);
+  const byTime = new Map((Array.isArray(raw) ? raw : []).filter(Array.isArray)
+    .map(c => [num(c[0]), c]));
+  const cutoff = num(availableAt, Infinity);
+  return candles.filter(c => c.closeTime <= cutoff)
+    .slice(-Math.max(1, Number(limit) || MARKET_WINDOW_BARS)).map(c => {
+    const source = byTime.get(c.time);
+    return { time: c.time, closeTime: c.closeTime, open: c.open, high: c.high,
+      low: c.low, close: c.close,
+      volume: source ? num(source[5], null) : null,
+      quoteVolume: source ? num(source[7], null) : null,
+      tradeCount: source ? num(source[8], null) : null,
+      takerBuyBaseVolume: source ? num(source[9], null) : null,
+      takerBuyQuoteVolume: source ? num(source[10], null) : null };
+  });
+}
+
 function signalCandleIndex(candles, signalTime) {
   let idx = -1;
   for (let i = 0; i < candles.length; i++) {
@@ -53,7 +72,7 @@ function atrAt(candles, idx) {
   return ranges.length ? ranges.reduce((s,v) => s + v, 0) / ranges.length : NaN;
 }
 
-function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvidence = null }) {
+function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvidence = null, marketWindow = null }) {
   const d = decision || {};
   const metrics = d.rankMetrics || {};
   const features = metrics.features || d.features || null;
@@ -87,6 +106,9 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
     roleContributions: metrics.roleContributions || null,
     roles,
     features: features && typeof features === "object" ? { ...features } : null,
+    featureSchemaVersion: 1,
+    marketDataSchemaVersion: 1,
+    marketWindow: snapshotMarketWindow(marketWindow, MARKET_WINDOW_BARS, num(signalTime, Infinity)),
     marketRegime: regimeOf(features),
     learningEvidence,
     evaluations: {},
@@ -235,7 +257,8 @@ function positiveEvidenceBonus(meanR, standardError, sampleCount) {
   return Number(clamp(lowerConfidenceBound * 1.5 * sampleCount / (sampleCount + MIN_SAMPLES), 0, MAX_LIVE_BONUS).toFixed(3));
 }
 
-async function recordActualOutcome({ decisionKey, tradeId, realizedR, pnl, closedAt }) {
+async function recordActualOutcome({ decisionKey, tradeId, realizedR, pnl, closedAt,
+  symbol = null, side = null, entryExecution = null, exit = null, accounting = null }) {
   if (!collection) throw new Error("NINE_AI_DECISION_JOURNAL_NOT_INITIALIZED");
   if (!decisionKey || !Number.isFinite(Number(realizedR))) return { updated: false, reason: "INVALID_ACTUAL_OUTCOME" };
   const actualOutcome = {
@@ -243,7 +266,12 @@ async function recordActualOutcome({ decisionKey, tradeId, realizedR, pnl, close
     realizedR: Number(realizedR),
     pnl: Number.isFinite(Number(pnl)) ? Number(pnl) : null,
     closedAt: closedAt ? new Date(closedAt) : new Date(),
-    source: "CONFIRMED_CLOSED_EXCHANGE_TRADE"
+    source: "CONFIRMED_CLOSED_EXCHANGE_TRADE",
+    symbol: symbol ? String(symbol) : null,
+    side: side && ["LONG", "SHORT"].includes(side) ? side : null,
+    entryExecution: entryExecution && typeof entryExecution === "object" ? entryExecution : null,
+    exit: exit && typeof exit === "object" ? exit : null,
+    accounting: accounting && typeof accounting === "object" ? accounting : null
   };
   const result = await collection.updateOne({ decisionKey: String(decisionKey) }, {
     $set: { actualTrade: true, actualOutcome, actualOutcomeRecordedAt: new Date() }
@@ -291,5 +319,5 @@ function status() {
     minSamples: MIN_SAMPLES, horizons: [...HORIZONS], maxLiveBonus: MAX_LIVE_BONUS };
 }
 
-module.exports = { COLLECTION, MAX_RECORDS, HORIZONS, MIN_SAMPLES, normalizeCandles,
+module.exports = { COLLECTION, MAX_RECORDS, HORIZONS, MIN_SAMPLES, MARKET_WINDOW_BARS, normalizeCandles, snapshotMarketWindow,
   snapshotDecision, initialize, recordDecision, settleMatured, computeEvaluations, positiveEvidenceBonus, recordActualOutcome, assess, status };

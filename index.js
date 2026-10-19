@@ -53,6 +53,7 @@ const nineAiAutonomousDeployment = require("./ai-trading/nine-ai-autonomous-depl
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const nineAiDbRetention = require("./ai-trading/nine-ai-db-retention")
 const nineAiAutonomousAdaptation = require("./ai-trading/nine-ai-autonomous-adaptation")
+const { summarizeClosedTrade } = require("./ai-trading/nine-ai-execution-ledger")
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -277,7 +278,7 @@ async function safeFetch(url, options = {}, retry = 3){
     return null
 }
 function getTradeActualRisk(trade = {}) {
-  const quantity = Number(trade.quantity);
+  const quantity = Number(trade.actualQuantity ?? trade.entryExecution?.executedQuantity ?? trade.quantity);
   const initialRisk = Number(trade.initialRisk ?? trade.riskDetail?.initialRisk);
   const quantityRisk = quantity * initialRisk;
   if (Number.isFinite(quantityRisk) && quantityRisk > 0) return quantityRisk;
@@ -286,13 +287,36 @@ function getTradeActualRisk(trade = {}) {
   return Number(trade.riskDetail?.riskBudget ?? trade.risk ?? 0);
 }
 
+async function getTradeFundingIncome(symbol, startTime, endTime) {
+    if(!process.env.BINANCE_KEY || !process.env.BINANCE_SECRET) return null
+    try{
+        const params = new URLSearchParams({
+            symbol: String(symbol), incomeType: "FUNDING_FEE",
+            startTime: String(Number(startTime) || 0), endTime: String(Number(endTime) || Date.now()),
+            limit: "1000", recvWindow: "60000", timestamp: String(getTimestamp())
+        }).toString()
+        const signature = crypto.createHmac("sha256", process.env.BINANCE_SECRET).update(params).digest("hex")
+        const response = await safeFetch(
+            `https://fapi.binance.com/fapi/v1/income?${params}&signature=${signature}`,
+            { headers: { "X-MBX-APIKEY": process.env.BINANCE_KEY } }, 1
+        )
+        if(!response?.ok) return null
+        const rows = await response.json()
+        return Array.isArray(rows) ? rows : null
+    }catch(error){
+        console.log(`⚠️ FUNDING HISTORY UNAVAILABLE ${symbol}:`, error?.message || error)
+        return null
+    }
+}
+
 async function getClosedTradeResult(t){
 
     try{
 
         const trades = await binance.futuresUserTrades({
             symbol: t.symbol,
-            limit: 50,
+            startTime: Number(t.enteredAt || t.createdAt || 0),
+            limit: 1000,
             recvWindow: 20000
         })
 
@@ -300,49 +324,12 @@ async function getClosedTradeResult(t){
             return null
         }
 
-        // Chỉ lấy các fill có realized PnL (lệnh đóng vị thế)
-        const openTime = t.enteredAt || t.createdAt || 0
-
-const exits = trades.filter(x =>
-    Number(x.realizedPnl || 0) !== 0 &&
-    Number(x.time || 0) >= openTime
-)
-
-        if(exits.length === 0){
-            return null
-        }
-
-        // orderId của lệnh đóng mới nhất
-        const latestOrderId = exits.at(-1).orderId
-
-        // Gom toàn bộ fill của cùng order đó
-        const fills = exits.filter(x => x.orderId === latestOrderId)
-
-        const realizedPnl = exits.reduce((sum, x) => sum + Number(x.realizedPnl || 0), 0)
-        // Include commissions for every fill after entry in the learning reward.
-        const tradeFills = trades.filter(x => Number(x.time || 0) >= openTime)
-        // Commission values use commissionAsset. Only subtract USDT fees here;
-        // raw BNB amounts must never be subtracted from USDT-denominated PnL.
-        const commissionsUSDT = tradeFills.reduce((sum, x) =>
-            sum + (String(x.commissionAsset || "USDT").toUpperCase() === "USDT"
-                ? Math.abs(Number(x.commission || 0)) : 0), 0)
-        const pnl = realizedPnl - commissionsUSDT
-
-        const lastFill = fills.at(-1)
-        const exitQty = exits.reduce((sum, fill) => sum + Math.abs(Number(fill.qty || 0)), 0)
-        const exitNotional = exits.reduce((sum, fill) =>
-            sum + Math.abs(Number(fill.qty || 0)) * Number(fill.price || 0), 0)
-        const exitPrice = exitQty > 0 ? exitNotional / exitQty : Number(lastFill.price || 0)
-
-        return {
-            pnl,
-            grossRealizedPnl: realizedPnl,
-            feesUSDT: commissionsUSDT,
-            exitPrice,
-            exitQty,
-            exitOrderId: String(latestOrderId),
-            closedAt: Number(lastFill.time || Date.now())
-        }
+        const fundingRows = await getTradeFundingIncome(
+            t.symbol, t.enteredAt || t.createdAt || 0,
+            Math.max(...trades.filter(fill => Number(fill.time || 0) >= Number(t.enteredAt || t.createdAt || 0))
+                .map(fill => Number(fill.time || 0)), Date.now())
+        )
+        return summarizeClosedTrade(t, trades, fundingRows)
 
     }catch(e){
 
@@ -1670,6 +1657,10 @@ async function openPositionWithTPSL(trade, qty){
         return false
     }
 
+    const plannedEntry = Number(trade.entry ?? trade.price)
+    const plannedSL = Number(trade.sl)
+    const plannedTP = Number(trade.tp)
+
     const order =
         await openPosition(
             symbol,
@@ -1737,9 +1728,6 @@ async function openPositionWithTPSL(trade, qty){
     // Preserve the Nine-AI plan's original reward/risk ratio after fill.
     // The execution fill may differ from the signal entry, but a legacy RR
     // default must never overwrite the TP selected by Nine-AI.
-    const plannedEntry = Number(trade.entry ?? trade.price)
-    const plannedSL = Number(trade.sl)
-    const plannedTP = Number(trade.tp)
     const plannedRisk = Math.abs(plannedEntry - plannedSL)
     const plannedReward = Math.abs(plannedTP - plannedEntry)
     const plannedRR = plannedRisk > 0 ? plannedReward / plannedRisk : NaN
@@ -1968,7 +1956,24 @@ async function openPositionWithTPSL(trade, qty){
             tp: trade.tp,
             initialRisk: trade.initialRisk,
             slOrderId: tpslResult.slOrderId,
-            tpOrderId: tpslResult.tpOrderId
+            tpOrderId: tpslResult.tpOrderId,
+            entryExecution: {
+                orderId: order.orderId == null ? null : String(order.orderId),
+                clientOrderId: String(order.clientOrderId || order.origClientOrderId || ""),
+                status: String(order.status || "UNKNOWN"),
+                averagePrice: Number(order.avgPrice) > 0 ? Number(order.avgPrice) : realEntry,
+                executedQuantity: Number(order.executedQty) > 0 ? Number(order.executedQty) : Math.abs(Number(pos.positionAmt || qty)),
+                quoteQuantity: Number(order.cumQuote) > 0 ? Number(order.cumQuote) : null,
+                orderTime: Number(order.updateTime || order.transactTime || 0) || null,
+                recovered: order.recovered === true,
+                positionAmount: Number(pos.positionAmt || 0),
+                leverage: Number(pos.leverage) || null,
+                marginType: String(pos.marginType || "UNKNOWN"),
+                plannedEntry, plannedSL, plannedTP,
+                actualEntry: realEntry,
+                actualSL: Number(trade.sl), actualTP: Number(trade.tp),
+                entrySlippage: realEntry - plannedEntry
+            }
         }
 
     }catch(e){
@@ -2374,7 +2379,8 @@ async function scan(symbol){
                     symbol,
                     decision,
                     signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
-                    scannedAt: scanAt
+                    scannedAt: scanAt,
+                    marketWindow: data15
                 });
                 if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
             } catch (journalError) {
@@ -2477,7 +2483,8 @@ async function scan(symbol){
                     const rejected = await nineAiDecisionJournal.recordDecision({
                         symbol, decision,
                         signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
-                        scannedAt: scanAt
+                        scannedAt: scanAt,
+                        marketWindow: data15
                     });
                     if (rejected.decisionKey) decision.nineAiDecisionKey = rejected.decisionKey;
                 } catch (journalError) {
@@ -2531,7 +2538,8 @@ async function scan(symbol){
                 symbol, decision,
                 signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
                 scannedAt: scanAt,
-                learningEvidence: opportunityEvidence
+                learningEvidence: opportunityEvidence,
+                marketWindow: data15
             });
             if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
         } catch (journalError) {
@@ -3547,6 +3555,16 @@ if(!execution?.ok){
 trade.waitingEntry = false
 trade.slOrderId = execution?.slOrderId || trade.slOrderId || null
 trade.tpOrderId = execution?.tpOrderId || trade.tpOrderId || null
+trade.entryExecution = execution?.entryExecution || {
+    plannedEntry: Number(trade.price), plannedSL: Number(trade.sl), plannedTP: Number(trade.tp),
+    actualEntry: Number(trade.entry), actualSL: Number(trade.sl), actualTP: Number(trade.tp),
+    entrySlippage: Number(trade.entry) - Number(trade.price), recovered: execution?.recovered === true,
+    captureStatus: "POSITION_RECOVERED_WITHOUT_ORDER_RESPONSE"
+}
+trade.actualQuantity = Number(trade.entryExecution.executedQuantity) > 0
+    ? Number(trade.entryExecution.executedQuantity)
+    : Number(trade.quantity)
+trade.executionSchemaVersion = 1
 
 // ==================================================
 // BINANCE ENTRY ĐÃ THÀNH CÔNG
@@ -3964,6 +3982,16 @@ await trades.updateOne(
                 : String(closed.exitOrderId) === String(t.tpOrderId || "") && t.tpOrderId
                     ? "TP" : "UNKNOWN",
             exitOrderId:closed.exitOrderId,
+            exitOrderIds:closed.exitOrderIds || [closed.exitOrderId],
+            executionFills:closed.executionFills || [],
+            executionFillCount:Number(closed.executionFillCount) || 0,
+            executionFillsMayBeTruncated:closed.executionFillsMayBeTruncated === true,
+            commissionsByAsset:closed.commissionsByAsset || {},
+            fundingUSDT:closed.fundingUSDT ?? null,
+            fundingByAsset:closed.fundingByAsset || {},
+            fundingEntries:closed.fundingEntries || [],
+            fundingIncluded:closed.fundingIncluded === true,
+            pnlAccountingVersion:1,
             closedAt:closed.closedAt
         }
     }
@@ -3977,7 +4005,32 @@ if (t.nineAiDecisionKey) {
             tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
             realizedR: riskBudget > 0 ? closed.pnl / riskBudget : NaN,
             pnl: closed.pnl,
-            closedAt: closed.closedAt
+            closedAt: closed.closedAt,
+            symbol: t.symbol,
+            side: t.side,
+            entryExecution: t.entryExecution || null,
+            exit: {
+                price: closed.exitPrice,
+                quantity: closed.exitQty,
+                orderIds: closed.exitOrderIds || [closed.exitOrderId],
+                reason: String(closed.exitOrderId) === String(t.slOrderId || "") && t.slOrderId
+                    ? "SL"
+                    : String(closed.exitOrderId) === String(t.tpOrderId || "") && t.tpOrderId
+                        ? "TP" : "UNKNOWN",
+                fillCount: closed.executionFillCount,
+                fillsMayBeTruncated: closed.executionFillsMayBeTruncated === true
+            },
+            accounting: {
+                grossRealizedPnl: closed.grossRealizedPnl,
+                feesUSDT: closed.feesUSDT,
+                commissionsByAsset: closed.commissionsByAsset || {},
+                fundingUSDT: closed.fundingUSDT ?? null,
+                fundingByAsset: closed.fundingByAsset || {},
+                fundingEntries: closed.fundingEntries || [],
+                fundingIncluded: closed.fundingIncluded === true,
+                netPnl: closed.pnl,
+                pnlAccountingVersion: 1
+            }
         });
     } catch (journalOutcomeError) {
         console.error("⚠️ NINE-AI ACTUAL OUTCOME JOURNAL FAILED " + t.symbol + ":", journalOutcomeError?.message || journalOutcomeError);

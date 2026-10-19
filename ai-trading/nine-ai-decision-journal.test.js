@@ -19,11 +19,33 @@ const wait = journal.snapshotDecision({
     side: null, action: "WAIT", reason: "NO_CONSENSUS", authorizedForExecution: false,
     rankMetrics: { features: { close: candles[2].close, atr14: 1, marketRegime: "TREND_UP" } },
     roles: [{ name: "Technical Analyst AI", side: "LONG", confidence: 72, weight: 0.15, reason: "trend aligns" }]
-  }
+  },
+  marketWindow: raw
 });
 assert.equal(wait.side, "WAIT");
 assert.equal(wait.reason, "NO_CONSENSUS");
 assert.equal(wait.actualTrade, false);
+assert.equal(wait.featureSchemaVersion, 1);
+assert.equal(wait.marketDataSchemaVersion, 1);
+assert.equal(wait.marketWindow.length, 3);
+assert.equal(wait.marketWindow.at(-1).closeTime, candles[2].closeTime);
+assert.deepEqual(wait.marketWindow[0], {
+  time: candles[0].time, closeTime: candles[0].closeTime,
+  open: candles[0].open, high: candles[0].high, low: candles[0].low,
+  close: candles[0].close, volume: 100,
+  quoteVolume: null, tradeCount: null, takerBuyBaseVolume: null, takerBuyQuoteVolume: null
+});
+const extendedRaw = Array.from({ length: journal.MARKET_WINDOW_BARS + 5 }, (_, i) => {
+  const time = base + i * 900_000;
+  return [time, 100, 102, 99, 101, 200, time + 899_999, 20_000, 42, 90, 9_000];
+});
+const boundedWindow = journal.snapshotMarketWindow(extendedRaw);
+assert.equal(boundedWindow.length, journal.MARKET_WINDOW_BARS);
+assert.equal(boundedWindow[0].volume, 200);
+assert.equal(boundedWindow[0].quoteVolume, 20_000);
+assert.equal(boundedWindow[0].tradeCount, 42);
+assert.equal(boundedWindow[0].takerBuyBaseVolume, 90);
+assert.equal(boundedWindow[0].takerBuyQuoteVolume, 9_000);
 assert.equal(wait.roles[0].reason, "trend aligns");
 assert.ok(wait.decisionKey.includes("TESTUSDT"));
 

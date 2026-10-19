@@ -38,4 +38,9 @@ assert.ok(trained.selectionValue > cold.selectionValue);
 const ranked = evolution.rankCandidates([trap, trend]);
 assert.equal(ranked.length, 2);
 assert.ok(ranked.every(x => x.strategyClassification && x.strategyEdge));
+const learnedFirst = evolution.compareCandidates(
+  { ...trend, rankMetrics: { ...trend.rankMetrics, autonomousAdaptation: { adjustment: 7 } } },
+  { ...trap, rankMetrics: { ...trap.rankMetrics, autonomousAdaptation: { adjustment: -2 } } }
+);
+assert.ok(learnedFirst < 0, "validated generated strategy effect must lead static family tie-breaking");
 console.log("nine-ai-strategy-evolution tests passed");

@@ -134,9 +134,13 @@ function estimateEdge(candidate, metrics = performance) {
 function compareCandidates(a, b) {
   const ea = a?.strategyEdge || estimateEdge(a);
   const eb = b?.strategyEdge || estimateEdge(b);
+  const learnedA = num(a?.rankMetrics?.autonomousAdaptation?.adjustment);
+  const learnedB = num(b?.rankMetrics?.autonomousAdaptation?.adjustment);
   // Realized, regime-aware edge first. During cold start, the strategy's
-  // pattern fit is used. Nine-AI score is intentionally only a late tie-break.
-  return num(eb.selectionValue) - num(ea.selectionValue) ||
+  // generated policy's validated effect leads; family performance is the next
+  // learned signal. Nine-AI score remains a late tie-break.
+  return learnedB - learnedA ||
+    num(eb.selectionValue) - num(ea.selectionValue) ||
     num(eb.fit) - num(ea.fit) ||
     num(b?.rankMetrics?.entryQuality) - num(a?.rankMetrics?.entryQuality) ||
     num(b?.rankScore, num(b?.confidence)) - num(a?.rankScore, num(a?.confidence)) ||
