@@ -42,6 +42,8 @@ assert.ok(learnedGrid.some(item => item.params.conditions.length === 2),
   "strategy evolution must combine predicates into newly generated strategies");
 assert.ok(learnedGrid.every(item => item.rule === "LEARNED_CONJUNCTION"),
   "strategy candidates must use the data-only learned rule grammar");
+assert.ok(adaptation.searchConfidenceZ(500) > adaptation.searchConfidenceZ(1),
+  "larger strategy searches must require stronger out-of-sample evidence");
 
 const rows = [];
 for (let i = 0; i < 200; i++) {
