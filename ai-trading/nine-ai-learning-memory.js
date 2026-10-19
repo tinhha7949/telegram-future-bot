@@ -178,7 +178,9 @@ async function applyOutcome(outcome) {
   const x = vector(outcome.features);
   const reward = clamp(Number(outcome.realizedR), -5, 5);
   const sideLabel = outcome.side === "LONG" ? 1 : 0;
-  const label = reward > 0 ? sideLabel : reward < 0 ? 1 - sideLabel : 0.5;
+  // A loss is not counterfactual evidence for the opposite direction.
+  // Keep the directional learner uncertain instead of teaching a false reversal.
+  const label = reward > 0 ? sideLabel : 0.5;
   const z = clamp(x.reduce((sum, value, i) => sum + value * state.weights[i], state.bias), -12, 12);
   const p = 1 / (1 + Math.exp(-z));
   const learningRate = 0.025 / Math.sqrt(1 + state.samples / 100);
