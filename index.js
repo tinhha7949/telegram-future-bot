@@ -2389,17 +2389,19 @@ async function scan(symbol){
             return null;
         }
 
-        // Opportunity learning can only add a small positive ranking bonus after
-        // enough forward outcomes and a positive lower-confidence-bound estimate.
-        // Loss evidence is stored and learned elsewhere; it never vetoes a live entry.
+        // Learn from similar pre-decision 96-candle windows and their matured
+        // forward outcomes. Evidence adjusts ranking only; execution and capital
+        // protection remain authoritative.
         const originalRankScore = Number(decision.rankScore ?? decision.confidence ?? 0);
         const opportunityEvidence = nineAiDecisionJournal.assess(
             decision.rankMetrics?.features || decision.features || {},
-            decision.side
+            decision.side,
+            { marketWindow: data15, signalTime: Number(decision.signalAt) || scanAt }
         );
         decision.originalRankScore = originalRankScore;
-        decision.liveOpportunityBonus = Number(opportunityEvidence.bonus) || 0;
-        decision.rankScore = Math.max(0, Math.min(100, originalRankScore + decision.liveOpportunityBonus));
+        decision.liveOpportunityAdjustment = Number(opportunityEvidence.bonus) || 0;
+        decision.liveOpportunityBonus = decision.liveOpportunityAdjustment;
+        decision.rankScore = Math.max(0, Math.min(100, originalRankScore + decision.liveOpportunityAdjustment));
         decision.qualityScore = decision.rankScore;
         decision.rankMetrics = {
             ...(decision.rankMetrics || {}),
@@ -4896,7 +4898,11 @@ await signalClaims.createIndex(
 const rewardModelStatus = await nineAiRewardModel.initialize(db);
 console.log("🧠 NINE-AI GENERAL REWARD MODEL READY: long=" + rewardModelStatus.longSamples + " short=" + rewardModelStatus.shortSamples);
 const decisionJournalStatus = await nineAiDecisionJournal.initialize(db);
-console.log("🧠 NINE-AI DECISION JOURNAL READY: samples=" + decisionJournalStatus.samples + " pending=" + decisionJournalStatus.pending);
+console.log("🧠 NINE-AI DECISION JOURNAL READY: samples=" + decisionJournalStatus.samples +
+    " pending=" + decisionJournalStatus.pending +
+    " 96barSnapshots=" + decisionJournalStatus.windowSnapshots +
+    " matured96barSamples=" + decisionJournalStatus.maturedWindowSamples +
+    " windowResearch=" + (decisionJournalStatus.maturedWindowSamples >= decisionJournalStatus.minWindowSamples ? "READY" : "COLLECTING"));
 try {
     const adaptationStatus = await nineAiAutonomousAdaptation.initialize(db, trades);
     console.log("🧠 NINE-AI AUTONOMOUS ADAPTATION READY: version=" + adaptationStatus.version +
