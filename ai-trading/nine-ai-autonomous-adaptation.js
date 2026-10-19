@@ -223,14 +223,19 @@ function buildPolicies(rawTrades) {
   const rows = [...dedup.values()].sort((a, b) => a.closedAt - b.closedAt);
   const policies = [];
   const contexts = new Set(rows.map(r => r.features.side + "|" + r.features.regime));
+  const searches = [];
   for (const key of contexts) {
     const [side, regime] = key.split("|");
     const contextRows = rows.filter(row => row.features.side === side && row.features.regime === regime);
     const trainingRows = contextRows.slice(0, Math.floor(contextRows.length * 0.7));
     const candidates = buildRuleGrid(trainingRows);
+    searches.push({ side, regime, candidates });
+  }
+  const comparisonCount = searches.reduce((sum, search) => sum + search.candidates.length, 0);
+  for (const { side, regime, candidates } of searches) {
     for (const candidate of candidates) {
       const policy = evaluateRule(rows, candidate.rule, candidate.params, side, regime,
-        { comparisonCount: candidates.length });
+        { comparisonCount });
       if (policy) policies.push(policy);
     }
   }
