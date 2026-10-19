@@ -2437,7 +2437,8 @@ async function scan(symbol){
                 decision.side,
                 {
                     marketRegime: decision.rankMetrics?.features?.marketRegime || decision.marketState || "UNKNOWN",
-                    strategyFamily: decision.strategyFamily || decision.rankMetrics?.strategyFamily || "UNKNOWN"
+                    strategyFamily: decision.strategyFamily || decision.rankMetrics?.strategyFamily || "UNKNOWN",
+                    roomQuality: decision.rankMetrics?.roomQuality ?? decision.rankMetrics?.features?.roomQuality
                 }
             );
             decision.rankMetrics = { ...(decision.rankMetrics || {}), autonomousAdaptation: adaptation };
