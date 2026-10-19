@@ -122,12 +122,12 @@ function evaluateRule(rows, rule, params, side, regime) {
   const upliftR = testMeanR - controlMeanR;
   const uncertainty = se(values);
   const validatedNegative = testMeanR < -0.03 && upliftR <= -0.08 &&
-    testMeanR + 1.96 * uncertainty < 0;
+    testMeanR + 2.58 * uncertainty < 0;
   const validatedPositive = testMeanR > 0.03 && upliftR >= 0.08 &&
-    testMeanR - 1.96 * uncertainty > 0;
+    testMeanR - 2.58 * uncertainty > 0;
   const hardVeto = values.length >= HARD_VETO_MIN_TEST &&
     testMeanR <= HARD_VETO_MAX_MEAN_R && upliftR <= HARD_VETO_MAX_UPLIFT_R &&
-    testMeanR + 1.96 * uncertainty < 0;
+    testMeanR + 2.58 * uncertainty < 0;
   const adjustment = validatedNegative
     ? -clamp(3 + Math.abs(upliftR) * 15, 3, MAX_ADJUSTMENT)
     : validatedPositive
