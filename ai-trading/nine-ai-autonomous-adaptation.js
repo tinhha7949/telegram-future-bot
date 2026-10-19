@@ -12,7 +12,17 @@ const MAX_ADJUSTMENT = 8;
 const HARD_VETO_MIN_TEST = 40;
 const HARD_VETO_MAX_MEAN_R = -0.15;
 const HARD_VETO_MAX_UPLIFT_R = -0.12;
-const RULES = ["EXTENDED_MOMENTUM_ENTRY", "WEAK_ENTRY_QUALITY", "LOW_VOLUME", "LOW_ROOM"];
+const RULE_GRID = [
+  ...[1.0, 1.25, 1.5, 1.75, 2.0].map(extensionThreshold => ({
+    rule: "EXTENDED_MOMENTUM_ENTRY", params: { extensionThreshold, rsiThreshold: 65 }
+  })),
+  ...[60, 65, 68, 70, 75].map(rsiThreshold => ({ rule: "OVERBOUGHT_LONG", params: { rsiThreshold } })),
+  ...[25, 30, 32, 35, 40].map(rsiThreshold => ({ rule: "OVERSOLD_SHORT", params: { rsiThreshold } })),
+  ...[0.55, 0.65, 0.75, 0.85].map(volumeThreshold => ({ rule: "LOW_VOLUME", params: { volumeThreshold } })),
+  ...[35, 40, 45, 50, 55].map(qualityThreshold => ({ rule: "WEAK_ENTRY_QUALITY", params: { qualityThreshold } })),
+  ...[0.5, 0.75, 1.0, 1.25, 1.5].map(roomThreshold => ({ rule: "LOW_ROOM", params: { roomThreshold } })),
+  ...[0.4, 0.5, 0.6, 0.7, 0.8].map(falseBreakoutThreshold => ({ rule: "FALSE_BREAKOUT_RISK", params: { falseBreakoutThreshold } }))
+];
 let tradesCollection = null;
 let stateCollection = null;
 let historyCollection = null;
