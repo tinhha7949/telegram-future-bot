@@ -4,13 +4,11 @@
 
 The goal is controlled storage reduction without destroying experience NINE-AI may need to analyze outcomes, evaluate strategies, or improve its decisions. **Age alone is not evidence that a record is disposable.**
 
-The current automatic deletion allowlist is intentionally narrow. It contains only:
-- `nine_ai_strategy_lab_reports`: generated reports older than 90 days.
-- `nine_ai_autonomous_decision_reports`: generated reports older than 90 days.
+Retention evaluates **all collections dynamically**, rather than relying on a two-collection allowlist. It can delete only records whose newest recognized lifecycle timestamp is older than 90 days. Collections representing source-of-truth trades, orders, positions, fills, active risk/wallet state, learning memory, outcomes, diagnoses, decision journals, research evidence, model training, policies, and deployments are protected by collection-name safeguards. MongoDB system collections are also excluded.
 
-Raw trades and all decision, diagnosis, counterfactual, contextual, reward-model, strategy-evolution, and ML outcome evidence are preserved. The repository has not yet established a durable compact replacement for every field those records contain or proven that every consumer reads such a replacement. Those collections must not be added to automatic deletion until that preservation path and its integration tests exist.
+For non-core collections, records with an active/in-flight `status` or `state` are excluded even if their timestamps are old. At deletion time, the controller rechecks the record IDs, the protected filter, and the newest valid timestamp. Records with no recognized valid timestamp are not candidates. This makes retention apply to stale data across collections without treating age alone as permission to erase the bot's source-of-truth trading or learning evidence.
 
-This means cleanup may stop above the target when report data is insufficient to reduce usage. That is the correct safe outcome, not permission to delete training evidence.
+The protections are conservative name-based safeguards, not a substitute for checking the actual production schema. If a new collection stores important data under an unfamiliar name, add its name pattern to the protected rules before deployment.
 
 ## Capacity behavior
 
@@ -21,10 +19,10 @@ This means cleanup may stop above the target when report data is insufficient to
 - The controller checks at startup and every 6 hours. By default it performs bounded deletion of eligible generated reports when usage crosses the trigger threshold.
 - Each deletion batch is at most 100 documents by default.
 - A run deletes at most 500 documents by default.
-- The process deletes only from the two allowlisted report collections, oldest first.
+- The process evaluates every non-system, non-core collection with recognized timestamps, oldest first, while protecting source-of-truth trading and learning collections.
 - Each candidate is rechecked against its age and allowlist before deletion.
 - Collections, indexes, databases, active trades, and all learning/research evidence are never dropped by this controller.
-- Collections not on the allowlist are reported as unreviewed and are never automatically mutated.
+- Protected trading/learning collections and MongoDB system collections are never automatically mutated.
 
 ## Configuration
 
@@ -36,7 +34,7 @@ This means cleanup may stop above the target when report data is insufficient to
 - `DB_RETENTION_INTERVAL_HOURS`: cycle interval (default `6`, bounded).
 - `DB_RETENTION_ENABLE_DELETE`: deletion kill-switch. Defaults to enabled. Set to `false`, `0`, or `no` to disable all deletion. Setting `true`, `1`, or `yes` explicitly enables it.
 - `DB_RETENTION_DRY_RUN`: defaults to `false`, so the controller actually deletes eligible old generated reports when the threshold is crossed. Set to `true` to preview only. Unknown values fail safe to preview.
-- **Default production behavior:** no extra environment variables are required for bounded cleanup. Only the two generated-report collections listed above are eligible; trades and learning/research evidence remain outside the deletion allowlist.
+- **Default production behavior:** no extra environment variables are required for bounded cleanup. All non-core collections are evaluated dynamically; records are eligible only when their newest valid lifecycle timestamp is older than 90 days and they are not active/in-flight. Trading and learning evidence remain protected.
 - To disable cleanup immediately, set `DB_RETENTION_ENABLE_DELETE=false`. To temporarily switch to preview mode, set `DB_RETENTION_DRY_RUN=true`. No other collections become eligible.
 
 ## Measurement limitation
@@ -45,4 +43,4 @@ This is a per-collection logical-size estimate, not a guaranteed measurement of 
 
 ## What remains intentionally unclaimed
 
-This module does not yet compact raw trades or learning evidence into a durable, tested learning archive. It therefore does not claim that the full long-term storage optimization goal is complete. The safe current behavior is to delete only generated reports and preserve records whose learning value has not been proven redundant.
+This module does not compact raw trades or learning evidence into a durable archive. It preserves those source-of-truth collections and deletes stale records from other collections only when the retention date and inactive-state checks pass. Production schemas and provider-level quota still need verification.
