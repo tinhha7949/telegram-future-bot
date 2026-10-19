@@ -124,8 +124,11 @@ assert.ok(threeWayLearned.policies[0].test.lowerBoundR > 0);
     sort() { return this; }, hint() { return this; }, limit() { return this; },
     async toArray() { return rows; }
   });
+  let journalIndexCreateCalls = 0;
   const journalCollection = {
-    async createIndex() {},
+    async createIndex() { journalIndexCreateCalls++; },
+    listIndexes() { return makeCursor([{ name: "nine_ai_consensus_journal_scan",
+      key: { outcomeStatus: 1, signalTime: -1 } }]); },
     find() { return makeCursor([]); }
   };
   const policyCollection = {
@@ -142,6 +145,7 @@ assert.ok(threeWayLearned.policies[0].test.lowerBoundR > 0);
     throw new Error("Unexpected collection: " + name);
   } };
   await consensus.initialize(db);
+  assert.equal(journalIndexCreateCalls, 0, "an equivalent legacy index must be reused regardless of name");
   const cycle = await consensus.runResearchCycle({ now: new Date("2026-10-19T00:00:00Z") });
   assert.equal(cycle.activePolicies, 1);
   assert.equal(consensus.status().policies[0].policyId, retained.policyId,
