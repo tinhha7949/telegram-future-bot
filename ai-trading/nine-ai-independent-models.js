@@ -25,6 +25,7 @@ function fresh(config) {
     _id: "model",
     modelId: config.id,
     version: 3,
+    learningRule: "WIN_ONLY_DIRECTIONAL_V1",
     samples: 0,
     weights: Array(18).fill(0),
     lastAppliedTradeId: null,
@@ -46,7 +47,8 @@ function validState(state, config) {
 
 function upgradeState(state, config) {
   if (!validState(state, config)) return fresh(config);
-  if (state.version === 3) return state;
+  if (state.version === 3 && state.learningRule === "WIN_ONLY_DIRECTIONAL_V1") return state;
+  if (state.version === 3) return fresh(config);
   const recent = Array.isArray(state.recent) ? state.recent : [];
   const { recent: _recent, ...persistedFields } = state;
   return {
@@ -244,8 +246,17 @@ async function initialize(db, legacyOutcomesCollection = null) {
       { tradeId: 1 }, { unique: true, name: `uniq_nine_ai_ml_${config.id}_trade` }
     );
     const stored = await runtime.stateCollection.findOne({ _id: "model" });
-    runtime.state = validState(stored, config) ? upgradeState(stored, config) : fresh(config);
-    if (!stored || !validState(stored, config) || stored.version !== runtime.state.version) {
+    const rebuildDirectionalState = stored?.version === 3 &&
+      stored.learningRule !== "WIN_ONLY_DIRECTIONAL_V1";
+    runtime.state = rebuildDirectionalState
+      ? fresh(config)
+      : (validState(stored, config) ? upgradeState(stored, config) : fresh(config));
+    if (rebuildDirectionalState) {
+      // Earlier versions treated a losing trade as proof that the opposite side was correct.
+      // Replay the durable outcomes once under the corrected win-only directional label.
+      await runtime.outcomesCollection.updateMany({}, { $set: { applied: false } });
+    }
+    if (rebuildDirectionalState || !stored || !validState(stored, config) || stored.version !== runtime.state.version) {
       await persistState(runtime, runtime.state);
     }
     runtimes.set(config.id, runtime);
