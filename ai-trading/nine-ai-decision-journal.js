@@ -3,8 +3,9 @@ const crypto = require("crypto");
 
 // Durable journal for every Nine-AI scan decision, including WAIT/abstentions.
 // Hypothetical forward outcomes are explicitly separate from actual trade PnL.
-// Only robust positive evidence can add a small live ranking bonus; losses never
-// veto a trade or trigger a "stand aside" rule.
+// The pre-decision candle window is summarized and compared with matured past
+// windows. Its evidence adjusts candidate ranking only; it never bypasses the
+// existing execution and capital-protection checks.
 const COLLECTION = "nine_ai_decision_journal";
 const MAX_RECORDS = 5000;
 const MARKET_WINDOW_BARS = 96;
@@ -19,6 +20,12 @@ const seen = new Set();
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const num = (v, d = NaN) => v == null || v === "" ? d : Number.isFinite(Number(v)) ? Number(v) : d;
 const regimeOf = features => String(features?.marketRegime || features?.regime || "UNKNOWN").toUpperCase();
+const mean = values => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+const standardDeviation = values => {
+  if (!values.length) return null;
+  const center = mean(values);
+  return Math.sqrt(mean(values.map(value => (value - center) ** 2)));
+};
 
 function normalizeCandles(raw) {
   if (!Array.isArray(raw)) return [];
@@ -37,20 +44,121 @@ function normalizeCandles(raw) {
 
 function snapshotMarketWindow(raw, limit = MARKET_WINDOW_BARS, availableAt = Infinity) {
   const candles = normalizeCandles(raw);
-  const byTime = new Map((Array.isArray(raw) ? raw : []).filter(Array.isArray)
-    .map(c => [num(c[0]), c]));
+  const byTime = new Map((Array.isArray(raw) ? raw : []).map(c => Array.isArray(c)
+    ? [num(c[0]), c]
+    : [num(c?.time ?? c?.openTime), c]));
   const cutoff = num(availableAt, Infinity);
   return candles.filter(c => c.closeTime <= cutoff)
     .slice(-Math.max(1, Number(limit) || MARKET_WINDOW_BARS)).map(c => {
     const source = byTime.get(c.time);
     return { time: c.time, closeTime: c.closeTime, open: c.open, high: c.high,
       low: c.low, close: c.close,
-      volume: source ? num(source[5], null) : null,
-      quoteVolume: source ? num(source[7], null) : null,
-      tradeCount: source ? num(source[8], null) : null,
-      takerBuyBaseVolume: source ? num(source[9], null) : null,
-      takerBuyQuoteVolume: source ? num(source[10], null) : null };
+      volume: source ? num(Array.isArray(source) ? source[5] : source.volume, null) : null,
+      quoteVolume: source ? num(Array.isArray(source) ? source[7] : source.quoteVolume, null) : null,
+      tradeCount: source ? num(Array.isArray(source) ? source[8] : source.tradeCount, null) : null,
+      takerBuyBaseVolume: source ? num(Array.isArray(source) ? source[9] : source.takerBuyBaseVolume, null) : null,
+      takerBuyQuoteVolume: source ? num(Array.isArray(source) ? source[10] : source.takerBuyQuoteVolume, null) : null };
   });
+}
+
+function extractWindowFeatures(raw) {
+  const candles = snapshotMarketWindow(raw, MARKET_WINDOW_BARS, Infinity);
+  if (candles.length < MARKET_WINDOW_BARS) return null;
+  const closes = candles.map(c => c.close);
+  const logReturns = closes.slice(1).map((close, i) => Math.log(close / closes[i]));
+  const lastClose = closes[closes.length - 1];
+  const returnOver = bars => Math.log(lastClose / closes[closes.length - 1 - bars]);
+  const volatilityOver = bars => standardDeviation(logReturns.slice(-bars));
+  const efficiencyOver = bars => {
+    const window = logReturns.slice(-bars);
+    const pathLength = window.reduce((sum, value) => sum + Math.abs(value), 0);
+    return pathLength > 0 ? window.reduce((sum, value) => sum + value, 0) / pathLength : 0;
+  };
+  const ranges = candles.map((c, i) => {
+    const previousClose = i ? candles[i - 1].close : c.close;
+    return Math.max(c.high - c.low, Math.abs(c.high - previousClose), Math.abs(c.low - previousClose));
+  });
+  const avgRange = values => mean(values);
+  const totalRange = Math.max(...candles.map(c => c.high)) - Math.min(...candles.map(c => c.low));
+  const recentVolume = mean(candles.slice(-8).map(c => num(c.volume)).filter(Number.isFinite));
+  const priorVolume = mean(candles.slice(0, -8).map(c => num(c.volume)).filter(Number.isFinite));
+  const takerRows = candles.filter(c => Number.isFinite(num(c.takerBuyBaseVolume)) && Number.isFinite(num(c.volume)));
+  const totalVolume = takerRows.reduce((sum, c) => sum + Number(c.volume), 0);
+  const takerBuyRatio = totalVolume > 0
+    ? takerRows.reduce((sum, c) => sum + Number(c.takerBuyBaseVolume), 0) / totalVolume : null;
+  const bodyRatios = candles.filter(c => c.high > c.low)
+    .map(c => Math.abs(c.close - c.open) / (c.high - c.low));
+  const wickBias = mean(candles.filter(c => c.high > c.low).map(c => {
+    const upper = c.high - Math.max(c.open, c.close);
+    const lower = Math.min(c.open, c.close) - c.low;
+    return (upper - lower) / (c.high - c.low);
+  }));
+  const rangePosition = totalRange > 0
+    ? (lastClose - Math.min(...candles.map(c => c.low))) / totalRange : 0.5;
+  const recentRangeRatio = avgRange(ranges.slice(-16)) / Math.max(avgRange(ranges), 1e-12);
+  return {
+    return4: returnOver(4), return16: returnOver(16), return48: returnOver(48), return96: returnOver(95),
+    volatility16: volatilityOver(16), volatility48: volatilityOver(48), volatility96: volatilityOver(95),
+    efficiency16: efficiencyOver(16), efficiency48: efficiencyOver(48), efficiency96: efficiencyOver(95),
+    rangePosition, recentRangeRatio,
+    volumeRatio: recentVolume != null && priorVolume > 0 ? recentVolume / priorVolume : null,
+    takerBuyRatio,
+    meanBodyRatio: mean(bodyRatios),
+    wickBias,
+    greenRate: candles.filter(c => c.close > c.open).length / candles.length
+  };
+}
+
+function assessWindowEvidence(rawWindow, side, sourceRecords = records) {
+  const current = extractWindowFeatures(rawWindow);
+  if (!current || !["LONG", "SHORT"].includes(String(side).toUpperCase())) {
+    return { ready: false, adjustment: 0, samples: 0, reason: "NO_COMPLETE_96_BAR_WINDOW" };
+  }
+  const outcomeKey = String(side).toLowerCase() + "NetR";
+  const candidates = sourceRecords.map(record => {
+    const features = record.windowFeatures || (Array.isArray(record.marketWindow) &&
+      record.marketWindow.length >= MARKET_WINDOW_BARS
+      ? (record.windowFeatures = extractWindowFeatures(record.marketWindow)) : null);
+    const outcomes = [record.evaluations?.["4"]?.[outcomeKey], record.evaluations?.["16"]?.[outcomeKey]].map(value => num(value));
+    const targetR = outcomes.every(Number.isFinite) ? mean(outcomes) : null;
+    return { record, features, targetR };
+  }).filter(row => row.features && Number.isFinite(row.targetR) && row.record.outcomeStatus === "EVALUATED");
+  const latestByCandle = new Map();
+  for (const row of candidates) {
+    latestByCandle.set(String(row.record.symbol) + ":" + String(row.record.signalTime), row);
+  }
+  const uniqueCandidates = [...latestByCandle.values()];
+  if (uniqueCandidates.length < MIN_SAMPLES) {
+    return { ready: false, adjustment: 0, samples: uniqueCandidates.length, reason: "INSUFFICIENT_MATURED_WINDOWS" };
+  }
+  const keys = Object.keys(current).filter(key => Number.isFinite(current[key]) &&
+    uniqueCandidates.some(row => Number.isFinite(row.features[key])));
+  if (keys.length < 8) return { ready: false, adjustment: 0, samples: 0, reason: "INSUFFICIENT_WINDOW_FEATURES" };
+  const scales = Object.fromEntries(keys.map(key => {
+    const values = uniqueCandidates.map(row => Number(row.features[key])).filter(Number.isFinite);
+    return [key, Math.max(standardDeviation(values) || 0, Math.abs(mean(values) || 0) * 0.05, 1e-6)];
+  }));
+  const neighbors = uniqueCandidates.map(row => {
+    const dimensions = keys.filter(key => Number.isFinite(row.features[key]));
+    const distance = dimensions.reduce((sum, key) => sum + ((current[key] - row.features[key]) / scales[key]) ** 2, 0) / dimensions.length;
+    return { ...row, distance, weight: 1 / (1 + distance) };
+  }).filter(row => Number.isFinite(row.distance)).sort((a, b) => a.distance - b.distance).slice(0, 60);
+  const weightSum = neighbors.reduce((sum, row) => sum + row.weight, 0);
+  const squaredWeightSum = neighbors.reduce((sum, row) => sum + row.weight ** 2, 0);
+  const effectiveSamples = squaredWeightSum > 0 ? weightSum ** 2 / squaredWeightSum : 0;
+  if (effectiveSamples < MIN_SAMPLES) {
+    return { ready: false, adjustment: 0, samples: neighbors.length,
+      effectiveSamples: Number(effectiveSamples.toFixed(2)), reason: "SIMILAR_WINDOW_EVIDENCE_TOO_THIN" };
+  }
+  const meanR = neighbors.reduce((sum, row) => sum + row.weight * row.targetR, 0) / weightSum;
+  const variance = neighbors.reduce((sum, row) => sum + row.weight * (row.targetR - meanR) ** 2, 0) / weightSum;
+  const standardError = Math.sqrt(variance / effectiveSamples);
+  const reliability = Math.sqrt(effectiveSamples / (effectiveSamples + MIN_SAMPLES));
+  const adjustment = clamp(meanR * 10 * reliability, -MAX_LIVE_BONUS, MAX_LIVE_BONUS);
+  return { ready: true, adjustment: Number(adjustment.toFixed(3)), samples: neighbors.length,
+    effectiveSamples: Number(effectiveSamples.toFixed(2)), meanR: Number(meanR.toFixed(5)),
+    standardError: Number(standardError.toFixed(5)), nearestDistance: Number(neighbors[0].distance.toFixed(5)),
+    horizonBars: [4, 16], source: "SIMILAR_96_BAR_WINDOWS_WITH_MATURED_FORWARD_OUTCOMES" };
 }
 
 function signalCandleIndex(candles, signalTime) {
@@ -87,6 +195,7 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
     weightedContribution: num(role?.weightedContribution, null),
     reason: String(role?.reason || "")
   })) : [];
+  const window = snapshotMarketWindow(marketWindow, MARKET_WINDOW_BARS, num(signalTime, Infinity));
   const snapshot = {
     symbol: String(symbol || d.symbol || "UNKNOWN"),
     side,
@@ -107,8 +216,9 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
     roles,
     features: features && typeof features === "object" ? { ...features } : null,
     featureSchemaVersion: 1,
-    marketDataSchemaVersion: 1,
-    marketWindow: snapshotMarketWindow(marketWindow, MARKET_WINDOW_BARS, num(signalTime, Infinity)),
+    marketDataSchemaVersion: 2,
+    marketWindow: window,
+    windowFeatures: extractWindowFeatures(window),
     marketRegime: regimeOf(features),
     learningEvidence,
     evaluations: {},
@@ -142,7 +252,13 @@ async function initialize(db) {
   records.reverse();
   seen.clear();
   for (const r of records) seen.add(String(r.decisionKey));
-  return { samples: records.length, pending: records.filter(r => r.outcomeStatus === "PENDING_HORIZON_EVALUATION").length };
+  return { samples: records.length, pending: records.filter(r => r.outcomeStatus === "PENDING_HORIZON_EVALUATION").length,
+    windowSnapshots: records.filter(r => Array.isArray(r.marketWindow) && r.marketWindow.length === MARKET_WINDOW_BARS).length,
+    maturedWindowSamples: records.filter(r => r.outcomeStatus === "EVALUATED" &&
+      Array.isArray(r.marketWindow) && r.marketWindow.length === MARKET_WINDOW_BARS &&
+      Number.isFinite(Number(r.evaluations?.["4"]?.longNetR)) &&
+      Number.isFinite(Number(r.evaluations?.["16"]?.longNetR))).length,
+    minWindowSamples: MIN_SAMPLES };
 }
 
 async function recordDecision(args) {
@@ -286,9 +402,11 @@ async function recordActualOutcome({ decisionKey, tradeId, realizedR, pnl, close
   return { updated: result.modifiedCount > 0, matched: result.matchedCount > 0 };
 }
 
-function assess(features = {}, side) {
+function assess(features = {}, side, { marketWindow = null, signalTime = Infinity } = {}) {
   const wantedSide = String(side || "").toUpperCase();
   if (!["LONG", "SHORT"].includes(wantedSide)) return { ready: false, bonus: 0, reason: "NO_DIRECTION" };
+  const liveWindow = snapshotMarketWindow(marketWindow, MARKET_WINDOW_BARS, num(signalTime, Infinity));
+  const windowEvidence = assessWindowEvidence(liveWindow, wantedSide);
   const regime = regimeOf(features);
   // Multiple snapshots can exist for one symbol/candle if learning changed
   // the decision during that scan window. Keep the latest snapshot per candle
@@ -303,26 +421,41 @@ function assess(features = {}, side) {
   const eligible = [...latestByCandle.values()].filter(r =>
     (r.marketRegime === regime || r.marketRegime === "UNKNOWN"));
   const sampleCount = eligible.length;
-  if (sampleCount < MIN_SAMPLES) return { ready: false, bonus: 0, samples: sampleCount, reason: "INSUFFICIENT_SAMPLE" };
-  const values = eligible.map(r => Number(r.evaluations["4"][wantedSide.toLowerCase() + "NetR"]));
-  const meanR = values.reduce((s,v) => s + v, 0) / values.length;
-  const variance = values.reduce((s,v) => s + (v - meanR) ** 2, 0) / values.length;
-  const standardError = Math.sqrt(variance / values.length);
-  const lowerConfidenceBound = meanR - standardError;
-  // Loss evidence is retained in the journal and existing outcome learners.
-  // This layer never penalizes or vetoes entries; only robust positive evidence
-  // can modestly improve ranking, preventing a losing streak from forcing WAIT.
-  const bonus = positiveEvidenceBonus(meanR, standardError, sampleCount);
-  return { ready: true, samples: sampleCount, meanR: Number(meanR.toFixed(4)),
-    standardError: Number(standardError.toFixed(4)), lowerConfidenceBound: Number(lowerConfidenceBound.toFixed(4)),
-    bonus, regime, side: wantedSide, horizonBars: 4, source: "HYPOTHETICAL_SKIPPED_AND_TAKEN_SIGNALS" };
+  let meanR = null, standardError = null, lowerConfidenceBound = null, broadBonus = 0;
+  if (sampleCount >= MIN_SAMPLES) {
+    const values = eligible.map(r => Number(r.evaluations["4"][wantedSide.toLowerCase() + "NetR"]));
+    meanR = values.reduce((s,v) => s + v, 0) / values.length;
+    const variance = values.reduce((s,v) => s + (v - meanR) ** 2, 0) / values.length;
+    standardError = Math.sqrt(variance / values.length);
+    lowerConfidenceBound = meanR - standardError;
+    broadBonus = positiveEvidenceBonus(meanR, standardError, sampleCount);
+  }
+  // Similar 96-bar windows contribute evidence from wins and losses. This is
+  // a soft ranking adjustment: it cannot authorize or veto an entry.
+  const bonus = Number(clamp(broadBonus + Number(windowEvidence.adjustment || 0),
+    -MAX_LIVE_BONUS, MAX_LIVE_BONUS).toFixed(3));
+  const ready = sampleCount >= MIN_SAMPLES || windowEvidence.ready;
+  return { ready, samples: sampleCount, meanR: meanR == null ? null : Number(meanR.toFixed(4)),
+    standardError: standardError == null ? null : Number(standardError.toFixed(4)),
+    lowerConfidenceBound: lowerConfidenceBound == null ? null : Number(lowerConfidenceBound.toFixed(4)),
+    bonus, regime, side: wantedSide, horizonBars: 4,
+    source: windowEvidence.ready ? "REGIME_AND_SIMILAR_96_BAR_WINDOWS" : "HYPOTHETICAL_SKIPPED_AND_TAKEN_SIGNALS",
+    windowLearning: windowEvidence,
+    reason: ready ? null : windowEvidence.reason || "INSUFFICIENT_SAMPLE" };
 }
 
 function status() {
   const evaluated = records.filter(r => r.outcomeStatus === "EVALUATED").length;
+  const windowSnapshots = records.filter(r => Array.isArray(r.marketWindow) && r.marketWindow.length === MARKET_WINDOW_BARS).length;
+  const maturedWindowSamples = records.filter(r => r.outcomeStatus === "EVALUATED" &&
+    Array.isArray(r.marketWindow) && r.marketWindow.length === MARKET_WINDOW_BARS &&
+    Number.isFinite(Number(r.evaluations?.["4"]?.longNetR)) &&
+    Number.isFinite(Number(r.evaluations?.["16"]?.longNetR))).length;
   return { samples: records.length, evaluated, pending: records.length - evaluated,
+    windowSnapshots, maturedWindowSamples, windowResearchReady: maturedWindowSamples >= MIN_SAMPLES,
     minSamples: MIN_SAMPLES, horizons: [...HORIZONS], maxLiveBonus: MAX_LIVE_BONUS };
 }
 
 module.exports = { COLLECTION, MAX_RECORDS, HORIZONS, MIN_SAMPLES, MARKET_WINDOW_BARS, normalizeCandles, snapshotMarketWindow,
-  snapshotDecision, initialize, recordDecision, settleMatured, computeEvaluations, positiveEvidenceBonus, recordActualOutcome, assess, status };
+  extractWindowFeatures, assessWindowEvidence, snapshotDecision, initialize, recordDecision, settleMatured,
+  computeEvaluations, positiveEvidenceBonus, recordActualOutcome, assess, status };
