@@ -276,6 +276,16 @@ async function safeFetch(url, options = {}, retry = 3){
 
     return null
 }
+function getTradeActualRisk(trade = {}) {
+  const quantity = Number(trade.quantity);
+  const initialRisk = Number(trade.initialRisk ?? trade.riskDetail?.initialRisk);
+  const quantityRisk = quantity * initialRisk;
+  if (Number.isFinite(quantityRisk) && quantityRisk > 0) return quantityRisk;
+  const finalRisk = Number(trade.finalRisk);
+  if (Number.isFinite(finalRisk) && finalRisk > 0) return finalRisk;
+  return Number(trade.riskDetail?.riskBudget ?? trade.risk ?? 0);
+}
+
 async function getClosedTradeResult(t){
 
     try{
@@ -319,9 +329,17 @@ const exits = trades.filter(x =>
         const pnl = realizedPnl - commissionsUSDT
 
         const lastFill = fills.at(-1)
+        const exitQty = exits.reduce((sum, fill) => sum + Math.abs(Number(fill.qty || 0)), 0)
+        const exitNotional = exits.reduce((sum, fill) =>
+            sum + Math.abs(Number(fill.qty || 0)) * Number(fill.price || 0), 0)
+        const exitPrice = exitQty > 0 ? exitNotional / exitQty : Number(lastFill.price || 0)
 
         return {
             pnl,
+            grossRealizedPnl: realizedPnl,
+            feesUSDT: commissionsUSDT,
+            exitPrice,
+            exitQty,
             exitOrderId: String(latestOrderId),
             closedAt: Number(lastFill.time || Date.now())
         }
@@ -1948,7 +1966,9 @@ async function openPositionWithTPSL(trade, qty){
             entry: trade.entry,
             sl: trade.sl,
             tp: trade.tp,
-            initialRisk: trade.initialRisk
+            initialRisk: trade.initialRisk,
+            slOrderId: tpslResult.slOrderId,
+            tpOrderId: tpslResult.tpOrderId
         }
 
     }catch(e){
@@ -3486,7 +3506,8 @@ if(!execution?.ok){
             if(recoveredTPSL?.ok){
                 trade.sl = Number(recoveredTPSL.sl)
                 trade.tp = Number(recoveredTPSL.tp)
-                execution = { ok: true, initialRisk: Math.abs(trade.entry - trade.sl), recovered: true }
+                execution = { ok: true, initialRisk: Math.abs(trade.entry - trade.sl), recovered: true,
+                    slOrderId: recoveredTPSL.slOrderId, tpOrderId: recoveredTPSL.tpOrderId }
                 trade.emergencyProtectionNeeded = false
                 console.log(`🛡 RECOVERED TPSL ${trade.symbol} SL=${trade.sl} TP=${trade.tp}`)
             }else{
@@ -3524,6 +3545,8 @@ if(!execution?.ok){
 }
 
 trade.waitingEntry = false
+trade.slOrderId = execution?.slOrderId || trade.slOrderId || null
+trade.tpOrderId = execution?.tpOrderId || trade.tpOrderId || null
 
 // ==================================================
 // BINANCE ENTRY ĐÃ THÀNH CÔNG
@@ -3932,6 +3955,14 @@ await trades.updateOne(
         $set:{
             result:isWin ? "WIN" : "LOSS",
             pnl:closed.pnl,
+            grossRealizedPnl:Number.isFinite(Number(closed.grossRealizedPnl)) ? Number(closed.grossRealizedPnl) : null,
+            feesUSDT:Number.isFinite(Number(closed.feesUSDT)) ? Number(closed.feesUSDT) : null,
+            exitPrice:Number.isFinite(Number(closed.exitPrice)) ? Number(closed.exitPrice) : null,
+            exitQty:Number.isFinite(Number(closed.exitQty)) ? Number(closed.exitQty) : null,
+            exitReason:String(closed.exitOrderId) === String(t.slOrderId || "") && t.slOrderId
+                ? "SL"
+                : String(closed.exitOrderId) === String(t.tpOrderId || "") && t.tpOrderId
+                    ? "TP" : "UNKNOWN",
             exitOrderId:closed.exitOrderId,
             closedAt:closed.closedAt
         }
@@ -3940,7 +3971,7 @@ await trades.updateOne(
 
 if (t.nineAiDecisionKey) {
     try {
-        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        const riskBudget = getTradeActualRisk(t);
         await nineAiDecisionJournal.recordActualOutcome({
             decisionKey: t.nineAiDecisionKey,
             tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
@@ -3957,7 +3988,7 @@ if (t.nineAiDecisionKey) {
 // has been saved. Learning failures must never interrupt trade reconciliation.
 if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
     try {
-        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        const riskBudget = getTradeActualRisk(t);
         if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
             const learning = await nineAiLearningMemory.learnClosedTrade({
                 tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
@@ -3981,7 +4012,7 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
 
     // General reward learner trains on realized net-R and full entry-time context.
     try {
-        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        const riskBudget = getTradeActualRisk(t);
         if (riskBudget > 0 && Number.isFinite(closed.pnl) && t.nineAiLearningFeatures) {
             const rewardLearning = await nineAiRewardModel.recordClosedTrade({
                 tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
@@ -3995,7 +4026,7 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
     }
     // Every independent model learns separately from this confirmed closed trade.
     try {
-        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        const riskBudget = getTradeActualRisk(t);
         if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
             const independentLearning = await nineAiIndependentModels.learnClosedTrade({
                 tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
@@ -4016,13 +4047,19 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
     }
 
     try {
-        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        const riskBudget = getTradeActualRisk(t);
         if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
             const diagnosis = await nineAiLossDiagnosis.recordClosedTrade({
                 tradeId: String(t._id || (t.symbol + ":" + t.createdAt)), symbol: t.symbol, side: t.side,
                 realizedR: closed.pnl / riskBudget,
                 features: { ...t.nineAiLearningFeatures, marketRegime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN" },
                 context: t.nineAiLearningContext || null, entry: Number(t.entry), sl: Number(t.sl), tp: Number(t.tp),
+                exitReason: String(closed.exitOrderId) === String(t.slOrderId || "") && t.slOrderId
+                    ? "SL"
+                    : String(closed.exitOrderId) === String(t.tpOrderId || "") && t.tpOrderId
+                        ? "TP" : "UNKNOWN",
+                exitPrice: Number(closed.exitPrice), feesUSDT: Number(closed.feesUSDT),
+                grossRealizedPnl: Number(closed.grossRealizedPnl),
                 regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
             });
             if (diagnosis.recorded) console.log("🧠 NINE-AI LOSS DIAGNOSIS: " + diagnosis.diagnosis.tags.join(",") + " outcome=" + diagnosis.diagnosis.outcome + " " + t.symbol);
@@ -4030,7 +4067,7 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
     } catch (diagnosisError) { console.error("⚠️ NINE-AI LOSS DIAGNOSIS FAILED " + t.symbol + ":", diagnosisError?.message || diagnosisError); }
 
     try {
-        const riskBudget = Number(t.riskDetail?.riskBudget ?? t.risk ?? 0);
+        const riskBudget = getTradeActualRisk(t);
         if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
             const contextual = await nineAiContextualLearning.recordClosedTrade({
                 tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
@@ -4062,6 +4099,11 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
                 createdAt: Number(t.createdAt), closedAt: closed.closedAt,
                 realizedR: Number.isFinite(Number(closed.pnl)) && Number(t.riskDetail?.riskBudget ?? t.risk ?? 0) > 0 ? Number(closed.pnl) / Number(t.riskDetail?.riskBudget ?? t.risk) : null,
                 features: { ...(t.nineAiLearningFeatures || {}), ...(t.nineAiLearningContext || {}) },
+                feeRate: Number(t.notional) > 0 ? Number(closed.feesUSDT || 0) / Number(t.notional) : null,
+                feeR: Number(t.riskDetail?.riskBudget ?? t.risk ?? 0) > 0
+                    ? Number(closed.feesUSDT || 0) / Number(t.riskDetail?.riskBudget ?? t.risk) : null,
+                maxRR: Number(t.tradePlan?.maxRiskReward ?? MAX_NINE_AI_RR),
+                minRR: 0.79,
                 regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
             }, researchCandles);
             if (research.variants) console.log("🧪 NINE-AI COUNTERFACTUAL RESEARCH: variants=" + research.variants +
