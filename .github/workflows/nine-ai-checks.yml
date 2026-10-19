@@ -39,5 +39,7 @@ jobs:
       - run: node ai-trading/nine-ai-autonomous-decision-research.test.js
       - run: node --check ai-trading/nine-ai-autonomous-deployment.js
       - run: node ai-trading/nine-ai-autonomous-deployment.test.js
+      - run: node --check ai-trading/nine-ai-autonomous-adaptation.js
+      - run: node ai-trading/nine-ai-autonomous-adaptation.test.js
       - run: node --check ai-trading/nine-ai-db-retention.js
       - run: node ai-trading/nine-ai-db-retention.test.js
