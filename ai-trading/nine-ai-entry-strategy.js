@@ -48,8 +48,9 @@ function selectEntryDecision({
     };
   }
 
-  const side = ["LONG", "SHORT"].includes(fenixDecision?.side)
-    ? fenixDecision.side : fenixBootstrapSide(features);
+  const side = fenixDecision
+    ? (["LONG", "SHORT"].includes(fenixDecision.side) ? fenixDecision.side : null)
+    : fenixBootstrapSide(features);
   return {
     source: "FENIXAI_BOOTSTRAP",
     side,
