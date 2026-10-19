@@ -134,8 +134,8 @@ function evaluateRule(rows, rule, params, side, regime) {
       ? clamp(2 + upliftR * 10, 2, MAX_ADJUSTMENT)
       : 0;
   return {
-    policyId: [rule, side, regime].join(":"),
-    rule, side, regime, status: hardVeto ? "ACTIVE_VETO" :
+    policyId: [rule, Object.values(params).join(","), side, regime].join(":"),
+    rule, params, side, regime, status: hardVeto ? "ACTIVE_VETO" :
       validatedNegative ? "ACTIVE_PENALTY" : validatedPositive ? "ACTIVE_BONUS" : "OBSERVE",
     samples: matching.length, trainSamples: train.length, testSamples: values.length,
     testMeanR: round(testMeanR), controlMeanR: round(controlMeanR), upliftR: round(upliftR),
