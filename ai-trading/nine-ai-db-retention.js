@@ -1,9 +1,9 @@
 "use strict";
 
 // Capacity-aware MongoDB retention. Only runs when estimated collection storage
-// crosses the configured threshold. Never drops collections/indexes. Automatic
-// deletion is restricted to disposable generated reports; all raw trade and
-// learning/research evidence is preserved until compact archival is implemented.
+// crosses the configured threshold. Never drops collections/indexes. The explicit
+// allowlist covers historical trade/learning/research events; mutable model state,
+// active policies, pending work, and unknown collections remain protected.
 const DEFAULTS = Object.freeze({
   limitMB: 5120,
   triggerRatio: 0.80,
@@ -17,20 +17,45 @@ const DEFAULTS = Object.freeze({
   dryRun: false
 });
 
-// Fail-closed policy: only generated reports are currently auto-deleted.
-// Age alone is not proof that training or research evidence is disposable.
-// Do not add trade/outcome collections until durable knowledge preservation and
-// all downstream consumers are verified by integration tests.
+// Event-ledger retention: only terminal/historical documents with a valid old
+// lifecycle timestamp can be removed. Keep at least 90 days of every dataset.
+// Mutable state/policy collections and unknown collections remain protected.
+// Outcome ledgers are eligible only after they were applied; the legacy ledger
+// also must finish independent-model migration before it can be pruned.
 const SPECS = Object.freeze([
-  // Only disposable generated reports are eligible for automatic deletion.
-  // Raw trade records and all research/learning evidence are deliberately
-  // excluded until a durable, tested compact representation exists and every
-  // consumer is proven to use that representation.
+  { name: "trades", dateFields: ["closedAt", "updatedAt", "createdAt"], days: 90,
+    category: "closed_trade", filter: { result: { $in: ["WIN", "LOSS", "CLOSED_UNRESOLVED"] } } },
+  { name: "nine_ai_decision_journal", dateFields: [
+    "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
+    "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
+    "scannedAt", "signalTime", "createdAt"
+  ], days: 90, category: "evaluated_decision", filter: { outcomeStatus: "EVALUATED" } },
+  { name: "nine_ai_learning_outcomes", dateFields: ["closedAt"], days: 90,
+    category: "applied_learning_outcome", filter: {
+      closed: true, applied: true, independentModelsMigrated: true
+    } },
+  { name: "nine_ai_reward_model_outcomes", dateFields: ["closedAt"], days: 90,
+    category: "applied_learning_outcome", filter: { closed: true, applied: true } },
+  { name: "nine_ai_contextual_outcomes", dateFields: ["closedAt"], days: 90,
+    category: "closed_learning_outcome", filter: { closed: true } },
+  { name: "nine_ai_counterfactual_outcomes", dateFields: ["closedAt"], days: 90,
+    category: "counterfactual_outcome", filter: { closedAt: { $exists: true } } },
+  { name: "nine_ai_loss_diagnoses", dateFields: ["diagnosedAt"], days: 90,
+    category: "loss_diagnosis", filter: { diagnosedAt: { $exists: true } } },
   { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90,
-    category: "generated_report", priority: 20 },
+    category: "generated_report" },
   { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 90,
-    category: "generated_report", priority: 20 }
+    category: "generated_report" },
+  { name: "nine_ai_strategy_hypotheses", dateFields: ["createdAt"], days: 90,
+    category: "research_hypothesis", filter: { createdAt: { $exists: true } } },
+  { name: "nine_ai_strategy_versions", dateFields: ["updatedAt", "createdAt"], days: 90,
+    category: "research_version", filter: { createdAt: { $exists: true } } },
+  { name: "nine_ai_autonomous_adaptation_history", dateFields: ["updatedAt", "createdAt"], days: 90,
+    category: "adaptation_history", filter: { version: { $exists: true } } }
 ]);
+const MODEL_OUTCOME_PATTERN = /^nine_ai_ml_(technical|signal|memory|bull|bear|contrarian|analyst|decision|risk)_outcomes$/;
+const MODEL_OUTCOME_SPEC = Object.freeze({ dateFields: ["closedAt"], days: 90,
+  category: "applied_model_outcome", filter: { closed: true, applied: true } });
 
 function boundedNumber(env, fallback, min, max) {
   const value = Number(process.env[env]);
@@ -105,8 +130,13 @@ function makeSafeDeleteQuery(ids, spec, cutoffMs) {
 }
 function getSpecs(collectionNames) {
   const present = new Set(collectionNames);
-  // Fail closed: only explicitly reviewed collections are eligible.
-  return SPECS.filter(spec => present.has(spec.name)).map(spec => ({ ...spec }));
+  // Fail closed: explicit event ledgers plus the nine known independent-model
+  // ledgers are eligible. Do not infer eligibility from a broad name prefix.
+  const specs = SPECS.filter(spec => present.has(spec.name)).map(spec => ({ ...spec }));
+  for (const name of present) {
+    if (MODEL_OUTCOME_PATTERN.test(name)) specs.push({ name, ...MODEL_OUTCOME_SPEC });
+  }
+  return specs;
 }
 function toTimestamp(value) {
   if (value instanceof Date) return value.getTime();
@@ -133,8 +163,10 @@ function createRetention(db, overrides = {}) {
   let lastSummary = null;
 
   async function readUsage() {
-    const names = (await db.listCollections({}, { nameOnly: true }).toArray()).map(x => x.name);
+    const collectionInfo = await db.listCollections({}, { nameOnly: true }).toArray();
+    const names = collectionInfo.filter(item => item.type !== "view").map(item => item.name);
     const stats = [];
+    const statsErrors = [];
     for (const name of names) {
       try {
         const s = await db.collection(name).stats(1024 * 1024);
@@ -148,10 +180,11 @@ function createRetention(db, overrides = {}) {
           totalIndexSize: Number(s.totalIndexSize || s.indexSize || 0) * 1024 * 1024
         });
       } catch (error) {
-        // A collection disappearing during measurement should not stop the bot.
+        // Never make a deletion decision from a partial DB-size estimate.
+        statsErrors.push({ name, message: String(error?.message || error) });
       }
     }
-    return { names, stats, usageMB: estimateUsageMB(stats) };
+    return { names, stats, statsErrors, usageMB: estimateUsageMB(stats) };
   }
 
   async function collectOldestCandidates(specs, limit = config.batchSize) {
@@ -220,6 +253,13 @@ function createRetention(db, overrides = {}) {
       const before = await readUsage();
       const triggerMB = config.limitMB * config.triggerRatio;
       const targetMB = config.limitMB * config.targetRatio;
+      if (before.statsErrors.length) {
+        lastSummary = { status: "MEASUREMENT_INCOMPLETE", usageMB: before.usageMB,
+          triggerMB, targetMB, statsErrors: before.statsErrors, deleted: 0,
+          note: "No deletion performed because one or more collection sizes could not be measured." };
+        console.error("⚠️ NINE-AI DB RETENTION MEASUREMENT INCOMPLETE: " + JSON.stringify(lastSummary));
+        return lastSummary;
+      }
       if (!force && before.usageMB < triggerMB) {
         lastSummary = { status: "BELOW_THRESHOLD", usageMB: before.usageMB,
           triggerMB, targetMB, deleted: 0 };
