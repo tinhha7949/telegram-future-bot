@@ -64,7 +64,7 @@ function upgradeState(state) {
   const recent = Array.isArray(state.recent) ? state.recent : [];
   const { recent: _recent, ...persistedFields } = state;
   return {
-    ...persistedFields, version: 4,
+    ...persistedFields, version: 4, learningRule: "WIN_ONLY_DIRECTIONAL_V1",
     weights: state.version === 1 ? [...state.weights, ...Array(12).fill(0)] : [...state.weights],
     decisionWeights: normalizeDecisionWeights(state.decisionWeights || BASE_DECISION_WEIGHTS),
     roleWeights: normalizeRoleWeights(state.roleWeights || BASE_ROLE_WEIGHTS),
