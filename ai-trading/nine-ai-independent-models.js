@@ -133,10 +133,10 @@ async function persistState(runtime, state) {
 
 function directionalLabel(outcome) {
   const reward = Number(outcome.realizedR);
-  if (reward === 0) return 0.5;
-  const chosenSideIsLong = outcome.side === "LONG";
-  const correctSideIsLong = reward > 0 ? chosenSideIsLong : !chosenSideIsLong;
-  return correctSideIsLong ? 1 : 0;
+  // A losing trade proves only that the chosen trade lost. It does not prove
+  // the opposite side would have won, so use a neutral target for direction.
+  if (reward <= 0) return 0.5;
+  return outcome.side === "LONG" ? 1 : 0;
 }
 
 async function applyOutcome(runtime, outcome) {
@@ -167,9 +167,14 @@ async function applyOutcome(runtime, outcome) {
   };
 
   next.samples++;
-  next.evaluation.evaluated++;
-  if ((p >= 0.5 && label >= 0.5) || (p < 0.5 && label < 0.5)) next.evaluation.correct++;
-  next.evaluation.brierSum += (p - label) ** 2;
+  // Directional evaluation is meaningful only when the selected side won.
+  // Losses train toward uncertainty, but cannot score the opposite side as correct.
+  const hasObservedDirectionalOutcome = config.target === "loss" || Number(outcome.realizedR) > 0;
+  if (hasObservedDirectionalOutcome) {
+    next.evaluation.evaluated++;
+    if ((p >= 0.5 && label >= 0.5) || (p < 0.5 && label < 0.5)) next.evaluation.correct++;
+    next.evaluation.brierSum += (p - label) ** 2;
+  }
   next.updatedAt = new Date().toISOString();
 
   await persistState(runtime, next);
