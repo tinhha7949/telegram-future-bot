@@ -52,6 +52,7 @@ const nineAiAutonomousDecisionResearch = require("./ai-trading/nine-ai-autonomou
 const nineAiAutonomousDeployment = require("./ai-trading/nine-ai-autonomous-deployment")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const nineAiDbRetention = require("./ai-trading/nine-ai-db-retention")
+const nineAiAutonomousAdaptation = require("./ai-trading/nine-ai-autonomous-adaptation")
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -2427,6 +2428,57 @@ async function scan(symbol){
         } catch (policyError) {
             console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
         }
+        // Autonomous adaptation is learned only from confirmed closed trades and
+        // activated only after chronological holdout validation. It can adjust ranking
+        // or veto a repeatedly harmful context, but cannot change SL/TP or position size.
+        try {
+            const adaptation = nineAiAutonomousAdaptation.assess(
+                decision.rankMetrics?.features || decision.features || {},
+                decision.side,
+                {
+                    marketRegime: decision.rankMetrics?.features?.marketRegime || decision.marketState || "UNKNOWN",
+                    strategyFamily: decision.strategyFamily || decision.rankMetrics?.strategyFamily || "UNKNOWN"
+                }
+            );
+            decision.rankMetrics = { ...(decision.rankMetrics || {}), autonomousAdaptation: adaptation };
+            if (adaptation.adjustment) {
+                const before = Number(decision.rankScore || 0);
+                decision.rankScore = Math.max(0, Math.min(100, before + adaptation.adjustment));
+                decision.qualityScore = decision.rankScore;
+                decision.rankMetrics.score = decision.rankScore;
+            }
+            if (adaptation.vetoReason) {
+                decision.authorizedForExecution = false;
+                decision.action = "WAIT";
+                decision.reason = adaptation.vetoReason;
+                recordNineAIAbstention(adaptation.vetoReason);
+                try {
+                    const rejected = await nineAiDecisionJournal.recordDecision({
+                        symbol, decision,
+                        signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                        scannedAt: scanAt
+                    });
+                    if (rejected.decisionKey) decision.nineAiDecisionKey = rejected.decisionKey;
+                } catch (journalError) {
+                    console.error("⚠️ NINE-AI ADAPTATION VETO JOURNAL FAILED " + symbol + ":",
+                        journalError?.message || journalError);
+                }
+                console.log("🧠 NINE-AI AUTONOMOUS ADAPTATION VETO " + symbol +
+                    " | side=" + decision.side + " | policy=" + adaptation.vetoReason +
+                    " | version=" + adaptation.version);
+                return null;
+            }
+            if (adaptation.adjustment || adaptation.matched?.length) {
+                console.log("🧠 NINE-AI AUTONOMOUS ADAPTATION " + symbol +
+                    " | adjustment=" + adaptation.adjustment +
+                    " | matched=" + (adaptation.matched || []).map(x => x.policyId).join(",") +
+                    " | version=" + adaptation.version);
+            }
+        } catch (adaptationError) {
+            console.error("⚠️ NINE-AI AUTONOMOUS ADAPTATION UNAVAILABLE " + symbol + ":",
+                adaptationError?.message || adaptationError);
+        }
+
         // A validated delay policy is an actual execution timing policy, not a report-only finding.
         // Persist the pending signal so repeated scans cannot restart the delay indefinitely.
         try {
@@ -4749,6 +4801,19 @@ const rewardModelStatus = await nineAiRewardModel.initialize(db);
 console.log("🧠 NINE-AI GENERAL REWARD MODEL READY: long=" + rewardModelStatus.longSamples + " short=" + rewardModelStatus.shortSamples);
 const decisionJournalStatus = await nineAiDecisionJournal.initialize(db);
 console.log("🧠 NINE-AI DECISION JOURNAL READY: samples=" + decisionJournalStatus.samples + " pending=" + decisionJournalStatus.pending);
+try {
+    const adaptationStatus = await nineAiAutonomousAdaptation.initialize(db, trades);
+    console.log("🧠 NINE-AI AUTONOMOUS ADAPTATION READY: version=" + adaptationStatus.version +
+        " trades=" + adaptationStatus.trades + " policies=" + adaptationStatus.policies);
+    setInterval(() => {
+        nineAiAutonomousAdaptation.refresh().then(status => {
+            if (!status.cached) console.log("🧠 NINE-AI ADAPTATION REFRESH: version=" + status.version +
+                " trades=" + status.trades + " policies=" + status.policies);
+        }).catch(error => console.error("⚠️ NINE-AI ADAPTATION REFRESH FAILED:", error?.message || error));
+    }, 15 * 60 * 1000);
+} catch (adaptationInitError) {
+    console.error("⚠️ NINE-AI AUTONOMOUS ADAPTATION INIT FAILED:", adaptationInitError?.message || adaptationInitError);
+}
 try {
     const decisionResearchStatus = await nineAiAutonomousDecisionResearch.initialize(db);
     console.log("🧪 NINE-AI AUTONOMOUS DECISION RESEARCH READY: activePolicies=" + decisionResearchStatus.activePolicies);
