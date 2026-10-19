@@ -117,4 +117,37 @@ assert.equal(threeWayLearned.policies[0].conditions.length, 3);
 assert.ok(threeWayLearned.reports[0].maximumConditionComplexitySearched >= 3);
 assert.ok(threeWayLearned.policies[0].test.lowerBoundR > 0);
 
+(async () => {
+  const retained = { policyId: "data-consensus:OBSERVED_TREND", status: "ACTIVE", regime: "OBSERVED_TREND" };
+  let retiredOrUpdatedWithoutReplacement = false;
+  const makeCursor = rows => ({
+    sort() { return this; }, hint() { return this; }, limit() { return this; },
+    async toArray() { return rows; }
+  });
+  const journalCollection = {
+    async createIndex() {},
+    find() { return makeCursor([]); }
+  };
+  const policyCollection = {
+    async createIndex() {},
+    find() { return makeCursor([retained]); },
+    async updateMany() { retiredOrUpdatedWithoutReplacement = true; },
+    async updateOne() { retiredOrUpdatedWithoutReplacement = true; }
+  };
+  const reportsCollection = { async insertOne() {} };
+  const db = { collection(name) {
+    if (name === "nine_ai_decision_journal") return journalCollection;
+    if (name === "nine_ai_data_derived_consensus_policies") return policyCollection;
+    if (name === "nine_ai_data_derived_consensus_reports") return reportsCollection;
+    throw new Error("Unexpected collection: " + name);
+  } };
+  await consensus.initialize(db);
+  const cycle = await consensus.runResearchCycle({ now: new Date("2026-10-19T00:00:00Z") });
+  assert.equal(cycle.activePolicies, 1);
+  assert.equal(consensus.status().policies[0].policyId, retained.policyId,
+    "an empty research cycle must preserve the existing validated policy");
+  assert.equal(retiredOrUpdatedWithoutReplacement, false,
+    "the researcher must not retire or mutate policies when no validated replacement exists");
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
 console.log("nine-ai-data-derived-consensus.test.js: OK");
