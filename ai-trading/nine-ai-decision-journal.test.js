@@ -26,7 +26,7 @@ assert.equal(wait.side, "WAIT");
 assert.equal(wait.reason, "NO_CONSENSUS");
 assert.equal(wait.actualTrade, false);
 assert.equal(wait.featureSchemaVersion, 1);
-assert.equal(wait.marketDataSchemaVersion, 1);
+assert.equal(wait.marketDataSchemaVersion, 2);
 assert.equal(wait.marketWindow.length, 3);
 assert.equal(wait.marketWindow.at(-1).closeTime, candles[2].closeTime);
 assert.deepEqual(wait.marketWindow[0], {
@@ -46,6 +46,7 @@ assert.equal(boundedWindow[0].quoteVolume, 20_000);
 assert.equal(boundedWindow[0].tradeCount, 42);
 assert.equal(boundedWindow[0].takerBuyBaseVolume, 90);
 assert.equal(boundedWindow[0].takerBuyQuoteVolume, 9_000);
+assert.equal(Object.keys(journal.extractWindowFeatures(extendedRaw)).length, 17);
 assert.equal(wait.roles[0].reason, "trend aligns");
 assert.ok(wait.decisionKey.includes("TESTUSDT"));
 
@@ -69,5 +70,35 @@ assert.equal(journal.positiveEvidenceBonus(1, 0.1, 10), 0);
 assert.ok(journal.positiveEvidenceBonus(0.8, 0.1, 100) > 0);
 assert.ok(journal.positiveEvidenceBonus(100, 0, 100) <= 3);
 assert.equal(journal.assess({}, "WAIT").bonus, 0);
+
+const patternWindow = Array.from({ length: journal.MARKET_WINDOW_BARS }, (_, i) => {
+  const time = base + i * 900_000;
+  const open = 100 + i * 0.02;
+  const close = open + 0.01;
+  return [time, open, close + 0.02, open - 0.01, close, 100 + i, time + 899_999,
+    10_000 + i, 20 + i, 50 + i, 5_000 + i];
+});
+const similarWindowRecords = Array.from({ length: 24 }, (_, i) => ({
+  symbol: `SIM${i}`, signalTime: base + i * 900_000,
+  outcomeStatus: "EVALUATED", marketWindow: patternWindow,
+  evaluations: {
+    "4": { longNetR: 0.5, shortNetR: -0.5 },
+    "16": { longNetR: 0.3, shortNetR: -0.3 }
+  }
+}));
+const learnedWinWindow = journal.assessWindowEvidence(patternWindow, "LONG", similarWindowRecords);
+assert.equal(learnedWinWindow.ready, true);
+assert.ok(learnedWinWindow.adjustment > 0);
+assert.ok(learnedWinWindow.effectiveSamples >= journal.MIN_SAMPLES);
+const similarLossRecords = similarWindowRecords.map(row => ({
+  ...row,
+  evaluations: {
+    "4": { longNetR: -0.5, shortNetR: 0.5 },
+    "16": { longNetR: -0.3, shortNetR: 0.3 }
+  }
+}));
+const learnedLossWindow = journal.assessWindowEvidence(patternWindow, "LONG", similarLossRecords);
+assert.equal(learnedLossWindow.ready, true);
+assert.ok(learnedLossWindow.adjustment < 0);
 
 console.log("nine-ai-decision-journal.test.js: OK");
