@@ -87,8 +87,15 @@ async function initialize(db) {
   policies = db.collection(POLICY_COLLECTION);
   // The research cycle filters evaluated journal rows then sorts newest-first.
   // This compound index avoids a collection-wide in-memory sort as the journal grows.
-  await journal.createIndex({ outcomeStatus: 1, signalTime: -1 },
-    { name: "nine_ai_decision_status_time" });
+  // Reuse any equivalent index, including legacy indexes created by the
+  // consensus researcher under a different name.
+  const journalIndexes = await journal.listIndexes().toArray();
+  const hasJournalScanIndex = journalIndexes.some(index =>
+    JSON.stringify(index.key) === JSON.stringify({ outcomeStatus: 1, signalTime: -1 }));
+  if (!hasJournalScanIndex) {
+    await journal.createIndex({ outcomeStatus: 1, signalTime: -1 },
+      { name: "nine_ai_decision_status_time" });
+  }
   await reports.createIndex({ createdAt: -1 }, { name: "nine_ai_decision_report_time" });
   await policies.createIndex({ status: 1, updatedAt: -1 }, { name: "nine_ai_decision_policy_active" });
   activePolicies = await policies.find({ status: "ACTIVE" }).sort({ updatedAt: -1 }).toArray();
