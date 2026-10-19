@@ -38,7 +38,7 @@ const fs = require("fs")
 const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
-const { analyzeNineAI, compareNineAICandidates, MAX_NINE_AI_RR } = require("./ai-trading/nine-ai-strategy")
+const { analyzeNineAI, compareNineAICandidates } = require("./ai-trading/nine-ai-strategy")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
 const nineAiContextualLearning = require("./ai-trading/nine-ai-contextual-learning")
@@ -50,6 +50,7 @@ const nineAiRewardModel = require("./ai-trading/nine-ai-reward-model")
 const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
 const nineAiAutonomousDecisionResearch = require("./ai-trading/nine-ai-autonomous-decision-research")
 const nineAiAutonomousDeployment = require("./ai-trading/nine-ai-autonomous-deployment")
+const nineAiDataDerivedConsensus = require("./ai-trading/nine-ai-data-derived-consensus")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const nineAiDbRetention = require("./ai-trading/nine-ai-db-retention")
 const nineAiAutonomousAdaptation = require("./ai-trading/nine-ai-autonomous-adaptation")
@@ -1435,7 +1436,7 @@ async function setInitialTPSL(trade){
                     rawSL / tickSize
                 ) * tickSize
 
-            // Round TP inward so exchange tick rounding cannot push RR above 1.8.
+            // Round TP inward to a valid tick while preserving the researched level.
             tp =
                 Math.floor(
                     rawTP / tickSize
@@ -1519,13 +1520,13 @@ async function setInitialTPSL(trade){
         }
 
         const initialRR = Math.abs(tp - entry) / Math.max(Math.abs(entry - sl), Number.EPSILON);
-        if (!Number.isFinite(initialRR) || initialRR > MAX_NINE_AI_RR + 1e-9) {
-            console.log(`⛔ INITIAL RR CAP ${symbol} RR=${initialRR} MAX=${MAX_NINE_AI_RR}`);
+        if (!Number.isFinite(initialRR) || initialRR <= 0) {
+            console.log(`⛔ INITIAL RR INVALID ${symbol} RR=${initialRR}`);
             return false;
         }
 
         // =========================================
-        // INITIAL 9AI TPSL, RR HARD-CAPPED AT 1.8
+        // INITIAL 9AI TPSL from the researched entry-time plan.
         // =========================================
 
         const cancelled =
@@ -1732,7 +1733,7 @@ async function openPositionWithTPSL(trade, qty){
     const plannedReward = Math.abs(plannedTP - plannedEntry)
     const plannedRR = plannedRisk > 0 ? plannedReward / plannedRisk : NaN
 
-    if (!Number.isFinite(plannedRR) || plannedRR <= 0 || plannedRR > MAX_NINE_AI_RR + 1e-9) {
+    if (!Number.isFinite(plannedRR) || plannedRR <= 0) {
         console.log(
             `❌ INVALID ORIGINAL NINE-AI RR ${symbol} ENTRY=${plannedEntry} SL=${plannedSL} TP=${plannedTP} RR=${plannedRR}`
         )
@@ -2509,6 +2510,35 @@ async function scan(symbol){
                 adaptationError?.message || adaptationError);
         }
 
+        // Apply the rank threshold selected from chronological journal
+        // outcomes. The live vote threshold is applied inside analyzeNineAI.
+        if (decision.authorizedForExecution === true) {
+            try {
+                const livePolicy = nineAiDataDerivedConsensus.assessLive(
+                    decision.roles || [],
+                    decision.rankMetrics?.features?.marketRegime || decision.marketState || "UNKNOWN",
+                    Number(decision.rankScore), decision.rankMetrics?.features || decision.features || {}
+                );
+                decision.rankMetrics = { ...(decision.rankMetrics || {}), dataDerivedConsensus: livePolicy };
+                if (livePolicy.ready && livePolicy.rankAllowed === false) {
+                    decision.originalSideBeforeDataPolicy = decision.side;
+                    decision.side = "WAIT";
+                    decision.action = "WAIT";
+                    decision.authorizedForExecution = false;
+                    decision.reason = livePolicy.reason;
+                    recordNineAIAbstention(livePolicy.reason);
+                }
+            } catch (policyError) {
+                console.error("⚠️ NINE-AI DATA-DERIVED CONSENSUS FAILED " + symbol + ":",
+                    policyError?.message || policyError);
+                decision.authorizedForExecution = false;
+                decision.side = "WAIT";
+                decision.action = "WAIT";
+                decision.reason = "DATA_DERIVED_POLICY_UNAVAILABLE";
+                recordNineAIAbstention(decision.reason);
+            }
+        }
+
         // A validated delay policy is an actual execution timing policy, not a report-only finding.
         // Persist the pending signal so repeated scans cannot restart the delay indefinitely.
         try {
@@ -2599,7 +2629,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     !Number.isFinite(tp) || tp <= 0 ||
     !Number.isFinite(priceRisk) || priceRisk <= 0 ||
     !Number.isFinite(budget) || budget <= 0 ||
-    !Number.isFinite(rr) || rr <= 0 || rr > MAX_NINE_AI_RR + 1e-9
+    !Number.isFinite(rr) || rr <= 0
   ) {
     console.log(`❌ INVALID NINE-AI SIGNAL ${best?.symbol || 'UNKNOWN'}`);
     return null;
@@ -2934,10 +2964,10 @@ let filtered = candidates.filter(c => {
         (side === "LONG" ? sl < entry && tp > entry :
          side === "SHORT" ? sl > entry && tp < entry : false);
 
-    if (!geometryValid || !Number.isFinite(rr) || rr < 0.79 || rr > MAX_NINE_AI_RR + 1e-9) {
+    if (!geometryValid || !Number.isFinite(rr) || rr <= 0) {
         console.log(
             `🚫 FILTER NINE-AI GEOMETRY: ${c.symbol} | ` +
-            `side=${side} | RR=${safeFixed(rr, 2)} | allowed=0.80-${MAX_NINE_AI_RR}`
+            `side=${side} | RR=${safeFixed(rr, 2)} | invalid positive geometry`
         );
         return false;
     }
@@ -3066,9 +3096,9 @@ continue
     // repaired with a legacy RR or database-derived target.
     const rr = Math.abs(Number(best.tp) - Number(best.price)) /
         Math.abs(Number(best.price) - Number(best.sl));
-    if (!Number.isFinite(rr) || rr < 0.79 || rr > MAX_NINE_AI_RR + 1e-9) {
+    if (!Number.isFinite(rr) || rr <= 0) {
         console.log(
-            `🚫 FILTER NINE-AI RR: ${best.symbol} | RR=${safeFixed(rr, 2)} | allowed=0.80-${MAX_NINE_AI_RR}`
+            `🚫 FILTER NINE-AI RR: ${best.symbol} | RR=${safeFixed(rr, 2)} | invalid positive geometry`
         );
         continue;
     }
@@ -3369,7 +3399,7 @@ if(!trade){
         const signalKey = `${trade.symbol}:${Number(trade.signalAt)}`
         const plannedTargetR = Math.abs(Number(trade.tp) - Number(trade.entry)) /
             Math.abs(Number(trade.entry) - Number(trade.sl));
-        if (!Number.isFinite(plannedTargetR) || plannedTargetR <= 0 || plannedTargetR > MAX_NINE_AI_RR + 1e-9) {
+        if (!Number.isFinite(plannedTargetR) || plannedTargetR <= 0) {
             console.log(`⛔ INVALID NINE-AI RR BEFORE CLAIM ${trade.symbol}: ${plannedTargetR}`);
             continue;
         }
@@ -4157,8 +4187,8 @@ if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
                 feeRate: Number(t.notional) > 0 ? Number(closed.feesUSDT || 0) / Number(t.notional) : null,
                 feeR: getTradeActualRisk(t) > 0
                     ? Number(closed.feesUSDT || 0) / getTradeActualRisk(t) : null,
-                maxRR: Number(t.tradePlan?.maxRiskReward ?? MAX_NINE_AI_RR),
-                minRR: 0.79,
+                maxRR: Number(t.tradePlan?.maxRiskReward ?? Infinity),
+                minRR: 0,
                 regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
             }, researchCandles);
             if (research.variants) console.log("🧪 NINE-AI COUNTERFACTUAL RESEARCH: variants=" + research.variants +
@@ -4904,6 +4934,24 @@ console.log("🧠 NINE-AI DECISION JOURNAL READY: samples=" + decisionJournalSta
     " matured96barSamples=" + decisionJournalStatus.maturedWindowSamples +
     " windowResearch=" + (decisionJournalStatus.maturedWindowSamples >= decisionJournalStatus.minWindowSamples ? "READY" : "COLLECTING"));
 try {
+    const consensusStatus = await nineAiDataDerivedConsensus.initialize(db);
+    console.log("🧬 NINE-AI DATA-DERIVED CONSENSUS READY: activePolicies=" + consensusStatus.activePolicies);
+    const runConsensusResearch = async () => {
+        try {
+            const result = await nineAiDataDerivedConsensus.runResearchCycle();
+            console.log("🧬 NINE-AI CONSENSUS RESEARCH: status=" + result.status +
+                " rows=" + result.rows + " regimes=" + result.regimes +
+                " activePolicies=" + result.activePolicies);
+        } catch (error) {
+            console.error("⚠️ NINE-AI CONSENSUS RESEARCH FAILED:", error?.message || error);
+        }
+    };
+    void runConsensusResearch();
+    setInterval(runConsensusResearch, 6 * 60 * 60 * 1000);
+} catch (consensusError) {
+    console.error("⚠️ NINE-AI DATA-DERIVED CONSENSUS INIT FAILED:", consensusError?.message || consensusError);
+}
+try {
     const adaptationStatus = await nineAiAutonomousAdaptation.initialize(db, trades);
     console.log("🧠 NINE-AI AUTONOMOUS ADAPTATION READY: version=" + adaptationStatus.version +
         " trades=" + adaptationStatus.trades + " policies=" + adaptationStatus.policies);
@@ -5595,7 +5643,7 @@ async function syncActiveTrades(){
 }
 
 let DYNAMIC_TPSL_RUNNING = false
-const ENABLE_DYNAMIC_TPSL= false
+const ENABLE_DYNAMIC_TPSL= true
 async function runDynamicTPSL(){
     if(!ENABLE_DYNAMIC_TPSL)return
 

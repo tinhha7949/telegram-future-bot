@@ -3,8 +3,7 @@ const assert = require("node:assert/strict");
 const {
   ROLE_NAMES, ROLE_WEIGHTS, analyzeNineAI, parseClosedCandles, buildFeatures,
   resolveModelSide, resolveConsensusSide, assessIndependentRiskModel, assessEntryRiskEvidence,
-  detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore, compareNineAICandidates,
-  MAX_NINE_AI_RR
+  detectContrarianSignal, isContrarianConflict, observedPivotExitDistances, calculateWeightedRoleScore, compareNineAICandidates
 } = require("./nine-ai-strategy");
 
 assert.equal(ROLE_NAMES.length, 9);
@@ -81,11 +80,11 @@ assert.equal(result.roles[7].name, "Decision AI");
 assert.equal(result.roles[8].name, "Risk Manager AI");
 if (result.side) {
   assert.ok(result.sl > 0 && result.tp > 0 && result.price > 0);
-  assert.ok(result.rr >= 0.79 && result.rr <= 1.8, "any valid RR below the hard 1.8 ceiling is allowed");
+  assert.ok(Number.isFinite(result.rr) && result.rr > 0, "learned exit geometry can use any positive data-derived RR");
   assert.equal(result.authorizedForExecution, true);
   assert.equal(result.tradePlan.timeframe, "15m");
   assert.equal(result.tradePlan.entryMethod, "LATEST_CLOSED_CANDLE");
-  assert.equal(result.tradePlan.stopMethod, "ATR_AND_RECENT_STRUCTURE");
+  assert.ok(result.tradePlan.stopMethod);
   assert.equal(result.entry, result.price);
   assert.equal(result.rankMetrics.roleContributions.length, 9);
   const contributionSum = result.rankMetrics.roleContributions
@@ -95,9 +94,9 @@ if (result.side) {
   assert.ok(result.rankScore >= 0 && result.rankScore <= 100);
   assert.ok(Math.abs(result.rankMetrics.roleWeight + result.rankMetrics.setupWeight +
     result.rankMetrics.entryQualityWeight - 1) < 1e-9);
-  assert.ok(result.rankMetrics.roleWeight >= 0.45 && result.rankMetrics.roleWeight <= 0.90);
-  assert.ok(result.rankMetrics.setupWeight >= 0.03 && result.rankMetrics.setupWeight <= 0.35);
-  assert.ok(result.rankMetrics.entryQualityWeight >= 0.03 && result.rankMetrics.entryQualityWeight <= 0.35);
+  assert.ok(result.rankMetrics.roleWeight >= 0 && result.rankMetrics.roleWeight <= 1);
+  assert.ok(result.rankMetrics.setupWeight >= 0 && result.rankMetrics.setupWeight <= 1);
+  assert.ok(result.rankMetrics.entryQualityWeight >= 0 && result.rankMetrics.entryQualityWeight <= 1);
   assert.ok(Math.abs(result.rankScore - (
     result.rankMetrics.roleScore * result.rankMetrics.roleWeight +
     result.rankMetrics.setupQuality * result.rankMetrics.setupWeight +
@@ -146,6 +145,15 @@ assert.equal(isContrarianConflict("SHORT", bullTrap), false,
   "the reversal direction should not be vetoed by the trap it follows");
 assert.equal(isContrarianConflict("LONG", { side: "SHORT", strength: 40 }), false,
   "weak countertrend evidence must not trigger the hard veto");
+
+const pivotPlan = observedPivotExitDistances([
+  { l: 99, h: 101 }, { l: 98, h: 102 }, { l: 99, h: 104 },
+  { l: 97, h: 103 }, { l: 99, h: 105 }, { l: 100, h: 102 },
+  { l: 100, h: 101 }
+], "LONG", 100);
+assert.equal(pivotPlan.source, "OBSERVED_96_CLOSED_CANDLE_PIVOTS");
+assert.equal(pivotPlan.stopDistance, 2.5);
+assert.equal(pivotPlan.targetDistance, 4.5);
 
 // The ranking score must actually change when role evidence changes, with
 // every role's declared weight represented in the calculation.
@@ -204,4 +212,4 @@ assert.ok(Number.isFinite(rewardPrediction.expectedR) && rewardPrediction.uncert
 assert.notEqual(rewardPrediction.expectedR, rewardModel.predict({ ...rewardFeatures, trend: -1 }, "LONG", rewardState).expectedR);
 assert.equal(rewardModel.predict(rewardFeatures, "WAIT", rewardState).ready, false);
 
-console.log("PASS: Nine-AI sole decision authority, AI-owned dynamic gates, weighted ranking, trade geometry, non-contracting TP, and RR cap");
+console.log("PASS: Nine-AI data-derived consensus interface, adaptive ranking, observed-pivot exits, and trade geometry");

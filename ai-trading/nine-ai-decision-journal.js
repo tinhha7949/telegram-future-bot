@@ -224,6 +224,7 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
     roleContributions: metrics.roleContributions || null,
     roles,
     features: features && typeof features === "object" ? { ...features } : null,
+    dataDerivedPolicyEvidence: metrics.dataDerivedConsensus || null,
     featureSchemaVersion: 1,
     marketDataSchemaVersion: 2,
     marketWindow: window,
@@ -238,6 +239,7 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
   const signature = JSON.stringify({
     side: snapshot.side, reason: snapshot.reason, rankScore: snapshot.rankScore,
     confidence: snapshot.confidence, roles: snapshot.roles, features: snapshot.features,
+    dataDerivedPolicyEvidence: snapshot.dataDerivedPolicyEvidence,
     learningEvidence: snapshot.learningEvidence
   });
   const digest = crypto.createHash("sha256").update(signature).digest("hex").slice(0, 12);

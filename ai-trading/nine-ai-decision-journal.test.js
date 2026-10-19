@@ -17,7 +17,8 @@ const wait = journal.snapshotDecision({
   scannedAt: candles[2].closeTime,
   decision: {
     side: null, action: "WAIT", reason: "NO_CONSENSUS", authorizedForExecution: false,
-    rankMetrics: { features: { close: candles[2].close, atr14: 1, marketRegime: "TREND_UP" } },
+    rankMetrics: { features: { close: candles[2].close, atr14: 1, marketRegime: "TREND_UP" },
+      dataDerivedConsensus: { ready: true, policyId: "data-consensus:TREND_UP", reason: "VALIDATED_DATA_DERIVED_POLICY_WAIT" } },
     roles: [{ name: "Technical Analyst AI", side: "LONG", confidence: 72, weight: 0.15, reason: "trend aligns" }]
   },
   marketWindow: raw
@@ -27,6 +28,8 @@ assert.equal(wait.reason, "NO_CONSENSUS");
 assert.equal(wait.actualTrade, false);
 assert.equal(wait.featureSchemaVersion, 1);
 assert.equal(wait.marketDataSchemaVersion, 2);
+assert.equal(wait.dataDerivedPolicyEvidence.policyId, "data-consensus:TREND_UP",
+  "journal must retain which learned policy authorized or rejected the decision");
 assert.equal(wait.marketWindow.length, 3);
 assert.equal(wait.marketWindow.at(-1).closeTime, candles[2].closeTime);
 assert.deepEqual(wait.marketWindow[0], {

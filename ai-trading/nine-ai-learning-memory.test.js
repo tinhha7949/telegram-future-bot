@@ -62,6 +62,14 @@ function makeCollection() {
   assert.equal(Object.hasOwn(learner.read(), "recent"), false, "outcome history must not be retained in RAM");
   assert.equal(learner.vector(features).length, 18);
   const initialWeights = learner.decisionPolicy().decisionWeights;
+const unconstrainedDecisionWeights = learner.normalizeDecisionWeights({ role: 100, setup: 0, entry: 0 });
+assert.deepEqual(unconstrainedDecisionWeights, { role: 1, setup: 0, entry: 0 },
+  "learned decision weights must normalize from evidence without fixed parameter bounds");
+const unconstrainedRoleWeights = learner.normalizeRoleWeights(Object.fromEntries(
+  Object.keys(learner.BASE_ROLE_WEIGHTS).map(name => [name, name === "Risk Manager AI" ? 100 : 0])
+));
+assert.equal(unconstrainedRoleWeights["Risk Manager AI"], 1,
+  "the risk role weight must also remain data-adjustable");
   assert.ok(Math.abs(initialWeights.role - 0.8) < 1e-9);
   assert.ok(Math.abs(initialWeights.setup - 0.1) < 1e-9);
   assert.ok(Math.abs(initialWeights.entry - 0.1) < 1e-9);
@@ -93,7 +101,8 @@ function makeCollection() {
   assert.notDeepEqual(policyAfter.decisionWeights, policyBefore.decisionWeights, "closed outcomes adapt ranking weights");
   assert.ok(Math.abs(Object.values(policyAfter.decisionWeights).reduce((a,b)=>a+b,0)-1)<1e-9);
   assert.ok(Math.abs(Object.values(policyAfter.roleWeights).reduce((a,b)=>a+b,0)-1)<1e-9);
-  assert.equal(policyAfter.roleWeights["Risk Manager AI"], 0.05);
+  assert.ok(policyAfter.roleWeights["Risk Manager AI"] >= 0 && policyAfter.roleWeights["Risk Manager AI"] <= 1,
+    "risk role weight must be learned from the role's actual outcome evidence");
   const duplicate = await learner.learnClosedTrade({
     tradeId: "closed-24", features, side: "LONG", realizedR: 1, closed: true
   });

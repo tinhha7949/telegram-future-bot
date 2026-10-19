@@ -135,8 +135,8 @@ function buildVariants(trade, rawCandles) {
   const result = [];
   const feeRate = n(trade.feeRate);
   const fallbackFeeR = n(trade.feeR, FEE_R);
-  const maxRR = n(trade.maxRR, 1.8);
-  const minRR = n(trade.minRR, 0.79);
+  const maxRR = n(trade.maxRR, Infinity);
+  const minRR = n(trade.minRR, 0);
   const add = (variant, side, idx, e, stop, target, delay=0) => {
     const candidateRisk = Math.abs(e-stop);
     const feeR = feeRate !== null && candidateRisk > 0
@@ -157,7 +157,7 @@ function buildVariants(trade, rawCandles) {
   for (const stopDistance of observed.stops) {
     for (const targetDistance of observed.targets) {
       const candidateRR = targetDistance / stopDistance;
-      if (candidateRR < minRR || candidateRR > maxRR) continue;
+      if (!(candidateRR > minRR && candidateRR <= maxRR)) continue;
       const stopScale = stopDistance / risk;
       const targetScale = targetDistance / baselineReward;
       if (!(Number.isFinite(stopScale) && stopScale > 0 && Number.isFinite(targetScale) && targetScale > 0)) continue;

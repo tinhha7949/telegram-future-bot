@@ -46,6 +46,8 @@ const SPECS = Object.freeze([
     category: "generated_report" },
   { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 90,
     category: "generated_report" },
+  { name: "nine_ai_data_derived_consensus_reports", dateFields: ["createdAt"], days: 90,
+    category: "generated_report" },
   { name: "nine_ai_strategy_hypotheses", dateFields: ["createdAt"], days: 90,
     category: "research_hypothesis", filter: { createdAt: { $exists: true } } },
   { name: "nine_ai_strategy_versions", dateFields: ["updatedAt", "createdAt"], days: 90,

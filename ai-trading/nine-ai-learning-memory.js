@@ -14,26 +14,26 @@ const BASE_ROLE_WEIGHTS = Object.freeze({
   "Bull AI": 0.10, "Bear AI": 0.10, "Contrarian AI": 0.15, "Analyst AI": 0.10,
   "Decision AI": 0.10, "Risk Manager AI": 0.05
 });
-const ADAPTIVE_ROLE_NAMES = Object.keys(BASE_ROLE_WEIGHTS).filter(name => name !== "Risk Manager AI");
+const ADAPTIVE_ROLE_NAMES = Object.keys(BASE_ROLE_WEIGHTS);
 function normalizeDecisionWeights(weights) {
-  const role = clamp(Number(weights?.role) || BASE_DECISION_WEIGHTS.role, 0.45, 0.90);
-  const nonRole = 1 - role;
-  const rawSetup = Math.max(0.001, Number(weights?.setup) || BASE_DECISION_WEIGHTS.setup);
-  const rawEntry = Math.max(0.001, Number(weights?.entry) || BASE_DECISION_WEIGHTS.entry);
-  const setupMin = Math.max(0.03, nonRole - 0.35);
-  const setupMax = Math.min(0.35, nonRole - 0.03);
-  const setup = clamp(nonRole * rawSetup / (rawSetup + rawEntry), setupMin, setupMax);
-  return { role, setup, entry: nonRole - setup };
+  const raw = Object.fromEntries(["role", "setup", "entry"].map(key => {
+    const value = Number(weights?.[key]);
+    return [key, Number.isFinite(value) && value >= 0 ? value : BASE_DECISION_WEIGHTS[key]];
+  }));
+  const total = Object.values(raw).reduce((sum, value) => sum + value, 0);
+  return total > 0 ? Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, value / total]))
+    : { role: 1 / 3, setup: 1 / 3, entry: 1 / 3 };
 }
 function normalizeRoleWeights(weights) {
   const result = {};
   let total = 0;
   for (const name of ADAPTIVE_ROLE_NAMES) {
-    result[name] = clamp(Number(weights?.[name]) || BASE_ROLE_WEIGHTS[name], BASE_ROLE_WEIGHTS[name] * 0.5, BASE_ROLE_WEIGHTS[name] * 1.5);
+    const value = Number(weights?.[name]);
+    result[name] = Number.isFinite(value) && value >= 0 ? value : BASE_ROLE_WEIGHTS[name];
     total += result[name];
   }
-  result["Risk Manager AI"] = BASE_ROLE_WEIGHTS["Risk Manager AI"];
-  for (const name of ADAPTIVE_ROLE_NAMES) result[name] *= 0.95 / total;
+  if (!(total > 0)) return Object.fromEntries(ADAPTIVE_ROLE_NAMES.map(name => [name, 1 / ADAPTIVE_ROLE_NAMES.length]));
+  for (const name of ADAPTIVE_ROLE_NAMES) result[name] /= total;
   return result;
 }
 function fresh() {
@@ -90,8 +90,8 @@ function adaptDecisionPolicy(state, outcome) {
   const nextWeights = { ...weights };
   for (const [key, score] of components) {
     if (!Number.isFinite(score)) continue;
-    nextWeights[key] = clamp(nextWeights[key] + lr * error * ((clamp(score, 0, 100) - 50) / 50),
-      0.03, key === "role" ? 0.90 : 0.35);
+    nextWeights[key] = Math.max(0,
+      nextWeights[key] + lr * error * ((clamp(score, 0, 100) - 50) / 50));
   }
   state.decisionWeights = normalizeDecisionWeights(nextWeights);
   const votes = Array.isArray(context.roleVotes) ? context.roleVotes : [];
@@ -104,8 +104,7 @@ function adaptDecisionPolicy(state, outcome) {
     const voteQuality = side === outcome.side ? confidence :
       (side === "LONG" || side === "SHORT" ? 100 - confidence : 50);
     const evidence = (voteQuality - 50) / 50;
-    roleWeights[name] = clamp(roleWeights[name] + lr * Math.sign(reward) * evidence,
-      BASE_ROLE_WEIGHTS[name] * 0.5, BASE_ROLE_WEIGHTS[name] * 1.5);
+    roleWeights[name] = Math.max(0, roleWeights[name] + lr * Math.sign(reward) * evidence);
   }
   state.roleWeights = normalizeRoleWeights(roleWeights);
 }

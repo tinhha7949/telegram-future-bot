@@ -13,6 +13,7 @@ const contextualLearning = require("./nine-ai-contextual-learning");
 const counterfactualResearch = require("./nine-ai-counterfactual-research");
 const rewardModel = require("./nine-ai-reward-model");
 const autonomousDeployment = require("./nine-ai-autonomous-deployment");
+const autonomousConsensus = require("./nine-ai-data-derived-consensus");
 
 const ROLE_NAMES = [
   "Technical Analyst AI",
@@ -303,6 +304,32 @@ function isContrarianConflict(side, contrarian) {
     contrarian.side !== side && Number(contrarian.strength) >= 60);
 }
 
+function observedPivotExitDistances(candles, side, entry) {
+  const history = candles.slice(-97, -1);
+  const stops = [], targets = [];
+  for (let i = 1; i < history.length - 1; i++) {
+    const candle = history[i], before = history[i - 1], after = history[i + 1];
+    const pivotLow = candle.l <= before.l && candle.l <= after.l;
+    const pivotHigh = candle.h >= before.h && candle.h >= after.h;
+    if (side === "LONG") {
+      if (pivotLow && candle.l < entry) stops.push(entry - candle.l);
+      if (pivotHigh && candle.h > entry) targets.push(candle.h - entry);
+    } else {
+      if (pivotHigh && candle.h > entry) stops.push(candle.h - entry);
+      if (pivotLow && candle.l < entry) targets.push(entry - candle.l);
+    }
+  }
+  const median = values => {
+    const ordered = [...new Set(values.filter(value => Number.isFinite(value) && value > 0))]
+      .sort((a, b) => a - b);
+    if (!ordered.length) return null;
+    const middle = Math.floor(ordered.length / 2);
+    return ordered.length % 2 ? ordered[middle] : (ordered[middle - 1] + ordered[middle]) / 2;
+  };
+  return { stopDistance: median(stops), targetDistance: median(targets),
+    stopLevels: stops.length, targetLevels: targets.length, source: "OBSERVED_96_CLOSED_CANDLE_PIVOTS" };
+}
+
 function calculateWeightedRoleScore(roleResults, side, adaptiveRoleWeights = ROLE_WEIGHTS) {
   if (!Array.isArray(roleResults) || !["LONG", "SHORT"].includes(side)) return { score: 0, roles: [] };
   let weightedTotal = 0;
@@ -500,16 +527,20 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       ? `independentAnalystModelP(long)=${analystModel.pLong}; volumeRatio=${f.volumeRatio.toFixed(2)}`
       : `warmupFallback=market-quality-check; volumeRatio=${f.volumeRatio.toFixed(2)}; body/range=${(candleRange ? candleBody / candleRange : 0).toFixed(2)}`);
 
-  // 8. Decision AI: consensus from roles 1-7. The risk role can still veto.
+  // 8. Decision AI: apply thresholds learned from matured journal outcomes.
+  // No fixed live 4-of-7 vote requirement remains.
   const longCount = longVotes.length, shortCount = shortVotes.length;
-  const consensusSide = longCount >= 4 && longCount - shortCount >= 2 ? "LONG" :
-    shortCount >= 4 && shortCount - longCount >= 2 ? "SHORT" : null;
+  const dataDerivedConsensus = autonomousConsensus.assessLive(
+    roleResults, f.marketRegime || "UNKNOWN", null,
+    { ...learnedFeatures, marketRegime: f.marketRegime, rsi14: f.rsi,
+      extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
+      falseBreakoutRisk: f.falseBreakoutRisk }
+  );
+  const consensusSide = dataDerivedConsensus.ready && dataDerivedConsensus.allowed
+    ? dataDerivedConsensus.side : null;
   const decisionModel = independent.get("decision");
-  // The learned Decision AI is advisory evidence, not a second hard veto.
-  // At the 20-sample warm-up boundary, a disagreement used to erase an
-  // otherwise valid 4-of-7 rule consensus and could halt all entries. Keep
-  // consensus as the trade-direction authority; record the model in the role
-  // audit trail so its disagreement can still be measured and learned from.
+  // The data-derived policy selects direction; the Decision AI prediction is
+  // retained as another learned input and audit signal.
   const side = resolveConsensusSide(consensusSide);
   const chosenVotes = side === "LONG" ? longVotes : side === "SHORT" ? shortVotes : [];
   const confidence = chosenVotes.length
@@ -521,7 +552,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     weight: ROLE_WEIGHTS[ROLE_NAMES[7]],
     reason: decisionModel?.trained
       ? `independentDecisionP(long)=${decisionModel.pLong}; consensus=${consensusSide || "WAIT"}; samples=${decisionModel.samples}`
-      : `warmupFallback=consensus; longVotes=${longCount}; shortVotes=${shortCount}; minConsensus=4` });
+      : `dataDerivedConsensus=${dataDerivedConsensus.reason}; longVotes=${longCount}; shortVotes=${shortCount}` });
 
   // 9. Risk Manager AI: learned evidence affects ranking, not entry eligibility.
   // These market observations remain visible to the model and audit trail, but
@@ -537,35 +568,25 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       ? `LEARNED_RISK_ADVISORY; evidence=${riskEvidence.evidence.join("|") || "none"}; ${learnedRisk.reason}; independentPLoss=${riskModel?.pLoss ?? "unavailable"}`
       : "NO_CONSENSUS" });
 
-  if (!riskAllowed) return { ...abstain, reason: "NO_CONSENSUS",
-    roles: roleResults, candles: candles.length, features: summarize(f) };
+  if (!riskAllowed) return { ...abstain,
+    reason: dataDerivedConsensus.ready ? dataDerivedConsensus.reason : "NO_VALIDATED_DATA_DERIVED_POLICY",
+    roles: roleResults, candles: candles.length, features: summarize(f),
+    rankMetrics: { dataDerivedConsensus } };
 
-  // All nine roles vote on the initial risk plan. Technical structure and
-  // ATR supply price anchors, while weighted role evidence selects stop room
-  // and the target RR. The hard RR ceiling is always 1.80.
+  // Observed pivots from the preceding 96 closed candles define the initial
+  // price levels. Validated counterfactual research may replace these levels.
   const entry = f.last.c;
   const weightedPlan = calculateWeightedRoleScore(roleResults, side);
   const rolePlanScore = weightedPlan.score;
-  const opposingRolePressure = roleResults
-    .filter(role => role.name !== "Decision AI" && role.name !== "Risk Manager AI" &&
-      (role.side === "LONG" || role.side === "SHORT") && role.side !== side)
-    .reduce((sum, role) => sum + (ROLE_WEIGHTS[role.name] || 0) * role.confidence, 0);
-  const riskRole = roleResults.find(role => role.name === "Risk Manager AI");
-  const contrarianRole = roleResults.find(role => role.name === "Contrarian AI");
-  const riskPressure = clamp(
-    ((Number(riskRole?.confidence) || 50) - 50) / 50 +
-    opposingRolePressure / 100 +
-    ((contrarianRole?.side && contrarianRole.side !== side) ? (Number(contrarianRole.confidence) || 0) / 200 : 0),
-    0, 1
-  );
-  const minimumStop = Math.max(f.atr * 0.8, entry * 0.0008);
-  const structureStop = side === "LONG"
-    ? Math.max(entry - f.swingLow + f.atr * 0.1, 0)
-    : Math.max(f.swingHigh - entry + f.atr * 0.1, 0);
-  const baseStopDistance = Math.max(minimumStop, structureStop);
-  let stopDistance = baseStopDistance * (1 - 0.18 * riskPressure);
-  let targetRR = Math.round(clamp(0.8 + rolePlanScore / 100 * 1.0, 0.8, MAX_NINE_AI_RR) * 100) / 100;
-  let targetDistance = stopDistance * targetRR;
+  const observedExitPlan = observedPivotExitDistances(candles, side, entry);
+  let stopDistance = observedExitPlan.stopDistance;
+  let targetDistance = observedExitPlan.targetDistance;
+  if (!(Number.isFinite(stopDistance) && stopDistance > 0 && Number.isFinite(targetDistance) && targetDistance > 0)) {
+    return { ...abstain, reason: "NO_OBSERVED_MARKET_PIVOTS_FOR_EXIT_PLAN", roles: roleResults,
+      candles: candles.length, features: summarize(f), rankMetrics: { observedExitPlan } };
+  }
+  let targetRR = targetDistance / stopDistance;
+  const riskPressure = null;
   let adaptiveExitPlan = null;
   const exitPlanAdvice = counterfactualResearch.advice({
     side,
@@ -591,10 +612,9 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     const candidateStopDistance = stopDistance * stopScale;
     const candidateTargetDistance = targetDistance * targetScale;
     const candidateRR = candidateTargetDistance / candidateStopDistance;
-    // Keep exchange-valid directional geometry and existing RR bounds. Position
-    // sizing is recalculated from the selected stop, so the existing account-risk
-    // budget remains the final bound even when a learned stop is wider.
-    if (candidateRR < 0.79 || candidateRR > MAX_NINE_AI_RR) continue;
+    // No preset RR range is imposed. Position sizing recalculates from the
+    // selected stop; the existing capital-risk budget remains the exposure cap.
+    if (!(Number.isFinite(candidateRR) && candidateRR > 0)) continue;
     stopDistance = candidateStopDistance;
     targetDistance = candidateTargetDistance;
     targetRR = Number(candidateRR.toFixed(2));
@@ -615,7 +635,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
   if (![entry, sl, tp, rr, targetRR].every(Number.isFinite) || entry <= 0 || sl <= 0 ||
       (side === "LONG" ? !(sl < entry && tp > entry) : !(tp < entry && sl > entry)) ||
-      rr < 0.79 || rr > 1.8 + 1e-9) {
+      rr <= 0) {
     return { ...abstain, reason: "FINAL_TRADE_GEOMETRY_INVALID", roles: roleResults, candles: candles.length };
   }
 
@@ -660,9 +680,10 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     ? Math.max(0, Math.abs(tp - entry) - estimatedRoundTripCost) /
       Math.max(Math.abs(entry - sl) + estimatedRoundTripCost, Number.EPSILON)
     : null;
-  const rewardQuality = clamp(
-    (hasCostModel ? netRR : rr) / MAX_NINE_AI_RR * 100, 0, 100
-  );
+  const learnedReward = rewardEvidence[side];
+  const rewardQuality = learnedReward?.ready
+    ? clamp((Number(learnedReward.expectedR) - Number(learnedReward.uncertainty || 0)) * 100, 0, 100)
+    : 0;
   const directionalEntryQuality = side === "LONG" ? f.longEntryQuality : f.shortEntryQuality;
   const entryQuality = Math.round(clamp(
     directionalEntryQuality * 0.75 + rewardQuality * 0.25, 0, 100
@@ -712,7 +733,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     counterfactualResearch: counterfactualAdvice,
     autonomousTimingDeployment: { ...timingPolicyEvidence, appliedAdjustment: timingAdjustment, baseRankScore: Math.round(baseRankScore * 100) / 100 },
     desiredRR: targetRR,
-    maxRiskReward: 1.8,
+    maxRiskReward: null,
     riskPressure,
     grossRR: rr,
     netRR,
@@ -730,6 +751,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     directionalVotes,
     opposingVotes,
     consensusMargin,
+    dataDerivedConsensus,
     consensusCoverage: Math.round(consensusCoverage),
     trendAlignment,
     momentumAlignment,
@@ -748,8 +770,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     tradePlan: {
       timeframe: "15m",
       entryMethod: "LATEST_CLOSED_CANDLE",
-      stopMethod: "ATR_AND_RECENT_STRUCTURE",
-      targetMethod: adaptiveExitPlan ? "NINE_AI_COUNTERFACTUAL_ADAPTIVE" : "NINE_AI_WEIGHTED_RR",
+      stopMethod: adaptiveExitPlan ? "VALIDATED_COUNTERFACTUAL_POLICY" : observedExitPlan.source,
+      targetMethod: adaptiveExitPlan ? "VALIDATED_COUNTERFACTUAL_POLICY" : observedExitPlan.source,
       exitPolicy: adaptiveExitPlan,
       stopDistance,
       targetDistance,
@@ -757,7 +779,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       rolePlanScore,
       riskPressure,
       riskReward: rr,
-      maxRiskReward: 1.8
+      maxRiskReward: null
     },
     signalAt: f.last.closeTime, setup: "NINE_AI_15M",
     marketState: f.marketRegime,
@@ -771,8 +793,6 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     authorizedForExecution: true
   };
 }
-
-const MAX_NINE_AI_RR = 1.8;
 
 function summarize(f) {
   return {
@@ -815,6 +835,6 @@ function compareNineAICandidates(a, b) {
 module.exports = {
   ROLE_NAMES, ROLE_WEIGHTS, parseClosedCandles, buildFeatures,
   resolveModelSide, resolveConsensusSide, assessIndependentRiskModel, assessEntryRiskEvidence,
-  detectContrarianSignal, isContrarianConflict, calculateWeightedRoleScore,
-  analyzeNineAI, compareNineAICandidates, MAX_NINE_AI_RR
+  detectContrarianSignal, isContrarianConflict, observedPivotExitDistances, calculateWeightedRoleScore,
+  analyzeNineAI, compareNineAICandidates
 };

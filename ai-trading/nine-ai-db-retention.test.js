@@ -63,6 +63,7 @@ const names = [
   "trades", "nine_ai_decision_journal", "nine_ai_learning_state",
   "nine_ai_timing_deployment_policies", "nine_ai_ml_signal_outcomes",
   "nine_ai_strategy_lab_reports", "nine_ai_autonomous_decision_reports",
+  "nine_ai_data_derived_consensus_reports",
   "nine_ai_learning_outcomes", "nine_ai_counterfactual_outcomes",
   "nine_ai_contextual_outcomes", "nine_ai_reward_model_outcomes",
   "nine_ai_loss_diagnoses", "nine_ai_strategy_evolution_outcomes",
@@ -75,7 +76,7 @@ const names = [
 ];
 const specs = retention.getSpecs(names);
 const byName = Object.fromEntries(specs.map(s => [s.name, s]));
-assert.strictEqual(specs.length, 21, "all explicitly reviewed event ledgers and model outcomes must be eligible");
+assert.strictEqual(specs.length, 22, "all explicitly reviewed event ledgers and model outcomes must be eligible");
 assert.strictEqual(byName.trades.days, 90);
 assert.deepStrictEqual(byName.trades.filter, { result: { $in: ["WIN", "LOSS", "CLOSED_UNRESOLVED"] } });
 assert.strictEqual(byName.nine_ai_decision_journal.filter.outcomeStatus, "EVALUATED");
@@ -87,10 +88,12 @@ for (const model of ["technical", "signal", "memory", "bull", "bear", "contraria
 }
 assert.strictEqual(byName.nine_ai_strategy_lab_reports.days, 90);
 assert.strictEqual(byName.nine_ai_autonomous_decision_reports.days, 90);
+assert.strictEqual(byName.nine_ai_data_derived_consensus_reports.days, 90);
 for (const protectedCollection of [
   "nine_ai_learning_state", "nine_ai_timing_deployment_policies",
   "nine_ai_reward_model_state", "nine_ai_decision_policies",
   "nine_ai_strategy_policy", "nine_ai_counterfactual_policies",
+  "nine_ai_data_derived_consensus_policies",
   "nine_ai_ml_signal_state", "nine_ai_ml_unknown_outcomes",
   "nine_ai_pending_timing_entries", "trade_signal_claims"
 ]) {
