@@ -8,7 +8,6 @@ const HISTORY_COLLECTION = "nine_ai_autonomous_adaptation_history";
 const MAX_TRADES = 3000;
 const MIN_TRAIN = 30;
 const MIN_TEST = 20;
-const MAX_ADJUSTMENT = 8;
 const HARD_VETO_MIN_TEST = 40;
 const HARD_VETO_MAX_MEAN_R = -0.15;
 const HARD_VETO_MAX_UPLIFT_R = -0.12;
@@ -22,7 +21,6 @@ let refreshRunning = false;
 const REFRESH_MS = 15 * 60 * 1000;
 
 const num = (v, fallback = null) => v == null || v === "" || !Number.isFinite(Number(v)) ? fallback : Number(v);
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const mean = xs => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null;
 const se = xs => {
   if (xs.length < 2) return Infinity;
@@ -50,28 +48,22 @@ function tradeFeatures(trade) {
   };
 }
 
+function readNumericFeature(features, name) {
+  const value = features?.raw?.[name] ?? features?.[name];
+  return num(value);
+}
+
+// A strategy is a data-only genome: one or more observed numeric feature
+// predicates. It cannot execute JavaScript or alter the order/risk pipeline.
 function ruleMatches(features, rule, params = {}) {
-  const f = features;
-  if (rule === "EXTENDED_MOMENTUM_ENTRY") {
-    const extensionThreshold = num(params.extensionThreshold, 1.5);
-    const rsiThreshold = num(params.rsiThreshold, 65);
-    return f.extension !== null && f.rsi !== null && Math.abs(f.extension) >= extensionThreshold &&
-      ((f.side === "LONG" && f.extension > 0 && f.rsi >= rsiThreshold) ||
-       (f.side === "SHORT" && f.extension < 0 && f.rsi <= 100 - rsiThreshold));
-  }
-  if (rule === "OVERBOUGHT_LONG") return f.side === "LONG" && f.rsi !== null && f.rsi >= num(params.rsiThreshold, 70);
-  if (rule === "OVERSOLD_SHORT") return f.side === "SHORT" && f.rsi !== null && f.rsi <= num(params.rsiThreshold, 30);
-  if (rule === "WEAK_ENTRY_QUALITY") {
-    const q = f.side === "LONG" ? f.longQuality : f.side === "SHORT" ? f.shortQuality : f.entryQuality;
-    return q !== null && q < num(params.qualityThreshold, 50);
-  }
-  if (rule === "LOW_VOLUME") return f.volume !== null && f.volume < num(params.volumeThreshold, 0.75);
-  if (rule === "LOW_ROOM") return f.roomQuality !== null && f.roomQuality <= num(params.roomThreshold, 25);
-  if (rule === "FALSE_BREAKOUT_RISK") {
-    const risk = num(f.raw?.falseBreakoutRisk);
-    return risk !== null && risk >= num(params.falseBreakoutThreshold, 0.6);
-  }
-  return false;
+  if (rule !== "LEARNED_CONJUNCTION") return false;
+  const conditions = Array.isArray(params.conditions) ? params.conditions : [];
+  return conditions.length > 0 && conditions.every(condition => {
+    const value = readNumericFeature(features, condition.feature);
+    if (value === null || !Number.isFinite(Number(condition.threshold))) return false;
+    return condition.operator === "gte" ? value >= condition.threshold
+      : condition.operator === "lte" ? value <= condition.threshold : false;
+  });
 }
 
 function normalizeTrade(t) {
@@ -112,47 +104,59 @@ function observedThresholds(values) {
   return [...result].sort((a, b) => a - b);
 }
 
-function buildRuleGrid(trainingRows = []) {
+function candidatePredicates(trainingRows = []) {
+  const names = new Set();
+  for (const row of trainingRows) {
+    for (const [name, value] of Object.entries(row.features?.raw || {})) {
+      if (value != null && value !== "" && Number.isFinite(Number(value))) names.add(name);
+    }
+  }
   const result = [];
-  const add = (rule, params) => {
-    if (Object.values(params).some(value => !Number.isFinite(value))) return;
-    result.push({ rule, params });
-  };
-  const features = trainingRows.map(row => row.features || {});
-  const extension = observedThresholds(features.map(f =>
-    f.extension === null ? NaN : Math.abs(f.extension)));
-  const longRsi = observedThresholds(features.filter(f => f.side === "LONG")
-    .map(f => f.rsi).filter(v => v !== null && v >= 50));
-  const shortRsi = observedThresholds(features.filter(f => f.side === "SHORT")
-    .map(f => f.rsi).filter(v => v !== null && v <= 50));
-  const rsi = observedThresholds(features.map(f => f.rsi).filter(v => v !== null));
-  const volume = observedThresholds(features.map(f => f.volume).filter(v => v !== null));
-  const quality = observedThresholds(features.map(f =>
-    f.side === "LONG" ? f.longQuality : f.side === "SHORT" ? f.shortQuality : f.entryQuality
-  ).filter(v => v !== null));
-  const room = observedThresholds(features.map(f => f.roomQuality).filter(v => v !== null));
-  const breakout = observedThresholds(features.map(f =>
-    num(f.raw?.falseBreakoutRisk)).filter(v => v !== null));
-
-  for (const extensionThreshold of extension) {
-    for (const rsiThreshold of longRsi) {
-      add("EXTENDED_MOMENTUM_ENTRY", { extensionThreshold, rsiThreshold });
-    }
-    for (const rsiThreshold of shortRsi) {
-      add("EXTENDED_MOMENTUM_ENTRY", { extensionThreshold, rsiThreshold });
+  for (const feature of names) {
+    const values = trainingRows.map(row => readNumericFeature(row.features, feature))
+      .filter(value => value !== null);
+    for (const threshold of observedThresholds(values)) {
+      for (const operator of ["gte", "lte"]) {
+        result.push({ feature, operator, threshold });
+      }
     }
   }
-  for (const rsiThreshold of rsi) {
-    if (rsiThreshold >= 50) add("OVERBOUGHT_LONG", { rsiThreshold });
-    if (rsiThreshold <= 50) add("OVERSOLD_SHORT", { rsiThreshold });
-  }
-  for (const volumeThreshold of volume) add("LOW_VOLUME", { volumeThreshold });
-  for (const qualityThreshold of quality) add("WEAK_ENTRY_QUALITY", { qualityThreshold });
-  for (const roomThreshold of room) add("LOW_ROOM", { roomThreshold });
-  for (const falseBreakoutThreshold of breakout) add("FALSE_BREAKOUT_RISK", { falseBreakoutThreshold });
+  return result;
+}
 
-  const unique = new Map(result.map(candidate =>
-    [candidate.rule + ":" + Object.values(candidate.params).join(","), candidate]));
+function predicateFitness(rows, condition) {
+  const matches = rows.filter(row => ruleMatches(row.features, "LEARNED_CONJUNCTION", { conditions: [condition] }));
+  const controls = rows.filter(row => !ruleMatches(row.features, "LEARNED_CONJUNCTION", { conditions: [condition] }));
+  const minCoverage = Math.max(8, Math.floor(rows.length * 0.08));
+  if (matches.length < minCoverage || controls.length < minCoverage) return null;
+  const edge = mean(matches.map(row => row.realizedR)) - mean(controls.map(row => row.realizedR));
+  const uncertainty = se(matches.map(row => row.realizedR)) + se(controls.map(row => row.realizedR));
+  return { condition, edge, fitness: Math.abs(edge) - uncertainty, matches: matches.length };
+}
+
+// Search conditions over every numeric feature present in the training ledger.
+// The next generation combines the strongest independent predicates, allowing
+// the bot to discover new conjunction strategies without a hand-written rule list.
+function buildRuleGrid(trainingRows = []) {
+  if (trainingRows.length < MIN_TRAIN) return [];
+  const ranked = candidatePredicates(trainingRows)
+    .map(condition => predicateFitness(trainingRows, condition))
+    .filter(Boolean)
+    .sort((a, b) => b.fitness - a.fitness || Math.abs(b.edge) - Math.abs(a.edge));
+  const parents = ranked.slice(0, Math.min(32, ranked.length));
+  const result = ranked.slice(0, 64).map(item => ({
+    rule: "LEARNED_CONJUNCTION", params: { conditions: [item.condition] }
+  }));
+  for (let i = 0; i < parents.length; i++) {
+    for (let j = i + 1; j < parents.length; j++) {
+      if (parents[i].condition.feature === parents[j].condition.feature) continue;
+      const conditions = [parents[i].condition, parents[j].condition];
+      result.push({ rule: "LEARNED_CONJUNCTION", params: { conditions } });
+    }
+  }
+  const unique = new Map(result.map(candidate => [
+    JSON.stringify(candidate.params.conditions), candidate
+  ]));
   return [...unique.values()];
 }
 
@@ -183,13 +187,13 @@ function evaluateRule(rows, rule, params, side, regime) {
   const hardVeto = values.length >= HARD_VETO_MIN_TEST &&
     testMeanR <= HARD_VETO_MAX_MEAN_R && upliftR <= HARD_VETO_MAX_UPLIFT_R &&
     testMeanR + 2.58 * uncertainty < 0;
-  const adjustment = validatedNegative
-    ? -clamp(3 + Math.abs(upliftR) * 15, 3, MAX_ADJUSTMENT)
-    : validatedPositive
-      ? clamp(2 + upliftR * 10, 2, MAX_ADJUSTMENT)
-      : 0;
+  // Scale the live score effect by the out-of-sample edge after its uncertainty
+  // penalty. This is learned from the measured effect, not a fixed strategy bonus.
+  const significantEdge = Math.max(0, Math.abs(upliftR) - 2.58 * uncertainty);
+  const adjustment = validatedNegative ? -significantEdge * 100
+    : validatedPositive ? significantEdge * 100 : 0;
   return {
-    policyId: [rule, Object.values(params).join(","), side, regime].join(":"),
+    policyId: [rule, JSON.stringify(params), side, regime].join(":"),
     rule, params, side, regime, status: hardVeto ? "ACTIVE_VETO" :
       validatedNegative ? "ACTIVE_PENALTY" : validatedPositive ? "ACTIVE_BONUS" : "OBSERVE",
     samples: matching.length, trainSamples: train.length, testSamples: values.length,
@@ -231,13 +235,16 @@ function assess(features = {}, side, context = {}) {
   const matched = activePolicies.filter(p => p.side === f.side && p.regime === f.regime &&
     ruleMatches(f, p.rule, p.params || {}) && p.validated);
   const veto = matched.find(p => p.veto);
-  const adjustment = clamp(matched.reduce((sum, p) => sum + p.adjustment, 0), -MAX_ADJUSTMENT, MAX_ADJUSTMENT);
+  const adjustment = matched.length
+    ? round(matched.reduce((sum, p) => sum + Number(p.adjustment || 0), 0) / matched.length, 2)
+    : 0;
   return {
     ready: activeVersion !== "cold-start", version: activeVersion,
     allowed: !veto, vetoReason: veto ? "VALIDATED_NEGATIVE_EDGE:" + veto.policyId : null,
     adjustment: round(adjustment, 2),
-    matched: matched.map(p => ({ policyId: p.policyId, status: p.status,
-      testMeanR: p.testMeanR, upliftR: p.upliftR, testSamples: p.testSamples })),
+    matched: matched.map(p => ({ policyId: p.policyId, rule: p.rule, params: p.params,
+      status: p.status, testMeanR: p.testMeanR, upliftR: p.upliftR,
+      testSamples: p.testSamples, adjustment: p.adjustment })),
     reason: veto ? "ROBUST_OUT_OF_SAMPLE_NEGATIVE_EDGE" :
       matched.length ? "VALIDATED_POLICY_APPLIED" : "NO_VALIDATED_CONTEXT_POLICY"
   };
@@ -296,6 +303,8 @@ function status() {
       testSamples: p.testSamples, testMeanR: p.testMeanR, upliftR: p.upliftR, adjustment: p.adjustment })) };
 }
 
-module.exports = { COLLECTION, HISTORY_COLLECTION, MIN_TRAIN, MIN_TEST, MAX_ADJUSTMENT,
-  tradeFeatures, ruleMatches, normalizeTrade, observedThresholds, buildRuleGrid,
+module.exports = { COLLECTION, HISTORY_COLLECTION, MIN_TRAIN, MIN_TEST,
+  tradeFeatures, readNumericFeature, ruleMatches, normalizeTrade, observedThresholds,
+  candidatePredicates, predicateFitness, buildRuleGrid,
   evaluateRule, buildPolicies, assess, initialize, refresh, status };
+
