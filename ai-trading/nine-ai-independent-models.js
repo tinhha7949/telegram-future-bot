@@ -54,6 +54,7 @@ function upgradeState(state, config) {
   return {
     ...persistedFields,
     version: 3,
+    learningRule: "WIN_ONLY_DIRECTIONAL_V1",
     weights: state.weights.length === 6 ? [...state.weights, ...Array(12).fill(0)] : [...state.weights],
     lastAppliedTradeId: recent.length ? String(recent[recent.length - 1].tradeId || "") || null : (state.lastAppliedTradeId || null),
     evaluation: { ...state.evaluation }
