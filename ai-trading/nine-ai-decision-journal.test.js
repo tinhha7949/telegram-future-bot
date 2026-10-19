@@ -116,4 +116,41 @@ const learnedLossWindow = journal.assessWindowEvidence(patternWindow, "LONG", si
 assert.equal(learnedLossWindow.ready, true);
 assert.ok(learnedLossWindow.adjustment < 0);
 
+(async () => {
+  let attempts = 0;
+  const inserted = [];
+  const cursor = {
+    sort() { return this; }, hint() { return this; }, limit() { return this; },
+    async toArray() { return []; }
+  };
+  const collection = {
+    async createIndex() {},
+    find() { return cursor; },
+    async insertOne(document) {
+      attempts++;
+      if (attempts < 3) {
+        const error = new Error("Socket secureConnect timed out after 10001ms");
+        error.name = "MongoNetworkTimeoutError";
+        throw error;
+      }
+      inserted.push(document);
+      return { insertedId: "journal-test-id" };
+    }
+  };
+  await journal.initialize({ collection: () => collection });
+  const args = {
+    symbol: "RETRYTESTUSDT", signalTime: base, scannedAt: base,
+    decision: { side: "WAIT", action: "WAIT", reason: "TEST", authorizedForExecution: false,
+      rankMetrics: { features: { close: 100, atr14: 1 } }, roles: [] },
+    marketWindow: raw
+  };
+  const result = await journal.recordDecision(args);
+  assert.equal(result.recorded, true);
+  assert.equal(attempts, 3, "transient network failures should be retried with a fresh insert attempt");
+  assert.equal(inserted.length, 1);
+  const duplicate = await journal.recordDecision(args);
+  assert.equal(duplicate.reason, "DUPLICATE_DECISION");
+  assert.equal(attempts, 3, "duplicate decisions must not trigger another database write");
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
 console.log("nine-ai-decision-journal.test.js: OK");
