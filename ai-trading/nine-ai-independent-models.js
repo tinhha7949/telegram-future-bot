@@ -25,6 +25,7 @@ function fresh(config) {
     _id: "model",
     modelId: config.id,
     version: 3,
+    learningRule: "WIN_ONLY_DIRECTIONAL_V1",
     samples: 0,
     weights: Array(18).fill(0),
     lastAppliedTradeId: null,
@@ -46,12 +47,14 @@ function validState(state, config) {
 
 function upgradeState(state, config) {
   if (!validState(state, config)) return fresh(config);
-  if (state.version === 3) return state;
+  if (state.version === 3 && state.learningRule === "WIN_ONLY_DIRECTIONAL_V1") return state;
+  if (state.version === 3) return fresh(config);
   const recent = Array.isArray(state.recent) ? state.recent : [];
   const { recent: _recent, ...persistedFields } = state;
   return {
     ...persistedFields,
     version: 3,
+    learningRule: "WIN_ONLY_DIRECTIONAL_V1",
     weights: state.weights.length === 6 ? [...state.weights, ...Array(12).fill(0)] : [...state.weights],
     lastAppliedTradeId: recent.length ? String(recent[recent.length - 1].tradeId || "") || null : (state.lastAppliedTradeId || null),
     evaluation: { ...state.evaluation }
@@ -133,10 +136,10 @@ async function persistState(runtime, state) {
 
 function directionalLabel(outcome) {
   const reward = Number(outcome.realizedR);
-  if (reward === 0) return 0.5;
-  const chosenSideIsLong = outcome.side === "LONG";
-  const correctSideIsLong = reward > 0 ? chosenSideIsLong : !chosenSideIsLong;
-  return correctSideIsLong ? 1 : 0;
+  // A losing trade proves only that the chosen trade lost. It does not prove
+  // the opposite side would have won, so use a neutral target for direction.
+  if (reward <= 0) return 0.5;
+  return outcome.side === "LONG" ? 1 : 0;
 }
 
 async function applyOutcome(runtime, outcome) {
@@ -167,9 +170,14 @@ async function applyOutcome(runtime, outcome) {
   };
 
   next.samples++;
-  next.evaluation.evaluated++;
-  if ((p >= 0.5 && label >= 0.5) || (p < 0.5 && label < 0.5)) next.evaluation.correct++;
-  next.evaluation.brierSum += (p - label) ** 2;
+  // Directional evaluation is meaningful only when the selected side won.
+  // Losses train toward uncertainty, but cannot score the opposite side as correct.
+  const hasObservedDirectionalOutcome = config.target === "loss" || Number(outcome.realizedR) > 0;
+  if (hasObservedDirectionalOutcome) {
+    next.evaluation.evaluated++;
+    if ((p >= 0.5 && label >= 0.5) || (p < 0.5 && label < 0.5)) next.evaluation.correct++;
+    next.evaluation.brierSum += (p - label) ** 2;
+  }
   next.updatedAt = new Date().toISOString();
 
   await persistState(runtime, next);
@@ -239,8 +247,17 @@ async function initialize(db, legacyOutcomesCollection = null) {
       { tradeId: 1 }, { unique: true, name: `uniq_nine_ai_ml_${config.id}_trade` }
     );
     const stored = await runtime.stateCollection.findOne({ _id: "model" });
-    runtime.state = validState(stored, config) ? upgradeState(stored, config) : fresh(config);
-    if (!stored || !validState(stored, config) || stored.version !== runtime.state.version) {
+    const rebuildDirectionalState = stored?.version === 3 &&
+      stored.learningRule !== "WIN_ONLY_DIRECTIONAL_V1";
+    runtime.state = rebuildDirectionalState
+      ? fresh(config)
+      : (validState(stored, config) ? upgradeState(stored, config) : fresh(config));
+    if (rebuildDirectionalState) {
+      // Earlier versions treated a losing trade as proof that the opposite side was correct.
+      // Replay the durable outcomes once under the corrected win-only directional label.
+      await runtime.outcomesCollection.updateMany({}, { $set: { applied: false } });
+    }
+    if (rebuildDirectionalState || !stored || !validState(stored, config) || stored.version !== runtime.state.version) {
       await persistState(runtime, runtime.state);
     }
     runtimes.set(config.id, runtime);

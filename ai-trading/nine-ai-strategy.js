@@ -402,7 +402,9 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   // observed uncertainty can change the direction. No blanket "loss => reverse".
   const validatedDirection = counterfactualAdvice.validatedSuggestions.find(s =>
     ["OPPOSITE_SIDE", "DELAY_1_BAR", "DELAY_2_BAR", "EARLIER_1_BAR", "EARLIER_2_BAR"].includes(s.variant) &&
-    s.side && s.testUpliftR > Number(s.standardError || 0) && s.testMeanR > 0);
+    s.side && Number(s.trainSamples) >= counterfactualResearch.MIN_TRAIN &&
+    Number(s.testSamples) >= counterfactualResearch.MIN_TEST &&
+    s.testUpliftR > Number(s.standardError || 0) && s.testMeanR > 0);
   if (validatedDirection && validatedDirection.variant === "OPPOSITE_SIDE") contextualWinner = validatedDirection.side;
   const learned = learningMemory.predict(learnedFeatures);
   const independent = new Map(independentModels.predictAll(learnedFeatures)
@@ -561,9 +563,51 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     ? Math.max(entry - f.swingLow + f.atr * 0.1, 0)
     : Math.max(f.swingHigh - entry + f.atr * 0.1, 0);
   const baseStopDistance = Math.max(minimumStop, structureStop);
-  const stopDistance = baseStopDistance * (1 - 0.18 * riskPressure);
-  const targetRR = Math.round(clamp(0.8 + rolePlanScore / 100 * 1.0, 0.8, 1.8) * 100) / 100;
-  const targetDistance = stopDistance * targetRR;
+  let stopDistance = baseStopDistance * (1 - 0.18 * riskPressure);
+  let targetRR = Math.round(clamp(0.8 + rolePlanScore / 100 * 1.0, 0.8, MAX_NINE_AI_RR) * 100) / 100;
+  let targetDistance = stopDistance * targetRR;
+  let adaptiveExitPlan = null;
+  const exitPlanAdvice = counterfactualResearch.advice({
+    side,
+    regime: String(f.marketRegime || "UNKNOWN"),
+    features: { ...learnedFeatures, marketRegime: f.marketRegime, rsi14: f.rsi,
+      extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
+      falseBreakoutRisk: f.falseBreakoutRisk }
+  });
+  const exitCandidates = (exitPlanAdvice.validatedSuggestions || [])
+    .filter(item => item.side === side &&
+      /^(STOP|TARGET)_SCALE_(0\.75|0\.90)$/.test(String(item.variant || "")) &&
+      Number(item.trainSamples) >= counterfactualResearch.MIN_TRAIN &&
+      Number(item.testSamples) >= counterfactualResearch.MIN_TEST &&
+      Number(item.testUpliftR) > Number(item.standardError || 0) &&
+      Number(item.testMeanR) > 0)
+    .sort((a, b) => (Number(b.testUpliftR) - Number(b.standardError || 0)) -
+      (Number(a.testUpliftR) - Number(a.standardError || 0)));
+  for (const candidate of exitCandidates) {
+    const match = String(candidate.variant).match(/_(0\.75|0\.90)$/);
+    const scale = match ? Number(match[1]) : NaN;
+    if (!Number.isFinite(scale) || scale <= 0) continue;
+    const candidateStopDistance = candidate.variant.startsWith("STOP_SCALE_")
+      ? stopDistance * scale : stopDistance;
+    const candidateTargetDistance = candidate.variant.startsWith("TARGET_SCALE_")
+      ? targetDistance * scale : targetDistance;
+    const candidateRR = candidateTargetDistance / candidateStopDistance;
+    // Preserve the bot's existing trade-geometry bounds and capital-risk
+    // sizing. The learned stop alternative only tightens the stop.
+    if (candidateRR < 0.79 || candidateRR > MAX_NINE_AI_RR) continue;
+    stopDistance = candidateStopDistance;
+    targetDistance = candidateTargetDistance;
+    targetRR = Number(candidateRR.toFixed(2));
+    adaptiveExitPlan = {
+      policy: candidate.variant,
+      testUpliftR: candidate.testUpliftR,
+      testMeanR: candidate.testMeanR,
+      testSamples: candidate.testSamples,
+      standardError: candidate.standardError,
+      scale
+    };
+    break;
+  }
   const sl = side === "LONG" ? entry - stopDistance : entry + stopDistance;
   const tp = side === "LONG" ? entry + targetDistance : entry - targetDistance;
   const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
@@ -703,7 +747,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       timeframe: "15m",
       entryMethod: "LATEST_CLOSED_CANDLE",
       stopMethod: "ATR_AND_RECENT_STRUCTURE",
-      targetMethod: "NINE_AI_WEIGHTED_RR",
+      targetMethod: adaptiveExitPlan ? "NINE_AI_COUNTERFACTUAL_ADAPTIVE" : "NINE_AI_WEIGHTED_RR",
+      exitPolicy: adaptiveExitPlan,
       stopDistance,
       targetDistance,
       desiredRR: targetRR,

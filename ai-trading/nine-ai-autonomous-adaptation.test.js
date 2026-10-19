@@ -7,6 +7,7 @@ function trade(i, matched, outcome) {
   return {
     _id: "trade-" + i, setup: "NINE_AI_15M", side: "LONG",
     result: outcome, pnl: matched ? -40 : 20, riskDetail: { riskBudget: 100 },
+    quantity: 2, initialRisk: 25, finalRisk: 50,
     closedAt,
     nineAiLearningFeatures: {
       extensionAtr: matched ? 2.0 : 0.2,
@@ -23,7 +24,8 @@ function trade(i, matched, outcome) {
 }
 
 const matched = trade(1, true, "LOSS");
-assert.equal(adaptation.normalizeTrade(matched).realizedR, -0.4);
+assert.equal(adaptation.normalizeTrade(matched).realizedR, -0.8,
+  "adaptive policy R must use quantity × stop distance, not configured risk budget");
 assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "EXTENDED_MOMENTUM_ENTRY"), true);
 assert.equal(adaptation.ruleMatches(adaptation.tradeFeatures(matched), "LOW_VOLUME"), true);
 

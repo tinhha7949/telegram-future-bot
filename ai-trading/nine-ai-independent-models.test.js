@@ -26,6 +26,15 @@ function collection() {
       docs.set(String(id), next);
       return { matchedCount: existing ? 1 : 0, upsertedCount: existing ? 0 : 1 };
     },
+    async updateMany(query, update) {
+      let modifiedCount = 0;
+      for (const [id, doc] of docs) {
+        if (!matches(doc, query)) continue;
+        docs.set(id, { ...doc, ...(update.$set || {}) });
+        modifiedCount++;
+      }
+      return { modifiedCount };
+    },
     async insertOne(doc) {
       if ([...docs.values()].some(item => item.tradeId && item.tradeId === doc.tradeId)) {
         const error = new Error("duplicate key"); error.code = 11000; throw error;
@@ -137,6 +146,8 @@ function collection() {
   for (const config of ml.MODEL_CONFIGS) {
     const saved = migrationCollections.get(`nine_ai_ml_${config.id}_state`).docs.get("model");
     assert.equal(saved.version, 3);
+    assert.equal(saved.learningRule, "WIN_ONLY_DIRECTIONAL_V1",
+      "migrated model state must persist the corrected directional learning rule");
     assert.equal(Object.hasOwn(saved, "recent"), false, "persisted model state must not embed outcome history");
     assert.equal(saved.weights.length, 18);
     assert.deepEqual(saved.weights.slice(0, 6), [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
@@ -164,6 +175,42 @@ function collection() {
     assert.equal([...outcomes.docs.values()].filter(item => item.applied === true).length, 20,
       `${config.id} model must apply every unique closed loss exactly once`);
   }
+
+  // Rebuild v3 states trained under the old loss=>reverse label and replay
+  // their durable outcomes once using the corrected neutral directional label.
+  const rebuildCollections = new Map();
+  const rebuildDb = { collection(name) {
+    if (!rebuildCollections.has(name)) rebuildCollections.set(name, collection());
+    return rebuildCollections.get(name);
+  } };
+  for (const config of ml.MODEL_CONFIGS) {
+    rebuildDb.collection(`nine_ai_ml_${config.id}_state`).docs.set("model", {
+      _id: "model", modelId: config.id, version: 3, samples: 9,
+      weights: Array(18).fill(1), lastAppliedTradeId: "old-last",
+      evaluation: { evaluated: 8, correct: 2, brierSum: 3 }, updatedAt: null
+    });
+    rebuildDb.collection(`nine_ai_ml_${config.id}_outcomes`).docs.set("old-loss", {
+      _id: "old-loss", tradeId: "old-loss", features, side: "LONG",
+      realizedR: -1, closedAt: new Date("2026-02-01T00:00:00Z"), applied: true
+    });
+  }
+  await ml.initialize(rebuildDb);
+  assert.ok(ml.status().every(model => model.samples === 1),
+    "legacy model weights must be rebuilt by replaying their outcome ledger");
+  for (const config of ml.MODEL_CONFIGS) {
+    assert.equal(rebuildCollections.get(`nine_ai_ml_${config.id}_state`).docs.get("model").learningRule,
+      "WIN_ONLY_DIRECTIONAL_V1");
+  }
+  const rebuiltPredictions = ml.predictAll(features);
+  for (const prediction of rebuiltPredictions.filter(item => item.pLong !== null)) {
+    assert.equal(prediction.pLong, 0.5,
+      "a single directional loss must not train the opposite side as correct");
+  }
+  assert.ok(rebuiltPredictions.find(item => item.modelId === "risk").pLoss > 0.5,
+    "the risk model must continue learning confirmed losses");
+  await ml.initialize(rebuildDb);
+  assert.ok(ml.status().every(model => model.samples === 1),
+    "the rebuilt ledger must not replay again on the next restart");
 
   console.log("PASS: nine independent contextual models persist context, migrate state, deduplicate outcomes, and learn from 20 losses");
 })().catch(error => { console.error(error); process.exitCode = 1; });

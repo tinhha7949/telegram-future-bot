@@ -38,7 +38,7 @@ function normalizeRoleWeights(weights) {
 }
 function fresh() {
   return {
-    _id: "main", version: 4, samples: 0,
+    _id: "main", version: 4, learningRule: "WIN_ONLY_DIRECTIONAL_V1", samples: 0,
     weights: [0, 0.35, 0.25, 0.15, 0.1, -0.1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     bias: 0, decisionWeights: { ...BASE_DECISION_WEIGHTS },
     roleWeights: { ...BASE_ROLE_WEIGHTS }, lastAppliedTradeId: null, updatedAt: null
@@ -59,11 +59,12 @@ function validState(state) {
 }
 function upgradeState(state) {
   if (!validState(state)) return fresh();
-  if (state.version === 4) return state;
+  if (state.version === 4 && state.learningRule === "WIN_ONLY_DIRECTIONAL_V1") return state;
+  if (state.version === 4) return fresh();
   const recent = Array.isArray(state.recent) ? state.recent : [];
   const { recent: _recent, ...persistedFields } = state;
   return {
-    ...persistedFields, version: 4,
+    ...persistedFields, version: 4, learningRule: "WIN_ONLY_DIRECTIONAL_V1",
     weights: state.version === 1 ? [...state.weights, ...Array(12).fill(0)] : [...state.weights],
     decisionWeights: normalizeDecisionWeights(state.decisionWeights || BASE_DECISION_WEIGHTS),
     roleWeights: normalizeRoleWeights(state.roleWeights || BASE_ROLE_WEIGHTS),
@@ -178,7 +179,9 @@ async function applyOutcome(outcome) {
   const x = vector(outcome.features);
   const reward = clamp(Number(outcome.realizedR), -5, 5);
   const sideLabel = outcome.side === "LONG" ? 1 : 0;
-  const label = reward > 0 ? sideLabel : reward < 0 ? 1 - sideLabel : 0.5;
+  // A loss is not counterfactual evidence for the opposite direction.
+  // Keep the directional learner uncertain instead of teaching a false reversal.
+  const label = reward > 0 ? sideLabel : 0.5;
   const z = clamp(x.reduce((sum, value, i) => sum + value * state.weights[i], state.bias), -12, 12);
   const p = 1 / (1 + Math.exp(-z));
   const learningRate = 0.025 / Math.sqrt(1 + state.samples / 100);
@@ -209,8 +212,17 @@ async function initialize(db) {
   await outcomesCollection.createIndex({ tradeId: 1 }, { unique: true, name: "uniq_nine_ai_trade_outcome" });
 
   const stored = await stateCollection.findOne({ _id: "main" });
-  stateCache = validState(stored) ? upgradeState(stored) : fresh();
-  if (!stored || !validState(stored) || stored.version !== stateCache.version) {
+  const rebuildDirectionalState = stored?.version === 4 &&
+    stored.learningRule !== "WIN_ONLY_DIRECTIONAL_V1";
+  stateCache = rebuildDirectionalState
+    ? fresh()
+    : (validState(stored) ? upgradeState(stored) : fresh());
+  if (rebuildDirectionalState) {
+    // Rebuild weights from durable outcomes because the old learner counted losses
+    // as evidence that the opposite direction was correct.
+    await outcomesCollection.updateMany({}, { $set: { applied: false } });
+  }
+  if (rebuildDirectionalState || !stored || !validState(stored) || stored.version !== stateCache.version) {
     await persistState(stateCache);
   }
 

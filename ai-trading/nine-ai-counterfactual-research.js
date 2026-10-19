@@ -101,12 +101,37 @@ function buildVariants(trade, rawCandles) {
   if (!(entry > 0 && risk > 0 && tp > 0)) return [];
   const rr = Math.abs(tp-entry)/risk;
   const result = [];
+  const feeRate = n(trade.feeRate);
+  const fallbackFeeR = n(trade.feeR, FEE_R);
+  const maxRR = n(trade.maxRR, 1.8);
+  const minRR = n(trade.minRR, 0.79);
   const add = (variant, side, idx, e, stop, target, delay=0) => {
-    const r = simulate({candles,entryIndex:idx,side,entry:e,sl:stop,tp:target,risk:Math.abs(e-stop),delay});
+    const candidateRisk = Math.abs(e-stop);
+    const feeR = feeRate !== null && candidateRisk > 0
+      ? feeRate * e / candidateRisk : fallbackFeeR;
+    const r = simulate({candles,entryIndex:idx,side,entry:e,sl:stop,tp:target,
+      risk:candidateRisk,delay,feeR});
     if (r.valid) result.push({variant,side,entryIndex:idx,entry:e,sl:stop,tp:target,...r});
   };
   // Actual-side baseline uses the real levels and actual entry.
   add("BASELINE", trade.side, entryIndex, entry, sl, tp, 0);
+  // Exit geometry alternatives are hypotheses, not fixed trade rules. Stops
+  // only tighten, so they cannot increase the original account-risk budget;
+  // targets and stops are independently validated against paired outcomes.
+  for (const [variant, stopScale, targetScale] of [
+    ["STOP_SCALE_0.75", 0.75, 1],
+    ["STOP_SCALE_0.90", 0.90, 1],
+    ["TARGET_SCALE_0.75", 1, 0.75],
+    ["TARGET_SCALE_0.90", 1, 0.90]
+  ]) {
+    const candidateStopDistance = risk * stopScale;
+    const candidateTargetDistance = Math.abs(tp-entry) * targetScale;
+    const candidateRR = candidateTargetDistance / candidateStopDistance;
+    if (candidateRR < minRR || candidateRR > maxRR) continue;
+    const candidateSL = trade.side === "LONG" ? entry - candidateStopDistance : entry + candidateStopDistance;
+    const candidateTP = trade.side === "LONG" ? entry + candidateTargetDistance : entry - candidateTargetDistance;
+    add(variant, trade.side, entryIndex, entry, candidateSL, candidateTP, 0);
+  }
   // Opposite direction is a research hypothesis, not an automatic flip. Mirror
   // the same risk and reward distances around entry and keep the same entry time.
   const opposite = trade.side === "LONG" ? "SHORT" : "LONG";
@@ -167,11 +192,11 @@ function featureTags(features = {}) {
   if (volume < 0.75) tags.push("LOW_VOLUME");
   return [...new Set(tags)];
 }
-function pairedVariantEvidence(sourceRows, features = {}, regime = "UNKNOWN") {
+function pairedVariantEvidence(sourceRows, features = {}, regime = "UNKNOWN", side = null) {
   const wanted = featureTags(features);
   const scoped = sourceRows.filter(r => r && r.hypothetical && r.variant && r.variant !== "BASELINE" &&
-    !String(r.variant).startsWith("RISK_SCALE_") &&
     (!regime || String(r.regime || "UNKNOWN") === String(regime)) &&
+    (!side || String(r.side || "") === String(side)) &&
     Array.isArray(r.features) && (!wanted.length || wanted.some(tag => r.features.includes(tag))));
   const baselines = new Map(sourceRows.filter(r => r && r.variant === "BASELINE")
     .map(r => [String(r.tradeId), r]));
@@ -179,12 +204,13 @@ function pairedVariantEvidence(sourceRows, features = {}, regime = "UNKNOWN") {
   for (const row of scoped) {
     const baseline = baselines.get(String(row.tradeId));
     if (!baseline || !Number.isFinite(Number(row.netR)) || !Number.isFinite(Number(baseline.netR))) continue;
-    const key = row.variant;
+    const key = row.variant + "|" + String(row.side || "");
     if (!byVariant.has(key)) byVariant.set(key, []);
     byVariant.get(key).push({ row, uplift: Number(row.netR) - Number(baseline.netR) });
   }
   const suggestions = [];
-  for (const [variant, pairs] of byVariant) {
+  for (const [variantKey, pairs] of byVariant) {
+    const [variant, candidateSide] = variantKey.split("|");
     // Multiple variants from the same trade are not independent observations.
     const unique = [...new Map(pairs.sort((a,b) => new Date(a.row.closedAt)-new Date(b.row.closedAt))
       .map(p => [String(p.row.tradeId), p])).values()];
@@ -203,9 +229,9 @@ function pairedVariantEvidence(sourceRows, features = {}, regime = "UNKNOWN") {
     // sample count or fixed R-uplift. Tiny samples with noisy outcomes naturally
     // fail this comparison; consistent repeated outcomes can qualify earlier.
     if (uplift > standardError && meanR > 0) suggestions.push({
-      variant, side: unique[0].row.side, testUpliftR: Number(uplift.toFixed(4)),
+      variant, side: candidateSide || unique[0].row.side, testUpliftR: Number(uplift.toFixed(4)),
       testMeanR: Number(meanR.toFixed(4)), standardError: Number(standardError.toFixed(4)),
-      testSamples: test.length, contextTags: wanted
+      trainSamples: splitAt, testSamples: test.length, contextTags: wanted
     });
   }
   return suggestions.sort((a,b) => (b.testUpliftR-b.standardError)-(a.testUpliftR-a.standardError));
@@ -286,7 +312,7 @@ async function researchClosedTrade(trade, rawCandles) {
     const doc={tradeId:String(trade.tradeId),symbol:String(trade.symbol||""),side:v.side,
       originalSide:trade.side,variant:v.variant,entry:v.entry,sl:v.sl,tp:v.tp,
       features:featureTags(trade.features || {}),
-      grossR:isBaseline ? baselineNetR + FEE_R : v.grossR,
+      grossR:isBaseline ? baselineNetR + n(trade.feeR, FEE_R) : v.grossR,
       netR:isBaseline ? baselineNetR : v.netR,exit:isBaseline ? "ACTUAL" : v.exit,
       exitTime:isBaseline ? (trade.closedAt || v.exitTime) : v.exitTime,barsHeld:v.barsHeld,
       regime:String(trade.regime||"UNKNOWN"),closedAt:trade.closedAt?new Date(trade.closedAt):new Date(),
@@ -308,7 +334,7 @@ async function researchClosedTrade(trade, rawCandles) {
 }
 
 function advice({side,regime="UNKNOWN",features={}}={}) {
-  const contextual = pairedVariantEvidence(rows, features, regime);
+  const contextual = pairedVariantEvidence(rows, features, regime, side);
   const matching=policies.filter(p=>p.status==="VALIDATED_CANDIDATE"&&p.key.endsWith("|"+regime));
   const legacy = matching.filter(p=>!String(p.variant).startsWith("RISK_SCALE_")&&p.testUpliftR>=MIN_TEST_UPLIFT_R&&p.testMeanR>0)
     .map(p=>({variant:p.variant,side:p.key.split("|")[1],testUpliftR:p.testUpliftR,

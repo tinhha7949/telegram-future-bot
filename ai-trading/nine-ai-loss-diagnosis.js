@@ -18,7 +18,9 @@ function diagnoseTrade(t={}){
  if([entry,sl,tp].every(Number.isFinite)&&entry>0&&Number.isFinite(rr)&&rr<1)add("LOW_REWARD_TO_RISK",.85,{rr,entry,sl,tp},"Test bounded SL/TP alternatives without weakening hard risk guards.");
  if(!causes.length)add("NO_SINGLE_FEATURE_CAUSE_IDENTIFIED",.25,{regime,trend,rsi,ext,mom,vol,fb,eq},"Gather more context; a single cause is not established.");
  causes.sort((a,b)=>b.confidence-a.confidence);const r=n(t.realizedR,0);
- return {tradeId:String(t.tradeId||""),symbol:String(t.symbol||""),side,realizedR:r,outcome:r>0?"WIN":r<0?"LOSS":"BREAKEVEN",regime,tags:causes.map(x=>x.code),causes,featuresSnapshot:{rsi,ext,mom,vol,fb,eq,trend,regime},diagnosedAt:new Date()};
+ return {tradeId:String(t.tradeId||""),symbol:String(t.symbol||""),side,realizedR:r,outcome:r>0?"WIN":r<0?"LOSS":"BREAKEVEN",regime,tags:causes.map(x=>x.code),causes,featuresSnapshot:{rsi,ext,mom,vol,fb,eq,trend,regime},
+   execution:{exitReason:up(t.exitReason),exitPrice:n(t.exitPrice),feesUSDT:n(t.feesUSDT),grossRealizedPnl:n(t.grossRealizedPnl)},
+   diagnosedAt:new Date()};
 }
 function evaluateVariantGroup(rows,variant,baselines){
  const seen=new Set(),a=[];for(const r of rows.slice().sort((x,y)=>n(x.closedAt,0)-n(y.closedAt,0))){const id=String(r.tradeId);if(!id||seen.has(id)||!baselines.has(id))continue;seen.add(id);a.push({...r,baseR:n(baselines.get(id).netR,0)});}
