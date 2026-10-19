@@ -38,7 +38,7 @@ function normalizeRoleWeights(weights) {
 }
 function fresh() {
   return {
-    _id: "main", version: 4, samples: 0,
+    _id: "main", version: 4, learningRule: "WIN_ONLY_DIRECTIONAL_V1", samples: 0,
     weights: [0, 0.35, 0.25, 0.15, 0.1, -0.1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     bias: 0, decisionWeights: { ...BASE_DECISION_WEIGHTS },
     roleWeights: { ...BASE_ROLE_WEIGHTS }, lastAppliedTradeId: null, updatedAt: null
@@ -59,7 +59,8 @@ function validState(state) {
 }
 function upgradeState(state) {
   if (!validState(state)) return fresh();
-  if (state.version === 4) return state;
+  if (state.version === 4 && state.learningRule === "WIN_ONLY_DIRECTIONAL_V1") return state;
+  if (state.version === 4) return fresh();
   const recent = Array.isArray(state.recent) ? state.recent : [];
   const { recent: _recent, ...persistedFields } = state;
   return {
@@ -211,8 +212,17 @@ async function initialize(db) {
   await outcomesCollection.createIndex({ tradeId: 1 }, { unique: true, name: "uniq_nine_ai_trade_outcome" });
 
   const stored = await stateCollection.findOne({ _id: "main" });
-  stateCache = validState(stored) ? upgradeState(stored) : fresh();
-  if (!stored || !validState(stored) || stored.version !== stateCache.version) {
+  const rebuildDirectionalState = stored?.version === 4 &&
+    stored.learningRule !== "WIN_ONLY_DIRECTIONAL_V1";
+  stateCache = rebuildDirectionalState
+    ? fresh()
+    : (validState(stored) ? upgradeState(stored) : fresh());
+  if (rebuildDirectionalState) {
+    // Rebuild weights from durable outcomes because the old learner counted losses
+    // as evidence that the opposite direction was correct.
+    await outcomesCollection.updateMany({}, { $set: { applied: false } });
+  }
+  if (rebuildDirectionalState || !stored || !validState(stored) || stored.version !== stateCache.version) {
     await persistState(stateCache);
   }
 
