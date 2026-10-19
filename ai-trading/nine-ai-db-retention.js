@@ -12,7 +12,7 @@ const DEFAULTS = Object.freeze({
   maxDeletesPerRun: 500,
   intervalMs: 6 * 60 * 60 * 1000,
   // Automatically perform bounded cleanup when the storage threshold is crossed.
-  // The allowlist below contains generated reports only; learning/trade data stays protected.
+  // The allowlist below contains reviewed historical event ledgers; live state stays protected.
   enabled: true,
   dryRun: false
 });
@@ -169,7 +169,9 @@ function createRetention(db, overrides = {}) {
     const statsErrors = [];
     for (const name of names) {
       try {
-        const s = await db.collection(name).stats(1024 * 1024);
+        // `stats()` is a mongosh helper, not part of the MongoDB Node.js
+        // Collection API. Use the supported database command through the driver.
+        const s = await db.command({ collStats: name, scale: 1024 * 1024 });
         // Use logical data + indexes for the cleanup loop. WiredTiger may keep
         // allocated storage after deletes, so storageSize can stay flat and cause
         // an otherwise-safe loop to over-delete eligible history.

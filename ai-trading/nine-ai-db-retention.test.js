@@ -156,13 +156,13 @@ async function testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors() {
         { name: "trades" }
       ] };
     },
+    async command(command) {
+      assert.strictEqual(command.scale, 1024 * 1024);
+      return { size: command.collStats === "nine_ai_strategy_lab_reports" ? reportUsageMB : 0,
+        totalIndexSize: 0, storageSize: 0 };
+    },
     collection(name) {
       return {
-        stats: async () => ({
-          size: name === "nine_ai_strategy_lab_reports" ? reportUsageMB : 0,
-          totalIndexSize: 0,
-          storageSize: 0
-        }),
         aggregate(pipeline) {
           return {
             toArray: async () => {
@@ -221,12 +221,12 @@ async function testIncompleteMeasurementNeverDeletes() {
   let deleteCalls = 0;
   const db = {
     listCollections() { return { toArray: async () => [{ name: "trades" }, { name: "nine_ai_strategy_lab_reports" }] }; },
+    async command({ collStats }) {
+      if (collStats === "trades") throw new Error("stats permission denied");
+      return { size: 5000, totalIndexSize: 0, storageSize: 0 };
+    },
     collection(name) {
       return {
-        stats: async () => {
-          if (name === "trades") throw new Error("stats permission denied");
-          return { size: 5000, totalIndexSize: 0, storageSize: 0 };
-        },
         deleteMany: async () => { deleteCalls += 1; return { deletedCount: 1 }; }
       };
     }
