@@ -9,8 +9,6 @@ const MAX_TRADES = 3000;
 const MIN_TRAIN = 30;
 const MIN_TEST = 20;
 const HARD_VETO_MIN_TEST = 40;
-const HARD_VETO_MAX_MEAN_R = -0.15;
-const HARD_VETO_MAX_UPLIFT_R = -0.12;
 let tradesCollection = null;
 let stateCollection = null;
 let historyCollection = null;
@@ -160,7 +158,15 @@ function buildRuleGrid(trainingRows = []) {
   return [...unique.values()];
 }
 
-function evaluateRule(rows, rule, params, side, regime) {
+function searchConfidenceZ(comparisonCount = 1, familywiseError = 0.01) {
+  const tests = Math.max(1, Number(comparisonCount) || 1);
+  const alpha = Math.max(Number.EPSILON, Math.min(0.5, Number(familywiseError) || 0.01));
+  // Gaussian tail bound with a Bonferroni family-wise correction. Searching
+  // more genomes therefore requires stronger held-out evidence for promotion.
+  return Math.sqrt(2 * Math.log(2 * tests / alpha));
+}
+
+function evaluateRule(rows, rule, params, side, regime, { comparisonCount = 1 } = {}) {
   const matching = rows.filter(r => r.features.side === side && r.features.regime === regime &&
     ruleMatches(r.features, rule, params)).sort((a, b) => a.closedAt - b.closedAt);
   if (matching.length < MIN_TRAIN + MIN_TEST) return null;
@@ -180,16 +186,17 @@ function evaluateRule(rows, rule, params, side, regime) {
   const controlMeanR = mean(controls);
   const upliftR = testMeanR - controlMeanR;
   const uncertainty = se(values);
-  const validatedNegative = testMeanR < -0.03 && upliftR <= -0.08 &&
-    testMeanR + 2.58 * uncertainty < 0;
-  const validatedPositive = testMeanR > 0.03 && upliftR >= 0.08 &&
-    testMeanR - 2.58 * uncertainty > 0;
+  const upliftUncertainty = Math.sqrt(uncertainty ** 2 + se(controls) ** 2);
+  const confidenceMultiplier = searchConfidenceZ(comparisonCount);
+  const validatedNegative = testMeanR + confidenceMultiplier * uncertainty < 0 &&
+    upliftR + confidenceMultiplier * upliftUncertainty < 0;
+  const validatedPositive = testMeanR - confidenceMultiplier * uncertainty > 0 &&
+    upliftR - confidenceMultiplier * upliftUncertainty > 0;
   const hardVeto = values.length >= HARD_VETO_MIN_TEST &&
-    testMeanR <= HARD_VETO_MAX_MEAN_R && upliftR <= HARD_VETO_MAX_UPLIFT_R &&
-    testMeanR + 2.58 * uncertainty < 0;
+    validatedNegative;
   // Scale the live score effect by the out-of-sample edge after its uncertainty
   // penalty. This is learned from the measured effect, not a fixed strategy bonus.
-  const significantEdge = Math.max(0, Math.abs(upliftR) - 2.58 * uncertainty);
+  const significantEdge = Math.max(0, Math.abs(upliftR) - confidenceMultiplier * upliftUncertainty);
   const adjustment = validatedNegative ? -significantEdge * 100
     : validatedPositive ? significantEdge * 100 : 0;
   return {
@@ -198,7 +205,9 @@ function evaluateRule(rows, rule, params, side, regime) {
       validatedNegative ? "ACTIVE_PENALTY" : validatedPositive ? "ACTIVE_BONUS" : "OBSERVE",
     samples: matching.length, trainSamples: train.length, testSamples: values.length,
     testMeanR: round(testMeanR), controlMeanR: round(controlMeanR), upliftR: round(upliftR),
-    standardError: round(uncertainty), adjustment: round(adjustment, 2),
+    standardError: round(uncertainty), upliftStandardError: round(upliftUncertainty),
+    confidenceMultiplier: round(confidenceMultiplier, 4), comparisonCount,
+    adjustment: round(adjustment, 2),
     veto: hardVeto, validated: validatedNegative || validatedPositive || hardVeto
   };
 }
@@ -220,7 +229,8 @@ function buildPolicies(rawTrades) {
     const trainingRows = contextRows.slice(0, Math.floor(contextRows.length * 0.7));
     const candidates = buildRuleGrid(trainingRows);
     for (const candidate of candidates) {
-      const policy = evaluateRule(rows, candidate.rule, candidate.params, side, regime);
+      const policy = evaluateRule(rows, candidate.rule, candidate.params, side, regime,
+        { comparisonCount: candidates.length });
       if (policy) policies.push(policy);
     }
   }
@@ -305,6 +315,6 @@ function status() {
 
 module.exports = { COLLECTION, HISTORY_COLLECTION, MIN_TRAIN, MIN_TEST,
   tradeFeatures, readNumericFeature, ruleMatches, normalizeTrade, observedThresholds,
-  candidatePredicates, predicateFitness, buildRuleGrid,
+  candidatePredicates, predicateFitness, buildRuleGrid, searchConfidenceZ,
   evaluateRule, buildPolicies, assess, initialize, refresh, status };
 
