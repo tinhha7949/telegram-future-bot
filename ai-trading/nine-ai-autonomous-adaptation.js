@@ -157,8 +157,8 @@ function buildPolicies(rawTrades) {
   const contexts = new Set(rows.map(r => r.features.side + "|" + r.features.regime));
   for (const key of contexts) {
     const [side, regime] = key.split("|");
-    for (const rule of RULES) {
-      const policy = evaluateRule(rows, rule, side, regime);
+    for (const candidate of RULE_GRID) {
+      const policy = evaluateRule(rows, candidate.rule, candidate.params, side, regime);
       if (policy) policies.push(policy);
     }
   }
