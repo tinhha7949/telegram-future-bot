@@ -68,6 +68,7 @@ assert.ok(contextFeatures.candleBodyRatio >= -1 && contextFeatures.candleBodyRat
 assert.ok(contextFeatures.upperWickRatio >= 0 && contextFeatures.upperWickRatio <= 1);
 assert.ok(contextFeatures.lowerWickRatio >= 0 && contextFeatures.lowerWickRatio <= 1);
 assert.ok(Number.isFinite(contextFeatures.breakoutStrength));
+assert.ok(Number.isFinite(contextFeatures.macdHistogram), "Fenix bootstrap MACD histogram must be available");
 assert.ok(contextFeatures.structurePosition >= -1 && contextFeatures.structurePosition <= 1);
 assert.ok(Number.isFinite(contextFeatures.roomToResistanceAtr));
 assert.ok(Number.isFinite(contextFeatures.roomToSupportAtr));
