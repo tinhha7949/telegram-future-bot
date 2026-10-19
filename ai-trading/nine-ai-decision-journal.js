@@ -142,7 +142,7 @@ function assessWindowEvidence(rawWindow, side, sourceRecords = records) {
     const dimensions = keys.filter(key => Number.isFinite(row.features[key]));
     const distance = dimensions.reduce((sum, key) => sum + ((current[key] - row.features[key]) / scales[key]) ** 2, 0) / dimensions.length;
     return { ...row, distance, weight: 1 / (1 + distance) };
-  }).filter(row => Number.isFinite(row.distance)).sort((a, b) => a.distance - b.distance).slice(0, 60);
+  }).filter(row => Number.isFinite(row.distance));
   const weightSum = neighbors.reduce((sum, row) => sum + row.weight, 0);
   const squaredWeightSum = neighbors.reduce((sum, row) => sum + row.weight ** 2, 0);
   const effectiveSamples = squaredWeightSum > 0 ? weightSum ** 2 / squaredWeightSum : 0;
@@ -154,10 +154,19 @@ function assessWindowEvidence(rawWindow, side, sourceRecords = records) {
   const variance = neighbors.reduce((sum, row) => sum + row.weight * (row.targetR - meanR) ** 2, 0) / weightSum;
   const standardError = Math.sqrt(variance / effectiveSamples);
   const reliability = Math.sqrt(effectiveSamples / (effectiveSamples + MIN_SAMPLES));
-  const adjustment = clamp(meanR * 10 * reliability, -MAX_LIVE_BONUS, MAX_LIVE_BONUS);
+  const similarWinRate = neighbors.reduce((sum, row) => sum + row.weight * Number(row.targetR > 0), 0) / weightSum;
+  const baselineWinRate = uniqueCandidates.filter(row => row.targetR > 0).length / uniqueCandidates.length;
+  // Express the learned win-rate edge in the existing 0-100 ranking scale.
+  // The adjustment has no extra fixed ceiling; its magnitude comes from the
+  // observed edge and shrinks toward neutral when effective evidence is thin.
+  const adjustment = (similarWinRate - baselineWinRate) * 100 * reliability;
+  let nearestDistance = Infinity;
+  for (const row of neighbors) nearestDistance = Math.min(nearestDistance, row.distance);
   return { ready: true, adjustment: Number(adjustment.toFixed(3)), samples: neighbors.length,
     effectiveSamples: Number(effectiveSamples.toFixed(2)), meanR: Number(meanR.toFixed(5)),
-    standardError: Number(standardError.toFixed(5)), nearestDistance: Number(neighbors[0].distance.toFixed(5)),
+    standardError: Number(standardError.toFixed(5)),
+    similarWinRate: Number(similarWinRate.toFixed(5)), baselineWinRate: Number(baselineWinRate.toFixed(5)),
+    nearestDistance: Number(nearestDistance.toFixed(5)),
     horizonBars: [4, 16], source: "SIMILAR_96_BAR_WINDOWS_WITH_MATURED_FORWARD_OUTCOMES" };
 }
 
@@ -432,8 +441,7 @@ function assess(features = {}, side, { marketWindow = null, signalTime = Infinit
   }
   // Similar 96-bar windows contribute evidence from wins and losses. This is
   // a soft ranking adjustment: it cannot authorize or veto an entry.
-  const bonus = Number(clamp(broadBonus + Number(windowEvidence.adjustment || 0),
-    -MAX_LIVE_BONUS, MAX_LIVE_BONUS).toFixed(3));
+  const bonus = Number((broadBonus + Number(windowEvidence.adjustment || 0)).toFixed(3));
   const ready = sampleCount >= MIN_SAMPLES || windowEvidence.ready;
   return { ready, samples: sampleCount, meanR: meanR == null ? null : Number(meanR.toFixed(4)),
     standardError: standardError == null ? null : Number(standardError.toFixed(4)),
