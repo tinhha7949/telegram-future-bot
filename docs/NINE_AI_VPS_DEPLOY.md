@@ -10,7 +10,6 @@
 ```bash
 git clone https://github.com/tinhha7949/telegram-future-bot.git
 cd telegram-future-bot
-git checkout rebuild/nine-ai-spec
 cp .env.example .env
 nano .env
 npm install
@@ -27,7 +26,7 @@ npm start
 Keep the process under your existing supervisor (systemd/PM2) only after the first foreground run passes startup checks. Review startup logs for MongoDB READY, time synchronization, decision-journal initialization, offline-learning initialization, and the liquidation WebSocket. If required data is unavailable, the canonical strategy should emit WAIT rather than invent missing inputs.
 
 ## Updating
-After the tested branch is promoted to main:
+For future updates after this release:
 ```bash
 git switch main
 git pull --ff-only origin main
