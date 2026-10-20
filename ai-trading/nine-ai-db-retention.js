@@ -5,8 +5,8 @@
 // allowlist covers historical trade/learning/research events; mutable model state,
 // active policies, pending work, and unknown collections remain protected.
 const DEFAULTS = Object.freeze({
-  limitMB: 5120,
-  triggerRatio: 0.80,
+  limitMB: 500,
+  triggerRatio: 0.86,
   targetRatio: 0.60,
   batchSize: 100,
   maxDeletesPerRun: 500,
@@ -18,7 +18,7 @@ const DEFAULTS = Object.freeze({
 });
 
 // Event-ledger retention: only terminal/historical documents with a valid old
-// lifecycle timestamp can be removed. Keep at least 90 days of every dataset.
+// lifecycle timestamp can be removed. Retention age is set per dataset and row type.
 // Mutable state/policy collections and unknown collections remain protected.
 // Outcome ledgers are eligible only after they were applied; the legacy ledger
 // also must finish independent-model migration before it can be pruned.
@@ -29,7 +29,19 @@ const SPECS = Object.freeze([
     "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
     "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
     "scannedAt", "signalTime", "createdAt"
-  ], days: 90, category: "evaluated_decision", filter: { outcomeStatus: "EVALUATED" } },
+  ], days: 90, category: "evaluated_decision", filter: {
+    outcomeStatus: "EVALUATED", side: { $ne: "WAIT" }
+  } },
+  // WAIT rows remain useful after their forward outcomes mature, but they are
+  // generated much more frequently than trades. Keep one week of evaluated WAIT
+  // evidence; never delete pending or actual-trade records.
+  { name: "nine_ai_decision_journal", dateFields: [
+    "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
+    "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
+    "scannedAt", "signalTime", "createdAt"
+  ], days: 7, category: "evaluated_wait_decision", filter: {
+    outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
+  } },
   { name: "nine_ai_learning_outcomes", dateFields: ["closedAt"], days: 90,
     category: "applied_learning_outcome", filter: {
       closed: true, applied: true, independentModelsMigrated: true
@@ -73,7 +85,7 @@ function configFromEnv() {
     : /^(1|true|yes)$/i.test(String(enabledEnv));
   const triggerRatio = boundedNumber("DB_STORAGE_TRIGGER_RATIO", DEFAULTS.triggerRatio, 0.50, 0.95);
   return {
-    limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 512, 1024 * 1024),
+    limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 100, 1024 * 1024),
     triggerRatio,
     targetRatio: Math.min(
       boundedNumber("DB_STORAGE_TARGET_RATIO", DEFAULTS.targetRatio, 0.25, 0.80),
@@ -264,9 +276,27 @@ function createRetention(db, overrides = {}) {
         console.error("⚠️ NINE-AI DB RETENTION MEASUREMENT INCOMPLETE: " + JSON.stringify(lastSummary));
         return lastSummary;
       }
+      const specs = getSpecs(before.names);
+      // Expired evaluated WAIT rows are pruned on every retention cycle, even
+      // below the global capacity threshold. This prevents the scan journal from
+      // accumulating indefinitely on smaller databases. Pending and actual-trade
+      // rows are excluded by the dedicated allowlisted spec.
       if (!force && before.usageMB < triggerMB) {
-        lastSummary = { status: "BELOW_THRESHOLD", usageMB: before.usageMB,
-          triggerMB, targetMB, deleted: 0 };
+        const waitSpec = specs.find(spec => spec.category === "evaluated_wait_decision");
+        const waitCleanup = waitSpec
+          ? await pruneOldestBatch([waitSpec], config.dryRun,
+            Math.min(config.batchSize, config.maxDeletesPerRun))
+          : { deleted: 0, candidates: 0, perCollection: {} };
+        lastSummary = {
+          status: config.dryRun && waitCleanup.candidates ? "DRY_RUN" :
+            waitCleanup.deleted ? "WAIT_RETENTION_COMPLETED" : "BELOW_THRESHOLD",
+          usageMB: Number(before.usageMB.toFixed(2)), triggerMB, targetMB,
+          deleted: waitCleanup.deleted, candidates: waitCleanup.candidates,
+          perCollection: waitCleanup.perCollection, dryRun: config.dryRun
+        };
+        if (waitCleanup.deleted || (config.dryRun && waitCleanup.candidates)) {
+          console.log("🧹 NINE-AI DB RETENTION: " + JSON.stringify(lastSummary));
+        }
         return lastSummary;
       }
 
@@ -274,7 +304,6 @@ function createRetention(db, overrides = {}) {
       let totalDeleted = 0;
       let totalCandidates = 0;
       const perCollection = {};
-      const specs = getSpecs(before.names);
 
       // One strict retention policy only. No emergency mode may shorten age limits.
       // Cap total deletes per run so a bad estimate cannot trigger an unbounded purge.

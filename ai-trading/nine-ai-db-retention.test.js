@@ -2,8 +2,11 @@
 const assert = require("assert");
 const retention = require("./nine-ai-db-retention");
 
-const config = { limitMB: 5120, triggerRatio: 0.80, targetRatio: 0.60 };
-assert.strictEqual(retention.DEFAULTS.triggerRatio, 0.80);
+const config = { limitMB: 500, triggerRatio: 0.86, targetRatio: 0.60 };
+assert.strictEqual(retention.DEFAULTS.limitMB, 500);
+assert.strictEqual(retention.DEFAULTS.triggerRatio, 0.86);
+assert.strictEqual(retention.configFromEnv().limitMB * retention.DEFAULTS.triggerRatio, 430);
+assert.strictEqual(retention.configFromEnv().limitMB * retention.DEFAULTS.targetRatio, 300);
 assert.strictEqual(retention.DEFAULTS.targetRatio, 0.60);
 assert.strictEqual(retention.DEFAULTS.enabled, true, "bounded cleanup must run by default");
 assert.strictEqual(retention.DEFAULTS.dryRun, false, "production default must actually clean eligible reports");
@@ -35,8 +38,8 @@ if (priorDryRun === undefined) delete process.env.DB_RETENTION_DRY_RUN;
 else process.env.DB_RETENTION_DRY_RUN = priorDryRun;
 if (priorEnableDelete === undefined) delete process.env.DB_RETENTION_ENABLE_DELETE;
 else process.env.DB_RETENTION_ENABLE_DELETE = priorEnableDelete;
-assert.strictEqual(retention.shouldCleanup(4096, config), true);
-assert.strictEqual(retention.shouldCleanup(4095.99, config), false);
+assert.strictEqual(retention.shouldCleanup(430, config), true);
+assert.strictEqual(retention.shouldCleanup(429.99, config), false);
 assert.strictEqual(retention.estimateUsageMB([
   { totalSize: 1024 * 1024 }, { storageSize: 1024 * 1024, totalIndexSize: 512 * 1024 }
 ]), 2.5);
@@ -76,10 +79,19 @@ const names = [
 ];
 const specs = retention.getSpecs(names);
 const byName = Object.fromEntries(specs.map(s => [s.name, s]));
-assert.strictEqual(specs.length, 22, "all explicitly reviewed event ledgers and model outcomes must be eligible");
+assert.strictEqual(specs.length, 23, "all explicitly reviewed event ledgers and model outcomes must be eligible");
 assert.strictEqual(byName.trades.days, 90);
 assert.deepStrictEqual(byName.trades.filter, { result: { $in: ["WIN", "LOSS", "CLOSED_UNRESOLVED"] } });
-assert.strictEqual(byName.nine_ai_decision_journal.filter.outcomeStatus, "EVALUATED");
+const journalSpecs = specs.filter(s => s.name === "nine_ai_decision_journal");
+assert.strictEqual(journalSpecs.length, 2, "journal has separate directional and WAIT retention");
+assert.strictEqual(journalSpecs.find(s => s.category === "evaluated_decision").days, 90);
+assert.deepStrictEqual(journalSpecs.find(s => s.category === "evaluated_decision").filter, {
+  outcomeStatus: "EVALUATED", side: { $ne: "WAIT" }
+});
+assert.strictEqual(journalSpecs.find(s => s.category === "evaluated_wait_decision").days, 7);
+assert.deepStrictEqual(journalSpecs.find(s => s.category === "evaluated_wait_decision").filter, {
+  outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
+});
 assert.strictEqual(byName.nine_ai_learning_outcomes.filter.applied, true);
 assert.strictEqual(byName.nine_ai_learning_outcomes.filter.independentModelsMigrated, true);
 for (const model of ["technical", "signal", "memory", "bull", "bear", "contrarian", "analyst", "decision", "risk"]) {
@@ -148,7 +160,7 @@ async function testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors() {
   delete process.env.DB_RETENTION_ENABLE_DELETE;
   delete process.env.DB_RETENTION_DRY_RUN;
 
-  let reportUsageMB = 4100;
+  let reportUsageMB = 450;
   let deleteCalls = 0;
   const deletedCollections = [];
   const db = {
@@ -171,9 +183,9 @@ async function testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors() {
             toArray: async () => {
               if (name === "trades") assert.deepStrictEqual(pipeline[0].$match, byName.trades.filter,
                 "candidate scan must exclude active trades");
-              return name === "nine_ai_strategy_lab_reports" && reportUsageMB > 4000
+              return name === "nine_ai_strategy_lab_reports" && reportUsageMB > 400
                 ? [{ _id: "old-report-1", _retentionDate: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000) }]
-                : name === "trades" && reportUsageMB > 4000
+                : name === "trades" && reportUsageMB > 400
                   ? [{ _id: "old-closed-trade", _retentionDate: new Date(Date.now() - 120 * 24 * 60 * 60 * 1000) }]
                   : [];
             }
@@ -188,7 +200,7 @@ async function testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors() {
             "delete-time check must preserve open and nonterminal trades");
           deleteCalls += 1;
           deletedCollections.push(name);
-          reportUsageMB = 3000;
+          reportUsageMB = 300;
           return { deletedCount: 1 };
         }
       };
@@ -203,11 +215,62 @@ async function testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors() {
     assert.strictEqual(deleteCalls, 2, "controller must prune the globally oldest eligible records from multiple collectors");
     assert.strictEqual(result.status, "COMPLETED");
     assert.strictEqual(result.deleted, 2);
-    assert.strictEqual(result.usageAfterMB, 3000);
+    assert.strictEqual(result.usageAfterMB, 300);
     assert.deepStrictEqual(new Set(Object.keys(result.perCollection)),
       new Set(["trades", "nine_ai_strategy_lab_reports"]));
     assert.deepStrictEqual(new Set(deletedCollections),
       new Set(["trades", "nine_ai_strategy_lab_reports"]));
+  } finally {
+    if (originalEnable === undefined) delete process.env.DB_RETENTION_ENABLE_DELETE;
+    else process.env.DB_RETENTION_ENABLE_DELETE = originalEnable;
+    if (originalDryRun === undefined) delete process.env.DB_RETENTION_DRY_RUN;
+    else process.env.DB_RETENTION_DRY_RUN = originalDryRun;
+  }
+}
+
+async function testExpiredWaitRowsArePrunedBelowCapacityThreshold() {
+  const originalEnable = process.env.DB_RETENTION_ENABLE_DELETE;
+  const originalDryRun = process.env.DB_RETENTION_DRY_RUN;
+  delete process.env.DB_RETENTION_ENABLE_DELETE;
+  delete process.env.DB_RETENTION_DRY_RUN;
+  let deleteCalls = 0;
+  const db = {
+    listCollections() {
+      return { toArray: async () => [{ name: "nine_ai_decision_journal" }] };
+    },
+    async command() {
+      return { size: 100, totalIndexSize: 0, storageSize: 100 };
+    },
+    collection(name) {
+      assert.strictEqual(name, "nine_ai_decision_journal");
+      return {
+        aggregate(pipeline) {
+          return {
+            toArray: async () => {
+              assert.deepStrictEqual(pipeline[0].$match, {
+                outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
+              });
+              return [{ _id: "expired-wait", _retentionDate: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000) }];
+            }
+          };
+        },
+        deleteMany: async query => {
+          assert.deepStrictEqual(query.$and[0], { _id: { $in: ["expired-wait"] } });
+          assert.deepStrictEqual(query.$and[1], {
+            outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
+          });
+          deleteCalls += 1;
+          return { deletedCount: 1 };
+        }
+      };
+    }
+  };
+  try {
+    const result = await retention.createRetention(db).runCleanup();
+    assert.strictEqual(result.status, "WAIT_RETENTION_COMPLETED");
+    assert.strictEqual(result.usageMB, 100, "WAIT cleanup must run even below the 430 MB threshold");
+    assert.strictEqual(result.deleted, 1);
+    assert.strictEqual(deleteCalls, 1);
   } finally {
     if (originalEnable === undefined) delete process.env.DB_RETENTION_ENABLE_DELETE;
     else process.env.DB_RETENTION_ENABLE_DELETE = originalEnable;
@@ -248,6 +311,7 @@ async function testIncompleteMeasurementNeverDeletes() {
 }
 
 testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors()
+  .then(testExpiredWaitRowsArePrunedBelowCapacityThreshold)
   .then(testIncompleteMeasurementNeverDeletes)
   .then(() => console.log("NINE-AI DB RETENTION TESTS PASSED"))
   .catch(error => {

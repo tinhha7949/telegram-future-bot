@@ -2,6 +2,8 @@
 const assert = require("node:assert/strict");
 const journal = require("./nine-ai-decision-journal");
 
+assert.equal(journal.MARKET_WINDOW_BARS, 48, "the journal must retain 12 hours of 15-minute candles");
+
 const raw = [];
 const base = 1_800_000_000_000;
 for (let i = 0; i < 24; i++) {
@@ -52,6 +54,15 @@ assert.equal(boundedWindow[0].takerBuyQuoteVolume, 9_000);
 assert.equal(Object.keys(journal.extractWindowFeatures(extendedRaw)).length, 17);
 assert.equal(wait.roles[0].reason, "trend aligns");
 assert.ok(wait.decisionKey.includes("TESTUSDT"));
+const repeatedWait = journal.snapshotDecision({
+  symbol: "TESTUSDT",
+  signalTime: candles[2].closeTime,
+  scannedAt: candles[2].closeTime + 60_000,
+  decision: { side: null, action: "WAIT", reason: "DIFFERENT_WAIT_REASON", authorizedForExecution: false },
+  marketWindow: raw
+});
+assert.equal(repeatedWait.decisionKey, wait.decisionKey,
+  "WAIT decisions for one symbol/candle must collapse to a single durable journal row");
 
 const evaluations = journal.computeEvaluations(wait, candles);
 assert.ok(evaluations);
@@ -85,16 +96,16 @@ const patternFeatures = journal.extractWindowFeatures(patternWindow);
 const oppositeFeatures = {
   ...patternFeatures,
   return4: -patternFeatures.return4, return16: -patternFeatures.return16,
-  return48: -patternFeatures.return48, return96: -patternFeatures.return96,
-  efficiency16: -patternFeatures.efficiency16, efficiency48: -patternFeatures.efficiency48,
-  efficiency96: -patternFeatures.efficiency96, rangePosition: 1 - patternFeatures.rangePosition,
+  return32: -patternFeatures.return32, return48: -patternFeatures.return48,
+  efficiency16: -patternFeatures.efficiency16, efficiency32: -patternFeatures.efficiency32,
+  efficiency48: -patternFeatures.efficiency48, rangePosition: 1 - patternFeatures.rangePosition,
   wickBias: -patternFeatures.wickBias, greenRate: 1 - patternFeatures.greenRate
 };
 const similarWindowRecords = Array.from({ length: 48 }, (_, i) => {
   const positive = i < 24;
   return {
     symbol: `SIM${i}`, signalTime: base + i * 900_000,
-    outcomeStatus: "EVALUATED", marketWindow: patternWindow,
+    outcomeStatus: "EVALUATED", marketWindow: patternWindow, windowFeatureSchemaVersion: 2,
     windowFeatures: positive ? patternFeatures : oppositeFeatures,
     evaluations: positive
       ? { "4": { longNetR: 0.5, shortNetR: -0.5 }, "16": { longNetR: 0.3, shortNetR: -0.3 } }
