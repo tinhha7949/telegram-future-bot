@@ -2394,8 +2394,8 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
         let shortLiquidationNotional = 0;
         let longLiquidationNotional = 0;
         for (const row of rows) {
-            const price = Number(row.avgPrice || row.price || row.ap || 0);
-            const qty = Number(row.executedQty || row.origQty || row.q || 0);
+            const price = [row.avgPrice, row.price, row.ap].map(Number).find(value => value > 0) || 0;
+            const qty = [row.executedQty, row.origQty, row.q].map(Number).find(value => value > 0) || 0;
             if (!(price > 0 && qty > 0)) continue;
             const notional = price * qty;
             if (String(row.side || row.S).toUpperCase() === "BUY") shortLiquidationNotional += notional;
@@ -2431,7 +2431,7 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
         openInterest: Number(oiNow?.openInterest),
         openInterestChange: oiChange,
         spreadPct,
-        depthNotional: bidDepth + askDepth,
+        depthNotional: Array.isArray(depth?.bids) && depth.bids.length && Array.isArray(depth?.asks) && depth.asks.length ? bidDepth + askDepth : null,
         latencyMs: Date.now() - started,
         liquidationImbalance,
         roundTripFeePct: envNumber("ROUND_TRIP_FEE_PCT", 0.1, 0, 2),
@@ -2487,7 +2487,8 @@ async function scan(symbol){
         const rawDecision = nineAiPipeline.analyzeNineAI({
             symbol, candles4h: data4h, candles1h: data1h || [], candles1d: data1d || [],
             outcomes: labeledOutcomes, equity: ACCOUNT_BALANCE,
-            market: marketSnapshot, config: championConfig
+            market: { ...marketSnapshot, trackRecord: await nineAiOfflineLearningService?.getTrackRecord?.() },
+            config: championConfig
         }) || {
             symbol, side: null, action: "WAIT", reason: "NO_DECISION_RETURNED",
             authorizedForExecution: false
