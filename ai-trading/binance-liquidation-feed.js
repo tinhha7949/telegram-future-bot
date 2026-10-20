@@ -14,6 +14,7 @@ let lastPongAt = 0;
 const eventsBySymbol = new Map();
 
 function scheduleReconnect() {
+  if (!started) return;
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -23,6 +24,7 @@ function scheduleReconnect() {
 }
 
 function connect() {
+  if (!started) return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   try {
     socket = new WebSocket(STREAM_URL);
@@ -71,7 +73,7 @@ function start() {
 
 function getImbalance(symbol, now = Date.now()) {
   if (!socket || socket.readyState !== WebSocket.OPEN || !lastPongAt || now - lastPongAt > STALE_MS) return null;
-  const rows = (eventsBySymbol.get(String(symbol || "").toUpperCase()) || []).filter(e => e.time >= now - WINDOW_MS);
+  const rows = (eventsBySymbol.get(String(symbol || "").toUpperCase()) || []).filter(e => e.time >= now - WINDOW_MS && e.time <= now);
   let shortLiquidationNotional = 0;
   let longLiquidationNotional = 0;
   for (const event of rows) {
