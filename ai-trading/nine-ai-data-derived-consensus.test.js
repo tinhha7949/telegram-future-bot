@@ -20,6 +20,13 @@ function makeRows(longR) {
 
 const learned = consensus.learnPolicies(makeRows(0.6));
 assert.equal(learned.rows, 240);
+assert.equal(consensus.MIN_TRAIN, 35);
+assert.equal(consensus.MIN_TEST, 15);
+const compactLearned = consensus.learnPolicies(makeRows(0.6).slice(0, 50));
+assert.equal(compactLearned.policies.length, 1,
+  "50 independent observations should be enough for a train/holdout policy when evidence is clean");
+assert.equal(compactLearned.reports[0].trainRows, 35);
+assert.equal(compactLearned.reports[0].testRows, 15);
 assert.equal(learned.policies.length, 1, "positive held-out observations should activate a learned gate");
 const policy = learned.policies[0];
 assert.equal(policy.regime, "OBSERVED_TREND");
@@ -36,6 +43,14 @@ assert.equal(consensus.assessLive(makeRows(0.6)[0].roles, "UNSEEN_REGIME", 100).
   "unvalidated regimes must not fall back to a hard-coded live vote gate");
 assert.equal(consensus.learnPolicies(makeRows(-0.6)).policies.length, 0,
   "a losing strategy must not be promoted from negative held-out results");
+
+const diagnosticRows = makeRows(0.6).slice(0, 2);
+diagnosticRows[0].rankScore = null;
+diagnosticRows[1].evaluations["16"].shortNetR = null;
+const diagnostics = {};
+assert.equal(consensus.normalizeRows(diagnosticRows, diagnostics).length, 0);
+assert.equal(diagnostics.missingRankScore, 1);
+assert.equal(diagnostics.incompleteOutcomes, 1);
 
 const featureRows = makeRows(0).map((row, index) => {
   row.roles = roleNames.map(name => ({ name, side: "WAIT" }));
