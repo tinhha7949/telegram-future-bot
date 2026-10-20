@@ -3,7 +3,7 @@
 // Canonical Nine-AI pipeline. This module is the only place that may choose
 // LONG, SHORT or WAIT. It consumes closed-candle snapshots and never places orders.
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
-const finite = (n, fallback = null) => Number.isFinite(Number(n)) ? Number(n) : fallback;
+const finite = (n, fallback = null) => n === null || n === undefined || n === "" ? fallback : (Number.isFinite(Number(n)) ? Number(n) : fallback);
 const mean = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 const stdev = xs => {
   if (xs.length < 2) return 0;
@@ -142,7 +142,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     const applicable=evidence.filter(e=>e.side===side);
     const p=applicable.length?applicable.reduce((s,e)=>s+e.p*e.weight,0)/applicable.reduce((s,e)=>s+e.weight,0):0.5;
     const er=applicable.length?applicable.reduce((s,e)=>s+e.er*e.weight,0)/applicable.reduce((s,e)=>s+e.weight,0):0;
-    const cost=(fee+fundingCost+estimatedSlippage)/Math.max(distMAE.p80,1e-12);
+    const cost=((fee+fundingCost+estimatedSlippage)*last.close/100)/Math.max(distMAE.p80,1e-12);
     const uncertainty=(1-regime.regime_conf)*finite(config.uncertaintyPenalty,0.5)+
       (Date.now()-finite(market.snapshotAt,now)>finite(config.maxDataAgeMs,5*60*1000)?1:0);
     return {side,p,expectedR:er,cost,uncertaintyPenalty:uncertainty,edge:p*er-cost-uncertainty,applicableModels:applicable.map(e=>e.name)};
