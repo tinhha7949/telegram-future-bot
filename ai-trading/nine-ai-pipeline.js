@@ -74,6 +74,35 @@ function classifyRegime(cs, higher = []) {
   const regimeConf=clamp(0.45+0.35*strength+0.2*Math.abs((volRank??0.5)-0.5)*2,0,1);
   return {regime,regime_conf:regimeConf,realized_vol_20d:realized20,realized_vol_90d:realized90,realized_vol_20_90d:realized,vol_percentile:volRank,momentum20:mom20,momentum5:mom5,trendAgreement};
 }
+function buildHistoricalOutcomeLabels(input, now = Date.now(), horizon = 24) {
+  const cs = closedCandles(input, now);
+  const labels = [];
+  // Only use historical opportunities whose full 24-candle outcome window has
+  // already closed. This is a bootstrap prior, explicitly tagged as simulated.
+  for (let i = 120; i + horizon < cs.length; i++) {
+    const prefix = cs.slice(0, i + 1);
+    const regime = classifyRegime(prefix);
+    if (!["UPTREND", "DOWNTREND"].includes(regime.regime)) continue;
+    const side = regime.regime === "UPTREND" ? "LONG" : "SHORT";
+    const entry = cs[i].close;
+    const future = cs.slice(i + 1, i + horizon + 1);
+    if (future.length !== horizon) continue;
+    const adverse = side === "LONG"
+      ? Math.max(0, entry - Math.min(...future.map(c => c.low)))
+      : Math.max(0, Math.max(...future.map(c => c.high)) - entry);
+    const favorable = side === "LONG"
+      ? Math.max(0, Math.max(...future.map(c => c.high)) - entry)
+      : Math.max(0, entry - Math.min(...future.map(c => c.low)));
+    // Match the requested MAE distribution of historically winning setups.
+    if (favorable <= adverse || favorable <= 0) continue;
+    labels.push({
+      setupKey: regime.regime, side, mae: adverse, mfe: favorable,
+      labeled: true, source: "CLOSED_HISTORICAL_4H_SIMULATION",
+      signalAt: cs[i].closeTime, outcomeClosedAt: future.at(-1).closeTime
+    });
+  }
+  return labels;
+}
 function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},outcomes=[],equity=0,config={}}={}) {
   const now=finite(market.now,Date.now()), cs=closedCandles(candles4h,now);
   const wait=(reason,extra={})=>({symbol,action:"WAIT",side:null,authorizedForExecution:false,reason,agents:null,...extra});
@@ -171,4 +200,4 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     tradePlan:{stopMethod:"LABELED_MAE_P80_WITH_STRUCTURE_BUFFER",targetMethod:"LABELED_MFE_P50_P90",tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeoutMs:96*60*60*1000},
     candles:cs.length};
 }
-module.exports={percentile,closedCandles,swingPoints,classifyRegime,analyzeNineAI};
+module.exports={percentile,closedCandles,swingPoints,classifyRegime,buildHistoricalOutcomeLabels,analyzeNineAI};
