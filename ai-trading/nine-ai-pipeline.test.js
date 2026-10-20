@@ -16,4 +16,19 @@ assert.ok(labels.every(x=>["UPTREND_CONTINUATION","UPTREND_BREAKOUT","DOWNTREND_
 assert.ok(labels.every(x=>Number.isFinite(x.maePct)&&Number.isFinite(x.mfePct)));
 assert.ok(labels.every(x=>typeof x.win==="boolean"));
 assert.equal(analyzeNineAI({symbol:"TEST",candles4h:candles,market:{now}}).action,"WAIT");
+const candles1h=Array.from({length:100},(_,i)=>{const close=200+i*.1;const time=now-(100-i)*3600000;return [time,close-.05,close+.1,close-.1,close,100,time+3600000-1]});
+const candles1d=Array.from({length:100},(_,i)=>{const close=300+i*.5;const time=now-(100-i)*86400000;return [time,close-.2,close+.3,close-.3,close,100,time+86400000-1]});
+const market={now,snapshotAt:now,fundingRate:0.0001,openInterestChange:1,spreadPct:0.01,depthNotional:1_000_000,latencyMs:100,liquidationImbalance:0.3,roundTripFeePct:0.1,expectedFundingCostPct:0.12};
+const flowLong=analyzeNineAI({symbol:"TEST",candles4h:candles,candles1h,candles1d,market});
+assert.equal(flowLong.agents.flow.confirmation,"CONFIRMED");
+assert.equal(flowLong.agents.flow.confirmationSide,"LONG");
+const flowShort=analyzeNineAI({symbol:"TEST",candles4h:candles,candles1h,candles1d,market:{...market,liquidationImbalance:-0.3}});
+assert.equal(flowShort.agents.flow.confirmation,"CONFIRMED");
+assert.equal(flowShort.agents.flow.confirmationSide,"SHORT");
+const flowHot=analyzeNineAI({symbol:"TEST",candles4h:candles,candles1h,candles1d,market:{...market,fundingRate:0.002}});
+assert.equal(flowHot.agents.flow.confirmation,"BLOCKED_HOT_FUNDING");
+assert.equal(flowHot.agents.flow.confirmationSide,null);
+const flowUnavailable=analyzeNineAI({symbol:"TEST",candles4h:candles,candles1h,candles1d,market:{...market,liquidationImbalance:null}});
+assert.equal(flowUnavailable.agents.flow.confirmation,"UNAVAILABLE");
+
 console.log("nine-ai-pipeline tests passed");
