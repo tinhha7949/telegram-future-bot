@@ -14,8 +14,8 @@ const REQUIRED_ROLES = Object.freeze([
   "Decision AI",
   "Risk Manager AI"
 ]);
-const MIN_CANDLES = 60;
-const MAX_SIGNAL_AGE_MS = 30 * 60 * 1000;
+const MIN_CANDLES = 100;
+const MAX_SIGNAL_AGE_MS = 4 * 60 * 60 * 1000;
 const MIN_RR = 0.8;
 
 function wait(decision, reason) {
@@ -40,16 +40,18 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   if (decision.authorizedForExecution !== true || !["LONG", "SHORT"].includes(side)) {
     return wait(decision, decision.reason || "NINE_AI_CHOSE_WAIT");
   }
-  if (decision.setup !== "NINE_AI_15M") return wait(decision, "NON_NINE_AI_SETUP_REJECTED");
+  if (decision.setup !== "NINE_AI_4H") return wait(decision, "NON_CANONICAL_NINE_AI_SETUP_REJECTED");
+  // The canonical pipeline exposes exactly eight specialist outputs plus one
+  // meta decision. Legacy role-based outputs are not accepted on the live path.
+  if (!decision.agents || !decision.regime || !decision.edges) {
+    return wait(decision, "CANONICAL_AGENT_OUTPUT_INCOMPLETE");
+  }
   if (symbol && String(decision.symbol || "").toUpperCase() !== String(symbol).toUpperCase()) {
     return wait(decision, "DECISION_SYMBOL_MISMATCH");
   }
-  if (!Array.isArray(decision.roles) || decision.roles.length < REQUIRED_ROLES.length) {
-    return wait(decision, "NINE_AI_ROLE_OUTPUT_INCOMPLETE");
-  }
-  const roleNames = new Set(decision.roles.map(role => String(role?.name || "")));
-  if (REQUIRED_ROLES.some(name => !roleNames.has(name))) {
-    return wait(decision, "NINE_AI_REQUIRED_ROLE_MISSING");
+  if (decision.agents.flow?.confirmation === "BLOCKED_HOT_FUNDING" ||
+      decision.agents.flow?.confirmation === "UNAVAILABLE") {
+    return wait(decision, "FLOW_CONFIRMATION_BLOCKED");
   }
   const candleCount = Number(decision.candles);
   if (!Number.isFinite(candleCount) || candleCount < MIN_CANDLES) {
@@ -57,7 +59,7 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   }
   const entry = Number(decision.entry ?? decision.price);
   const sl = Number(decision.sl);
-  const tp = Number(decision.tp);
+  const tp = Number(decision.tp2 ?? decision.tp);
   const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
   if (![entry, sl, tp, rr].every(Number.isFinite) || entry <= 0 || sl <= 0 || tp <= 0 ||
       entry === sl || rr < MIN_RR ||
