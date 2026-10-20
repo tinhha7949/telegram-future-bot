@@ -554,9 +554,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       ? `independentAnalystModelP(long)=${analystModel.pLong}; volumeRatio=${f.volumeRatio.toFixed(2)}`
       : `warmupFallback=market-quality-check; volumeRatio=${f.volumeRatio.toFixed(2)}; body/range=${(candleRange ? candleBody / candleRange : 0).toFixed(2)}`);
 
-  // 8. Decision AI: apply thresholds learned from matured journal outcomes.
-  // No fixed live 4-of-7 vote requirement remains.
-  const longCount = longVotes.length, shortCount = shortVotes.length;
+  // 8. Decision AI: combine directional assessor evidence with a minimum
+  // coverage and weighted-margin guard before authorizing a direction.
   // Research policies are evidence only. They may be logged and evaluated, but
   // never own the direction or provide a fallback trading brain.
   const dataDerivedConsensus = autonomousConsensus.assessLive(
@@ -565,7 +564,6 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
       falseBreakoutRisk: f.falseBreakoutRisk }
   );
-  const nativePolicyStatus = autonomousConsensus.status();
   const consensusSide = dataDerivedConsensus.ready && dataDerivedConsensus.allowed
     ? dataDerivedConsensus.side : null;
 
@@ -582,7 +580,6 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     sideEvidence[roleSide] += weight * conviction;
     sideWeights[roleSide] += weight;
   }
-  const longCount = longVotes.length, shortCount = shortVotes.length;
   const winningSide = sideEvidence.LONG > sideEvidence.SHORT ? "LONG"
     : sideEvidence.SHORT > sideEvidence.LONG ? "SHORT" : null;
   const totalDirectionalWeight = sideWeights.LONG + sideWeights.SHORT;
