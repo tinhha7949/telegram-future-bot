@@ -2503,7 +2503,7 @@ async function scan(symbol){
                 symbol, decision,
                 signalTime: Number(decision.signalAt) || Math.floor(scanAt / 14400000) * 14400000,
                 scannedAt: scanAt,
-                                marketWindow: data4h
+                marketWindow: data4h
             });
             if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
         } catch (journalError) {
@@ -2520,12 +2520,10 @@ async function scan(symbol){
             rankScore: Number.isFinite(netEdge) ? netEdge : -Infinity,
             qualityScore: Number.isFinite(netEdge) ? netEdge : 0,
             nineAiDecisionKey: decision.nineAiDecisionKey || null,
-                        symbol,
+            symbol,
             setup: "NINE_AI_4H",
-            triggerType: "NINE_AI_CONSENSUS",
-            rankDirectionMode: "NINE_AI_PRIMARY",
-            rankScore: Number.isFinite(netEdge) ? netEdge : -Infinity,
-            qualityScore: Number.isFinite(netEdge) ? netEdge : 0
+            triggerType: "NINE_AI_4H_EDGE",
+            rankDirectionMode: "NINE_AI_PRIMARY"
         };
     } catch (e) {
         console.error(`🔥 NINE-AI SCAN ERROR ${symbol}:`, e?.message || e);
