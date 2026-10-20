@@ -228,6 +228,57 @@ async function testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors() {
   }
 }
 
+async function testExpiredWaitRowsArePrunedBelowCapacityThreshold() {
+  const originalEnable = process.env.DB_RETENTION_ENABLE_DELETE;
+  const originalDryRun = process.env.DB_RETENTION_DRY_RUN;
+  delete process.env.DB_RETENTION_ENABLE_DELETE;
+  delete process.env.DB_RETENTION_DRY_RUN;
+  let deleteCalls = 0;
+  const db = {
+    listCollections() {
+      return { toArray: async () => [{ name: "nine_ai_decision_journal" }] };
+    },
+    async command() {
+      return { size: 100, totalIndexSize: 0, storageSize: 100 };
+    },
+    collection(name) {
+      assert.strictEqual(name, "nine_ai_decision_journal");
+      return {
+        aggregate(pipeline) {
+          return {
+            toArray: async () => {
+              assert.deepStrictEqual(pipeline[0].$match, {
+                outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
+              });
+              return [{ _id: "expired-wait", _retentionDate: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000) }];
+            }
+          };
+        },
+        deleteMany: async query => {
+          assert.deepStrictEqual(query.$and[0], { _id: { $in: ["expired-wait"] } });
+          assert.deepStrictEqual(query.$and[1], {
+            outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
+          });
+          deleteCalls += 1;
+          return { deletedCount: 1 };
+        }
+      };
+    }
+  };
+  try {
+    const result = await retention.createRetention(db).runCleanup();
+    assert.strictEqual(result.status, "WAIT_RETENTION_COMPLETED");
+    assert.strictEqual(result.usageMB, 100, "WAIT cleanup must run even below the 430 MB threshold");
+    assert.strictEqual(result.deleted, 1);
+    assert.strictEqual(deleteCalls, 1);
+  } finally {
+    if (originalEnable === undefined) delete process.env.DB_RETENTION_ENABLE_DELETE;
+    else process.env.DB_RETENTION_ENABLE_DELETE = originalEnable;
+    if (originalDryRun === undefined) delete process.env.DB_RETENTION_DRY_RUN;
+    else process.env.DB_RETENTION_DRY_RUN = originalDryRun;
+  }
+}
+
 async function testIncompleteMeasurementNeverDeletes() {
   const originalEnable = process.env.DB_RETENTION_ENABLE_DELETE;
   const originalDryRun = process.env.DB_RETENTION_DRY_RUN;
@@ -260,6 +311,7 @@ async function testIncompleteMeasurementNeverDeletes() {
 }
 
 testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors()
+  .then(testExpiredWaitRowsArePrunedBelowCapacityThreshold)
   .then(testIncompleteMeasurementNeverDeletes)
   .then(() => console.log("NINE-AI DB RETENTION TESTS PASSED"))
   .catch(error => {
