@@ -4045,6 +4045,7 @@ if (isWin && t.nineAiSetupKey && Number(t.maxAdverseMove) > 0 && Number(t.maxFav
             { tradeId: String(t._id || `${t.symbol}:${t.createdAt}`) },
             { $setOnInsert: {
                 tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
+                symbol: String(t.symbol),
                 setupKey: String(t.nineAiSetupKey),
                 side: String(t.side),
                 mae: Number(t.maxAdverseMove),
