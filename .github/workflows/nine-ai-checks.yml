@@ -14,16 +14,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: node --check index.js
-      - run: node --check ai-trading/nine-ai-pipeline.js
-      - run: node ai-trading/nine-ai-pipeline.test.js
-      - run: node --check ai-trading/nine-ai-central-decision-engine.js
-      - run: node ai-trading/nine-ai-central-decision-engine.test.js
-      - run: node --check ai-trading/nine-ai-offline-learning.js
-      - run: node ai-trading/nine-ai-offline-learning.test.js
-      - run: node --check ai-trading/nine-ai-decision-journal.js
-      - run: node ai-trading/nine-ai-decision-journal.test.js
-      - run: node --check ai-trading/execution-risk.js
-      - run: node ai-trading/execution-risk.test.js
-      - run: node --check ai-trading/nine-ai-db-retention.js
-      - run: node ai-trading/nine-ai-db-retention.test.js
+      - run: npm install --no-package-lock --ignore-scripts
+      - run: npm test
