@@ -22,6 +22,7 @@ const learned = consensus.learnPolicies(makeRows(0.6));
 assert.equal(learned.rows, 240);
 assert.equal(consensus.MIN_TRAIN, 35);
 assert.equal(consensus.MIN_TEST, 15);
+assert.equal(consensus.MIN_INDEPENDENT_GAP_MS, 2 * 60 * 60 * 1000);
 const compactLearned = consensus.learnPolicies(makeRows(0.6).slice(0, 50));
 assert.equal(compactLearned.policies.length, 1,
   "50 independent observations should be enough for a train/holdout policy when evidence is clean");
@@ -51,6 +52,26 @@ const diagnostics = {};
 assert.equal(consensus.normalizeRows(diagnosticRows, diagnostics).length, 0);
 assert.equal(diagnostics.missingRankScore, 1);
 assert.equal(diagnostics.incompleteOutcomes, 1);
+
+const overlapBase = makeRows(0.2)[0];
+const twoHourRows = [
+  { ...overlapBase, symbol: "GAP", signalTime: 1_000_000, scannedAt: 1_000_000 },
+  { ...overlapBase, symbol: "GAP", signalTime: 1_000_000 + 60 * 60 * 1000, scannedAt: 1_000_000 + 60 * 60 * 1000 },
+  { ...overlapBase, symbol: "GAP", signalTime: 1_000_000 + 2 * 60 * 60 * 1000, scannedAt: 1_000_000 + 2 * 60 * 60 * 1000 }
+];
+const twoHourDiagnostics = {};
+const twoHourIndependent = consensus.normalizeRows(twoHourRows, twoHourDiagnostics);
+assert.equal(twoHourIndependent.length, 2,
+  "same-symbol opportunities 2h apart should be retained; a 1h repeat should be excluded");
+assert.equal(twoHourDiagnostics.overlappingOpportunities, 1);
+
+const legacyRankRows = makeRows(0.2).slice(0, 1).map(row => ({
+  ...row, rankScore: null, originalRankScore: 61.5
+}));
+const legacyRankDiagnostics = {};
+assert.equal(consensus.normalizeRows(legacyRankRows, legacyRankDiagnostics).length, 1,
+  "legacy rows with a genuine originalRankScore should be recoverable");
+assert.equal(legacyRankDiagnostics.recoveredRankScore, 1);
 
 const featureRows = makeRows(0).map((row, index) => {
   row.roles = roleNames.map(name => ({ name, side: "WAIT" }));

@@ -11,6 +11,7 @@ const HANDOFF = "nine_ai_strategy_handoff_state";
 const MAX_ROWS = 10000;
 const MIN_TRAIN = 35;
 const MIN_TEST = 15;
+const MIN_INDEPENDENT_GAP_MS = 8 * 15 * 60 * 1000; // 8 candles = 2 hours
 const MAX_CONDITION_COMPLEXITY = 8;
 const MAX_ATOMS = 64;
 let journal = null;
@@ -39,14 +40,18 @@ function outcome(row, side, horizon) {
 
 function normalizeRows(source, diagnostics = null) {
   const stats = { sourceRows: Array.isArray(source) ? source.length : 0,
-    invalidSignalTime: 0, missingRankScore: 0, incompleteOutcomes: 0,
+    invalidSignalTime: 0, missingRankScore: 0, recoveredRankScore: 0, incompleteOutcomes: 0,
     duplicateOpportunities: 0, overlappingOpportunities: 0, independentRows: 0 };
   const latest = new Map();
   for (const row of source || []) {
     const time = number(row?.signalTime);
-    const rank = number(row?.rankScore);
+    const storedRank = number(row?.rankScore);
+    const recoveredRank = storedRank === null
+      ? number(row?.originalRankScore) ?? number(row?.rankMetrics?.score) : null;
+    const rank = storedRank ?? recoveredRank;
     if (!Number.isFinite(time)) { stats.invalidSignalTime++; continue; }
     if (rank === null) { stats.missingRankScore++; continue; }
+    if (storedRank === null && recoveredRank !== null) stats.recoveredRankScore++;
     const outcomes = [outcome(row, "LONG", 4), outcome(row, "LONG", 16),
       outcome(row, "SHORT", 4), outcome(row, "SHORT", 16)];
     if (!outcomes.every(Number.isFinite)) { stats.incompleteOutcomes++; continue; }
@@ -65,13 +70,14 @@ function normalizeRows(source, diagnostics = null) {
     if (!previous || normalized.scannedAt > previous.scannedAt) latest.set(key, normalized);
   }
   const chronological = [...latest.values()].sort((a, b) => a.signalTime - b.signalTime || a.scannedAt - b.scannedAt);
-  // Forward labels overlap for 16 candles. Keep non-overlapping per-symbol
-  // opportunities so repeated scans cannot inflate the research sample.
+  // The live strategy trades 15m candles and most TPSL exits complete within 2h.
+  // Keep at most one opportunity per symbol per 8 candles (2h) to avoid scan spam
+  // while retaining more recent independent trading opportunities.
   const independent = [];
   const lastBySymbol = new Map();
   for (const row of chronological) {
     const previous = lastBySymbol.get(row.symbol);
-    if (previous != null && row.signalTime - previous < 16 * 15 * 60 * 1000) {
+    if (previous != null && row.signalTime - previous < MIN_INDEPENDENT_GAP_MS) {
       stats.overlappingOpportunities++;
       continue;
     }
@@ -387,5 +393,5 @@ function assessLive(roles, regime, rankScore, features = {}) {
 function status() { return { initialized: Boolean(journal), activePolicies: activePolicies.length,
   handoffActivated, policies: activePolicies }; }
 
-module.exports = { MIN_TRAIN, MIN_TEST, MAX_CONDITION_COMPLEXITY, votes, normalizeRows, candidateValues, selectSide,
+module.exports = { MIN_TRAIN, MIN_TEST, MIN_INDEPENDENT_GAP_MS, MAX_CONDITION_COMPLEXITY, votes, normalizeRows, candidateValues, selectSide,
   evaluate, learnPolicies, initialize, runResearchCycle, assessPolicy, assessLive, status };
