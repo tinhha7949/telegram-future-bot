@@ -190,11 +190,11 @@ function buildOutcomeDistribution(outcomes, family, regime, side) {
   }
   const mae = winners.map(row => Number(row.maePct));
   const mfe = winners.map(row => Number(row.mfePct));
-  const netRs = rows.map(row => Number(row.netR));
+  const grossRs = rows.map(row => Number.isFinite(Number(row.grossR)) ? Number(row.grossR) : Number(row.netR));
   const pWin = rows.filter(row => String(row.result).toUpperCase() === "WIN").length / rows.length;
   return {
     ready: true, samples: rows.length, winningSamples: winners.length,
-    pWin, expectedR: mean(netRs), dist_MAE: { p80: percentile(mae, 0.80) },
+    pWin, expectedR: mean(grossRs), dist_MAE: { p80: percentile(mae, 0.80) },
     dist_MFE: { p50: percentile(mfe, 0.50), p90: percentile(mfe, 0.90) },
     maeSamples: mae.length, mfeSamples: mfe.length
   };
