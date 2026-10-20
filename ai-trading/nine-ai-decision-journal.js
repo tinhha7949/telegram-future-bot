@@ -287,7 +287,8 @@ async function initialize(db) {
     maturedWindowSamples: records.filter(r => r.outcomeStatus === "EVALUATED" &&
       Array.isArray(r.marketWindow) && r.marketWindow.length === MARKET_WINDOW_BARS &&
       Number.isFinite(Number(r.evaluations?.["4"]?.longNetR)) &&
-      Number.isFinite(Number(r.evaluations?.["16"]?.longNetR))).length,
+       Number.isFinite(Number(r.evaluations?.["16"]?.longNetR)) &&
+       Number.isFinite(Number(r.evaluations?.["24"]?.longNetR))).length,
     minWindowSamples: MIN_SAMPLES };
 }
 
@@ -517,7 +518,8 @@ function status() {
   const maturedWindowSamples = records.filter(r => r.outcomeStatus === "EVALUATED" &&
     Array.isArray(r.marketWindow) && r.marketWindow.length === MARKET_WINDOW_BARS &&
     Number.isFinite(Number(r.evaluations?.["4"]?.longNetR)) &&
-    Number.isFinite(Number(r.evaluations?.["16"]?.longNetR))).length;
+       Number.isFinite(Number(r.evaluations?.["16"]?.longNetR)) &&
+       Number.isFinite(Number(r.evaluations?.["24"]?.longNetR))).length;
   return { samples: records.length, evaluated, pending: records.length - evaluated,
     windowSnapshots, maturedWindowSamples, windowResearchReady: maturedWindowSamples >= MIN_SAMPLES,
     minSamples: MIN_SAMPLES, horizons: [...HORIZONS], maxLiveBonus: MAX_LIVE_BONUS };
