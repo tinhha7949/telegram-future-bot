@@ -9,8 +9,8 @@ const POLICIES = "nine_ai_data_derived_consensus_policies";
 const REPORTS = "nine_ai_data_derived_consensus_reports";
 const HANDOFF = "nine_ai_strategy_handoff_state";
 const MAX_ROWS = 10000;
-const MIN_TRAIN = 40;
-const MIN_TEST = 20;
+const MIN_TRAIN = 35;
+const MIN_TEST = 15;
 const MAX_CONDITION_COMPLEXITY = 8;
 const MAX_ATOMS = 64;
 let journal = null;
@@ -37,16 +37,21 @@ function outcome(row, side, horizon) {
   return number(row?.evaluations?.[String(horizon)]?.[side.toLowerCase() + "NetR"]);
 }
 
-function normalizeRows(source) {
+function normalizeRows(source, diagnostics = null) {
+  const stats = { sourceRows: Array.isArray(source) ? source.length : 0,
+    invalidSignalTime: 0, missingRankScore: 0, incompleteOutcomes: 0,
+    duplicateOpportunities: 0, overlappingOpportunities: 0, independentRows: 0 };
   const latest = new Map();
   for (const row of source || []) {
     const time = number(row?.signalTime);
-    const regime = String(row?.marketRegime || "UNKNOWN").toUpperCase();
     const rank = number(row?.rankScore);
-    const counts = votes(row);
+    if (!Number.isFinite(time)) { stats.invalidSignalTime++; continue; }
+    if (rank === null) { stats.missingRankScore++; continue; }
     const outcomes = [outcome(row, "LONG", 4), outcome(row, "LONG", 16),
       outcome(row, "SHORT", 4), outcome(row, "SHORT", 16)];
-    if (!Number.isFinite(time) || rank === null || !outcomes.every(Number.isFinite)) continue;
+    if (!outcomes.every(Number.isFinite)) { stats.incompleteOutcomes++; continue; }
+    const regime = String(row?.marketRegime || "UNKNOWN").toUpperCase();
+    const counts = votes(row);
     const normalized = { symbol: String(row.symbol || "UNKNOWN"), signalTime: time,
       scannedAt: new Date(row.scannedAt || time).getTime(), regime, rank,
       long: counts.LONG, short: counts.SHORT,
@@ -56,6 +61,7 @@ function normalizeRows(source) {
       longR: average(outcomes.slice(0, 2)), shortR: average(outcomes.slice(2)) };
     const key = normalized.symbol + ":" + time;
     const previous = latest.get(key);
+    if (previous) stats.duplicateOpportunities++;
     if (!previous || normalized.scannedAt > previous.scannedAt) latest.set(key, normalized);
   }
   const chronological = [...latest.values()].sort((a, b) => a.signalTime - b.signalTime || a.scannedAt - b.scannedAt);
@@ -65,10 +71,15 @@ function normalizeRows(source) {
   const lastBySymbol = new Map();
   for (const row of chronological) {
     const previous = lastBySymbol.get(row.symbol);
-    if (previous != null && row.signalTime - previous < 16 * 15 * 60 * 1000) continue;
+    if (previous != null && row.signalTime - previous < 16 * 15 * 60 * 1000) {
+      stats.overlappingOpportunities++;
+      continue;
+    }
     independent.push(row);
     lastBySymbol.set(row.symbol, row.signalTime);
   }
+  stats.independentRows = independent.length;
+  if (diagnostics && typeof diagnostics === "object") Object.assign(diagnostics, stats);
   return independent;
 }
 
@@ -137,13 +148,20 @@ function evaluate(rows, policy, confidenceMultiplier = 1.96) {
 }
 
 function learnPolicies(sourceRows) {
-  const rows = normalizeRows(sourceRows);
+  const normalizationDiagnostics = {};
+  const rows = normalizeRows(sourceRows, normalizationDiagnostics);
   const regimes = [...new Set(rows.map(row => row.regime))];
   const policies = [];
   const reports = [];
   for (const regime of regimes) {
     const group = rows.filter(row => row.regime === regime);
-    if (group.length < MIN_TRAIN + MIN_TEST) continue;
+    if (group.length < MIN_TRAIN + MIN_TEST) {
+      reports.push({ regime, totalRows: group.length, trainRows: 0, testRows: 0,
+        candidatesTested: 0, qualifiedCandidates: 0, selected: null,
+        skipReason: "INSUFFICIENT_INDEPENDENT_ROWS",
+        requiredRows: MIN_TRAIN + MIN_TEST });
+      continue;
+    }
     const split = Math.floor(group.length * 0.7);
     const train = group.slice(0, split), test = group.slice(split);
     // Candidate thresholds come strictly from the training partition.
@@ -246,7 +264,9 @@ function learnPolicies(sourceRows) {
     // Select from training data only, then evaluate exactly one winner on the
     // untouched chronological holdout to avoid repeatedly fishing the test set.
     const proposed = candidates[0] || null;
-    const testResult = proposed ? evaluate(test, proposed, confidenceMultiplier) : null;
+    // Candidate search is confined to train. The untouched chronological holdout
+    // gets a standard 95% interval, avoiding a second multiple-search penalty.
+    const testResult = proposed ? evaluate(test, proposed, 1.96) : null;
     const selected = testResult && testResult.samples >= MIN_TEST && testResult.lowerBoundR > 0
       ? { ...proposed, test: testResult } : null;
     reports.push({ regime, totalRows: group.length, trainRows: train.length,
@@ -264,7 +284,7 @@ function learnPolicies(sourceRows) {
       minimumMargin: selected.minimumMargin ?? null, minimumRank: selected.minimumRank,
       train: selected.train, test: selected.test, samples: group.length });
   }
-  return { rows: rows.length, policies, reports };
+  return { rows: rows.length, policies, reports, normalizationDiagnostics };
 }
 
 async function initialize(db) {
@@ -323,8 +343,11 @@ async function runResearchCycle({ now = new Date() } = {}) {
         { upsert: true }
       );
     }
-    const report = { createdAt: new Date(now), status: "COMPLETED", rows: learned.rows,
+    const report = { createdAt: new Date(now), status: "COMPLETED",
+      sourceRows: sourceRows.length, rows: learned.rows, usableRows: learned.rows,
+      normalizationDiagnostics: learned.normalizationDiagnostics,
       qualifiedPolicies: learned.policies.length, regimes: learned.reports,
+      minimumTrainSamples: MIN_TRAIN, minimumTestSamples: MIN_TEST,
       researchSemantics: "HYPOTHETICAL_FORWARD_CLOSES_NOT_EXECUTED_PNL",
       deploymentSemantics: "ONLY_CHRONOLOGICAL_OUT_OF_SAMPLE_POSITIVE_EXPECTANCY" };
     await reportCollection.insertOne(report);
@@ -340,10 +363,12 @@ function assessPolicy(roles, policy, rankScore, features = {}) {
     if (["Decision AI", "Risk Manager AI"].includes(role?.name)) continue;
     if (role?.side === "LONG" || role?.side === "SHORT") row[role.side === "LONG" ? "long" : "short"]++;
   }
+  const liveRank = number(rankScore) ?? number(features?.rankScore) ?? Number(policy.minimumRank);
   const liveFeatures = { ...features, longVotes: row.long, shortVotes: row.short,
-    voteMargin: row.long - row.short, rankScore: number(rankScore) ?? 0 };
-  const side = selectSide({ ...row, features: liveFeatures, rank: policy.minimumRank }, policy);
-  const rankAllowed = rankScore == null ? null : number(rankScore) >= Number(policy.minimumRank);
+    voteMargin: row.long - row.short, rankScore: liveRank };
+  const side = selectSide({ ...row, features: liveFeatures, rank: liveRank }, policy);
+  const rankAllowed = rankScore == null && number(features?.rankScore) == null
+    ? null : liveRank >= Number(policy.minimumRank);
   return { ready: true, allowed: Boolean(side), side,
     rankAllowed,
     reason: !side ? "VALIDATED_DATA_DERIVED_POLICY_WAIT" : rankAllowed === false
