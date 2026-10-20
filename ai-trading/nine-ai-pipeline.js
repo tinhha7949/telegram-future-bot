@@ -96,7 +96,8 @@ function buildHistoricalOutcomeLabels(input, now = Date.now(), horizon = 24) {
     // Match the requested MAE distribution of historically winning setups.
     if (favorable <= adverse || favorable <= 0) continue;
     labels.push({
-      setupKey: regime.regime, side, mae: adverse, mfe: favorable,
+      setupKey: regime.regime, side, entryPrice: entry,
+      mae: adverse, mfe: favorable, maePct: adverse / entry * 100, mfePct: favorable / entry * 100,
       labeled: true, source: "CLOSED_HISTORICAL_4H_SIMULATION",
       signalAt: cs[i].closeTime, outcomeClosedAt: future.at(-1).closeTime
     });
@@ -106,11 +107,14 @@ function buildHistoricalOutcomeLabels(input, now = Date.now(), horizon = 24) {
 function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},outcomes=[],equity=0,config={}}={}) {
   const now=finite(market.now,Date.now()), cs=closedCandles(candles4h,now);
   const wait=(reason,extra={})=>({symbol,action:"WAIT",side:null,authorizedForExecution:false,reason,agents:null,...extra});
-  if(cs.length<100) return wait("INSUFFICIENT_CLOSED_4H_CANDLES",{candles:cs.length});
+  if(cs.length<541) return wait("INSUFFICIENT_90D_CLOSED_4H_HISTORY",{candles:cs.length,required:541});
   const last=cs.at(-1), prev=cs.at(-2), closes=cs.map(c=>c.close);
-  const regime=classifyRegime(cs, [candles1h,candles1d].filter(a=>a?.length>=2).map(a=> {
-    const x=closedCandles(a,now); return x.length>=2 ? Math.sign(x.at(-1).close/x.at(-2).close-1) : 0;
-  }));
+  const higherMomentum = [candles1h, candles1d].map((raw, index) => {
+    const x = closedCandles(raw, now);
+    const lookback = index === 0 ? 24 : 20;
+    return x.length > lookback ? x.at(-1).close / x.at(-1 - lookback).close - 1 : null;
+  }).filter(Number.isFinite);
+  const regime=classifyRegime(cs, higherMomentum);
   const atrs=trueRanges(cs), atr=mean(atrs.slice(-14)), atrPct=atr/last.close;
   const structure=swingPoints(cs.slice(-120),2);
   const swingHigh=structure.highs.at(-1)?.price ?? Math.max(...cs.slice(-30).map(c=>c.high));
@@ -137,19 +141,26 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const breakoutP=breakoutSide&&breakoutHeld&&volumeRatio>=1.25&&spread!==null&&spread<=finite(config.maxSpreadPct,0.15)&&extension<2.5 ? clamp(0.55+Math.min(0.2,(volumeRatio-1)*0.1),0.5,0.78):0.5;
   const vwapValue=vwap(cs.slice(-24)), deviation=vwapValue?(last.close-vwapValue)/Math.max(atr,1e-12):0;
   const rangeRegime=["RANGE","HIGH_VOL"].includes(regime.regime);
-  const liq=finite(market.liquidationImbalance,0);
-  const revertSide=rangeRegime && Math.abs(deviation)>=1.25 ? (deviation>0 && liq>=0 ? "SHORT" : deviation<0 && liq<=0 ? "LONG" : null):null;
+  // Positive liquidationImbalance is short-liquidation notional minus long-liquidation notional.
+  // Missing liquidation data is never treated as zero and cannot confirm a direction.
+  const liq=finite(market.liquidationImbalance);
+  const revertSide=rangeRegime && liq!==null && Math.abs(deviation)>=1.25
+    ? (deviation>0 && liq<=0 ? "SHORT" : deviation<0 && liq>=0 ? "LONG" : null) : null;
   const revertP=revertSide?clamp(0.53+Math.min(0.15,Math.abs(deviation)*0.04),0.5,0.72):0.5;
+  const flowConfirmationSide = oiChange!==null && oiChange>0 && liq!==null && !fundingHot
+    ? (liq>0 && funding<=0 ? "LONG" : liq<0 && funding>=0 ? "SHORT" : null)
+    : null;
   const flow={fundingRate:funding,openInterestChange:oiChange,liquidationImbalance:liq,
-    confirmation: funding===null || oiChange===null ? "UNAVAILABLE" :
-      (fundingHot?"BLOCKED_HOT_FUNDING":(oiChange>0 && ((funding<=0&&liq>=0)||(funding>=0&&liq<=0))?"CONFIRMED":"NEUTRAL"))};
+    confirmationSide:flowConfirmationSide,
+    confirmation: funding===null || oiChange===null || liq===null ? "UNAVAILABLE" :
+      (fundingHot?"BLOCKED_HOT_FUNDING":(flowConfirmationSide?"CONFIRMED":"NEUTRAL"))};
   const historicalLabels = buildHistoricalOutcomeLabels(cs, now);
-  const labeled=[...outcomes,...historicalLabels].filter(o=>o&&o.setupKey&&Number.isFinite(Number(o.mae))&&Number.isFinite(Number(o.mfe)));
-  // Outcome distributions are regime-conditional. Historical simulations are
-  // explicitly tagged and use only fully matured forward windows.
+  const labeled=[...outcomes,...historicalLabels].filter(o=>o&&o.setupKey&&Number.isFinite(Number(o.maePct))&&Number.isFinite(Number(o.mfePct)));
+  // Percent-normalized movement distributions can be pooled across symbols
+  // without mixing a low-priced coin's raw distance with BTC's.
   const setupKey=regime.regime;
-  const matched=labeled.filter(o=>o.setupKey===setupKey&&o.side);
-  const maes=matched.map(o=>Math.abs(Number(o.mae))), mfes=matched.map(o=>Math.abs(Number(o.mfe)));
+  const matched=labeled.filter(o=>o.setupKey===setupKey&&o.side&&(!o.symbol||String(o.symbol).toUpperCase()===String(symbol).toUpperCase()||o.source==="CLOSED_HISTORICAL_4H_SIMULATION"));
+  const maes=matched.map(o=>Math.abs(Number(o.maePct))), mfes=matched.map(o=>Math.abs(Number(o.mfePct)));
   const distMAE={p50:percentile(maes,.5),p80:percentile(maes,.8),p90:percentile(maes,.9),samples:maes.length};
   const distMFE={p50:percentile(mfes,.5),p90:percentile(mfes,.9),samples:mfes.length};
   // No fabricated MAE/MFE quantiles. Insufficient labels means no live trade.
@@ -187,18 +198,19 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const minEdge=finite(config.minEdge,0.05), gapEdge=finite(config.gapEdge,0.1);
   let side="WAIT",reason="EDGE_BELOW_THRESHOLD";
   if(!["UPTREND","DOWNTREND"].includes(regime.regime)) reason="REGIME_NOT_TREND";
-  else if(flow.confirmation==="BLOCKED_HOT_FUNDING"||flow.confirmation==="UNAVAILABLE") reason="FLOW_BLOCKED_OR_UNAVAILABLE";
-  else if(long.edge>minEdge && long.edge-short.edge>gapEdge && (trendLong?structureBias!=="BEARISH":true)) {side="LONG";reason="LONG_NET_EDGE_WINS";}
-  else if(short.edge>minEdge && short.edge-long.edge>gapEdge && (trendShort?structureBias!=="BULLISH":true)) {side="SHORT";reason="SHORT_NET_EDGE_WINS";}
+  else if(flow.confirmation!=="CONFIRMED") reason="FLOW_BLOCKED_OR_UNCONFIRMED";
+  else if(long.edge>minEdge && long.edge-short.edge>gapEdge && flow.confirmationSide==="LONG" && (trendLong?structureBias!=="BEARISH":true)) {side="LONG";reason="LONG_NET_EDGE_WINS";}
+  else if(short.edge>minEdge && short.edge-long.edge>gapEdge && flow.confirmationSide==="SHORT" && (trendShort?structureBias!=="BULLISH":true)) {side="SHORT";reason="SHORT_NET_EDGE_WINS";}
   if(side==="WAIT") return wait(reason,{regime,agents,edges:{LONG:long,SHORT:short},setupKey});
-  const stopDistance=distMAE.p80, tp1Distance=distMFE.p50, tp2Distance=distMFE.p90;
-  const entry=last.close, sl=side==="LONG"?Math.min(entry-stopDistance,support-atr*.1):Math.max(entry+stopDistance,resistance+atr*.1);
+  const entry=last.close;
+  const stopDistance=distMAE.p80*entry/100, tp1Distance=distMFE.p50*entry/100, tp2Distance=distMFE.p90*entry/100;
+  const sl=side==="LONG"?Math.min(entry-stopDistance,support-atr*.1):Math.max(entry+stopDistance,resistance+atr*.1);
   const tp1=side==="LONG"?entry+tp1Distance:entry-tp1Distance, tp2=side==="LONG"?entry+tp2Distance:entry-tp2Distance;
   if(!(stopDistance>0&&tp1Distance>0&&tp2Distance>=tp1Distance&&Number.isFinite(sl)&&Number.isFinite(tp1)&&Number.isFinite(tp2)))
     return wait("INVALID_OUTCOME_DERIVED_EXIT_PLAN",{regime,agents,edges:{LONG:long,SHORT:short}});
   return {symbol,side,action:side,authorizedForExecution:true,reason,setup:"NINE_AI_4H",signalAt:last.closeTime,
     entry,price:entry,sl,tp:tp2,tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeframe:"4h",
-    riskPerTradePct:finite(config.riskPerTradePct,.0075),riskEquity:finite(equity,0)*finite(config.riskPerTradePct,.0075),
+    riskPerTradePct:0.0075,riskEquity:finite(equity,0)*0.0075,
     edges:{LONG:long,SHORT:short},regime,agents,setupKey,featureSnapshot:{snapshotAt:finite(market.snapshotAt,now),closeTime:last.closeTime,close:entry,atr,atrPct,volumeRatio,funding,oiChange,spread,depth,latency,regime,structureBias},
     tradePlan:{stopMethod:"LABELED_MAE_P80_WITH_STRUCTURE_BUFFER",targetMethod:"LABELED_MFE_P50_P90",tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeoutMs:96*60*60*1000},
     candles:cs.length};
