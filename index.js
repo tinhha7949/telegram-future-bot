@@ -3956,7 +3956,7 @@ await trades.updateOne(
     }
 )
 
-if (isWin && t.nineAiSetupKey && Number(t.maxAdverseMove) > 0 && Number(t.maxFavorableMove) > 0) {
+if (t.nineAiSetupKey && Number(t.entry) > 0 && Number.isFinite(Number(t.maxAdverseMove)) && Number.isFinite(Number(t.maxFavorableMove)) && Number(t.maxAdverseMove) >= 0 && Number(t.maxFavorableMove) >= 0) {
     try {
         await db.collection("nine_ai_outcome_labels").updateOne(
             { tradeId: String(t._id || `${t.symbol}:${t.createdAt}`) },
@@ -3971,7 +3971,8 @@ if (isWin && t.nineAiSetupKey && Number(t.maxAdverseMove) > 0 && Number(t.maxFav
                 maePct: Number(t.entry) > 0 ? Number(t.maxAdverseMove) / Number(t.entry) * 100 : null,
                 mfePct: Number(t.entry) > 0 ? Number(t.maxFavorableMove) / Number(t.entry) * 100 : null,
                 labeled: true,
-                source: "REALIZED_WINNING_TRADE",
+                win: Number(closed.pnl) > 0,
+                source: "REALIZED_CLOSED_TRADE",
                 closedAt: closed.closedAt
             }},
             { upsert: true }
