@@ -18,14 +18,13 @@ function policyAction(row, params) {
   const d = row?.decisionSnapshot;
   const regime = String(d?.regime?.regime || "").toUpperCase();
   if (!["UPTREND", "DOWNTREND"].includes(regime) ||
-      d?.agents?.flow?.confirmation !== "CONFIRMED") return "WAIT";
+      ["BLOCKED_HOT_FUNDING", "UNAVAILABLE"].includes(d?.agents?.flow?.confirmation)) return "WAIT";
   const long = finite(d?.edges?.LONG?.edge);
   const short = finite(d?.edges?.SHORT?.edge);
   if (long === null || short === null) return "WAIT";
-  if (long > params.minEdge && long - short > params.gapEdge &&
-      d?.agents?.flow?.confirmationSide === "LONG") return "LONG";
-  if (short > params.minEdge && short - long > params.gapEdge &&
-      d?.agents?.flow?.confirmationSide === "SHORT") return "SHORT";
+  const flowSide = d?.agents?.flow?.confirmationSide || null;
+  if (long > params.minEdge && long - short > params.gapEdge && (!flowSide || flowSide === "LONG")) return "LONG";
+  if (short > params.minEdge && short - long > params.gapEdge && (!flowSide || flowSide === "SHORT")) return "SHORT";
   return "WAIT";
 }
 
