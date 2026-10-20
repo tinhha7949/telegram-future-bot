@@ -2503,29 +2503,24 @@ async function scan(symbol){
                 symbol, decision,
                 signalTime: Number(decision.signalAt) || Math.floor(scanAt / 14400000) * 14400000,
                 scannedAt: scanAt,
-                learningEvidence: opportunityEvidence,
-                marketWindow: data4h
+                                marketWindow: data4h
             });
             if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
         } catch (journalError) {
             console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":", journalError?.message || journalError);
         }
         if (decision.authorizedForExecution !== true) return null;
+        const netEdge = Number(decision.edges?.[decision.side]?.edge);
         console.log(
-            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | OPPORTUNITY_BONUS=${safeFixed(decision.liveOpportunityBonus, 3)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
+            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | REGIME=${decision.regime?.regime || "UNKNOWN"} | EDGE=${safeFixed(netEdge, 4)} | REASON=${decision.reason}`
         );
-        const longEdge = Number(decision.edges?.LONG?.edge);
-        const shortEdge = Number(decision.edges?.SHORT?.edge);
-        const netEdge = Math.max(Number.isFinite(longEdge) ? longEdge : -Infinity,
-            Number.isFinite(shortEdge) ? shortEdge : -Infinity);
         return {
             ...decision,
             confidence: Number.isFinite(netEdge) ? Math.max(0, Math.min(100, 50 + netEdge * 10)) : 0,
             rankScore: Number.isFinite(netEdge) ? netEdge : -Infinity,
             qualityScore: Number.isFinite(netEdge) ? netEdge : 0,
             nineAiDecisionKey: decision.nineAiDecisionKey || null,
-            nineAiResearchPolicy: researchPolicyAtEntry,
-            symbol,
+                        symbol,
             setup: "NINE_AI_4H",
             triggerType: "NINE_AI_CONSENSUS",
             rankDirectionMode: "NINE_AI_PRIMARY",
