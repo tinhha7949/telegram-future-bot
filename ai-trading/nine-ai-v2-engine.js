@@ -163,7 +163,7 @@ function normalizedCost(context, entry, stopDistance, side) {
   if (![spreadBps, depthUsd, latencyMs].every(Number.isFinite) || spreadBps < 0 || depthUsd < 0 || latencyMs < 0) return null;
   const slippageBps = spreadBps / 2 + (depthUsd > 0 ? Math.min(25, 2 / Math.sqrt(depthUsd / 1000)) : 25) + Math.min(10, latencyMs / 1000);
   const fundingRate = Number(context.fundingRate);
-  const fundingCost = Number.isFinite(fundingRate) ? Math.abs(fundingRate) * Math.min(24, 24) : null;
+  const fundingCost = Number.isFinite(fundingRate) ? fundingRate * 12 * (side === "LONG" ? 1 : -1) : null;
   const priceRiskPct = stopDistance / entry;
   if (!(priceRiskPct > 0)) return null;
   const costPct = 2 * feeRate + slippageBps / 10000 + (fundingCost ?? 0);
