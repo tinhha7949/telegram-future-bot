@@ -147,6 +147,12 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const structure=swingPoints(cs.slice(-120),2);
   const swingHigh=structure.highs.at(-1)?.price??Math.max(...cs.slice(-30).map(c=>c.high));
   const swingLow=structure.lows.at(-1)?.price??Math.min(...cs.slice(-30).map(c=>c.low));
+  const lastSwingHigh=structure.highs.at(-1), prevSwingHigh=structure.highs.at(-2);
+  const lastSwingLow=structure.lows.at(-1), prevSwingLow=structure.lows.at(-2);
+  const upperSlope=lastSwingHigh&&prevSwingHigh?(lastSwingHigh.price-prevSwingHigh.price)/Math.max(1,lastSwingHigh.index-prevSwingHigh.index):0;
+  const lowerSlope=lastSwingLow&&prevSwingLow?(lastSwingLow.price-prevSwingLow.price)/Math.max(1,lastSwingLow.index-prevSwingLow.index):0;
+  const channel={upper:lastSwingHigh?lastSwingHigh.price+upperSlope*(119-lastSwingHigh.index):swingHigh,
+    lower:lastSwingLow?lastSwingLow.price+lowerSlope*(119-lastSwingLow.index):swingLow,upperSlope,lowerSlope};
   const structureBias=structure.highs.length>=2&&structure.lows.length>=2&&structure.highs.at(-1).price>structure.highs.at(-2).price&&structure.lows.at(-1).price>structure.lows.at(-2).price?"BULLISH":
     structure.highs.length>=2&&structure.lows.length>=2&&structure.highs.at(-1).price<structure.highs.at(-2).price&&structure.lows.at(-1).price<structure.lows.at(-2).price?"BEARISH":
     last.close>swingHigh?"BULLISH":last.close<swingLow?"BEARISH":"NEUTRAL";
@@ -186,7 +192,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     return wait("EXECUTION_COST_INPUTS_STALE_OR_MISSING",{regime,flow,featureSnapshot});
   const agents={
     regime,
-    structure:{structure_bias:structureBias,swingHigh,swingLow,support,resistance,validLongSLBelow:support,validShortSLAbove:resistance},
+    structure:{structure_bias:structureBias,swingHigh,swingLow,support,resistance,channel,validLongSLBelow:support,validShortSLAbove:resistance},
     continuation:{side:continuationSide,p:continuationSide?clamp(0.54+Math.min(0.18,Math.abs(regime.momentum20)*3)+(volumeRatio>1?0.05:0),0.5,0.78):0.5,expectedR:null,volumeRatio,oiChange,fundingHot},
     breakout:{side:breakoutSide,p:breakoutSide?clamp(0.55+Math.min(0.2,(volumeRatio-1)*0.1),0.5,0.78):0.5,held:breakoutHeld,volumeRatio,extensionAtr:extension,spreadPct:spread},
     meanReversion:{side:revertSide,p:revertSide?0.55:0.5,vwap:vwapValue,deviationAtr:deviation,enabled:rangeRegime},
@@ -244,6 +250,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   let side="WAIT",reason="EDGE_BELOW_THRESHOLD";
   if(!["UPTREND","DOWNTREND"].includes(regime.regime)) reason="REGIME_NOT_TREND";
   else if(flow.confirmation==="BLOCKED_HOT_FUNDING"||flow.confirmation==="UNAVAILABLE") reason="FLOW_BLOCKED_OR_UNAVAILABLE";
+  else if(!["LONG","SHORT"].includes(flow.confirmationSide)) reason="FLOW_DIRECTION_NOT_CONFIRMED";
   else if(!Number.isFinite(long.edge)||!Number.isFinite(short.edge)) reason="INSUFFICIENT_DIRECTIONAL_OUTCOME_DISTRIBUTION";
   else if(long.edge>minEdge&&long.edge-short.edge>gapEdge&&flow.confirmationSide==="LONG"&&
     (regime.regime!=="UPTREND"||structureBias!=="BEARISH")){side="LONG";reason="LONG_NET_EDGE_WINS";}
