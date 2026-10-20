@@ -1,5 +1,8 @@
-// USER-EDITABLE FIXED RISK: 0.75% of equity per trade.
-const RISK_PER_TRADE = 0.075;
+// Load VPS .env before reading any environment-backed configuration.
+require("dotenv").config();
+
+// Fixed Nine-AI risk: 0.75% of equity per trade. Never override from .env.
+const RISK_PER_TRADE = 0.0075;
 
 let DB_READY = false
 let nineAiOfflineLearningService = null;
@@ -441,7 +444,6 @@ async function requireOneWayPositionMode(){
     return true
 }
 //////////////
-require("dotenv").config()
 const { MongoClient } = require("mongodb")
 const client = new MongoClient(process.env.MONGO_URI, {
     connectTimeoutMS: 10000,
