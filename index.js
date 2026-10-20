@@ -2348,14 +2348,15 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
         try { return await response.json(); } catch (_) { return null; }
     };
     const encoded = encodeURIComponent(symbol);
-    const [premium, oiNow, oiHistory, book, depth, liquidationImbalance] = await Promise.all([
+    const [premium, oiNow, oiHistory, book, depth] = await Promise.all([
         getJson("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=" + encoded),
         getJson("https://fapi.binance.com/fapi/v1/openInterest?symbol=" + encoded),
         getJson("https://fapi.binance.com/futures/data/openInterestHist?symbol=" + encoded + "&period=4h&limit=2"),
         getJson("https://fapi.binance.com/fapi/v1/ticker/bookTicker?symbol=" + encoded),
-        getJson("https://fapi.binance.com/fapi/v1/depth?symbol=" + encoded + "&limit=20"),
-        Promise.resolve(nineAiLiquidationFeed.getImbalance(symbol, now))
+        getJson("https://fapi.binance.com/fapi/v1/depth?symbol=" + encoded + "&limit=20")
     ]);
+    const snapshotAt = Date.now();
+    const liquidationImbalance = nineAiLiquidationFeed.getImbalance(symbol, snapshotAt);
     const bid = Number(book?.bidPrice), ask = Number(book?.askPrice);
     const spreadPct = bid > 0 && ask >= bid ? ((ask - bid) / ((ask + bid) / 2)) * 100 : null;
     const bidDepth = Array.isArray(depth?.bids) ? depth.bids.reduce((sum, level) => sum + Number(level[0]) * Number(level[1]), 0) : 0;
@@ -2368,7 +2369,7 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
     }
     const fundingRate = Number(premium?.lastFundingRate);
     return {
-        now, snapshotAt: now,
+        now: snapshotAt, snapshotAt,
         fundingRate: Number.isFinite(fundingRate) ? fundingRate : null,
         openInterest: Number(oiNow?.openInterest),
         openInterestChange: oiChange,
