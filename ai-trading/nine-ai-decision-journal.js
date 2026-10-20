@@ -346,7 +346,11 @@ function computeEvaluations(record, candles) {
   const atr = num(record.features?.atr14, atrAt(candles, idx));
   if (!(baseEntry > 0 && atr > 0)) return null;
   const configuredCost = num(process.env.NINE_AI_ROUND_TRIP_COST_RATE, DEFAULT_ROUND_TRIP_COST_RATE);
-  const costRate = clamp(configuredCost, 0, 0.02);
+  const snapCosts = record.decisionSnapshot?.featureSnapshot || {};
+  const explicitCostPct = [snapCosts.feePct, snapCosts.fundingCostPct, snapCosts.estSlippagePct].map(value => num(value));
+  const costRate = explicitCostPct.every(Number.isFinite)
+    ? clamp(explicitCostPct.reduce((sum, value) => sum + value, 0) / 100, 0, 0.05)
+    : clamp(configuredCost, 0, 0.02);
   const evaluations = { ...(record.evaluations || {}) };
   const researchVariants = { ...(record.researchVariants || {}) };
   let changed = false;
