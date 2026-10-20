@@ -16,7 +16,7 @@ const REQUIRED_ROLES = Object.freeze([
 ]);
 const MIN_CANDLES = 100;
 const MAX_SIGNAL_AGE_MS = 4 * 60 * 60 * 1000;
-const MIN_RR = 0.8;
+const MIN_RR = 0; // Edge-based policy owns trade selection; no extra RR gate.
 
 function wait(decision, reason) {
   return {
