@@ -2464,7 +2464,7 @@ async function scan(symbol){
         const rawDecision = nineAiPipeline.analyzeNineAI({
             symbol, candles4h: data4h, candles1h: data1h || [], candles1d: data1d || [],
             outcomes: labeledOutcomes, equity: ACCOUNT_BALANCE,
-            market: { ...marketSnapshot, trackRecord: await nineAiOfflineLearningService?.getTrackRecord?.() },
+            market: { ...marketSnapshot, now: scanAt, candleCutoffAt: scanAt, trackRecord: await nineAiOfflineLearningService?.getTrackRecord?.() },
             config: championConfig
         }) || {
             symbol, side: null, action: "WAIT", reason: "NO_DECISION_RETURNED",
