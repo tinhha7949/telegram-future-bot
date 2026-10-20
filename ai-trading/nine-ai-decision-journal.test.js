@@ -6,12 +6,12 @@ assert.equal(journal.MARKET_WINDOW_BARS, 48, "the journal must retain 12 hours o
 
 const raw = [];
 const base = 1_800_000_000_000;
-for (let i = 0; i < 24; i++) {
+for (let i = 0; i < 40; i++) {
   const close = 100 + i * 0.2;
   raw.push([base + i * 900_000, close - 0.1, close + 0.5, close - 0.5, close, 100, base + (i + 1) * 900_000 - 1]);
 }
 const candles = journal.normalizeCandles(raw);
-assert.equal(candles.length, 24);
+assert.equal(candles.length, 40);
 
 const wait = journal.snapshotDecision({
   symbol: "TESTUSDT",
