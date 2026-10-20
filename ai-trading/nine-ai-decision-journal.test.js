@@ -2,6 +2,8 @@
 const assert = require("node:assert/strict");
 const journal = require("./nine-ai-decision-journal");
 
+assert.equal(journal.MARKET_WINDOW_BARS, 48, "the journal must retain 12 hours of 15-minute candles");
+
 const raw = [];
 const base = 1_800_000_000_000;
 for (let i = 0; i < 24; i++) {
@@ -52,6 +54,15 @@ assert.equal(boundedWindow[0].takerBuyQuoteVolume, 9_000);
 assert.equal(Object.keys(journal.extractWindowFeatures(extendedRaw)).length, 17);
 assert.equal(wait.roles[0].reason, "trend aligns");
 assert.ok(wait.decisionKey.includes("TESTUSDT"));
+const repeatedWait = journal.snapshotDecision({
+  symbol: "TESTUSDT",
+  signalTime: candles[2].closeTime,
+  scannedAt: candles[2].closeTime + 60_000,
+  decision: { side: null, action: "WAIT", reason: "DIFFERENT_WAIT_REASON", authorizedForExecution: false },
+  marketWindow: raw
+});
+assert.equal(repeatedWait.decisionKey, wait.decisionKey,
+  "WAIT decisions for one symbol/candle must collapse to a single durable journal row");
 
 const evaluations = journal.computeEvaluations(wait, candles);
 assert.ok(evaluations);
