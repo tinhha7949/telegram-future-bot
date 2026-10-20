@@ -2333,10 +2333,48 @@ async function fetchNineAIJson(url) {
     }
 }
 
+async function getNineAILiquidationCascade(symbol) {
+    if (!process.env.BINANCE_KEY || !process.env.BINANCE_SECRET) return null;
+    try {
+        const now = Date.now();
+        const params = new URLSearchParams({
+            symbol: String(symbol),
+            startTime: String(now - 4 * 60 * 60 * 1000),
+            endTime: String(now),
+            limit: "100",
+            recvWindow: "5000",
+            timestamp: String(getTimestamp())
+        }).toString();
+        const signature = crypto.createHmac("sha256", process.env.BINANCE_SECRET).update(params).digest("hex");
+        const response = await safeFetch(
+            "https://fapi.binance.com/fapi/v1/forceOrders?" + params + "&signature=" + signature,
+            { headers: { "X-MBX-APIKEY": process.env.BINANCE_KEY } }, 1
+        );
+        if (!response?.ok) return null;
+        const orders = await response.json();
+        if (!Array.isArray(orders)) return null;
+        const notional = order => {
+            const qty = Number(order?.executedQty ?? order?.origQty);
+            const price = Number(order?.avgPrice || order?.price);
+            return Number.isFinite(qty) && Number.isFinite(price) && qty > 0 && price > 0 ? qty * price : 0;
+        };
+        const longLiquidationUsd = orders.filter(order => String(order.side).toUpperCase() === "SELL").reduce((sum, order) => sum + notional(order), 0);
+        const shortLiquidationUsd = orders.filter(order => String(order.side).toUpperCase() === "BUY").reduce((sum, order) => sum + notional(order), 0);
+        if (orders.length < 3) return null;
+        return {
+            longLiquidationUsd, shortLiquidationUsd, orders: orders.length,
+            windowMs: 4 * 60 * 60 * 1000, observedAt: now, source: "BINANCE_FORCE_ORDERS"
+        };
+    } catch (error) {
+        console.error("NINE-AI LIQUIDATION CONTEXT UNAVAILABLE " + symbol + ":", error?.message || error);
+        return null;
+    }
+}
+
 async function getNineAIMarketContext(symbol) {
     const startedAt = Date.now();
     const base = "https://fapi.binance.com";
-    const [dailyCandles, premium, oiHistory, depth, outcomes] = await Promise.all([
+    const [dailyCandles, premium, oiHistory, depth, outcomes, liquidationCascade] = await Promise.all([
         getData(symbol, "1d", 100),
         fetchNineAIJson(base + "/fapi/v1/premiumIndex?symbol=" + encodeURIComponent(symbol)),
         fetchNineAIJson(base + "/futures/data/openInterestHist?symbol=" + encodeURIComponent(symbol) + "&period=4h&limit=2"),
@@ -2348,7 +2386,8 @@ async function getNineAIMarketContext(symbol) {
             } catch (error) {
                 return [];
             }
-        })()
+        })(),
+        getNineAILiquidationCascade(symbol)
     ]);
     const bids = Array.isArray(depth?.bids) ? depth.bids : [];
     const asks = Array.isArray(depth?.asks) ? depth.asks : [];
@@ -2376,7 +2415,7 @@ async function getNineAIMarketContext(symbol) {
         depthUsd,
         latencyMs: Date.now() - startedAt,
         takerFeeRate: Number(process.env.NINE_AI_TAKER_FEE_RATE || 0.0005),
-        liquidationCascade: null,
+        liquidationCascade,
         outcomes: Array.isArray(outcomes) ? outcomes : []
     };
 }
