@@ -215,11 +215,11 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     const p=weightSum?applicable.reduce((s,m)=>s+m.p*m.weight,0)/weightSum:0.5;
     const er=weightSum?applicable.reduce((s,m)=>s+m.er*m.weight,0)/weightSum:0;
     const distSource=applicable.slice().sort((a,b)=>b.weight-a.weight)[0]||null;
-    const cost=distSource?(fee+fundingCost+slippage)/Math.max(distSource.distMAE.p80,1e-12):Infinity;
+    const cost=distSource?(fee+fundingCost+slippage)/Math.max(distSource.distMAE.p80,1e-12):null;
     const uncertainty=(1-regime.regime_conf)*finite(config.uncertaintyPenalty,0.5);
     const track=market.trackRecord?.[regime.regime+"_"+side], trackSamples=finite(track?.samples,0), trackNetR=finite(track?.meanNetR);
     const expectedR=trackSamples>=20&&trackNetR!==null?0.5*er+0.5*trackNetR:er;
-    const edge=p*expectedR-cost-uncertainty;
+    const edge=distSource?p*expectedR-cost-uncertainty:null;
     return {side,p,expectedR,cost,uncertaintyPenalty:uncertainty,edge,applicableModels:applicable.map(m=>m.name),setupKey:distSource?.setupKey||null,distMAE:distSource?.distMAE||null,distMFE:distSource?.distMFE||null,samples:distSource?.samples||0};
   });
   const [long,short]=candidates;
@@ -227,7 +227,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   let side="WAIT",reason="EDGE_BELOW_THRESHOLD";
   if(!["UPTREND","DOWNTREND"].includes(regime.regime)) reason="REGIME_NOT_TREND";
   else if(flow.confirmation==="BLOCKED_HOT_FUNDING"||flow.confirmation==="UNAVAILABLE") reason="FLOW_BLOCKED_OR_UNAVAILABLE";
-  else if(!long.applicableModels.length&&!short.applicableModels.length) reason="NO_LABELED_SETUP_DISTRIBUTION";
+  else if(!Number.isFinite(long.edge)||!Number.isFinite(short.edge)) reason="INSUFFICIENT_DIRECTIONAL_OUTCOME_DISTRIBUTION";
   else if(long.edge>minEdge&&long.edge-short.edge>gapEdge&&flow.confirmationSide==="LONG"&&
     (regime.regime!=="UPTREND"||structureBias!=="BEARISH")){side="LONG";reason="LONG_NET_EDGE_WINS";}
   else if(short.edge>minEdge&&short.edge-long.edge>gapEdge&&flow.confirmationSide==="SHORT"&&
