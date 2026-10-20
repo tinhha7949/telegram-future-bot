@@ -1249,7 +1249,8 @@ async function placeTPSLWithRetry(
     symbol,
     side,
     type,
-    stopPrice
+    stopPrice,
+    partialQuantity = null
 ){
     const closeSide = side === "LONG" ? "SELL" : "BUY"
     // Binance requires clientAlgoId to be shorter than 36 characters.
@@ -1277,16 +1278,22 @@ async function placeTPSLWithRetry(
     }
 
     try{
-        const result = await signedRequest("/fapi/v1/algoOrder", "POST", {
+        const orderParams = {
             algoType: "CONDITIONAL",
             symbol,
             side: closeSide,
             type,
             triggerPrice: String(stopPrice),
-            closePosition: "true",
             workingType: "MARK_PRICE",
             clientAlgoId
-        })
+        };
+        if (Number.isFinite(Number(partialQuantity)) && Number(partialQuantity) > 0) {
+            orderParams.quantity = String(partialQuantity);
+            orderParams.reduceOnly = "true";
+        } else {
+            orderParams.closePosition = "true";
+        }
+        const result = await signedRequest("/fapi/v1/algoOrder", "POST", orderParams)
         if(result?.algoId) return result
 
         // POST may have reached Binance even if its response was lost. Query by
@@ -1411,12 +1418,15 @@ async function setInitialTPSL(trade){
 
         const rawTP =
             Number(trade.tp)
+        const rawTP1 =
+            Number(trade.tp1)
 
         if(
             !Number.isFinite(rawSL) ||
             !Number.isFinite(rawTP) ||
             rawSL <= 0 ||
-            rawTP <= 0
+            rawTP <= 0 ||
+            !Number.isFinite(rawTP1) || rawTP1 <= 0
         ){
 
             console.log(
@@ -1429,6 +1439,7 @@ async function setInitialTPSL(trade){
 
         let sl
         let tp
+        let tp1
 
         if(positionSide === "LONG"){
 
@@ -1438,6 +1449,8 @@ async function setInitialTPSL(trade){
                 ) * tickSize
 
             // Round TP inward to a valid tick while preserving the researched level.
+            tp1 =
+                Math.floor(rawTP1 / tickSize) * tickSize
             tp =
                 Math.floor(
                     rawTP / tickSize
@@ -1450,6 +1463,8 @@ async function setInitialTPSL(trade){
                     rawSL / tickSize
                 ) * tickSize
 
+            tp1 =
+                Math.ceil(rawTP1 / tickSize) * tickSize
             tp =
                 Math.ceil(
                     rawTP / tickSize
@@ -1469,6 +1484,7 @@ async function setInitialTPSL(trade){
                 sl.toFixed(decimals)
             )
 
+        tp1 = Number(tp1.toFixed(decimals))
         tp =
             Number(
                 tp.toFixed(decimals)
@@ -1493,6 +1509,7 @@ async function setInitialTPSL(trade){
 
             if(
                 sl >= entry ||
+                tp1 <= entry || tp1 >= tp ||
                 tp <= entry
             ){
 
@@ -1508,6 +1525,7 @@ async function setInitialTPSL(trade){
 
             if(
                 sl <= entry ||
+                tp1 >= entry || tp1 <= tp ||
                 tp >= entry
             ){
 
@@ -1582,11 +1600,34 @@ async function setInitialTPSL(trade){
     slRes.orderId
 
         // =========================================
-        // SET TP
+        // SET TP1: close 50% of the actual position, TP2 protects remainder.
         // =========================================
+        const lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE");
+        const stepSize = Number(lotFilter?.stepSize);
+        const rawHalfQty = Math.abs(positionAmt) * 0.5;
+        const tp1Qty = stepSize > 0 ? Math.floor((rawHalfQty + 1e-12) / stepSize) * stepSize : 0;
+        const qtyPrecision = stepSize > 0 ? Math.max(0, (String(stepSize).split(".")[1] || "").length) : 0;
+        const roundedTP1Qty = Number(tp1Qty.toFixed(qtyPrecision));
+        if (!(roundedTP1Qty > 0) || roundedTP1Qty >= Math.abs(positionAmt)) {
+            console.log(`❌ TP1 HALF-POSITION QTY INVALID ${symbol}`);
+            await cancelAllOrders(symbol);
+            return false;
+        }
+        const tp1Res = await placeTPSLWithRetry(
+            symbol, positionSide, "TAKE_PROFIT_MARKET", tp1, roundedTP1Qty
+        );
+        if (!tp1Res || !(tp1Res.algoId || tp1Res.orderId)) {
+            console.log(`❌ TP1 INVALID RESPONSE ${symbol}`);
+            await cancelAllOrders(symbol);
+            return false;
+        }
+        const tp1OrderId = tp1Res.algoId || tp1Res.orderId;
 
+        // =========================================
+        // SET TP2: close remaining position after TP1 partial fill.
+        // =========================================
         console.log(
-            `🎯 SET TP ${symbol}: ${tp}`
+            `🎯 SET TP2 ${symbol}: ${tp}`
         )
 
         const tpRes =
@@ -1632,8 +1673,10 @@ const tpOrderId =
         return {
     ok: true,
     sl,
+    tp1,
     tp,
     slOrderId,
+    tp1OrderId,
     tpOrderId
 }
 
@@ -1897,6 +1940,8 @@ async function openPositionWithTPSL(trade, qty){
         trade.sl =
             Number(tpslResult.sl)
 
+        trade.tp1 = Number(tpslResult.tp1)
+        trade.tp1OrderId = tpslResult.tp1OrderId
         trade.tp =
             Number(tpslResult.tp)
 
@@ -3566,6 +3611,7 @@ if(!execution?.ok){
 
 trade.waitingEntry = false
 trade.slOrderId = execution?.slOrderId || trade.slOrderId || null
+trade.tp1OrderId = execution?.tp1OrderId || trade.tp1OrderId || null
 trade.tpOrderId = execution?.tpOrderId || trade.tpOrderId || null
 trade.entryExecution = execution?.entryExecution || {
     plannedEntry: Number(trade.price), plannedSL: Number(trade.sl), plannedTP: Number(trade.tp),
