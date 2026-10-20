@@ -11,7 +11,7 @@ const TPSL_CLOSING = {}
 const MIN_NOTIONAL_RISK_COOLDOWN = new Map()
 const MIN_NOTIONAL_RISK_COOLDOWN_MS = 15 * 60 * 1000
 const MAX_CANDIDATE_ATTEMPTS_PER_SCAN = 10
-const MIN_TRADE_RR = 0.8
+const MIN_TRADE_RR = 0.01
 function envNumber(name, fallback, min, max) {
     const raw = process.env[name];
     if (raw == null || String(raw).trim() === "") return fallback;
@@ -2888,7 +2888,7 @@ if (
 // No legacy RF counter/follow branch. Keep the approved nine-AI
 // direction and ATR-derived SL/TP; downstream risk/position caps remain.
 best.side = side;
-best.triggerType = "NINE_AI_CONSENSUS";
+best.triggerType = "NINE_AI_META_EDGE";
 best.rankDirectionMode = "NINE_AI_PRIMARY";
 console.log(
     `🧠 NINE-AI PRIMARY ${best.symbol} | SIDE=${best.side} | CONF=${best.confidence} | RANK=${safeFixed(best.rankScore, 2)} | SL=${best.sl} | TP=${best.tp}`
@@ -3051,11 +3051,13 @@ if(!trade){
         trade.risk / diff
 
     // ===== FINAL QTY =====
-    let qty =
-        Math.min(
-            qtyBySize,
-            qtyByRisk
-        )
+    // Never silently under-risk a trade to fit the notional cap. If the
+    // fixed 0.75% risk budget cannot fit, abstain instead of changing risk.
+    if (qtyBySize < qtyByRisk * 0.995) {
+        console.log(`⛔ RISK BUDGET DOES NOT FIT POSITION CAP ${best.symbol} requiredQty=${qtyByRisk} capQty=${qtyBySize}`);
+        continue;
+    }
+    let qty = qtyByRisk
 
     // Hard cap 3x account
     let maxPositionValue =
