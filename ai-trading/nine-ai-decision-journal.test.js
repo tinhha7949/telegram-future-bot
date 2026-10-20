@@ -105,7 +105,7 @@ const similarWindowRecords = Array.from({ length: 48 }, (_, i) => {
   const positive = i < 24;
   return {
     symbol: `SIM${i}`, signalTime: base + i * 900_000,
-    outcomeStatus: "EVALUATED", marketWindow: patternWindow,
+    outcomeStatus: "EVALUATED", marketWindow: patternWindow, windowFeatureSchemaVersion: 2,
     windowFeatures: positive ? patternFeatures : oppositeFeatures,
     evaluations: positive
       ? { "4": { longNetR: 0.5, shortNetR: -0.5 }, "16": { longNetR: 0.3, shortNetR: -0.3 } }
