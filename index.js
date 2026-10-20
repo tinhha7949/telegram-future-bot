@@ -1,4 +1,4 @@
-let DB_READY = false
+// USER-EDITABLE FIXED RISK: 0.75% of equity per trade.\nconst RISK_PER_TRADE = 0.0075;\n\nlet DB_READY = false
 let STOP_NEW_ENTRIES = false
 let signalClaims = null
 let ORPHAN_RECOVERY_RUNNING = false
@@ -23,9 +23,6 @@ function envNumber(name, fallback, min, max) {
     return Math.max(min, Math.min(max, value));
 }
 
-// Canonical user-editable risk setting. Keep this at the top of index.js.
-// 0.0075 = 0.75% of current equity per trade. Do not increase via environment.
-const RISK_PER_TRADE = 0.0075;
 const TRADE_CONFIG = Object.freeze({
     riskPerTrade: RISK_PER_TRADE,
     maxRiskPerTrade: RISK_PER_TRADE,
@@ -2532,7 +2529,7 @@ async function scan(symbol){
                     signalTime: Number(decision.signalAt) || Math.floor(scanAt / 14400000) * 14400000,
                     scannedAt: scanAt,
                     learningEvidence: opportunityEvidence,
-                    marketWindow: data15
+                    marketWindow: data4h
                 });
                 if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
             } catch (journalError) {
@@ -2557,8 +2554,15 @@ async function scan(symbol){
         console.log(
             `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | OPPORTUNITY_BONUS=${safeFixed(decision.liveOpportunityBonus, 3)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
         );
+        const longEdge = Number(decision.edges?.LONG?.edge);
+        const shortEdge = Number(decision.edges?.SHORT?.edge);
+        const netEdge = Math.max(Number.isFinite(longEdge) ? longEdge : -Infinity,
+            Number.isFinite(shortEdge) ? shortEdge : -Infinity);
         return {
             ...decision,
+            confidence: Number.isFinite(netEdge) ? Math.max(0, Math.min(100, 50 + netEdge * 10)) : 0,
+            rankScore: Number.isFinite(netEdge) ? netEdge : -Infinity,
+            qualityScore: Number.isFinite(netEdge) ? netEdge : 0,
             nineAiDecisionKey: decision.nineAiDecisionKey || null,
             nineAiResearchPolicy: researchPolicyAtEntry,
             symbol,
