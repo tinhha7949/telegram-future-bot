@@ -2582,65 +2582,10 @@ function buildTradeFromNineAISignal(best, riskBudget) {
   }
 
   const now = Date.now();
-  const sourceRisk = best?.risk && typeof best.risk === 'object' ? best.risk : {};
-  const riskDetail = best?.riskDetail && typeof best.riskDetail === 'object'
-    ? best.riskDetail
-    : sourceRisk;
-  const qualityScore = Number(best?.qualityScore ?? best?.score ?? best?.quality?.score ?? 0);
-  const strategyFeatures = best?.rankMetrics?.features;
-  const nineAiLearningFeatures = best?.setup === "NINE_AI_4H" && strategyFeatures
-    ? {
-        trend: strategyFeatures.trend === "UP" ? 1 : strategyFeatures.trend === "DOWN" ? -1 : 0,
-        momentum: Number(strategyFeatures.momentum4) / Math.max(Number(strategyFeatures.atrPercent) || 0, 0.0001),
-        rsi: Number(strategyFeatures.rsi14),
-        volume: Number(strategyFeatures.volumeRatio),
-        extension: Number(strategyFeatures.extensionAtr),
-        candleBody: Number(strategyFeatures.candleBodyRatio) || 0,
-        wickImbalance: (Number(strategyFeatures.lowerWickRatio) || 0) - (Number(strategyFeatures.upperWickRatio) || 0),
-        breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
-        regime: strategyFeatures.marketRegime === "TREND_UP" ? 1 : strategyFeatures.marketRegime === "TREND_DOWN" ? -1 :
-          strategyFeatures.marketRegime === "SIDEWAYS" ? -0.5 : 0,
-        volatilityRegime: strategyFeatures.volatilityRegime === "HIGH" ? 1 : strategyFeatures.volatilityRegime === "LOW" ? -1 : 0,
-        structurePosition: Number(strategyFeatures.structurePosition) || 0,
-        roomToResistance: Number(strategyFeatures.roomToResistanceAtr) || 0,
-        roomToSupport: Number(strategyFeatures.roomToSupportAtr) || 0,
-        falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
-        directionalStreak: Number(strategyFeatures.directionalStreak) || 0,
-        longEntryQuality: Number.isFinite(Number(strategyFeatures.longEntryQuality))
-          ? Number(strategyFeatures.longEntryQuality) : 50,
-        shortEntryQuality: Number.isFinite(Number(strategyFeatures.shortEntryQuality))
-          ? Number(strategyFeatures.shortEntryQuality) : 50
-      }
-    : null;
-  const nineAiLearningContext = best?.setup === "NINE_AI_4H" && strategyFeatures
-    ? {
-        marketRegime: String(strategyFeatures.marketRegime || best.marketState || "UNKNOWN"),
-        strategyFamily: String(best?.strategyClassification?.family || "CONSENSUS_FALLBACK"),
-        strategyFit: Number(best?.strategyClassification?.fit) || 0,
-        strategyEdgeR: Number(best?.strategyEdge?.selectionValue) || 0,
-        strategyEdgeSamples: Number(best?.strategyEdge?.samples) || 0,
-        strategyEdgeSource: String(best?.strategyEdge?.edgeSource || "COLD_START"),
-        volatilityRegime: String(strategyFeatures.volatilityRegime || best.volatility || "UNKNOWN"),
-        structureTrend: String(strategyFeatures.structureTrend || "UNKNOWN"),
-        breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
-        falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
-        roleScore: Number(best.rankMetrics?.roleScore) || 0,
-        setupQuality: Number(best.rankMetrics?.setupQuality) || 0,
-        entryQuality: Number(best.rankMetrics?.entryQuality) || 0,
-        breakoutQuality: Number(best.rankMetrics?.breakoutQuality) || 0,
-        roomQuality: Number(best.rankMetrics?.roomQuality) || 0,
-        grossRR: Number(best.rr) || 0,
-        netRR: Number.isFinite(Number(best.rankMetrics?.netRR)) ? Number(best.rankMetrics.netRR) : null,
-        netRRStatus: String(best.rankMetrics?.netRRStatus || "NOT_CONFIGURED"),
-        rankScore: Number(best.rankScore) || 0,
-        confidence: Number(best.confidence) || 0,
-        roleVotes: Array.isArray(best.roles) ? best.roles.map(role => ({
-          name: String(role.name || ""),
-          side: String(role.side || "NEUTRAL"),
-          confidence: Number(role.confidence) || 0
-        })) : []
-      }
-    : null;
+  const sourceRisk = best?.risk && typeof best.risk === "object" ? best.risk : {};
+  const riskDetail = best?.riskDetail && typeof best.riskDetail === "object" ? best.riskDetail : sourceRisk;
+  const edgeScore = Number(best?.edges?.[side]?.edge);
+  const qualityScore = Number.isFinite(edgeScore) ? edgeScore : 0;
 
   return {
     // Preserve the authoritative Nine-AI decision and plan through execution.
@@ -2652,15 +2597,10 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     sl,
     tp,
     setup: best.setup,
-    pullbackType: best.pullbackType ?? null,
-    triggerType: best.triggerType ?? null,
-    marketState: best.marketState ?? null,
-    volatility: best.volatility ?? null,
+    marketState: best.regime?.regime || "UNKNOWN",
+    volatility: best.regime?.regime || "UNKNOWN",
+    triggerType: "NINE_AI_4H_EDGE",
     qualityScore: Number.isFinite(qualityScore) ? qualityScore : 0,
-    nineAiLearningFeatures,
-    nineAiLearningContext,
-    nineAiStrategyFamily: String(best?.strategyClassification?.family || "CONSENSUS_FALLBACK"),
-    nineAiResearchPolicy: best.nineAiResearchPolicy ?? null,
     nineAiDecisionKey: best.nineAiDecisionKey ?? null,
 
     // `risk` remains the monetary sizing budget expected by the execution code.
