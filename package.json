@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "test": "node --check index.js && node --check ai-trading/nine-ai-pipeline.js && node ai-trading/nine-ai-pipeline.test.js && node --check ai-trading/nine-ai-central-decision-engine.js && node ai-trading/nine-ai-central-decision-engine.test.js && node --check ai-trading/nine-ai-offline-learning.js && node ai-trading/nine-ai-offline-learning.test.js && node --check ai-trading/nine-ai-decision-journal.js && node ai-trading/nine-ai-decision-journal.test.js && node --check ai-trading/execution-risk.js && node ai-trading/execution-risk.test.js && node --check ai-trading/nine-ai-db-retention.js && node ai-trading/nine-ai-db-retention.test.js"
+    "test": "node --check index.js && node --check ai-trading/binance-liquidation-feed.js && node --check ai-trading/nine-ai-pipeline.js && node ai-trading/nine-ai-pipeline.test.js && node --check ai-trading/nine-ai-central-decision-engine.js && node ai-trading/nine-ai-central-decision-engine.test.js && node --check ai-trading/nine-ai-offline-learning.js && node ai-trading/nine-ai-offline-learning.test.js && node --check ai-trading/nine-ai-decision-journal.js && node ai-trading/nine-ai-decision-journal.test.js && node --check ai-trading/execution-risk.js && node ai-trading/execution-risk.test.js && node --check ai-trading/nine-ai-db-retention.js && node ai-trading/nine-ai-db-retention.test.js"
   },
   "dependencies": {
     "mongodb": "^6.3.0",
