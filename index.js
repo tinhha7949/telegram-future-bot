@@ -2450,7 +2450,7 @@ async function scan(symbol){
         const opportunityEvidence = nineAiDecisionJournal.assess(
             decision.rankMetrics?.features || decision.features || {},
             decision.side,
-            { marketWindow: data15, signalTime: Number(decision.signalAt) || scanAt }
+            { marketWindow: data4h, signalTime: Number(decision.signalAt) || scanAt }
         );
         decision.originalRankScore = originalRankScore;
         decision.liveOpportunityAdjustment = 0;
@@ -2529,7 +2529,7 @@ async function scan(symbol){
             try {
                 const journalResult = await nineAiDecisionJournal.recordDecision({
                     symbol, decision,
-                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 14400000) * 14400000,
                     scannedAt: scanAt,
                     learningEvidence: opportunityEvidence,
                     marketWindow: data15
@@ -2562,7 +2562,7 @@ async function scan(symbol){
             nineAiDecisionKey: decision.nineAiDecisionKey || null,
             nineAiResearchPolicy: researchPolicyAtEntry,
             symbol,
-            setup: "NINE_AI_15M",
+            setup: "NINE_AI_4H",
             triggerType: "NINE_AI_CONSENSUS",
             rankDirectionMode: "NINE_AI_PRIMARY",
             rankScore: Number(decision.rankScore ?? decision.confidence),
@@ -2653,7 +2653,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
           ? Number(strategyFeatures.shortEntryQuality) : 50
       }
     : null;
-  const nineAiLearningContext = best?.setup === "NINE_AI_15M" && strategyFeatures
+  const nineAiLearningContext = best?.setup === "NINE_AI_4H" && strategyFeatures
     ? {
         marketRegime: String(strategyFeatures.marketRegime || best.marketState || "UNKNOWN"),
         strategyFamily: String(best?.strategyClassification?.family || "CONSENSUS_FALLBACK"),
