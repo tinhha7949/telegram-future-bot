@@ -217,8 +217,8 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     const distSource=applicable.slice().sort((a,b)=>b.weight-a.weight)[0]||null;
     const cost=distSource?(fee+fundingCost+slippage)/Math.max(distSource.distMAE.p80,1e-12):null;
     const uncertainty=(1-regime.regime_conf)*finite(config.uncertaintyPenalty,0.5);
-    const track=market.trackRecord?.[regime.regime+"_"+side], trackSamples=finite(track?.samples,0), trackNetR=finite(track?.meanNetR);
-    const expectedR=trackSamples>=20&&trackNetR!==null?0.5*er+0.5*trackNetR:er;
+    const track=market.trackRecord?.[regime.regime+"_"+side], trackSamples=finite(track?.samples,0), trackGrossR=finite(track?.meanGrossR);
+    const expectedR=trackSamples>=20&&trackGrossR!==null?0.5*er+0.5*trackGrossR:er;
     const edge=distSource?p*expectedR-cost-uncertainty:null;
     return {side,p,expectedR,cost,uncertaintyPenalty:uncertainty,edge,applicableModels:applicable.map(m=>m.name),setupKey:distSource?.setupKey||null,distMAE:distSource?.distMAE||null,distMFE:distSource?.distMFE||null,samples:distSource?.samples||0};
   });
@@ -246,7 +246,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     return wait("INVALID_OUTCOME_DERIVED_EXIT_PLAN",{regime,agents,edges:{LONG:long,SHORT:short}});
   return {symbol,side,action:side,authorizedForExecution:true,reason,setup:"NINE_AI_4H",signalAt:last.closeTime,
     entry,price:entry,sl,tp:tp2,tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeframe:"4h",
-    riskPerTradePct:0.0075,riskEquity:finite(equity,0)*0.0075,
+    riskPerTradePct:0.0075,riskEquity:finite(equity,0)*0.0075,decisionPolicy:{minEdge,gapEdge},
     edges:{LONG:long,SHORT:short},regime,agents,setupKey:chosen.setupKey,
     featureSnapshot:{snapshotAt,closeTime:last.closeTime,close:entry,atr,atrPct,volumeRatio,funding,oiChange,spread,depth,latency,feePct:fee,fundingCostPct:fundingCost,estSlippagePct:slippage,regime,structureBias},
     tradePlan:{stopMethod:"LABELED_MAE_P80_WITH_STRUCTURE_BUFFER",targetMethod:"LABELED_MFE_P50_P90",tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeoutMs:96*60*60*1000},
