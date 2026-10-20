@@ -45,6 +45,7 @@ const ROLE_WEIGHTS = Object.freeze({
   "Risk Manager AI": 0.05
 });
 
+const MIN_TRADE_RR = 0.8;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const finite = n => Number.isFinite(Number(n));
 const avg = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
@@ -659,7 +660,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     const candidateRR = candidateTargetDistance / candidateStopDistance;
     // No preset RR range is imposed. Position sizing recalculates from the
     // selected stop; the existing capital-risk budget remains the exposure cap.
-    if (!(Number.isFinite(candidateRR) && candidateRR > 0)) continue;
+    if (!(Number.isFinite(candidateRR) && candidateRR >= MIN_TRADE_RR)) continue;
     stopDistance = candidateStopDistance;
     targetDistance = candidateTargetDistance;
     targetRR = Number(candidateRR.toFixed(2));
@@ -680,8 +681,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
   if (![entry, sl, tp, rr, targetRR].every(Number.isFinite) || entry <= 0 || sl <= 0 ||
       (side === "LONG" ? !(sl < entry && tp > entry) : !(tp < entry && sl > entry)) ||
-      rr <= 0) {
-    return { ...abstain, reason: "FINAL_TRADE_GEOMETRY_INVALID", roles: roleResults, candles: candles.length };
+      rr < MIN_TRADE_RR) {
+    return { ...abstain, reason: rr < MIN_TRADE_RR ? "RR_BELOW_MINIMUM_0_8" : "FINAL_TRADE_GEOMETRY_INVALID", roles: roleResults, candles: candles.length };
   }
 
   // All nine roles contribute through explicit weights. A role agreeing with
