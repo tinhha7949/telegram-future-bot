@@ -2398,7 +2398,7 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
     }
     const fundingRate = Number(premium?.lastFundingRate);
     return {
-        now, snapshotAt: Date.now(),
+        now, snapshotAt: now,
         fundingRate: Number.isFinite(fundingRate) ? fundingRate : null,
         openInterest: Number(oiNow?.openInterest),
         openInterestChange: oiChange,
@@ -2414,7 +2414,7 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
 async function scan(symbol){
     try {
         // Canonical strategy runs only on fully closed 4h candles.
-        const data4h = await getData(symbol, "4h", 601);
+        const data4h = await getData(symbol, "4h", 1500);
         const data1h = await getData(symbol, "1h", 100);
         const data1d = await getData(symbol, "1d", 100);
         const scanAt = Date.now();
