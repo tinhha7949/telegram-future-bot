@@ -1,5 +1,5 @@
 // USER-EDITABLE FIXED RISK: 0.75% of equity per trade.
-const RISK_PER_TRADE = 0.0075;
+const RISK_PER_TRADE = 0.075;
 
 let DB_READY = false
 let nineAiOfflineLearningService = null;
@@ -2274,7 +2274,7 @@ async function getTopSymbols() {
       candidates.sort((a, b) => b.quoteVolume - a.quoteVolume);
 
       const selected = candidates
-        .slice(0, 20)
+        .slice(0, 80)
         .map(candidate => candidate.symbol);
 
       console.log(
