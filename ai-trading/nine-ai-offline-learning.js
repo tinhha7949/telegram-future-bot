@@ -100,7 +100,7 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
   const candidateTest = evaluatePolicy(splits.test, selected.params);
   const championTest = evaluatePolicy(splits.test, champion);
   const uplift = candidateTest.averageNetR - championTest.averageNetR;
-  if (candidateTest.trades < MIN_TEST_ROWS || !Number.isFinite(uplift) || uplift <= 0) {
+  if (candidateTest.trades < MIN_TEST_ROWS || !Number.isFinite(uplift) || uplift <= 0.02) {
     return { status: "CANDIDATE_DID_NOT_BEAT_CHAMPION", sampleCounts: {
       train: splits.train.length, validation: splits.validation.length, test: splits.test.length
     }, candidate: selected.params, candidateTest, championTest, uplift };
@@ -115,12 +115,15 @@ function calibrationSummary(rows) {
   if (!usable.length) return { samples: 0, meanPredictedR: null, meanRealizedR: null, biasR: null, maeR: null };
   const predicted = usable.map(r => Number(r.predictedEdgeR));
   const realized = usable.map(r => Number(r.realizedR));
+  const biasR = mean(predicted.map((v, i) => v - realized[i]));
+  const maeR = mean(predicted.map((v, i) => Math.abs(v - realized[i])));
   return {
     samples: usable.length,
     meanPredictedR: mean(predicted),
     meanRealizedR: mean(realized),
-    biasR: mean(predicted.map((v, i) => v - realized[i])),
-    maeR: mean(predicted.map((v, i) => Math.abs(v - realized[i])))
+    biasR, maeR,
+    status: usable.length < 30 ? "COLLECTING" :
+      (Math.abs(biasR) > 0.25 || maeR > 0.75 ? "RED_FLAG_CALIBRATION_DRIFT" : "CALIBRATION_WITHIN_GUARDRAILS")
   };
 }
 
