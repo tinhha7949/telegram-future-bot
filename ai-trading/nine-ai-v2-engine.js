@@ -245,17 +245,19 @@ function analyzeNineAI(raw4h, symbol, context = {}, asOf = Date.now()) {
   }
   const fundingHotLong = fundingRate >= 0.0008;
   const fundingHotShort = fundingRate <= -0.0008;
+  const oneBarMomentum = last.close / candles.at(-2).close - 1;
+  const confirmsLong = oiChange > 0 && oneBarMomentum > 0 && fundingRate < 0.0008;
+  const confirmsShort = oiChange > 0 && oneBarMomentum < 0 && fundingRate > -0.0008;
   const flow = {
-    fundingRate, openInterestChangePct: oiChange,
+    fundingRate, openInterestChangePct: oiChange, oneBarMomentum,
     liquidationCascade: liquidation,
-    confirmation: "NEUTRAL",
-    confirmsLong: oiChange > 0 && fundingRate < 0.0008,
-    confirmsShort: oiChange > 0 && fundingRate > -0.0008,
+    confirmation: confirmsLong ? "LONG_CONFIRMED" : confirmsShort ? "SHORT_CONFIRMED" : "NO_DIRECTIONAL_CONFIRMATION",
+    confirmsLong, confirmsShort,
     blocksLong: fundingHotLong, blocksShort: fundingHotShort
   };
   const setups = [];
-  const trendLong = regime.regime === "TREND_UP" && regime.trendDirection === "LONG";
-  const trendShort = regime.regime === "TREND_DOWN" && regime.trendDirection === "SHORT";
+  const trendLong = regime.regime === "TREND_UP" && regime.trendDirection === "LONG" && structure.structure_bias === "LONG";
+  const trendShort = regime.regime === "TREND_DOWN" && regime.trendDirection === "SHORT" && structure.structure_bias === "SHORT";
   // AI-3: pullback within a confirmed trend, followed by a directional push.
   const pushLong = last.close > last.open && last.close > candles.at(-2).high && last.close > last.open + 0.35 * a;
   const pushShort = last.close < last.open && last.close < candles.at(-2).low && last.close < last.open - 0.35 * a;
@@ -292,7 +294,13 @@ function analyzeNineAI(raw4h, symbol, context = {}, asOf = Date.now()) {
     if (!outcomes.ready || !Number.isFinite(outcomes.expectedR) || !Number.isFinite(outcomes.pWin)) {
       continue;
     }
-    const slDistance = last.close * outcomes.dist_MAE.p80;
+    const maeDistance = last.close * outcomes.dist_MAE.p80;
+    const structureStopDistance = setup.side === "LONG" && Number.isFinite(structure.support)
+      ? last.close - (structure.support - 0.10 * a)
+      : setup.side === "SHORT" && Number.isFinite(structure.resistance)
+        ? (structure.resistance + 0.10 * a) - last.close : 0;
+    const slDistance = Math.max(maeDistance, structureStopDistance);
+    if (!(slDistance > 0) || slDistance / last.close > 0.08) continue;
     const cost = normalizedCost(context, last.close, slDistance, setup.side);
     if (!cost) continue;
     const uncertaintyPenalty = clamp(
@@ -325,9 +333,20 @@ function analyzeNineAI(raw4h, symbol, context = {}, asOf = Date.now()) {
     minEdgeR: MIN_EDGE_R, gapEdgeR: MIN_GAP_EDGE_R, candidates
   });
   const dist = chosen.outcomeDistribution;
-  const slDistance = last.close * dist.dist_MAE.p80;
+  const maeDistance = last.close * dist.dist_MAE.p80;
+  const structureStopDistance = chosen.side === "LONG" && Number.isFinite(structure.support)
+    ? last.close - (structure.support - 0.10 * a)
+    : chosen.side === "SHORT" && Number.isFinite(structure.resistance)
+      ? (structure.resistance + 0.10 * a) - last.close : 0;
+  const slDistance = Math.max(maeDistance, structureStopDistance);
   const tp1Distance = last.close * dist.dist_MFE.p50;
   const tp2Distance = last.close * dist.dist_MFE.p90;
+  const structuralRoom = chosen.side === "LONG"
+    ? (Number.isFinite(structure.resistance) ? structure.resistance - last.close : Infinity)
+    : (Number.isFinite(structure.support) ? last.close - structure.support : Infinity);
+  if (structuralRoom <= tp1Distance) {
+    return waitResult(symbol, "STRUCTURE_BLOCKS_TP1_ROOM", { regime, structure, chosen, structuralRoom });
+  }
   if (![slDistance, tp1Distance, tp2Distance].every(Number.isFinite) ||
       slDistance <= 0 || tp1Distance <= 0 || tp2Distance < tp1Distance) {
     return waitResult(symbol, "INVALID_MAE_MFE_DISTRIBUTION", { chosen });
