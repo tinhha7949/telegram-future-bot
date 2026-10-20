@@ -96,9 +96,9 @@ const patternFeatures = journal.extractWindowFeatures(patternWindow);
 const oppositeFeatures = {
   ...patternFeatures,
   return4: -patternFeatures.return4, return16: -patternFeatures.return16,
-  return48: -patternFeatures.return48, return96: -patternFeatures.return96,
-  efficiency16: -patternFeatures.efficiency16, efficiency48: -patternFeatures.efficiency48,
-  efficiency96: -patternFeatures.efficiency96, rangePosition: 1 - patternFeatures.rangePosition,
+  return32: -patternFeatures.return32, return48: -patternFeatures.return48,
+  efficiency16: -patternFeatures.efficiency16, efficiency32: -patternFeatures.efficiency32,
+  efficiency48: -patternFeatures.efficiency48, rangePosition: 1 - patternFeatures.rangePosition,
   wickBias: -patternFeatures.wickBias, greenRate: 1 - patternFeatures.greenRate
 };
 const similarWindowRecords = Array.from({ length: 48 }, (_, i) => {
