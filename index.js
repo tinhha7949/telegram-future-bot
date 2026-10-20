@@ -2,6 +2,7 @@
 const RISK_PER_TRADE = 0.0075;
 
 let DB_READY = false
+let nineAiOfflineLearningService = null;
 let STOP_NEW_ENTRIES = false
 let signalClaims = null
 let ORPHAN_RECOVERY_RUNNING = false
@@ -40,25 +41,13 @@ const fs = require("fs")
 const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
-const { analyzeNineAI: analyzeLegacyNineAI, compareNineAICandidates } = require("./ai-trading/nine-ai-strategy")
 const nineAiPipeline = require("./ai-trading/nine-ai-pipeline")
 const nineAiCentralDecisionEngine = require("./ai-trading/nine-ai-central-decision-engine")
-const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
-const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
-const nineAiContextualLearning = require("./ai-trading/nine-ai-contextual-learning")
-const nineAiCounterfactualResearch = require("./ai-trading/nine-ai-counterfactual-research")
-const nineAiLossDiagnosis = require("./ai-trading/nine-ai-loss-diagnosis")
-const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
-const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
-const nineAiRewardModel = require("./ai-trading/nine-ai-reward-model")
 const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
-const nineAiAutonomousDecisionResearch = require("./ai-trading/nine-ai-autonomous-decision-research")
-const nineAiAutonomousDeployment = require("./ai-trading/nine-ai-autonomous-deployment")
-const nineAiDataDerivedConsensus = require("./ai-trading/nine-ai-data-derived-consensus")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const nineAiDbRetention = require("./ai-trading/nine-ai-db-retention")
-const nineAiAutonomousAdaptation = require("./ai-trading/nine-ai-autonomous-adaptation")
-const { summarizeClosedTrade } = require("./ai-trading/nine-ai-execution-ledger")
+const nineAiOfflineLearning = require("./ai-trading/nine-ai-offline-learning");
+const { summarizeClosedTrade } = require("./ai-trading/nine-ai-execution-ledger");
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -2490,104 +2479,6 @@ async function scan(symbol){
             return null;
         }
 
-        // Learning/research modules are observers of the central decision, not
-        // additional live decision-makers. Their evidence is journaled for research
-        // but cannot alter side, authorization, rank, entry, SL/TP, or timing.
-        const originalRankScore = Number(decision.rankScore ?? decision.confidence ?? 0);
-        const opportunityEvidence = nineAiDecisionJournal.assess(
-            decision.rankMetrics?.features || decision.features || {},
-            decision.side,
-            { marketWindow: data4h, signalTime: Number(decision.signalAt) || scanAt }
-        );
-        decision.originalRankScore = originalRankScore;
-        decision.liveOpportunityAdjustment = 0;
-        decision.liveOpportunityBonus = 0;
-        decision.rankMetrics = {
-            ...(decision.rankMetrics || {}),
-            score: originalRankScore,
-            liveOpportunityLearning: opportunityEvidence,
-            liveOpportunityApplied: false
-        };
-        let researchPolicyAtEntry = null;
-        try {
-            const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
-            if (activePolicy) {
-                researchPolicyAtEntry = {
-                    policyId: activePolicy.policyId,
-                    status: activePolicy.status,
-                    testUpliftR: Number(activePolicy.testUpliftR) || 0,
-                    applicationMode: "RESEARCH_ONLY_NO_LIVE_DECISION_EFFECT"
-                };
-                decision.rankMetrics.researchPolicyEvidence = researchPolicyAtEntry;
-            }
-        } catch (policyError) {
-            console.error("⚠️ NINE-AI RESEARCH POLICY DIAGNOSTIC UNAVAILABLE " + symbol + ":",
-                policyError?.message || policyError);
-        }
-        try {
-            const adaptation = nineAiAutonomousAdaptation.assess(
-                decision.rankMetrics?.features || decision.features || {},
-                decision.side,
-                {
-                    marketRegime: decision.rankMetrics?.features?.marketRegime || decision.marketState || "UNKNOWN",
-                    strategyFamily: decision.strategyFamily || decision.rankMetrics?.strategyFamily || "UNKNOWN",
-                    roomQuality: decision.rankMetrics?.roomQuality ?? decision.rankMetrics?.features?.roomQuality
-                }
-            );
-            decision.rankMetrics.autonomousAdaptation = {
-                ...adaptation,
-                liveApplication: "DIAGNOSTIC_ONLY"
-            };
-        } catch (adaptationError) {
-            console.error("⚠️ NINE-AI ADAPTATION DIAGNOSTIC UNAVAILABLE " + symbol + ":",
-                adaptationError?.message || adaptationError);
-        }
-        try {
-            const livePolicy = nineAiDataDerivedConsensus.assessLive(
-                decision.roles || [],
-                decision.rankMetrics?.features?.marketRegime || decision.marketState || "UNKNOWN",
-                Number(decision.rankScore),
-                decision.rankMetrics?.features || decision.features || {}
-            );
-            decision.rankMetrics.dataDerivedConsensus = {
-                ...livePolicy,
-                liveApplication: "DIAGNOSTIC_ONLY"
-            };
-        } catch (policyError) {
-            console.error("⚠️ NINE-AI DATA-DERIVED RESEARCH DIAGNOSTIC FAILED " + symbol + ":",
-                policyError?.message || policyError);
-        }
-        try {
-            const timingEvidence = nineAiAutonomousDeployment.assess(
-                decision.rankMetrics?.features || decision.features || {},
-                decision.side
-            );
-            decision.rankMetrics.autonomousTimingDeployment = {
-                ...timingEvidence,
-                appliedAdjustment: 0,
-                liveApplication: "DIAGNOSTIC_ONLY"
-            };
-        } catch (timingError) {
-            console.error("⚠️ NINE-AI TIMING RESEARCH DIAGNOSTIC FAILED " + symbol + ":",
-                timingError?.message || timingError);
-        }
-        if (decision.authorizedForExecution !== true) {
-            recordNineAIAbstention(decision.reason || "CENTRAL_ENGINE_ABSTAINED");
-            try {
-                const journalResult = await nineAiDecisionJournal.recordDecision({
-                    symbol, decision,
-                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 14400000) * 14400000,
-                    scannedAt: scanAt,
-                    learningEvidence: opportunityEvidence,
-                    marketWindow: data4h
-                });
-                if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
-            } catch (journalError) {
-                console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":",
-                    journalError?.message || journalError);
-            }
-            return null;
-        }
         try {
             const journalResult = await nineAiDecisionJournal.recordDecision({
                 symbol, decision,
@@ -4162,135 +4053,14 @@ if (t.nineAiDecisionKey) {
     }
 }
 
-// Train only after Binance confirms the position is closed and the realized PnL
-// has been saved. Learning failures must never interrupt trade reconciliation.
-if (t.setup === "NINE_AI_4H" && t.nineAiLearningFeatures) {
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
-            const learning = await nineAiLearningMemory.learnClosedTrade({
-                tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
-                features: t.nineAiLearningFeatures,
-                context: t.nineAiLearningContext || null,
-                researchPolicy: t.nineAiResearchPolicy || null,
-                side: t.side,
-                realizedR: closed.pnl / riskBudget,
-                closed: true,
-                closedAt: closed.closedAt
-            });
-            if (learning.updated) {
-                console.log(`🧠 NINE-AI MEMORY UPDATED: samples=${learning.samples} trade=${t.symbol}`);
-            } else if (learning.reason === "DUPLICATE_TRADE") {
-                console.log(`🧠 NINE-AI MEMORY: duplicate outcome ignored for ${t.symbol}`);
-            }
-        }
-    } catch (learningError) {
-        console.error(`⚠️ NINE-AI MEMORY UPDATE FAILED ${t.symbol}:`, learningError?.message || learningError);
+// Persist realized outcomes for daily calibration only after Binance confirms closure.
+try {
+    if (nineAiOfflineLearningService) {
+        const recorded = await nineAiOfflineLearningService.recordClosedTrade(t, closed);
+        if (recorded.recorded) console.log("🧠 NINE-AI REALIZED OUTCOME SAVED: " + t.symbol + " R=" + recorded.realizedR);
     }
-
-    // General reward learner trains on realized net-R and full entry-time context.
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl) && t.nineAiLearningFeatures) {
-            const rewardLearning = await nineAiRewardModel.recordClosedTrade({
-                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
-                features: t.nineAiLearningFeatures, context: t.nineAiLearningContext || null,
-                side: t.side, realizedR: closed.pnl / riskBudget, closed: true, closedAt: closed.closedAt
-            });
-            if (rewardLearning.updated) console.log("🧠 NINE-AI REWARD MODEL UPDATED: long=" + rewardLearning.longSamples + " short=" + rewardLearning.shortSamples + " " + t.symbol);
-        }
-    } catch (rewardLearningError) {
-        console.error("⚠️ NINE-AI REWARD MODEL UPDATE FAILED " + t.symbol + ":", rewardLearningError?.message || rewardLearningError);
-    }
-    // Every independent model learns separately from this confirmed closed trade.
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
-            const independentLearning = await nineAiIndependentModels.learnClosedTrade({
-                tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
-                features: t.nineAiLearningFeatures,
-                context: t.nineAiLearningContext || null,
-                side: t.side,
-                realizedR: closed.pnl / riskBudget,
-                closed: true,
-                closedAt: closed.closedAt
-            });
-            if (independentLearning.updated) {
-                console.log(`🧠 NINE INDEPENDENT ML MODELS UPDATED: ${independentLearning.updatedModels}/9 ${t.symbol}`);
-            }
-        }
-    } catch (independentLearningError) {
-        console.error(`⚠️ NINE INDEPENDENT ML UPDATE FAILED ${t.symbol}:`,
-            independentLearningError?.message || independentLearningError);
-    }
-
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
-            const diagnosis = await nineAiLossDiagnosis.recordClosedTrade({
-                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)), symbol: t.symbol, side: t.side,
-                realizedR: closed.pnl / riskBudget,
-                features: { ...t.nineAiLearningFeatures, marketRegime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN" },
-                context: t.nineAiLearningContext || null, entry: Number(t.entry), sl: Number(t.sl), tp: Number(t.tp),
-                exitReason: String(closed.exitOrderId) === String(t.slOrderId || "") && t.slOrderId
-                    ? "SL"
-                    : String(closed.exitOrderId) === String(t.tpOrderId || "") && t.tpOrderId
-                        ? "TP" : "UNKNOWN",
-                exitPrice: Number(closed.exitPrice), feesUSDT: Number(closed.feesUSDT),
-                grossRealizedPnl: Number(closed.grossRealizedPnl),
-                regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
-            });
-            if (diagnosis.recorded) console.log("🧠 NINE-AI LOSS DIAGNOSIS: " + diagnosis.diagnosis.tags.join(",") + " outcome=" + diagnosis.diagnosis.outcome + " " + t.symbol);
-        }
-    } catch (diagnosisError) { console.error("⚠️ NINE-AI LOSS DIAGNOSIS FAILED " + t.symbol + ":", diagnosisError?.message || diagnosisError); }
-
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
-            const contextual = await nineAiContextualLearning.recordClosedTrade({
-                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
-                symbol: t.symbol,
-                features: { ...t.nineAiLearningFeatures,
-                    marketRegime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN" },
-                context: t.nineAiLearningContext || null,
-                side: t.side,
-                realizedR: closed.pnl / riskBudget,
-                closed: true,
-                closedAt: closed.closedAt
-            });
-            if (contextual.updated) console.log("🧠 NINE-AI CONTEXT LEARNED: tags=" + contextual.tags.join(",") + " samples=" + contextual.samples + " " + t.symbol);
-        }
-    } catch (contextualError) {
-        console.error("⚠️ NINE-AI CONTEXTUAL LEARNING FAILED " + t.symbol + ":",
-            contextualError?.message || contextualError);
-    }
-
-    // Run retrospective alternatives only after confirmed close. These simulated
-    // results are kept separate from actual PnL and never force an opposite trade.
-    try {
-        const researchCandles = await getNineAiResearchCandles(t.symbol, t.createdAt, closed.closedAt);
-        if (researchCandles && researchCandles.length >= 4) {
-            const research = await nineAiCounterfactualResearch.researchClosedTrade({
-                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
-                symbol: t.symbol, side: t.side, entry: Number(t.entry),
-                sl: Number(t.sl), tp: Number(t.tp), entryTime: Number(t.createdAt),
-                createdAt: Number(t.createdAt), closedAt: closed.closedAt,
-                realizedR: Number.isFinite(Number(closed.pnl)) && getTradeActualRisk(t) > 0 ? Number(closed.pnl) / getTradeActualRisk(t) : null,
-                features: { ...(t.nineAiLearningFeatures || {}), ...(t.nineAiLearningContext || {}) },
-                feeRate: Number(t.notional) > 0 ? Number(closed.feesUSDT || 0) / Number(t.notional) : null,
-                feeR: getTradeActualRisk(t) > 0
-                    ? Number(closed.feesUSDT || 0) / getTradeActualRisk(t) : null,
-                maxRR: Number(t.tradePlan?.maxRiskReward ?? Infinity),
-                minRR: 0,
-                regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
-            }, researchCandles);
-            if (research.variants) console.log("🧪 NINE-AI COUNTERFACTUAL RESEARCH: variants=" + research.variants +
-                " samples=" + research.samples + " candidates=" + research.candidates + " " + t.symbol);
-        }
-    } catch (researchError) {
-        console.error("⚠️ NINE-AI COUNTERFACTUAL RESEARCH FAILED " + t.symbol + ":",
-            researchError?.message || researchError);
-    }
+} catch (offlineLearningError) {
+    console.error("⚠️ NINE-AI REALIZED OUTCOME SAVE FAILED " + t.symbol + ":", offlineLearningError?.message || offlineLearningError);
 }
 
         const latestBalance = await updateBalance()
@@ -4995,18 +4765,6 @@ try {
     }
 }
 
-try {
-    const evolutionStatus = await nineAiStrategyEvolution.initialize(db);
-    console.log(`🧬 NINE-AI STRATEGY EVOLUTION READY: groups=${evolutionStatus.familyGroups} families=${evolutionStatus.families.join(",")}`);
-    setInterval(() => {
-        nineAiStrategyEvolution.refreshPerformance().then(status => {
-            if (!status.cached) console.log(`🧬 NINE-AI STRATEGY EDGE REFRESH: outcomes=${status.outcomes} groups=${status.families}`);
-        }).catch(error => console.error("⚠️ NINE-AI STRATEGY EDGE REFRESH FAILED:", error?.message || error));
-    }, 30 * 60 * 1000);
-} catch (evolutionError) {
-    console.error("⚠️ NINE-AI STRATEGY EVOLUTION INIT FAILED:", evolutionError?.message || evolutionError);
-}
-
 // Tự xóa bản ghi sau 10 ngày tính từ createdAt
 await signalClaims.createIndex(
     { createdAt: 1 },
@@ -5016,147 +4774,30 @@ await signalClaims.createIndex(
     }
 );
 
-// Load all learning state before scan loops. Each of the nine models owns
-// separate MongoDB state/outcome collections; no paid API is used.
-const rewardModelStatus = await nineAiRewardModel.initialize(db);
-console.log("🧠 NINE-AI GENERAL REWARD MODEL READY: long=" + rewardModelStatus.longSamples + " short=" + rewardModelStatus.shortSamples);
+// The canonical journal and daily offline learner are the only Nine-AI learning path.
 const decisionJournalStatus = await nineAiDecisionJournal.initialize(db);
 console.log("🧠 NINE-AI DECISION JOURNAL READY: samples=" + decisionJournalStatus.samples +
-    " pending=" + decisionJournalStatus.pending +
-    " 96barSnapshots=" + decisionJournalStatus.windowSnapshots +
-    " matured96barSamples=" + decisionJournalStatus.maturedWindowSamples +
-    " windowResearch=" + (decisionJournalStatus.maturedWindowSamples >= decisionJournalStatus.minWindowSamples ? "READY" : "COLLECTING"));
-try {
-    const consensusStatus = await nineAiDataDerivedConsensus.initialize(db);
-    console.log("🧬 NINE-AI DATA-DERIVED RESEARCH READY (NOT LIVE-APPLIED): activePolicies=" + consensusStatus.activePolicies);
-    const runConsensusResearch = async () => {
-        try {
-            const result = await nineAiDataDerivedConsensus.runResearchCycle();
-            console.log("🧬 NINE-AI CONSENSUS RESEARCH: status=" + result.status +
-                " rows=" + result.rows + " regimes=" + result.regimes +
-                " activePolicies=" + result.activePolicies);
-        } catch (error) {
-            console.error("⚠️ NINE-AI CONSENSUS RESEARCH FAILED:", error?.message || error);
-        }
-    };
-    void runConsensusResearch();
-    setInterval(runConsensusResearch, 6 * 60 * 60 * 1000);
-} catch (consensusError) {
-    console.error("⚠️ NINE-AI DATA-DERIVED CONSENSUS INIT FAILED:", consensusError?.message || consensusError);
-}
-try {
-    const adaptationStatus = await nineAiAutonomousAdaptation.initialize(db, trades);
-    console.log("🧠 NINE-AI AUTONOMOUS ADAPTATION READY: version=" + adaptationStatus.version +
-        " trades=" + adaptationStatus.trades + " policies=" + adaptationStatus.policies);
-    setInterval(() => {
-        nineAiAutonomousAdaptation.refresh().then(status => {
-            if (!status.cached) console.log("🧠 NINE-AI ADAPTATION REFRESH: version=" + status.version +
-                " trades=" + status.trades + " policies=" + status.policies);
-        }).catch(error => console.error("⚠️ NINE-AI ADAPTATION REFRESH FAILED:", error?.message || error));
-    }, 15 * 60 * 1000);
-} catch (adaptationInitError) {
-    console.error("⚠️ NINE-AI AUTONOMOUS ADAPTATION INIT FAILED:", adaptationInitError?.message || adaptationInitError);
-}
-try {
-    const decisionResearchStatus = await nineAiAutonomousDecisionResearch.initialize(db);
-    console.log("🧪 NINE-AI AUTONOMOUS DECISION RESEARCH READY: activePolicies=" + decisionResearchStatus.activePolicies);
-    const runDecisionResearch = async () => {
-        try {
-            const result = await nineAiAutonomousDecisionResearch.runResearchCycle();
-            console.log("🧪 NINE-AI DECISION RESEARCH: status=" + result.status +
-                " rows=" + result.usableRows + " groups=" + result.groups +
-                " validatedPolicies=" + result.activatedPolicies);
-        } catch (error) {
-            console.error("⚠️ NINE-AI DECISION RESEARCH CYCLE FAILED:", error?.message || error);
-        }
-    };
-    void runDecisionResearch();
-    setInterval(runDecisionResearch, 6 * 60 * 60 * 1000);
-} catch (decisionResearchInitError) {
-    console.error("⚠️ NINE-AI AUTONOMOUS DECISION RESEARCH INIT FAILED:",
-        decisionResearchInitError?.message || decisionResearchInitError);
-}
-const learningStatus = await nineAiLearningMemory.initialize(db);
-console.log(`🧠 NINE-AI LEGACY MEMORY READY: samples=${learningStatus.samples} trained=${learningStatus.trained}`);
-const independentModelStatus = await nineAiIndependentModels.initialize(
-    db, db.collection("nine_ai_learning_outcomes")
-);
-console.log(`🧠 NINE INDEPENDENT ML MODELS READY: migratedTrades=${independentModelStatus.migratedLegacyTrades} allTrained=${independentModelStatus.allTrained}`);
-for (const model of nineAiIndependentModels.status()) {
-    console.log(`🧠 MODEL ${model.role}: samples=${model.samples} trained=${model.trained} accuracy=${model.evaluation.accuracy ?? "N/A"} brier=${model.evaluation.brierScore ?? "N/A"}`);
-}
+    " pending=" + decisionJournalStatus.pending + " matured24barSamples=" +
+    decisionJournalStatus.maturedWindowSamples);
+nineAiOfflineLearningService = nineAiOfflineLearning.createOfflineLearning(db);
+const offlineLearningStatus = await nineAiOfflineLearningService.initialize();
+console.log("🧠 NINE-AI OFFLINE LEARNING READY: champion=" +
+    JSON.stringify(offlineLearningStatus.champion));
+const runDailyNineAIOfflineLearning = async () => {
+    try {
+        const report = await nineAiOfflineLearningService.runDailyCycle();
+        console.log("🧪 NINE-AI DAILY LEARNING: calibrationSamples=" + report.calibration.samples +
+            " biasR=" + report.calibration.biasR +
+            " candidate=" + (report.candidateResult?.status || "NONE") +
+            " shadow=" + (report.shadowResult?.status || "NONE"));
+    } catch (error) {
+        console.error("⚠️ NINE-AI DAILY OFFLINE LEARNING FAILED:", error?.message || error);
+    }
+};
+void runDailyNineAIOfflineLearning();
+setInterval(runDailyNineAIOfflineLearning, 24 * 60 * 60 * 1000);
 
-try {
-    const contextualStatus = await nineAiContextualLearning.initialize(db);
-    console.log("🧠 NINE-AI CONTEXTUAL LEARNING READY: samples=" + contextualStatus.samples + " uniqueTrades=" + contextualStatus.uniqueTrades);
-} catch (contextualError) {
-    console.error("⚠️ NINE-AI CONTEXTUAL LEARNING INIT FAILED:", contextualError?.message || contextualError);
-}
-
-
-try {
-    const counterfactualStatus = await nineAiCounterfactualResearch.initialize(db);
-    console.log("NINE-AI COUNTERFACTUAL RESEARCH READY: samples=" + counterfactualStatus.samples + " validatedPolicies=" + counterfactualStatus.policies);
-} catch (counterfactualError) {
-    console.error("NINE-AI COUNTERFACTUAL RESEARCH INIT FAILED:", counterfactualError?.message || counterfactualError);
-}
-
-try {
-    const deploymentStatus = await nineAiAutonomousDeployment.initialize(db);
-    console.log("🧪 NINE-AI TIMING RESEARCH REGISTRY READY (NOT LIVE-APPLIED): activePolicies=" + deploymentStatus.activePolicies);
-    const runTimingDeployment = async () => {
-        try {
-            const result = await nineAiAutonomousDeployment.runResearchCycle();
-            console.log("🚀 NINE-AI TIMING POLICY CYCLE: status=" + result.status +
-                " outcomes=" + (result.rows ?? 0) + " candidates=" + (result.candidates ?? 0) +
-                " active=" + (result.activePolicies ?? 0));
-        } catch (error) {
-            console.error("⚠️ NINE-AI TIMING POLICY CYCLE FAILED:", error?.message || error);
-        }
-    };
-    void runTimingDeployment();
-    setInterval(runTimingDeployment, 6 * 60 * 60 * 1000);
-} catch (deploymentInitError) {
-    console.error("⚠️ NINE-AI AUTONOMOUS DEPLOYMENT INIT FAILED:", deploymentInitError?.message || deploymentInitError);
-}
-
-try {
-    const diagnosisStatus = await nineAiLossDiagnosis.initialize(db);
-    console.log("🧠 NINE-AI CAUSAL DIAGNOSIS + STRATEGY LAB READY: " + diagnosisStatus.ready);
-    const runDiagnosisResearch = async () => {
-        try {
-            const result = await nineAiLossDiagnosis.runResearchCycle();
-            console.log("🧪 NINE-AI STRATEGY LAB: trades=" + result.closedTradesAnalyzed + " losses=" + result.lossesAnalyzed + " hypotheses=" + result.hypotheses + " validated=" + result.validatedCandidates);
-        } catch (error) { console.error("⚠️ NINE-AI STRATEGY LAB CYCLE FAILED:", error?.message || error); }
-    };
-    void runDiagnosisResearch();
-    setInterval(runDiagnosisResearch, 6 * 60 * 60 * 1000);
-} catch (diagnosisInitError) { console.error("⚠️ NINE-AI CAUSAL DIAGNOSIS INIT FAILED:", diagnosisInitError?.message || diagnosisInitError); }
-
-// Autonomous strategy research mines confirmed closed-trade memory and validates
-// hypotheses on chronological holdouts. Policies remain research metadata only;
-// the central Nine-AI decision engine is the sole live decision authority.
-try {
-    const researchStatus = await nineAiAutonomousResearch.initialize(db);
-    console.log(`🧪 NINE-AI AUTONOMOUS RESEARCH READY: mode=${researchStatus.mode} minSamples=${researchStatus.minSamples}`);
-    const runResearch = async () => {
-        try {
-            const result = await nineAiAutonomousResearch.runResearchCycle();
-            console.log(`🧪 NINE-AI RESEARCH: status=${result.status} samples=${result.sampleCount} candidates=${result.storedCandidates ?? 0}`); 
-            if (result.activatedPolicy) console.log(`🧪 NINE-AI RESEARCH POLICY PROMOTED (NOT LIVE-APPLIED): policy=${result.activatedPolicy.policyId} rule=${result.activatedPolicy.description}`);
-            if (result.rolledBackPolicy) console.warn(`↩️ NINE-AI POLICY ROLLED BACK: policy=${result.rolledBackPolicy.policyId} matchedVsUnmatchedUpliftR=${result.rolledBackPolicy.livePerformance.matchedVsUnmatchedUpliftR}`);
-        } catch (researchError) {
-            console.error("⚠️ NINE-AI RESEARCH CYCLE FAILED:", researchError?.message || researchError);
-        }
-    };
-    void runResearch();
-    setInterval(runResearch, 6 * 60 * 60 * 1000);
-} catch (researchError) {
-    // Research is optional and must never block market scanning or risk controls.
-    console.error("⚠️ NINE-AI RESEARCH INIT FAILED:", researchError?.message || researchError);
-}
-
-        // Capacity-aware retention: old evaluated/research history is pruned only after
+// Capacity-aware retention: old evaluated/research history is pruned only after
 // estimated collection storage crosses the configured threshold. Failure is non-fatal.
 try {
     const dbRetention = nineAiDbRetention.createRetention(db);
