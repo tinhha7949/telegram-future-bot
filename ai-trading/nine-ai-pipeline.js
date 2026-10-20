@@ -221,6 +221,13 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   });
   const [long,short]=candidates;
   const minEdge=finite(config.minEdge,0.05), gapEdge=finite(config.gapEdge,0.1);
+  const directionalGap=Math.abs(long.edge-short.edge);
+  const closeDirectionPenalty=Math.max(0,gapEdge-directionalGap);
+  for(const candidate of candidates){
+    candidate.uncertaintyPenalty += closeDirectionPenalty;
+    candidate.edge -= closeDirectionPenalty;
+    candidate.directionalGap=directionalGap;
+  }
   let side="WAIT",reason="EDGE_BELOW_THRESHOLD";
   if(!["UPTREND","DOWNTREND"].includes(regime.regime)) reason="REGIME_NOT_TREND";
   else if(flow.confirmation==="BLOCKED_HOT_FUNDING"||flow.confirmation==="UNAVAILABLE") reason="FLOW_BLOCKED_OR_UNAVAILABLE";
