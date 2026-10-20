@@ -15,7 +15,7 @@ const TPSL_CLOSING = {}
 const MIN_NOTIONAL_RISK_COOLDOWN = new Map()
 const MIN_NOTIONAL_RISK_COOLDOWN_MS = 15 * 60 * 1000
 const MAX_CANDIDATE_ATTEMPTS_PER_SCAN = 10
-const MIN_TRADE_RR = 0.8
+const MIN_TRADE_RR = 0
 function envNumber(name, fallback, min, max) {
     const raw = process.env[name];
     if (raw == null || String(raw).trim() === "") return fallback;
@@ -1997,6 +1997,7 @@ async function openPositionWithTPSL(trade, qty){
             tp: trade.tp,
             initialRisk: trade.initialRisk,
             slOrderId: tpslResult.slOrderId,
+            tp1OrderId: tpslResult.tp1OrderId,
             tpOrderId: tpslResult.tpOrderId,
             entryExecution: {
                 orderId: order.orderId == null ? null : String(order.orderId),
@@ -2470,16 +2471,23 @@ async function scan(symbol){
         let labeledOutcomes = [];
         try {
             const outcomeRows = await db.collection("nine_ai_outcome_labels")
-                .find({ labeled: true, mae: { $type: "number" }, mfe: { $type: "number" } })
+                .find({ labeled: true, maePct: { $type: "number" }, mfePct: { $type: "number" } })
                 .sort({ closedAt: -1 }).limit(5000).toArray();
             labeledOutcomes = outcomeRows;
         } catch (outcomeReadError) {
             console.error("⚠️ NINE-AI OUTCOME LABEL READ FAILED:", outcomeReadError?.message || outcomeReadError);
         }
+        let championConfig = {};
+        try {
+            championConfig = nineAiOfflineLearningService
+                ? await nineAiOfflineLearningService.getChampionConfig() : {};
+        } catch (configError) {
+            console.error("⚠️ NINE-AI CHAMPION CONFIG READ FAILED:", configError?.message || configError);
+        }
         const rawDecision = nineAiPipeline.analyzeNineAI({
             symbol, candles4h: data4h, candles1h: data1h || [], candles1d: data1d || [],
             outcomes: labeledOutcomes, equity: ACCOUNT_BALANCE,
-            market: marketSnapshot
+            market: marketSnapshot, config: championConfig
         }) || {
             symbol, side: null, action: "WAIT", reason: "NO_DECISION_RETURNED",
             authorizedForExecution: false
@@ -2703,7 +2711,16 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     result: best?.result ?? 'PENDING',
     maxAdverseMove: Number(best?.maxAdverseMove) || 0,
     maxFavorableMove: Number(best?.maxFavorableMove) || 0,
-    nineAiFeatureSnapshot: best?.featureSnapshot || null,
+    nineAiFeatureSnapshot: best?.featureSnapshot ? {
+      ...best.featureSnapshot,
+      estSlippagePct: Number(best.featureSnapshot.estSlippagePct ?? best.agents?.fill?.est_slippage)
+    } : null,
+    nineAiPredictionSnapshot: {
+      edges: best?.edges || null,
+      predictedEdgeR: Number.isFinite(Number(best?.edges?.[side]?.edge)) ? Number(best.edges[side].edge) : null,
+      predictedProbability: Number.isFinite(Number(best?.edges?.[side]?.p)) ? Number(best.edges[side].p) : null,
+      predictedExpectedR: Number.isFinite(Number(best?.edges?.[side]?.expectedR)) ? Number(best.edges[side].expectedR) : null
+    },
     nineAiSetupKey: best?.setupKey || null,
     timeoutCandles: 24
   };
@@ -4032,6 +4049,9 @@ if (isWin && t.nineAiSetupKey && Number(t.maxAdverseMove) > 0 && Number(t.maxFav
                 side: String(t.side),
                 mae: Number(t.maxAdverseMove),
                 mfe: Number(t.maxFavorableMove),
+                entryPrice: Number(t.entry),
+                maePct: Number(t.entry) > 0 ? Number(t.maxAdverseMove) / Number(t.entry) * 100 : null,
+                mfePct: Number(t.entry) > 0 ? Number(t.maxFavorableMove) / Number(t.entry) * 100 : null,
                 labeled: true,
                 source: "REALIZED_WINNING_TRADE",
                 closedAt: closed.closedAt
