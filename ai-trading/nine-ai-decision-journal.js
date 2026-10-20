@@ -243,7 +243,12 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
     learningEvidence: snapshot.learningEvidence
   });
   const digest = crypto.createHash("sha256").update(signature).digest("hex").slice(0, 12);
-  snapshot.decisionKey = snapshot.symbol + ":" + String(snapshot.signalTime) + ":" + digest;
+  // Repeated WAIT scans inside the same 15-minute candle add little value.
+  // Collapse them to one WAIT row per symbol/candle while retaining the richer
+  // signature-based key for authorized directional decisions.
+  snapshot.decisionKey = side === "WAIT"
+    ? snapshot.symbol + ":" + String(snapshot.signalTime) + ":WAIT"
+    : snapshot.symbol + ":" + String(snapshot.signalTime) + ":" + digest;
   return snapshot;
 }
 
