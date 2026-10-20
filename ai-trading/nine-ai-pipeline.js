@@ -74,17 +74,36 @@ function classifyRegime(cs, higher = []) {
   const regimeConf=clamp(0.45+0.35*strength+0.2*Math.abs((volRank??0.5)-0.5)*2,0,1);
   return {regime,regime_conf:regimeConf,realized_vol_20d:realized20,realized_vol_90d:realized90,realized_vol_20_90d:realized,vol_percentile:volRank,momentum20:mom20,momentum5:mom5,trendAgreement};
 }
-function buildHistoricalOutcomeLabels(input, now = Date.now(), horizon = 24) {
+function buildHistoricalOutcomeLabels(input, now = Date.now(), horizon = 24, symbol = null) {
   const cs = closedCandles(input, now);
   const labels = [];
-  // Only use historical opportunities whose full 24-candle outcome window has
-  // already closed. This is a bootstrap prior, explicitly tagged as simulated.
-  for (let i = 120; i + horizon < cs.length; i++) {
+  // Historical bootstrap samples use the same trend-pullback or confirmed
+  // range-breakout entry conditions as the live strategy. Every outcome window
+  // is fully matured before it can enter AI-7 distributions.
+  for (let i = 540; i + horizon < cs.length; i++) {
     const prefix = cs.slice(0, i + 1);
     const regime = classifyRegime(prefix);
     if (!["UPTREND", "DOWNTREND"].includes(regime.regime)) continue;
-    const side = regime.regime === "UPTREND" ? "LONG" : "SHORT";
-    const entry = cs[i].close;
+    const last = cs[i], prev = cs[i - 1];
+    const atr = mean(trueRanges(prefix).slice(-14));
+    if (!(atr > 0)) continue;
+    const averageVolume = mean(prefix.slice(-21, -1).map(c => c.volume)) || 0;
+    const volumeRatio = averageVolume > 0 ? last.volume / averageVolume : 0;
+    const rangeHigh = Math.max(...prefix.slice(-21, -1).map(c => c.high));
+    const rangeLow = Math.min(...prefix.slice(-21, -1).map(c => c.low));
+    const extension = Math.abs(last.close - prefix.at(-5).close) / Math.max(atr, 1e-12);
+    const pullbackLong = regime.regime === "UPTREND" && last.close < prev.close &&
+      last.close > last.open && last.close > prefix.at(-4).close;
+    const pullbackShort = regime.regime === "DOWNTREND" && last.close > prev.close &&
+      last.close < last.open && last.close < prefix.at(-4).close;
+    const breakoutLong = last.close > rangeHigh && last.close > prev.close &&
+      last.low > rangeHigh - atr * 0.25 && volumeRatio >= 1.25 && extension < 2.5;
+    const breakoutShort = last.close < rangeLow && last.close < prev.close &&
+      last.high < rangeLow + atr * 0.25 && volumeRatio >= 1.25 && extension < 2.5;
+    const side = pullbackLong || breakoutLong ? "LONG" :
+      pullbackShort || breakoutShort ? "SHORT" : null;
+    if (!side) continue;
+    const entry = last.close;
     const future = cs.slice(i + 1, i + horizon + 1);
     if (future.length !== horizon) continue;
     const adverse = side === "LONG"
@@ -93,9 +112,9 @@ function buildHistoricalOutcomeLabels(input, now = Date.now(), horizon = 24) {
     const favorable = side === "LONG"
       ? Math.max(0, Math.max(...future.map(c => c.high)) - entry)
       : Math.max(0, entry - Math.min(...future.map(c => c.low)));
-    // Match the requested MAE distribution of historically winning setups.
     if (favorable <= adverse || favorable <= 0) continue;
     labels.push({
+      symbol: symbol ? String(symbol).toUpperCase() : null,
       setupKey: regime.regime, side, entryPrice: entry,
       mae: adverse, mfe: favorable, maePct: adverse / entry * 100, mfePct: favorable / entry * 100,
       labeled: true, source: "CLOSED_HISTORICAL_4H_SIMULATION",
@@ -156,7 +175,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     confirmationSide:flowConfirmationSide,
     confirmation: funding===null || oiChange===null || liq===null ? "UNAVAILABLE" :
       (fundingHot?"BLOCKED_HOT_FUNDING":(flowConfirmationSide?"CONFIRMED":"NEUTRAL"))};
-  const historicalLabels = buildHistoricalOutcomeLabels(cs, now);
+  const historicalLabels = buildHistoricalOutcomeLabels(cs, now, 24, symbol);
   const labeled=[...outcomes,...historicalLabels].filter(o=>o&&o.setupKey&&Number.isFinite(Number(o.maePct))&&Number.isFinite(Number(o.mfePct)));
   // Percent-normalized movement distributions can be pooled across symbols
   // without mixing a low-priced coin's raw distance with BTC's.
