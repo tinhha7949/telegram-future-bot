@@ -1,4 +1,7 @@
-// USER-EDITABLE FIXED RISK: 0.75% of equity per trade.\nconst RISK_PER_TRADE = 0.0075;\n\nlet DB_READY = false
+// USER-EDITABLE FIXED RISK: 0.75% of equity per trade.
+const RISK_PER_TRADE = 0.0075;
+
+let DB_READY = false
 let STOP_NEW_ENTRIES = false
 let signalClaims = null
 let ORPHAN_RECOVERY_RUNNING = false
