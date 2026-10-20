@@ -108,9 +108,11 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const now=finite(market.now,Date.now()), cs=closedCandles(candles4h,now);
   const wait=(reason,extra={})=>({symbol,setup:"NINE_AI_4H",signalAt:cs.at(-1)?.closeTime,action:"WAIT",side:null,authorizedForExecution:false,reason,agents:null,...extra});
   if(cs.length<541) return wait("INSUFFICIENT_90D_CLOSED_4H_HISTORY",{candles:cs.length,required:541});
+  const cs1h=closedCandles(candles1h,now), cs1d=closedCandles(candles1d,now);
+  if(cs1h.length<=24||cs1d.length<=20)
+    return wait("MISSING_MULTITIMEFRAME_CLOSED_CANDLES",{candles1h:cs1h.length,candles1d:cs1d.length});
   const last=cs.at(-1), prev=cs.at(-2), closes=cs.map(c=>c.close);
-  const higherMomentum = [candles1h, candles1d].map((raw, index) => {
-    const x = closedCandles(raw, now);
+  const higherMomentum = [cs1h, cs1d].map((x, index) => {
     const lookback = index === 0 ? 24 : 20;
     return x.length > lookback ? x.at(-1).close / x.at(-1 - lookback).close - 1 : null;
   }).filter(Number.isFinite);
