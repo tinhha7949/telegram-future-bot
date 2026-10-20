@@ -106,7 +106,7 @@ function buildHistoricalOutcomeLabels(input, now = Date.now(), horizon = 24) {
 }
 function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},outcomes=[],equity=0,config={}}={}) {
   const now=finite(market.now,Date.now()), cs=closedCandles(candles4h,now);
-  const wait=(reason,extra={})=>({symbol,action:"WAIT",side:null,authorizedForExecution:false,reason,agents:null,...extra});
+  const wait=(reason,extra={})=>({symbol,setup:"NINE_AI_4H",signalAt:cs.at(-1)?.closeTime,action:"WAIT",side:null,authorizedForExecution:false,reason,agents:null,...extra});
   if(cs.length<541) return wait("INSUFFICIENT_90D_CLOSED_4H_HISTORY",{candles:cs.length,required:541});
   const last=cs.at(-1), prev=cs.at(-2), closes=cs.map(c=>c.close);
   const higherMomentum = [candles1h, candles1d].map((raw, index) => {
@@ -211,7 +211,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   return {symbol,side,action:side,authorizedForExecution:true,reason,setup:"NINE_AI_4H",signalAt:last.closeTime,
     entry,price:entry,sl,tp:tp2,tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeframe:"4h",
     riskPerTradePct:0.0075,riskEquity:finite(equity,0)*0.0075,
-    edges:{LONG:long,SHORT:short},regime,agents,setupKey,featureSnapshot:{snapshotAt:finite(market.snapshotAt,now),closeTime:last.closeTime,close:entry,atr,atrPct,volumeRatio,funding,oiChange,spread,depth,latency,regime,structureBias},
+    edges:{LONG:long,SHORT:short},regime,agents,setupKey,featureSnapshot:{snapshotAt:finite(market.snapshotAt,now),closeTime:last.closeTime,close:entry,atr,atrPct,volumeRatio,funding,oiChange,spread,depth,latency,estSlippagePct:estimatedSlippage,regime,structureBias},
     tradePlan:{stopMethod:"LABELED_MAE_P80_WITH_STRUCTURE_BUFFER",targetMethod:"LABELED_MFE_P50_P90",tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeoutMs:96*60*60*1000},
     candles:cs.length};
 }
