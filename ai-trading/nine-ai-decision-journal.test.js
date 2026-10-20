@@ -68,6 +68,7 @@ const evaluations = journal.computeEvaluations(wait, candles);
 assert.ok(evaluations);
 assert.ok(evaluations.evaluations["4"]);
 assert.ok(evaluations.evaluations["16"]);
+assert.ok(evaluations.evaluations["24"], "the timeout horizon must be evaluated after 24 closed 4h bars");
 assert.equal(evaluations.evaluations["4"].source, "HYPOTHETICAL_FORWARD_CLOSES_NOT_EXECUTED_PNL");
 assert.ok(Number.isFinite(evaluations.evaluations["4"].longNetR));
 assert.ok(Number.isFinite(evaluations.evaluations["4"].shortNetR));
@@ -159,6 +160,8 @@ assert.ok(learnedLossWindow.adjustment < 0);
   assert.equal(result.recorded, true);
   assert.equal(attempts, 3, "transient network failures should be retried with a fresh insert attempt");
   assert.equal(inserted.length, 1);
+  assert.equal(await journal.hasDecisionForCandle("RETRYTESTUSDT", base), true,
+    "the journal must block a second decision on the same closed candle");
   const duplicate = await journal.recordDecision(args);
   assert.equal(duplicate.reason, "DUPLICATE_DECISION");
   assert.equal(attempts, 3, "duplicate decisions must not trigger another database write");
