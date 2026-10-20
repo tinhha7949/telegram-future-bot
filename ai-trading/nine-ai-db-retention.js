@@ -276,9 +276,27 @@ function createRetention(db, overrides = {}) {
         console.error("⚠️ NINE-AI DB RETENTION MEASUREMENT INCOMPLETE: " + JSON.stringify(lastSummary));
         return lastSummary;
       }
+      const specs = getSpecs(before.names);
+      // Expired evaluated WAIT rows are pruned on every retention cycle, even
+      // below the global capacity threshold. This prevents the scan journal from
+      // accumulating indefinitely on smaller databases. Pending and actual-trade
+      // rows are excluded by the dedicated allowlisted spec.
       if (!force && before.usageMB < triggerMB) {
-        lastSummary = { status: "BELOW_THRESHOLD", usageMB: before.usageMB,
-          triggerMB, targetMB, deleted: 0 };
+        const waitSpec = specs.find(spec => spec.category === "evaluated_wait_decision");
+        const waitCleanup = waitSpec
+          ? await pruneOldestBatch([waitSpec], config.dryRun,
+            Math.min(config.batchSize, config.maxDeletesPerRun))
+          : { deleted: 0, candidates: 0, perCollection: {} };
+        lastSummary = {
+          status: config.dryRun && waitCleanup.candidates ? "DRY_RUN" :
+            waitCleanup.deleted ? "WAIT_RETENTION_COMPLETED" : "BELOW_THRESHOLD",
+          usageMB: Number(before.usageMB.toFixed(2)), triggerMB, targetMB,
+          deleted: waitCleanup.deleted, candidates: waitCleanup.candidates,
+          perCollection: waitCleanup.perCollection, dryRun: config.dryRun
+        };
+        if (waitCleanup.deleted || (config.dryRun && waitCleanup.candidates)) {
+          console.log("🧹 NINE-AI DB RETENTION: " + JSON.stringify(lastSummary));
+        }
         return lastSummary;
       }
 
@@ -286,7 +304,6 @@ function createRetention(db, overrides = {}) {
       let totalDeleted = 0;
       let totalCandidates = 0;
       const perCollection = {};
-      const specs = getSpecs(before.names);
 
       // One strict retention policy only. No emergency mode may shorten age limits.
       // Cap total deletes per run so a bad estimate cannot trigger an unbounded purge.
