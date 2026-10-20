@@ -185,12 +185,12 @@ function buildOutcomeDistribution(outcomes, family, regime, side) {
     Number.isFinite(Number(row.mfePct)) && Number(row.mfePct) >= 0
   );
   const winners = rows.filter(row => String(row.result).toUpperCase() === "WIN");
-  if (rows.length < MIN_LABELS || winners.length < MIN_LABELS) {
+  if (rows.length < MIN_LABELS || winners.length < Math.max(10, Math.ceil(MIN_LABELS * 0.25))) {
     return { ready: false, samples: rows.length, winningSamples: winners.length, reason: "INSUFFICIENT_LABELLED_OUTCOMES" };
   }
   const mae = winners.map(row => Number(row.maePct));
   const mfe = winners.map(row => Number(row.mfePct));
-  const grossRs = rows.map(row => Number.isFinite(Number(row.grossR)) ? Number(row.grossR) : Number(row.netR));
+  const grossRs = winners.map(row => Number.isFinite(Number(row.grossR)) ? Number(row.grossR) : Number(row.netR)).filter(Number.isFinite);
   const pWin = rows.filter(row => String(row.result).toUpperCase() === "WIN").length / rows.length;
   return {
     ready: true, samples: rows.length, winningSamples: winners.length,
@@ -216,7 +216,7 @@ function analyzeNineAI(raw4h, symbol, context = {}, asOf = Date.now()) {
   if (candles.length < 90) return waitResult(symbol, "INSUFFICIENT_CLOSED_4H_CANDLES", { closed4h: candles.length });
   const last = candles.at(-1), a = atr(candles, 14);
   if (!a || !Number.isFinite(a) || !(last.close > 0)) return waitResult(symbol, "INVALID_ATR_OR_PRICE");
-  if (asOf - last.closeTime > MAX_SIGNAL_AGE_MS + TIMEFRAME_MS) return waitResult(symbol, "STALE_LAST_CLOSED_CANDLE", { lastCloseTime: last.closeTime });
+  if (asOf - last.closeTime > MAX_SIGNAL_AGE_MS) return waitResult(symbol, "STALE_LAST_CLOSED_CANDLE", { lastCloseTime: last.closeTime });
   const regime = estimateRegime(candles, daily);
   if (regime.regime === "UNKNOWN") return waitResult(symbol, regime.reason, { regime });
   if (regime.regime_conf < 0.55) return waitResult(symbol, "LOW_REGIME_CONFIDENCE", { regime });
