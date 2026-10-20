@@ -47,6 +47,8 @@ const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const nineAiDbRetention = require("./ai-trading/nine-ai-db-retention")
 const nineAiOfflineLearning = require("./ai-trading/nine-ai-offline-learning");
+const nineAiLiquidationFeed = require("./ai-trading/binance-liquidation-feed");
+nineAiLiquidationFeed.start();
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -2345,38 +2347,6 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
         if (!response?.ok) return null;
         try { return await response.json(); } catch (_) { return null; }
     };
-    const getLiquidationImbalance = async () => {
-        if (!process.env.BINANCE_KEY || !process.env.BINANCE_SECRET) return null;
-        const params = new URLSearchParams({
-            symbol: String(symbol),
-            startTime: String(now - 4 * 60 * 60 * 1000),
-            endTime: String(now),
-            limit: "100",
-            recvWindow: "5000",
-            timestamp: String(getTimestamp())
-        });
-        const signature = crypto.createHmac("sha256", process.env.BINANCE_SECRET).update(params.toString()).digest("hex");
-        const url = "https://fapi.binance.com/fapi/v1/forceOrders?" + params.toString() + "&signature=" + signature;
-        const response = await safeFetch(url, { headers: { "X-MBX-APIKEY": process.env.BINANCE_KEY } }, 1);
-        if (!response?.ok) return null;
-        let rows;
-        try { rows = await response.json(); } catch (_) { return null; }
-        if (!Array.isArray(rows)) return null;
-        if (!rows.length) return 0;
-        let shortLiquidationNotional = 0;
-        let longLiquidationNotional = 0;
-        for (const row of rows) {
-            const price = [row.avgPrice, row.price, row.ap].map(Number).find(value => value > 0) || 0;
-            const qty = [row.executedQty, row.origQty, row.q].map(Number).find(value => value > 0) || 0;
-            if (!(price > 0 && qty > 0)) continue;
-            const notional = price * qty;
-            if (String(row.side || row.S).toUpperCase() === "BUY") shortLiquidationNotional += notional;
-            else if (String(row.side || row.S).toUpperCase() === "SELL") longLiquidationNotional += notional;
-        }
-        const total = shortLiquidationNotional + longLiquidationNotional;
-        if (!(total > 0)) return null;
-        return (shortLiquidationNotional - longLiquidationNotional) / total;
-    };
     const encoded = encodeURIComponent(symbol);
     const [premium, oiNow, oiHistory, book, depth, liquidationImbalance] = await Promise.all([
         getJson("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=" + encoded),
@@ -2384,7 +2354,7 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
         getJson("https://fapi.binance.com/futures/data/openInterestHist?symbol=" + encoded + "&period=4h&limit=2"),
         getJson("https://fapi.binance.com/fapi/v1/ticker/bookTicker?symbol=" + encoded),
         getJson("https://fapi.binance.com/fapi/v1/depth?symbol=" + encoded + "&limit=20"),
-        getLiquidationImbalance()
+        Promise.resolve(nineAiLiquidationFeed.getImbalance(symbol, now))
     ]);
     const bid = Number(book?.bidPrice), ask = Number(book?.askPrice);
     const spreadPct = bid > 0 && ask >= bid ? ((ask - bid) / ((ask + bid) / 2)) * 100 : null;
