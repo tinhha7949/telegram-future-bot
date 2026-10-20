@@ -190,7 +190,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     continuation:{side:continuationSide,p:continuationSide?0.6:0.5,expectedR:null,volumeRatio,oiChange,fundingHot},
     breakout:{side:breakoutSide,p:breakoutSide?0.6:0.5,held:breakoutHeld,volumeRatio,extensionAtr:extension,spreadPct:spread},
     meanReversion:{side:revertSide,p:revertSide?0.55:0.5,vwap:vwapValue,deviationAtr:deviation,enabled:rangeRegime},
-    flow,outcome:{dist_MAE:null,dist_MFE:null},fill:{est_slippage:slippage,spreadPct:spread,depthNotional:depth,latencyMs:latency}
+    flow,outcome:{dist_MAE:null,dist_MFE:null},fill:{est_slippage:slippage,spreadPct:spread,depthNotional:depth,latencyMs:latency,estimatedFillPriceBySide:{LONG:last.close*(1+slippage/100),SHORT:last.close*(1-slippage/100)}}
   };
   const candidates=["LONG","SHORT"].map(side=>{
     const modelList=[
@@ -224,7 +224,11 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     const track=market.trackRecord?.[regime.regime+"_"+side], trackSamples=finite(track?.samples,0), trackGrossR=finite(track?.meanGrossR);
     const expectedR=trackSamples>=20&&trackGrossR!==null?0.5*er+0.5*trackGrossR:er;
     const edge=distSource?p*expectedR-cost-uncertainty:null;
-    return {side,p,expectedR,cost,uncertaintyPenalty:uncertainty,edge,applicableModels:applicable.map(m=>m.name),setupKey:distSource?.setupKey||null,distMAE:distSource?.distMAE||null,distMFE:distSource?.distMFE||null,samples:distSource?.samples||0};
+    return {side,p,expectedR,cost,uncertaintyPenalty:uncertainty,edge,
+      applicableModels:applicable.map(m=>m.name),
+      modelEstimates:applicable.map(m=>({name:m.name,p:m.p,expectedR:m.er,samples:m.samples,setupKey:m.setupKey})),
+      estimatedFillPrice:last.close*(side==="LONG"?1+slippage/100:1-slippage/100),
+      setupKey:distSource?.setupKey||null,distMAE:distSource?.distMAE||null,distMFE:distSource?.distMFE||null,samples:distSource?.samples||0};
   });
   const [long,short]=candidates;
   const minEdge=finite(config.minEdge,0.05), gapEdge=finite(config.gapEdge,0.1);
@@ -245,7 +249,13 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     (regime.regime!=="UPTREND"||structureBias!=="BEARISH")){side="LONG";reason="LONG_NET_EDGE_WINS";}
   else if(short.edge>minEdge&&short.edge-long.edge>gapEdge&&flow.confirmationSide==="SHORT"&&
     (regime.regime!=="DOWNTREND"||structureBias!=="BULLISH")){side="SHORT";reason="SHORT_NET_EDGE_WINS";}
-  agents.continuation.expectedR=continuationSide==="LONG"?long.expectedR:continuationSide==="SHORT"?short.expectedR:null;
+  const continuationEstimate=(continuationSide==="LONG"?long:continuationSide==="SHORT"?short:null)?.modelEstimates?.find(m=>m.name==="continuation");
+  const breakoutEstimate=(breakoutSide==="LONG"?long:breakoutSide==="SHORT"?short:null)?.modelEstimates?.find(m=>m.name==="breakout");
+  const revertEstimate=(revertSide==="LONG"?long:revertSide==="SHORT"?short:null)?.modelEstimates?.find(m=>m.name==="mean_reversion");
+  agents.continuation.p=continuationEstimate?.p??null;
+  agents.continuation.expectedR=continuationEstimate?.expectedR??null;
+  agents.breakout.p=breakoutEstimate?.p??null;
+  agents.meanReversion.p=revertEstimate?.p??null;
   agents.outcome={dist_MAE:side==="LONG"?long.distMAE:side==="SHORT"?short.distMAE:null,
     dist_MFE:side==="LONG"?long.distMFE:side==="SHORT"?short.distMFE:null,
     setupKey:side==="LONG"?long.setupKey:side==="SHORT"?short.setupKey:null,
