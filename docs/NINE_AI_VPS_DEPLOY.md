@@ -37,7 +37,7 @@ npm test
 Before restarting an existing live bot, verify the exchange has no unprotected position. The process uses a local PID lock, but that does not protect against a second copy on another VPS.
 
 ## Fixed risk and strategy
-- Risk is hard-coded in `index.js` as `RISK_PER_TRADE = 0.0075` (0.75% equity). Environment variables do not override it.
+- To change per-trade risk, manually edit the numeric literal in `index.js`: `const RISK_PER_TRADE = 0.0075` means 0.75% of equity. For example, `0.01` means 1%. Both risk limits use this constant; `.env` does not override it. Run `npm test` after editing.
 - The decision cycle uses closed 4-hour candles and requires about 90 days of 4-hour history plus closed 1-hour and 1-day context.
 - New entries default to WAIT when market inputs, liquidation confirmation, outcome distributions, or exchange protection are unavailable.
 - The initial champion policy can trade when the Nine-AI entry contract passes. Candidate policies cannot replace the champion until the same-opportunity/cost walk-forward test passes and a 14-day shadow period beats the champion.
