@@ -3504,7 +3504,7 @@ if(!execution?.ok){
                 trade.sl = Number(recoveredTPSL.sl)
                 trade.tp = Number(recoveredTPSL.tp)
                 execution = { ok: true, initialRisk: Math.abs(trade.entry - trade.sl), recovered: true,
-                    slOrderId: recoveredTPSL.slOrderId, tpOrderId: recoveredTPSL.tpOrderId }
+                    slOrderId: recoveredTPSL.slOrderId, tp1OrderId: recoveredTPSL.tp1OrderId, tpOrderId: recoveredTPSL.tpOrderId }
                 trade.emergencyProtectionNeeded = false
                 console.log(`🛡 RECOVERED TPSL ${trade.symbol} SL=${trade.sl} TP=${trade.tp}`)
             }else{
@@ -4630,7 +4630,11 @@ if(existingIndex !== -1){
         const protection = await setInitialTPSL(orphanTrade)
         if(protection?.ok){
             orphanTrade.sl = Number(protection.sl)
+            orphanTrade.tp1 = Number(protection.tp1)
+            orphanTrade.tp1OrderId = protection.tp1OrderId
             orphanTrade.tp = Number(protection.tp)
+            orphanTrade.slOrderId = protection.slOrderId
+            orphanTrade.tpOrderId = protection.tpOrderId
             orphanTrade.initialRisk = Math.abs(entry - orphanTrade.sl)
             orphanTrade.emergencyProtectionNeeded = false
             TPSL_PHASE[symbol] = "ACTIVE"
@@ -5413,7 +5417,11 @@ async function runDynamicTPSL(){
                     const protection = await setInitialTPSL(trade)
                     if(protection?.ok){
                         trade.sl = Number(protection.sl)
+                        trade.tp1 = Number(protection.tp1)
+                        trade.tp1OrderId = protection.tp1OrderId
                         trade.tp = Number(protection.tp)
+                        trade.slOrderId = protection.slOrderId
+                        trade.tpOrderId = protection.tpOrderId
                         trade.initialRisk = Math.abs(Number(trade.entry) - trade.sl)
                         trade.emergencyProtectionNeeded = false
                         TPSL_PHASE[symbol] = "ACTIVE"
@@ -5421,7 +5429,11 @@ async function runDynamicTPSL(){
                             { symbol, result: "PENDING" },
                             { $set: {
                                 sl: trade.sl,
+                                tp1: trade.tp1,
+                                tp1OrderId: trade.tp1OrderId,
                                 tp: trade.tp,
+                                slOrderId: trade.slOrderId,
+                                tpOrderId: trade.tpOrderId,
                                 initialRisk: trade.initialRisk,
                                 emergencyProtectionNeeded: false,
                                 updatedAt: Date.now()
