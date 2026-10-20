@@ -2418,7 +2418,6 @@ async function scan(symbol){
         const data1h = await getData(symbol, "1h", 100);
         const data1d = await getData(symbol, "1d", 100);
         const scanAt = Date.now();
-        const marketSnapshot = await getNineAIMarketSnapshot(symbol, scanAt);
         if (!Array.isArray(data4h)) {
             recordNineAIAbstention("MARKET_DATA_UNAVAILABLE");
             try {
@@ -2434,6 +2433,15 @@ async function scan(symbol){
             }
             return null;
         }
+        const latestClosedCandle = nineAiPipeline.closedCandles(data4h, scanAt).at(-1);
+        if (!latestClosedCandle) {
+            recordNineAIAbstention("NO_CLOSED_4H_CANDLE");
+            return null;
+        }
+        if (await nineAiDecisionJournal.hasDecisionForCandle(symbol, latestClosedCandle.closeTime)) {
+            return null;
+        }
+        const marketSnapshot = await getNineAIMarketSnapshot(symbol, scanAt);
         try {
             await nineAiDecisionJournal.settleMatured(symbol, data4h);
         } catch (settleError) {
