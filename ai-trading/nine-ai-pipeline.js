@@ -202,9 +202,9 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const minEdge=finite(config.minEdge,0.05), gapEdge=finite(config.gapEdge,0.1);
   let side="WAIT",reason="EDGE_BELOW_THRESHOLD";
   if(!["UPTREND","DOWNTREND"].includes(regime.regime)) reason="REGIME_NOT_TREND";
-  else if(flow.confirmation!=="CONFIRMED") reason="FLOW_BLOCKED_OR_UNCONFIRMED";
-  else if(long.edge>minEdge && long.edge-short.edge>gapEdge && flow.confirmationSide==="LONG" && (trendLong?structureBias!=="BEARISH":true)) {side="LONG";reason="LONG_NET_EDGE_WINS";}
-  else if(short.edge>minEdge && short.edge-long.edge>gapEdge && flow.confirmationSide==="SHORT" && (trendShort?structureBias!=="BULLISH":true)) {side="SHORT";reason="SHORT_NET_EDGE_WINS";}
+  else if(flow.confirmation==="BLOCKED_HOT_FUNDING"||flow.confirmation==="UNAVAILABLE") reason="FLOW_BLOCKED_OR_UNAVAILABLE";
+  else if(long.edge>minEdge && long.edge-short.edge>gapEdge && (!flow.confirmationSide||flow.confirmationSide==="LONG") && (trendLong?structureBias!=="BEARISH":true)) {side="LONG";reason="LONG_NET_EDGE_WINS";}
+  else if(short.edge>minEdge && short.edge-long.edge>gapEdge && (!flow.confirmationSide||flow.confirmationSide==="SHORT") && (trendShort?structureBias!=="BULLISH":true)) {side="SHORT";reason="SHORT_NET_EDGE_WINS";}
   if(side==="WAIT") return wait(reason,{regime,agents,edges:{LONG:long,SHORT:short},setupKey});
   const entry=last.close;
   const stopDistance=distMAE.p80*entry/100, tp1Distance=distMFE.p50*entry/100, tp2Distance=distMFE.p90*entry/100;
