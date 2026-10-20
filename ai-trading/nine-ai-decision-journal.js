@@ -116,9 +116,10 @@ function assessWindowEvidence(rawWindow, side, sourceRecords = records) {
   }
   const outcomeKey = String(side).toLowerCase() + "NetR";
   const candidates = sourceRecords.map(record => {
-    const features = record.windowFeatures || (Array.isArray(record.marketWindow) &&
-      record.marketWindow.length >= MARKET_WINDOW_BARS
-      ? (record.windowFeatures = extractWindowFeatures(record.marketWindow)) : null);
+    const features = record.windowFeatureSchemaVersion === 2
+      ? record.windowFeatures || null
+      : Array.isArray(record.marketWindow) && record.marketWindow.length >= MARKET_WINDOW_BARS
+        ? (record.windowFeatures = extractWindowFeatures(record.marketWindow)) : record.windowFeatures || null;
     const outcomes = [record.evaluations?.["4"]?.[outcomeKey], record.evaluations?.["16"]?.[outcomeKey]].map(value => num(value));
     const targetR = outcomes.every(Number.isFinite) ? mean(outcomes) : null;
     return { record, features, targetR };
@@ -228,6 +229,7 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
     featureSchemaVersion: 1,
     marketDataSchemaVersion: 2,
     marketWindow: window,
+    windowFeatureSchemaVersion: 2,
     windowFeatures: extractWindowFeatures(window),
     marketRegime: regimeOf(features),
     learningEvidence,
