@@ -11,6 +11,7 @@ const TPSL_CLOSING = {}
 const MIN_NOTIONAL_RISK_COOLDOWN = new Map()
 const MIN_NOTIONAL_RISK_COOLDOWN_MS = 15 * 60 * 1000
 const MAX_CANDIDATE_ATTEMPTS_PER_SCAN = 10
+const MIN_TRADE_RR = 0.8
 function envNumber(name, fallback, min, max) {
     const raw = process.env[name];
     if (raw == null || String(raw).trim() === "") return fallback;
@@ -1520,7 +1521,7 @@ async function setInitialTPSL(trade){
         }
 
         const initialRR = Math.abs(tp - entry) / Math.max(Math.abs(entry - sl), Number.EPSILON);
-        if (!Number.isFinite(initialRR) || initialRR <= 0) {
+        if (!Number.isFinite(initialRR) || initialRR < MIN_TRADE_RR) {
             console.log(`⛔ INITIAL RR INVALID ${symbol} RR=${initialRR}`);
             return false;
         }
@@ -1733,7 +1734,7 @@ async function openPositionWithTPSL(trade, qty){
     const plannedReward = Math.abs(plannedTP - plannedEntry)
     const plannedRR = plannedRisk > 0 ? plannedReward / plannedRisk : NaN
 
-    if (!Number.isFinite(plannedRR) || plannedRR <= 0) {
+    if (!Number.isFinite(plannedRR) || plannedRR < MIN_TRADE_RR) {
         console.log(
             `❌ INVALID ORIGINAL NINE-AI RR ${symbol} ENTRY=${plannedEntry} SL=${plannedSL} TP=${plannedTP} RR=${plannedRR}`
         )
@@ -2615,7 +2616,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     !Number.isFinite(tp) || tp <= 0 ||
     !Number.isFinite(priceRisk) || priceRisk <= 0 ||
     !Number.isFinite(budget) || budget <= 0 ||
-    !Number.isFinite(rr) || rr <= 0
+    !Number.isFinite(rr) || rr < MIN_TRADE_RR
   ) {
     console.log(`❌ INVALID NINE-AI SIGNAL ${best?.symbol || 'UNKNOWN'}`);
     return null;
@@ -2950,7 +2951,7 @@ let filtered = candidates.filter(c => {
         (side === "LONG" ? sl < entry && tp > entry :
          side === "SHORT" ? sl > entry && tp < entry : false);
 
-    if (!geometryValid || !Number.isFinite(rr) || rr <= 0) {
+    if (!geometryValid || !Number.isFinite(rr) || rr < MIN_TRADE_RR) {
         console.log(
             `🚫 FILTER NINE-AI GEOMETRY: ${c.symbol} | ` +
             `side=${side} | RR=${safeFixed(rr, 2)} | invalid positive geometry`
@@ -3082,7 +3083,7 @@ continue
     // repaired with a legacy RR or database-derived target.
     const rr = Math.abs(Number(best.tp) - Number(best.price)) /
         Math.abs(Number(best.price) - Number(best.sl));
-    if (!Number.isFinite(rr) || rr <= 0) {
+    if (!Number.isFinite(rr) || rr < MIN_TRADE_RR) {
         console.log(
             `🚫 FILTER NINE-AI RR: ${best.symbol} | RR=${safeFixed(rr, 2)} | invalid positive geometry`
         );
@@ -3385,7 +3386,7 @@ if(!trade){
         const signalKey = `${trade.symbol}:${Number(trade.signalAt)}`
         const plannedTargetR = Math.abs(Number(trade.tp) - Number(trade.entry)) /
             Math.abs(Number(trade.entry) - Number(trade.sl));
-        if (!Number.isFinite(plannedTargetR) || plannedTargetR <= 0) {
+        if (!Number.isFinite(plannedTargetR) || plannedTargetR < MIN_TRADE_RR) {
             console.log(`⛔ INVALID NINE-AI RR BEFORE CLAIM ${trade.symbol}: ${plannedTargetR}`);
             continue;
         }
