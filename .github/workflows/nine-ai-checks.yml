@@ -2,7 +2,7 @@ name: Nine-AI strategy checks
 
 on:
   push:
-    branches: ["main", "feature/nine-ai-primary-strategy"]
+    branches: ["main", "feature/nine-ai-primary-strategy", "nine-ai-four-hour-rebuild"]
   pull_request:
     branches: ["main"]
 
@@ -15,6 +15,8 @@ jobs:
         with:
           node-version: "22"
       - run: node --check index.js
+      - run: node --check ai-trading/nine-ai-v2-engine.js
+      - run: node ai-trading/nine-ai-v2-engine.test.js
       - run: node --check ai-trading/nine-ai-central-decision-engine.js
       - run: node ai-trading/nine-ai-central-decision-engine.test.js
       - run: node --check ai-trading/execution-risk.js
