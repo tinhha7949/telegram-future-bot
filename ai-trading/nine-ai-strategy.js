@@ -12,10 +12,7 @@ const independentModels = require("./nine-ai-independent-models");
 const contextualLearning = require("./nine-ai-contextual-learning");
 const counterfactualResearch = require("./nine-ai-counterfactual-research");
 const rewardModel = require("./nine-ai-reward-model");
-const autonomousDeployment = require("./nine-ai-autonomous-deployment");
 const autonomousConsensus = require("./nine-ai-data-derived-consensus");
-const entryStrategy = require("./nine-ai-entry-strategy");
-const fenixBootstrap = require("./nine-ai-fenix-bootstrap");
 
 const ROLE_NAMES = [
   "Technical Analyst AI",
@@ -557,40 +554,56 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       ? `independentAnalystModelP(long)=${analystModel.pLong}; volumeRatio=${f.volumeRatio.toFixed(2)}`
       : `warmupFallback=market-quality-check; volumeRatio=${f.volumeRatio.toFixed(2)}; body/range=${(candleRange ? candleBody / candleRange : 0).toFixed(2)}`);
 
-  // 8. Decision AI: apply thresholds learned from matured journal outcomes.
-  // No fixed live 4-of-7 vote requirement remains.
-  const longCount = longVotes.length, shortCount = shortVotes.length;
+  // 8. Decision AI: combine directional assessor evidence with a minimum
+  // coverage and weighted-margin guard before authorizing a direction.
+  // Research policies are evidence only. They may be logged and evaluated, but
+  // never own the direction or provide a fallback trading brain.
   const dataDerivedConsensus = autonomousConsensus.assessLive(
     roleResults, f.marketRegime || "UNKNOWN", null,
     { ...learnedFeatures, marketRegime: f.marketRegime, rsi14: f.rsi,
       extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
       falseBreakoutRisk: f.falseBreakoutRisk }
   );
-  const nativePolicyStatus = autonomousConsensus.status();
-  const nativeMode = Boolean(nativePolicyStatus.handoffActivated) || nativePolicyStatus.activePolicies > 0;
-  // Critical one-way boundary: do not even calculate FenixAI features/signals
-  // after the persisted NINE-AI native handoff has activated.
-  const fenixDecision = nativeMode ? null : fenixBootstrap.decideFenixBootstrap(candles, f);
-  const entryDecision = entryStrategy.selectEntryDecision({
-    activeNativePolicyCount: nativePolicyStatus.activePolicies,
-    nativeHandoffActivated: nativePolicyStatus.handoffActivated,
-    nativePolicyDecision: dataDerivedConsensus,
-    fenixDecision,
-    features: { rsi: f.rsi, macdHistogram: f.macdHistogram }
-  });
   const consensusSide = dataDerivedConsensus.ready && dataDerivedConsensus.allowed
     ? dataDerivedConsensus.side : null;
-  const decisionModel = independent.get("decision");
-  // Before native policy activation, FenixAI's multi-component bootstrap is
-  // the sole entry-direction source. After activation, NINE-AI's own policy
-  // is the sole source and FenixAI is not evaluated or used as fallback.
-  const side = resolveConsensusSide(entryDecision.side);
+
+  // Nine-AI Decision AI computes the only live direction from the seven
+  // directional assessors. No Fenix/legacy bootstrap or research policy can
+  // originate a side. A weak/ambiguous meta-decision becomes WAIT.
+  const directionalRows = roleResults.filter(role => role.side === "LONG" || role.side === "SHORT");
+  const sideEvidence = { LONG: 0, SHORT: 0 };
+  const sideWeights = { LONG: 0, SHORT: 0 };
+  for (const role of directionalRows) {
+    const roleSide = role.side;
+    const weight = Number(role.weight ?? ROLE_WEIGHTS[role.name] ?? 0);
+    const conviction = clamp(Number(role.confidence) || 0, 0, 100) / 100;
+    sideEvidence[roleSide] += weight * conviction;
+    sideWeights[roleSide] += weight;
+  }
+  const longCount = longVotes.length, shortCount = shortVotes.length;
+  const winningSide = sideEvidence.LONG > sideEvidence.SHORT ? "LONG"
+    : sideEvidence.SHORT > sideEvidence.LONG ? "SHORT" : null;
+  const totalDirectionalWeight = sideWeights.LONG + sideWeights.SHORT;
+  const evidenceMargin = totalDirectionalWeight > 0
+    ? Math.abs(sideEvidence.LONG - sideEvidence.SHORT) / totalDirectionalWeight : 0;
+  const winningVoteCount = winningSide === "LONG" ? longCount : winningSide === "SHORT" ? shortCount : 0;
+  const side = winningSide && winningVoteCount >= 3 && evidenceMargin >= 0.08
+    ? winningSide : null;
+  const entryDecision = {
+    source: "NINE_AI_CENTRAL_META_DECISION",
+    side,
+    confidence: side ? Math.round(100 * Math.max(sideEvidence.LONG, sideEvidence.SHORT) /
+      Math.max(totalDirectionalWeight, Number.EPSILON)) : 0,
+    reason: side ? "NINE_AI_WEIGHTED_DIRECTIONAL_EVIDENCE" : "NINE_AI_DIRECTIONAL_EVIDENCE_AMBIGUOUS",
+    details: { sideEvidence, sideWeights, evidenceMargin, winningVoteCount,
+      minimumWinningVotes: 3, minimumEvidenceMargin: 0.08,
+      researchPolicySide: consensusSide || null }
+  };
   const chosenVotes = side === "LONG" ? longVotes : side === "SHORT" ? shortVotes : [];
-  const confidence = entryDecision.source === "FENIXAI_BOOTSTRAP"
+  const confidence = side
     ? Math.max(0, Math.min(95, Number(entryDecision.confidence) || 0))
-    : chosenVotes.length
-      ? Math.round(avg(chosenVotes.map(v => v.confidence)) * Math.min(1, chosenVotes.length / 5))
-      : 0;
+    : 0;
+  const decisionModel = independent.get("decision");
   const decisionConfidence = modelConfidence("decision");
   roleResults.push({ name: ROLE_NAMES[7], side: side || "WAIT",
     confidence: decisionConfidence == null ? confidence : Math.min(confidence || decisionConfidence, decisionConfidence),
@@ -682,23 +695,10 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const adaptiveDecisionWeights = policy.decisionWeights;
   const weighted = calculateWeightedRoleScore(roleResults, side, policy.roleWeights);
   const roleScore = weighted.score;
-  // Validated counterfactual timing evidence is deployed into ranking. Earlier-entry
-  // policies add a bounded boost; delayed-entry policies penalize immediate-entry
-  // ranking so the scanner prioritizes better-aligned opportunities. Hard execution
-  // risk checks, SL/TP geometry and position sizing remain unchanged.
-  const timingPolicyEvidence = autonomousDeployment.assess({
-    marketRegime: f.marketRegime,
-    extensionAtr: f.extensionAtr,
-    rsi14: f.rsi,
-    momentum4: f.mom4,
-    volumeRatio: f.volumeRatio,
-    falseBreakoutRisk: f.falseBreakoutRisk
-  }, side);
-  const timingVariant = timingPolicyEvidence.policy?.variant || "";
-  const timingAdjustment = timingVariant.startsWith("EARLIER_")
-    ? Math.abs(Number(timingPolicyEvidence.adjustment) || 0)
-    : timingVariant.startsWith("DELAY_")
-      ? -Math.abs(Number(timingPolicyEvidence.adjustment) || 0) : 0;
+  // Timing research remains diagnostic. It cannot alter live rank/eligibility.
+  const timingPolicyEvidence = { adjustment: 0, policy: null,
+    reason: "RESEARCH_ONLY_NOT_APPLIED_TO_LIVE_DECISIONS" };
+  const timingAdjustment = 0;
   const baseRankScore = roleScore * adaptiveDecisionWeights.role +
     setupQuality * adaptiveDecisionWeights.setup + entryQuality * adaptiveDecisionWeights.entry;
   const rankScore = Math.round(clamp(baseRankScore + timingAdjustment, 0, 100) * 100) / 100;
@@ -735,41 +735,9 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
       falseBreakoutRisk: f.falseBreakoutRisk }
   });
-  const exitCandidates = (exitPlanAdvice.validatedSuggestions || [])
-    .filter(item => item.side === side &&
-      /^EXIT_LEVEL:S[0-9]+(?:\.[0-9]+)?:T[0-9]+(?:\.[0-9]+)?$/.test(String(item.variant || "")) &&
-      Number(item.trainSamples) >= counterfactualResearch.MIN_TRAIN &&
-      Number(item.testSamples) >= counterfactualResearch.MIN_TEST &&
-      Number(item.testUpliftR) > Number(item.standardError || 0) &&
-      Number(item.testMeanR) > 0)
-    .sort((a, b) => (Number(b.testUpliftR) - Number(b.standardError || 0)) -
-      (Number(a.testUpliftR) - Number(a.standardError || 0)));
-  for (const candidate of exitCandidates) {
-    const match = String(candidate.variant).match(/^EXIT_LEVEL:S([0-9]+(?:\.[0-9]+)?):T([0-9]+(?:\.[0-9]+)?)$/);
-    const stopScale = match ? Number(match[1]) : NaN;
-    const targetScale = match ? Number(match[2]) : NaN;
-    if (![stopScale, targetScale].every(Number.isFinite) || stopScale <= 0 || targetScale <= 0) continue;
-    const candidateStopDistance = stopDistance * stopScale;
-    const candidateTargetDistance = targetDistance * targetScale;
-    const candidateRR = candidateTargetDistance / candidateStopDistance;
-    // No preset RR range is imposed. Position sizing recalculates from the
-    // selected stop; the existing capital-risk budget remains the exposure cap.
-    if (!(Number.isFinite(candidateRR) && candidateRR >= MIN_TRADE_RR)) continue;
-    stopDistance = candidateStopDistance;
-    targetDistance = candidateTargetDistance;
-    targetRR = Number(candidateRR.toFixed(2));
-    adaptiveExitPlan = {
-      policy: candidate.variant,
-      testUpliftR: candidate.testUpliftR,
-      testMeanR: candidate.testMeanR,
-      testSamples: candidate.testSamples,
-      standardError: candidate.standardError,
-      stopScale,
-      targetScale,
-      source: candidate.source || "VALIDATED_OBSERVED_MARKET_LEVELS"
-    };
-    break;
-  }
+  // Counterfactual exit research is retained in the audit trail only. Live SL/TP
+  // comes from observed market pivots and is never silently replaced by a policy.
+  const exitCandidates = [];
   const sl = side === "LONG" ? entry - stopDistance : entry + stopDistance;
   const tp = side === "LONG" ? entry + targetDistance : entry - targetDistance;
   const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
@@ -829,8 +797,8 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     tradePlan: {
       timeframe: "15m",
       entryMethod: "LATEST_CLOSED_CANDLE",
-      stopMethod: adaptiveExitPlan ? "VALIDATED_COUNTERFACTUAL_POLICY" : observedExitPlan.source,
-      targetMethod: adaptiveExitPlan ? "VALIDATED_COUNTERFACTUAL_POLICY" : observedExitPlan.source,
+      stopMethod: observedExitPlan.source,
+      targetMethod: observedExitPlan.source,
       exitPolicy: adaptiveExitPlan,
       stopDistance,
       targetDistance,
