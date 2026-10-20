@@ -2390,7 +2390,8 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
         if (!response?.ok) return null;
         let rows;
         try { rows = await response.json(); } catch (_) { return null; }
-        if (!Array.isArray(rows) || !rows.length) return null;
+        if (!Array.isArray(rows)) return null;
+        if (!rows.length) return 0;
         let shortLiquidationNotional = 0;
         let longLiquidationNotional = 0;
         for (const row of rows) {
