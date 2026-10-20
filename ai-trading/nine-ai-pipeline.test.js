@@ -1,12 +1,12 @@
 "use strict";
 const assert=require("node:assert/strict");
-const {percentile,closedCandles,swingPoints,classifyRegime,analyzeNineAI}=require("./nine-ai-pipeline");
+const {percentile,closedCandles,swingPoints,classifyRegime,buildHistoricalOutcomeLabels,analyzeNineAI}=require("./nine-ai-pipeline");
 assert.equal(percentile([1,2,3,4,5],.5),3);
 assert.equal(percentile([], .5),null);
 const now=Date.now();
 const candles=Array.from({length:150},(_,i)=>{const close=100+i*.2;return [now-(150-i)*4*3600000,close-.1,close+.4,close-.4,close,100+i,now-(150-i)*4*3600000+4*3600000-1]});
 assert.equal(closedCandles(candles,now).length,150);
 assert.ok(swingPoints(closedCandles(candles,now),2));
-assert.ok(["UPTREND","DOWNTREND","RANGE","HIGH_VOL"].includes(classifyRegime(closedCandles(candles,now)).regime));
+assert.ok(["UPTREND","DOWNTREND","RANGE","HIGH_VOL"].includes(classifyRegime(closedCandles(candles,now)).regime));\nconst labels=buildHistoricalOutcomeLabels(candles,now);\nassert.ok(labels.every(x=>x.source==="CLOSED_HISTORICAL_4H_SIMULATION"));\nassert.ok(labels.every(x=>x.outcomeClosedAt < now));
 assert.equal(analyzeNineAI({symbol:"TEST",candles4h:candles,market:{now}}).action,"WAIT");
 console.log("nine-ai-pipeline tests passed");
