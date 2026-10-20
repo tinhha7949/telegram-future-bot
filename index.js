@@ -2388,8 +2388,29 @@ async function scan(symbol){
         const scanAt = Date.now();
         const probe4h = await getData(symbol, "4h", 3);
         const probeClosedCandle = nineAiPipeline.closedCandles(probe4h, scanAt).at(-1);
-        if (probeClosedCandle &&
-            await nineAiDecisionJournal.hasDecisionForCandle(symbol, probeClosedCandle.closeTime)) return null;
+        if (probeClosedCandle) {
+            const priorDecision = await nineAiDecisionJournal.getDecisionForCandle(symbol, probeClosedCandle.closeTime);
+            if (priorDecision) {
+                const cached = priorDecision.decisionSnapshot?.executionDecision;
+                if (cached?.authorizedForExecution === true && ["LONG", "SHORT"].includes(cached.side)) {
+                    const signalKey = `${symbol}:${Number(cached.signalAt)}`;
+                    const claim = signalClaims ? await signalClaims.findOne({ signalKey }) : null;
+                    if (!claim) {
+                        const cachedEdge = Number(cached.edges?.[cached.side]?.edge);
+                        return {
+                            ...cached,
+                            confidence: Number.isFinite(cachedEdge) ? Math.max(0, Math.min(100, 50 + cachedEdge * 10)) : 0,
+                            rankScore: Number.isFinite(cachedEdge) ? cachedEdge : -Infinity,
+                            qualityScore: Number.isFinite(cachedEdge) ? cachedEdge : 0,
+                            nineAiDecisionKey: priorDecision.decisionKey,
+                            symbol, setup: "NINE_AI_4H", triggerType: "NINE_AI_4H_EDGE",
+                            rankDirectionMode: "NINE_AI_PRIMARY"
+                        };
+                    }
+                }
+                return null;
+            }
+        }
         const data4h = await getData(symbol, "4h", 1500);
         const data1h = await getData(symbol, "1h", 100);
         const data1d = await getData(symbol, "1d", 100);
