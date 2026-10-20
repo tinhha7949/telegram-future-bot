@@ -4,15 +4,15 @@
 // This module never creates a direction: it can only preserve a valid
 // Nine-AI decision or convert it to WAIT. Research policies are not consulted.
 const REQUIRED_ROLES = Object.freeze([
-  "Technical Analyst AI",
-  "ML Signal AI",
-  "Learning & Memory AI",
-  "Bull AI",
-  "Bear AI",
-  "Contrarian AI",
-  "Analyst AI",
-  "Decision AI",
-  "Risk Manager AI"
+  "AI-1 Regime",
+  "AI-2 Structure",
+  "AI-3 Continuation",
+  "AI-4 Breakout",
+  "AI-5 Mean Reversion",
+  "AI-6 Flow",
+  "AI-7 Outcome",
+  "AI-8 Fill/Slippage",
+  "AI-9 Meta/Decision"
 ]);
 const MIN_CANDLES = 541;
 const MAX_SIGNAL_AGE_MS = 4 * 60 * 60 * 1000;
