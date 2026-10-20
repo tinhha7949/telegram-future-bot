@@ -29,5 +29,5 @@ assert.equal(engine.finalizeDecision({ ...base, signalAt: 1 },
 assert.equal(engine.finalizeDecision({ ...base, side: "WAIT", authorizedForExecution: false },
   { symbol: "BTCUSDT", scannedAt: 1_000_100 }).side, null);
 assert.equal(engine.finalizeDecision({ ...base, agents: { flow: { confirmation: "BLOCKED_HOT_FUNDING" } } },
-  { symbol: "BTCUSDT", scannedAt: 1_000_100 }).reason, "FLOW_CONFIRMATION_BLOCKED");
+  { symbol: "BTCUSDT", scannedAt: 1_000_100 }).reason, "FLOW_CONFIRMATION_BLOCKED_OR_MISMATCHED");
 console.log("nine-ai-central-decision-engine.test.js: OK");
