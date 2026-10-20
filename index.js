@@ -3835,32 +3835,45 @@ continue
                 const liveCandle = data.at(-1);
                 let price = +liveCandle[4];
 
-// ===== POINT-IN-TIME EXCURSION LABELS =====
+// ===== POINT-IN-TIME EXCURSION LABELS: CLOSED 4H BARS ONLY =====
 if (!t.entry) continue;
 if (!t.enteredAt) t.enteredAt = Number(t.openedAt || t.createdAt) || Date.now();
-const entryForExcursion = Number(t.entry);
-const candleHigh = Number(liveCandle[2]), candleLow = Number(liveCandle[3]);
-if (entryForExcursion > 0 && Number.isFinite(candleHigh) && Number.isFinite(candleLow)) {
-    const adversePct = t.side === "LONG"
-        ? Math.max(0, (entryForExcursion - candleLow) / entryForExcursion)
-        : Math.max(0, (candleHigh - entryForExcursion) / entryForExcursion);
-    const favorablePct = t.side === "LONG"
-        ? Math.max(0, (candleHigh - entryForExcursion) / entryForExcursion)
-        : Math.max(0, (entryForExcursion - candleLow) / entryForExcursion);
-    const nextMae = Math.max(Number(t.maePct) || 0, adversePct);
-    const nextMfe = Math.max(Number(t.mfePct) || 0, favorablePct);
-    if (nextMae > (Number(t.maePct) || 0) || nextMfe > (Number(t.mfePct) || 0)) {
-        t.maePct = nextMae;
-        t.mfePct = nextMfe;
-        try {
+try {
+    const excursionBars = await getData(t.symbol, "4h", 2);
+    const excursionBar = Array.isArray(excursionBars) && excursionBars.length >= 2
+        ? excursionBars[excursionBars.length - 2] : null;
+    const excursionCloseTime = Number(excursionBar?.[6]);
+    const entryForExcursion = Number(t.entry);
+    if (excursionBar && Number.isFinite(excursionCloseTime) &&
+        excursionCloseTime < Date.now() &&
+        excursionCloseTime > Number(t.lastExcursionCandleCloseTime || 0) &&
+        entryForExcursion > 0) {
+        const excursionHigh = Number(excursionBar[2]);
+        const excursionLow = Number(excursionBar[3]);
+        if (Number.isFinite(excursionHigh) && Number.isFinite(excursionLow)) {
+            const adversePct = t.side === "LONG"
+                ? Math.max(0, (entryForExcursion - excursionLow) / entryForExcursion)
+                : Math.max(0, (excursionHigh - entryForExcursion) / entryForExcursion);
+            const favorablePct = t.side === "LONG"
+                ? Math.max(0, (excursionHigh - entryForExcursion) / entryForExcursion)
+                : Math.max(0, (entryForExcursion - excursionLow) / entryForExcursion);
+            const nextMae = Math.max(Number(t.maePct) || 0, adversePct);
+            const nextMfe = Math.max(Number(t.mfePct) || 0, favorablePct);
+            t.maePct = nextMae;
+            t.mfePct = nextMfe;
+            t.lastExcursionCandleCloseTime = excursionCloseTime;
             await trades.updateOne(
                 { _id: t._id, result: "PENDING" },
-                { $set: { maePct: nextMae, mfePct: nextMfe, lastExcursionAt: Date.now() } }
+                { $set: {
+                    maePct: nextMae, mfePct: nextMfe,
+                    lastExcursionCandleCloseTime: excursionCloseTime,
+                    lastExcursionAt: Date.now()
+                } }
             );
-        } catch (labelError) {
-            console.error("NINE-AI MAE/MFE SNAPSHOT FAILED " + t.symbol + ":", labelError?.message || labelError);
         }
     }
+} catch (labelError) {
+    console.error("NINE-AI MAE/MFE SNAPSHOT FAILED " + t.symbol + ":", labelError?.message || labelError);
 }
 
 // TP1 closes half of the actual position; the exchange's closePosition TP2 remains
