@@ -264,7 +264,9 @@ function learnPolicies(sourceRows) {
     // Select from training data only, then evaluate exactly one winner on the
     // untouched chronological holdout to avoid repeatedly fishing the test set.
     const proposed = candidates[0] || null;
-    // Candidate search is confined to train. The untouched chronological holdout\n    // gets a standard 95% interval, avoiding a second multiple-search penalty.\n    const testResult = proposed ? evaluate(test, proposed, 1.96) : null;
+    // Candidate search is confined to train. The untouched chronological holdout
+    // gets a standard 95% interval, avoiding a second multiple-search penalty.
+    const testResult = proposed ? evaluate(test, proposed, 1.96) : null;
     const selected = testResult && testResult.samples >= MIN_TEST && testResult.lowerBoundR > 0
       ? { ...proposed, test: testResult } : null;
     reports.push({ regime, totalRows: group.length, trainRows: train.length,
