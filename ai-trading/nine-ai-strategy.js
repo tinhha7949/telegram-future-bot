@@ -613,78 +613,6 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       ? `LEARNED_RISK_ADVISORY; evidence=${riskEvidence.evidence.join("|") || "none"}; ${learnedRisk.reason}; independentPLoss=${riskModel?.pLoss ?? "unavailable"}`
       : "NO_CONSENSUS" });
 
-  if (!riskAllowed) return { ...abstain,
-    reason: entryDecision.reason,
-    roles: roleResults, candles: candles.length, features: summarize(f),
-    rankMetrics: { dataDerivedConsensus, entryStrategy: entryDecision,
-      fenixBootstrap: entryDecision.source === "FENIXAI_BOOTSTRAP" ? entryDecision.details : null } };
-
-  // Observed pivots from the preceding 96 closed candles define the initial
-  // price levels. Validated counterfactual research may replace these levels.
-  const entry = f.last.c;
-  const weightedPlan = calculateWeightedRoleScore(roleResults, side);
-  const rolePlanScore = weightedPlan.score;
-  const observedExitPlan = observedPivotExitDistances(candles, side, entry);
-  let stopDistance = observedExitPlan.stopDistance;
-  let targetDistance = observedExitPlan.targetDistance;
-  if (!(Number.isFinite(stopDistance) && stopDistance > 0 && Number.isFinite(targetDistance) && targetDistance > 0)) {
-    return { ...abstain, reason: "NO_OBSERVED_MARKET_PIVOTS_FOR_EXIT_PLAN", roles: roleResults,
-      candles: candles.length, features: summarize(f), rankMetrics: { observedExitPlan } };
-  }
-  let targetRR = targetDistance / stopDistance;
-  const riskPressure = null;
-  let adaptiveExitPlan = null;
-  const exitPlanAdvice = counterfactualResearch.advice({
-    side,
-    regime: String(f.marketRegime || "UNKNOWN"),
-    features: { ...learnedFeatures, marketRegime: f.marketRegime, rsi14: f.rsi,
-      extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
-      falseBreakoutRisk: f.falseBreakoutRisk }
-  });
-  const exitCandidates = (exitPlanAdvice.validatedSuggestions || [])
-    .filter(item => item.side === side &&
-      /^EXIT_LEVEL:S[0-9]+(?:\.[0-9]+)?:T[0-9]+(?:\.[0-9]+)?$/.test(String(item.variant || "")) &&
-      Number(item.trainSamples) >= counterfactualResearch.MIN_TRAIN &&
-      Number(item.testSamples) >= counterfactualResearch.MIN_TEST &&
-      Number(item.testUpliftR) > Number(item.standardError || 0) &&
-      Number(item.testMeanR) > 0)
-    .sort((a, b) => (Number(b.testUpliftR) - Number(b.standardError || 0)) -
-      (Number(a.testUpliftR) - Number(a.standardError || 0)));
-  for (const candidate of exitCandidates) {
-    const match = String(candidate.variant).match(/^EXIT_LEVEL:S([0-9]+(?:\.[0-9]+)?):T([0-9]+(?:\.[0-9]+)?)$/);
-    const stopScale = match ? Number(match[1]) : NaN;
-    const targetScale = match ? Number(match[2]) : NaN;
-    if (![stopScale, targetScale].every(Number.isFinite) || stopScale <= 0 || targetScale <= 0) continue;
-    const candidateStopDistance = stopDistance * stopScale;
-    const candidateTargetDistance = targetDistance * targetScale;
-    const candidateRR = candidateTargetDistance / candidateStopDistance;
-    // No preset RR range is imposed. Position sizing recalculates from the
-    // selected stop; the existing capital-risk budget remains the exposure cap.
-    if (!(Number.isFinite(candidateRR) && candidateRR >= MIN_TRADE_RR)) continue;
-    stopDistance = candidateStopDistance;
-    targetDistance = candidateTargetDistance;
-    targetRR = Number(candidateRR.toFixed(2));
-    adaptiveExitPlan = {
-      policy: candidate.variant,
-      testUpliftR: candidate.testUpliftR,
-      testMeanR: candidate.testMeanR,
-      testSamples: candidate.testSamples,
-      standardError: candidate.standardError,
-      stopScale,
-      targetScale,
-      source: candidate.source || "VALIDATED_OBSERVED_MARKET_LEVELS"
-    };
-    break;
-  }
-  const sl = side === "LONG" ? entry - stopDistance : entry + stopDistance;
-  const tp = side === "LONG" ? entry + targetDistance : entry - targetDistance;
-  const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
-  if (![entry, sl, tp, rr, targetRR].every(Number.isFinite) || entry <= 0 || sl <= 0 ||
-      (side === "LONG" ? !(sl < entry && tp > entry) : !(tp < entry && sl > entry)) ||
-      rr < MIN_TRADE_RR) {
-    return { ...abstain, reason: rr < MIN_TRADE_RR ? "RR_BELOW_MINIMUM_0_8" : "FINAL_TRADE_GEOMETRY_INVALID", roles: roleResults, candles: candles.length };
-  }
-
   // All nine roles contribute through explicit weights. A role agreeing with
   // the chosen side adds its conviction; an opposing role subtracts it; a
   // neutral role contributes 50 rather than an arbitrary fixed penalty.
@@ -768,6 +696,83 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const baseRankScore = roleScore * adaptiveDecisionWeights.role +
     setupQuality * adaptiveDecisionWeights.setup + entryQuality * adaptiveDecisionWeights.entry;
   const rankScore = Math.round(clamp(baseRankScore + timingAdjustment, 0, 100) * 100) / 100;
+
+  if (!riskAllowed) return { ...abstain,
+    reason: entryDecision.reason,
+    roles: roleResults, candles: candles.length, features: summarize(f),
+    rankMetrics: { dataDerivedConsensus, entryStrategy: entryDecision,
+      fenixBootstrap: entryDecision.source === "FENIXAI_BOOTSTRAP" ? entryDecision.details : null } };
+
+  // Observed pivots from the preceding 96 closed candles define the initial
+  // price levels. Validated counterfactual research may replace these levels.
+  const entry = f.last.c;
+  const weightedPlan = calculateWeightedRoleScore(roleResults, side);
+  const rolePlanScore = weightedPlan.score;
+  const observedExitPlan = observedPivotExitDistances(candles, side, entry);
+  let stopDistance = observedExitPlan.stopDistance;
+  let targetDistance = observedExitPlan.targetDistance;
+  if (!(Number.isFinite(stopDistance) && stopDistance > 0 && Number.isFinite(targetDistance) && targetDistance > 0)) {
+    return { ...abstain, reason: "NO_OBSERVED_MARKET_PIVOTS_FOR_EXIT_PLAN", roles: roleResults,
+      candles: candles.length, features: summarize(f), rankMetrics: { observedExitPlan } };
+  }
+  let targetRR = targetDistance / stopDistance;
+  const riskPressure = null;
+  let adaptiveExitPlan = null;
+  const exitPlanAdvice = counterfactualResearch.advice({
+    side,
+    regime: String(f.marketRegime || "UNKNOWN"),
+    features: { ...learnedFeatures, marketRegime: f.marketRegime, rsi14: f.rsi,
+      extensionAtr: f.extensionAtr, momentum4: f.mom4, volumeRatio: f.volumeRatio,
+      falseBreakoutRisk: f.falseBreakoutRisk }
+  });
+  const exitCandidates = (exitPlanAdvice.validatedSuggestions || [])
+    .filter(item => item.side === side &&
+      /^EXIT_LEVEL:S[0-9]+(?:\.[0-9]+)?:T[0-9]+(?:\.[0-9]+)?$/.test(String(item.variant || "")) &&
+      Number(item.trainSamples) >= counterfactualResearch.MIN_TRAIN &&
+      Number(item.testSamples) >= counterfactualResearch.MIN_TEST &&
+      Number(item.testUpliftR) > Number(item.standardError || 0) &&
+      Number(item.testMeanR) > 0)
+    .sort((a, b) => (Number(b.testUpliftR) - Number(b.standardError || 0)) -
+      (Number(a.testUpliftR) - Number(a.standardError || 0)));
+  for (const candidate of exitCandidates) {
+    const match = String(candidate.variant).match(/^EXIT_LEVEL:S([0-9]+(?:\.[0-9]+)?):T([0-9]+(?:\.[0-9]+)?)$/);
+    const stopScale = match ? Number(match[1]) : NaN;
+    const targetScale = match ? Number(match[2]) : NaN;
+    if (![stopScale, targetScale].every(Number.isFinite) || stopScale <= 0 || targetScale <= 0) continue;
+    const candidateStopDistance = stopDistance * stopScale;
+    const candidateTargetDistance = targetDistance * targetScale;
+    const candidateRR = candidateTargetDistance / candidateStopDistance;
+    // No preset RR range is imposed. Position sizing recalculates from the
+    // selected stop; the existing capital-risk budget remains the exposure cap.
+    if (!(Number.isFinite(candidateRR) && candidateRR >= MIN_TRADE_RR)) continue;
+    stopDistance = candidateStopDistance;
+    targetDistance = candidateTargetDistance;
+    targetRR = Number(candidateRR.toFixed(2));
+    adaptiveExitPlan = {
+      policy: candidate.variant,
+      testUpliftR: candidate.testUpliftR,
+      testMeanR: candidate.testMeanR,
+      testSamples: candidate.testSamples,
+      standardError: candidate.standardError,
+      stopScale,
+      targetScale,
+      source: candidate.source || "VALIDATED_OBSERVED_MARKET_LEVELS"
+    };
+    break;
+  }
+  const sl = side === "LONG" ? entry - stopDistance : entry + stopDistance;
+  const tp = side === "LONG" ? entry + targetDistance : entry - targetDistance;
+  const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
+  if (![entry, sl, tp, rr, targetRR].every(Number.isFinite) || entry <= 0 || sl <= 0 ||
+      (side === "LONG" ? !(sl < entry && tp > entry) : !(tp < entry && sl > entry)) ||
+      rr < MIN_TRADE_RR) {
+    return { ...abstain, reason: rr < MIN_TRADE_RR ? "RR_BELOW_MINIMUM_0_8" : "FINAL_TRADE_GEOMETRY_INVALID",
+      rankScore, qualityScore: rankScore, roles: rankedRoles, candles: candles.length,
+      features: summarize(f), rankMetrics: { score: rankScore, roleScore, setupQuality, entryQuality,
+        features: summarize(f) } };
+  }
+
+
   const rankedRoles = weighted.roles;
   const rankMetrics = {
     score: rankScore, roleScore,
