@@ -188,7 +188,11 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     ];
     const applicable=evidence.filter(e=>e.side===side);
     const p=applicable.length?applicable.reduce((s,e)=>s+e.p*e.weight,0)/applicable.reduce((s,e)=>s+e.weight,0):0.5;
-    const er=applicable.length?applicable.reduce((s,e)=>s+e.er*e.weight,0)/applicable.reduce((s,e)=>s+e.weight,0):0;
+    const modelER=applicable.length?applicable.reduce((s,e)=>s+e.er*e.weight,0)/applicable.reduce((s,e)=>s+e.weight,0):0;
+    const track = market.trackRecord?.[regime.regime + "_" + side];
+    const trackSamples = finite(track?.samples, 0);
+    const trackGrossR = finite(track?.meanGrossR);
+    const er = trackSamples >= 20 && trackGrossR !== null ? 0.5 * modelER + 0.5 * trackGrossR : modelER;
     const cost=(fee+fundingCost+estimatedSlippage)/Math.max(distMAE.p80,1e-12);
     const uncertainty=(1-regime.regime_conf)*finite(config.uncertaintyPenalty,0.5)+
       (Date.now()-finite(market.snapshotAt,now)>finite(config.maxDataAgeMs,5*60*1000)?1:0);
@@ -211,7 +215,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   return {symbol,side,action:side,authorizedForExecution:true,reason,setup:"NINE_AI_4H",signalAt:last.closeTime,
     entry,price:entry,sl,tp:tp2,tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeframe:"4h",
     riskPerTradePct:0.0075,riskEquity:finite(equity,0)*0.0075,
-    edges:{LONG:long,SHORT:short},regime,agents,setupKey,featureSnapshot:{snapshotAt:finite(market.snapshotAt,now),closeTime:last.closeTime,close:entry,atr,atrPct,volumeRatio,funding,oiChange,spread,depth,latency,estSlippagePct:estimatedSlippage,regime,structureBias},
+    edges:{LONG:long,SHORT:short},regime,agents,setupKey,featureSnapshot:{snapshotAt:finite(market.snapshotAt,now),closeTime:last.closeTime,close:entry,atr,atrPct,volumeRatio,funding,oiChange,spread,depth,latency,feePct:fee,fundingCostPct:fundingCost,estSlippagePct:estimatedSlippage,regime,structureBias},
     tradePlan:{stopMethod:"LABELED_MAE_P80_WITH_STRUCTURE_BUFFER",targetMethod:"LABELED_MFE_P50_P90",tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeoutMs:96*60*60*1000},
     candles:cs.length};
 }
