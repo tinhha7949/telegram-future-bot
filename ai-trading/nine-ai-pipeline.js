@@ -187,8 +187,8 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const agents={
     regime,
     structure:{structure_bias:structureBias,swingHigh,swingLow,support,resistance,validLongSLBelow:support,validShortSLAbove:resistance},
-    continuation:{side:continuationSide,p:continuationSide?0.6:0.5,expectedR:null,volumeRatio,oiChange,fundingHot},
-    breakout:{side:breakoutSide,p:breakoutSide?0.6:0.5,held:breakoutHeld,volumeRatio,extensionAtr:extension,spreadPct:spread},
+    continuation:{side:continuationSide,p:continuationSide?clamp(0.54+Math.min(0.18,Math.abs(regime.momentum20)*3)+(volumeRatio>1?0.05:0),0.5,0.78):0.5,expectedR:null,volumeRatio,oiChange,fundingHot},
+    breakout:{side:breakoutSide,p:breakoutSide?clamp(0.55+Math.min(0.2,(volumeRatio-1)*0.1),0.5,0.78):0.5,held:breakoutHeld,volumeRatio,extensionAtr:extension,spreadPct:spread},
     meanReversion:{side:revertSide,p:revertSide?0.55:0.5,vwap:vwapValue,deviationAtr:deviation,enabled:rangeRegime},
     flow,outcome:{dist_MAE:null,dist_MFE:null},fill:{est_slippage:slippage,spreadPct:spread,depthNotional:depth,latencyMs:latency,estimatedFillPriceBySide:{LONG:last.close*(1+slippage/100),SHORT:last.close*(1-slippage/100)}}
   };
@@ -213,7 +213,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
       const wins=winningSamples.length;
       const p=clamp((wins+2)/(samples.length+4),0.01,0.99);
       const er=mfe50/mae;
-      applicable.push({...model,setupKey,samples:samples.length,distMAE:{p80:mae,samples:samples.length},distMFE:{p50:mfe50,p90:mfe90,samples:samples.length},p,er});
+      applicable.push({...model,setupKey,samples:samples.length,distMAE:{p80:mae,samples:winningSamples.length},distMFE:{p50:mfe50,p90:mfe90,samples:winningSamples.length},p,er});
     }
     const weightSum=applicable.reduce((s,m)=>s+m.weight,0);
     const p=weightSum?applicable.reduce((s,m)=>s+m.p*m.weight,0)/weightSum:0.5;
@@ -252,10 +252,10 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const continuationEstimate=(continuationSide==="LONG"?long:continuationSide==="SHORT"?short:null)?.modelEstimates?.find(m=>m.name==="continuation");
   const breakoutEstimate=(breakoutSide==="LONG"?long:breakoutSide==="SHORT"?short:null)?.modelEstimates?.find(m=>m.name==="breakout");
   const revertEstimate=(revertSide==="LONG"?long:revertSide==="SHORT"?short:null)?.modelEstimates?.find(m=>m.name==="mean_reversion");
-  agents.continuation.p=continuationEstimate?.p??null;
+  agents.continuation.p=continuationEstimate?.p??agents.continuation.p;
   agents.continuation.expectedR=continuationEstimate?.expectedR??null;
-  agents.breakout.p=breakoutEstimate?.p??null;
-  agents.meanReversion.p=revertEstimate?.p??null;
+  agents.breakout.p=breakoutEstimate?.p??agents.breakout.p;
+  agents.meanReversion.p=revertEstimate?.p??agents.meanReversion.p;
   agents.outcome={dist_MAE:side==="LONG"?long.distMAE:side==="SHORT"?short.distMAE:null,
     dist_MFE:side==="LONG"?long.distMFE:side==="SHORT"?short.distMFE:null,
     setupKey:side==="LONG"?long.setupKey:side==="SHORT"?short.setupKey:null,
