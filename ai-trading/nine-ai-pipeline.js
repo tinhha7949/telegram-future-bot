@@ -159,7 +159,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   // Percent-normalized movement distributions can be pooled across symbols
   // without mixing a low-priced coin's raw distance with BTC's.
   const setupKey=regime.regime;
-  const matched=labeled.filter(o=>o.setupKey===setupKey&&o.side&&(!o.symbol||String(o.symbol).toUpperCase()===String(symbol).toUpperCase()||o.source==="CLOSED_HISTORICAL_4H_SIMULATION"));
+  const matched=labeled.filter(o=>o.setupKey===setupKey&&o.side&&(o.source==="CLOSED_HISTORICAL_4H_SIMULATION"||(o.symbol&&String(o.symbol).toUpperCase()===String(symbol).toUpperCase())));
   const maes=matched.map(o=>Math.abs(Number(o.maePct))), mfes=matched.map(o=>Math.abs(Number(o.mfePct)));
   const distMAE={p50:percentile(maes,.5),p80:percentile(maes,.8),p90:percentile(maes,.9),samples:maes.length};
   const distMFE={p50:percentile(mfes,.5),p90:percentile(mfes,.9),samples:mfes.length};
