@@ -304,6 +304,16 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function hasDecisionForCandle(symbol, signalTime) {
+  const key = String(symbol || "").toUpperCase();
+  const time = num(signalTime);
+  if (!key || !Number.isFinite(time)) return false;
+  if (records.some(row => String(row.symbol).toUpperCase() === key && Number(row.signalTime) === time)) return true;
+  if (!collection) return false;
+  const found = await collection.findOne({ symbol: key, signalTime: time }, { projection: { _id: 1 } });
+  return Boolean(found);
+}
+
 async function recordDecision(args) {
   if (!collection) throw new Error("NINE_AI_DECISION_JOURNAL_NOT_INITIALIZED");
   const scannedAt = num(args?.scannedAt, Date.now());
@@ -514,5 +524,5 @@ function status() {
 }
 
 module.exports = { COLLECTION, MAX_RECORDS, HORIZONS, MIN_SAMPLES, MARKET_WINDOW_BARS, normalizeCandles, snapshotMarketWindow,
-  extractWindowFeatures, assessWindowEvidence, snapshotDecision, initialize, recordDecision, settleMatured,
+  extractWindowFeatures, assessWindowEvidence, snapshotDecision, initialize, hasDecisionForCandle, recordDecision, settleMatured,
   computeEvaluations, positiveEvidenceBonus, recordActualOutcome, assess, status };
