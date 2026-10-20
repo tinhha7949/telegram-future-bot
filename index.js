@@ -3846,6 +3846,7 @@ try {
     const entryForExcursion = Number(t.entry);
     if (excursionBar && Number.isFinite(excursionCloseTime) &&
         excursionCloseTime < Date.now() &&
+        excursionCloseTime > Number(t.enteredAt || t.openedAt || t.createdAt || 0) &&
         excursionCloseTime > Number(t.lastExcursionCandleCloseTime || 0) &&
         entryForExcursion > 0) {
         const excursionHigh = Number(excursionBar[2]);
