@@ -18,13 +18,13 @@ function policyAction(row, params) {
   const d = row?.decisionSnapshot;
   const regime = String(d?.regime?.regime || "").toUpperCase();
   if (!["UPTREND", "DOWNTREND"].includes(regime) ||
-      ["BLOCKED_HOT_FUNDING", "UNAVAILABLE"].includes(d?.agents?.flow?.confirmation)) return "WAIT";
+      d?.agents?.flow?.confirmation !== "CONFIRMED") return "WAIT";
   const long = finite(d?.edges?.LONG?.edge);
   const short = finite(d?.edges?.SHORT?.edge);
   if (long === null || short === null) return "WAIT";
   const flowSide = d?.agents?.flow?.confirmationSide || null;
-  if (long > params.minEdge && long - short > params.gapEdge && (!flowSide || flowSide === "LONG")) return "LONG";
-  if (short > params.minEdge && short - long > params.gapEdge && (!flowSide || flowSide === "SHORT")) return "SHORT";
+  if (long > params.minEdge && long - short > params.gapEdge && flowSide === "LONG") return "LONG";
+  if (short > params.minEdge && short - long > params.gapEdge && flowSide === "SHORT") return "SHORT";
   return "WAIT";
 }
 
@@ -111,7 +111,7 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
 }
 
 function calibrationSummary(rows) {
-  const usable = rows.filter(r => Number.isFinite(Number(r.predictedEdgeR)) && Number.isFinite(Number(r.realizedR)));
+  const usable = rows.filter(r => r.predictedEdgeR != null && r.realizedR != null && Number.isFinite(Number(r.predictedEdgeR)) && Number.isFinite(Number(r.realizedR)));
   if (!usable.length) return { samples: 0, meanPredictedR: null, meanRealizedR: null, biasR: null, maeR: null };
   const predicted = usable.map(r => Number(r.predictedEdgeR));
   const realized = usable.map(r => Number(r.realizedR));
