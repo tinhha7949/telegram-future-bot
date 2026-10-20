@@ -9,7 +9,7 @@ const crypto = require("crypto");
 const COLLECTION = "nine_ai_decision_journal";
 const MAX_RECORDS = 5000;
 const MARKET_WINDOW_BARS = 48;
-const HORIZONS = [4, 16];
+const HORIZONS = [4, 16, 24];
 const MIN_SAMPLES = 20;
 const MAX_LIVE_BONUS = 3;
 const DEFAULT_ROUND_TRIP_COST_RATE = 0.0008;
@@ -207,6 +207,18 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
   })) : [];
   const window = snapshotMarketWindow(marketWindow, MARKET_WINDOW_BARS, num(signalTime, Infinity));
   const snapshot = {
+    decisionSnapshot: d && typeof d === "object" ? {
+      setup: d.setup || null,
+      side,
+      edges: d.edges || null,
+      regime: d.regime || null,
+      agents: d.agents || null,
+      featureSnapshot: d.featureSnapshot || null,
+      tradePlan: d.tradePlan || null,
+      predictedEdgeR: num(d.edges?.[side]?.edge, null),
+      predictedProbability: num(d.edges?.[side]?.p, null),
+      predictedExpectedR: num(d.edges?.[side]?.expectedR, null)
+    } : null,
     symbol: String(symbol || d.symbol || "UNKNOWN"),
     side,
     action: String(d.action || side),
