@@ -1708,6 +1708,7 @@ async function openPositionWithTPSL(trade, qty){
     const plannedEntry = Number(trade.entry ?? trade.price)
     const plannedSL = Number(trade.sl)
     const plannedTP = Number(trade.tp)
+    const plannedTP1 = Number(trade.tp1)
 
     const order =
         await openPosition(
@@ -1773,27 +1774,28 @@ async function openPositionWithTPSL(trade, qty){
         return false
     }
 
-    // Preserve the Nine-AI plan's original reward/risk ratio after fill.
-    // The execution fill may differ from the signal entry, but a legacy RR
-    // default must never overwrite the TP selected by Nine-AI.
+    // Preserve the AI-7 p50/p90 price distances when execution slippage shifts
+    // the actual entry. Never reconstruct targets from an arbitrary RR ratio.
     const plannedRisk = Math.abs(plannedEntry - plannedSL)
     const plannedReward = Math.abs(plannedTP - plannedEntry)
+    const plannedTP1Distance = Math.abs(plannedTP1 - plannedEntry)
     const plannedRR = plannedRisk > 0 ? plannedReward / plannedRisk : NaN
-
-    if (!Number.isFinite(plannedRR) || plannedRR < MIN_TRADE_RR) {
-        console.log(
-            `❌ INVALID ORIGINAL NINE-AI RR ${symbol} ENTRY=${plannedEntry} SL=${plannedSL} TP=${plannedTP} RR=${plannedRR}`
-        )
-        return false
+    if (!Number.isFinite(plannedRR) || plannedRR < MIN_TRADE_RR ||
+        !Number.isFinite(plannedTP1Distance) || plannedTP1Distance <= 0 ||
+        (trade.side === "LONG" && !(plannedEntry < plannedTP1 && plannedTP1 < plannedTP)) ||
+        (trade.side === "SHORT" && !(plannedEntry > plannedTP1 && plannedTP1 > plannedTP))) {
+        console.log(`❌ INVALID ORIGINAL NINE-AI TP PLAN ${symbol}`);
+        return false;
     }
 
     trade.entry = realEntry
     trade.initialRisk = Math.abs(realEntry - plannedSL)
-
-    const targetDistance = trade.initialRisk * plannedRR
+    trade.tp1 = trade.side === "LONG"
+        ? realEntry + plannedTP1Distance
+        : realEntry - plannedTP1Distance
     trade.tp = trade.side === "LONG"
-        ? realEntry + targetDistance
-        : realEntry - targetDistance
+        ? realEntry + plannedReward
+        : realEntry - plannedReward
 
     if(
         !Number.isFinite(trade.initialRisk) ||
