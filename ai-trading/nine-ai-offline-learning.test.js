@@ -2,6 +2,7 @@
 const assert = require("node:assert/strict");
 const learner = require("./nine-ai-offline-learning");
 assert.equal(learner.policyAction({ decisionSnapshot: { regime: { regime: "RANGE" } } }, learner.DEFAULT_CHAMPION), "WAIT");
+assert.equal(learner.policyAction({ decisionSnapshot: { regime: { regime: "UPTREND" }, agents: { flow: { confirmation: "NEUTRAL" } }, edges: { LONG: { edge: 0.8 }, SHORT: { edge: 0.1 } } } }, learner.DEFAULT_CHAMPION), "WAIT");
 const rows = Array.from({ length: 600 }, (_, i) => ({
   signalTime: 1_700_000_000_000 + i * learner.BAR_MS,
   outcomeStatus: "EVALUATED",
@@ -25,7 +26,7 @@ assert.ok(splits.purgeEmbargoMs >= 24 * 4 * 60 * 60 * 1000);
 assert.equal(learner.evaluatePolicy(rows.slice(0, 10), learner.DEFAULT_CHAMPION).trades, 10);
 const trained = learner.trainCandidate(rows, learner.DEFAULT_CHAMPION);
 assert.ok(["SHADOW_PENDING", "CANDIDATE_DID_NOT_BEAT_CHAMPION", "INSUFFICIENT_WALK_FORWARD_SAMPLES", "NO_VALID_CANDIDATE"].includes(trained.status));
-const calibration = learner.calibrationSummary([{ predictedEdgeR: 0.2, realizedR: 0.1 }, { predictedEdgeR: 0.4, realizedR: 0.2 }]);
+const calibration = learner.calibrationSummary([{ predictedEdgeR: 0.2, realizedR: 0.1 }, { predictedEdgeR: 0.4, realizedR: 0.2 }, { predictedEdgeR: null, realizedR: null }]);
 assert.equal(calibration.samples, 2);
 assert.ok(Math.abs(calibration.biasR - 0.15) < 1e-9);
 console.log("nine-ai-offline-learning tests passed");
