@@ -108,7 +108,7 @@ assert.equal(result.roles[7].name, "Decision AI");
 assert.equal(result.roles[8].name, "Risk Manager AI");
 if (result.side) {
   assert.ok(result.sl > 0 && result.tp > 0 && result.price > 0);
-  assert.ok(Number.isFinite(result.rr) && result.rr > 0, "learned exit geometry can use any positive data-derived RR");
+  assert.ok(Number.isFinite(result.rr) && result.rr >= 0.8, "authorized trades must meet the hard 0.8 minimum RR");
   assert.equal(result.authorizedForExecution, true);
   assert.equal(result.tradePlan.timeframe, "15m");
   assert.equal(result.tradePlan.entryMethod, "LATEST_CLOSED_CANDLE");
