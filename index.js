@@ -2413,11 +2413,16 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
 // ================= SCAN =================
 async function scan(symbol){
     try {
-        // Canonical strategy runs only on fully closed 4h candles.
+        // Probe only the latest few candles first. Once this closed 4h candle
+        // has a journal decision, skip the expensive 1500-bar/history/API work.
+        const scanAt = Date.now();
+        const probe4h = await getData(symbol, "4h", 3);
+        const probeClosedCandle = nineAiPipeline.closedCandles(probe4h, scanAt).at(-1);
+        if (probeClosedCandle &&
+            await nineAiDecisionJournal.hasDecisionForCandle(symbol, probeClosedCandle.closeTime)) return null;
         const data4h = await getData(symbol, "4h", 1500);
         const data1h = await getData(symbol, "1h", 100);
         const data1d = await getData(symbol, "1d", 100);
-        const scanAt = Date.now();
         if (!Array.isArray(data4h)) {
             recordNineAIAbstention("MARKET_DATA_UNAVAILABLE");
             try {
@@ -2884,7 +2889,7 @@ filtered = unique
 // Diagnostic shortlist only; execution attempts remain bounded by the risk and exchange guards.
 if(filtered.length > 0){
     const shortlist = filtered.slice(0, 5).map(c =>
-        `${c.symbol}(RANK=${safeFixed(c.rankScore, 2)},CONF=${safeFixed(c.confidence, 1)},VOTES=${c.rankMetrics?.directionalVotes || 0}-${c.rankMetrics?.opposingVotes || 0})`
+        `${c.symbol}(${c.side},EDGE=${safeFixed(c.rankScore, 4)},REGIME=${c.regime?.regime || "UNKNOWN"})`
     ).join(" | ")
     console.log(`🧠 NINE-AI TOP ${Math.min(5, filtered.length)}: ${shortlist}`)
 }
@@ -2917,7 +2922,7 @@ if (
 // No legacy RF counter/follow branch. Keep the approved nine-AI
 // direction and ATR-derived SL/TP; downstream risk/position caps remain.
 best.side = side;
-best.triggerType = "NINE_AI_CONSENSUS";
+best.triggerType = "NINE_AI_4H_EDGE";
 best.rankDirectionMode = "NINE_AI_PRIMARY";
 console.log(
     `🧠 NINE-AI PRIMARY ${best.symbol} | SIDE=${best.side} | CONF=${best.confidence} | RANK=${safeFixed(best.rankScore, 2)} | SL=${best.sl} | TP=${best.tp}`
