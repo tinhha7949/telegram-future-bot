@@ -20,7 +20,7 @@ assert.equal(engine.finalizeDecision({ ...base, agents: null },
 assert.equal(engine.finalizeDecision({ ...base, sl: 101 },
   { symbol: "BTCUSDT", scannedAt: 1_000_100 }).reason, "CENTRAL_ENGINE_INVALID_TRADE_GEOMETRY");
 assert.equal(engine.finalizeDecision({ ...base, signalAt: 1 },
-  { symbol: "BTCUSDT", scannedAt: 40 * 60 * 1000 }).reason, "STALE_OR_INVALID_SIGNAL_TIMESTAMP");
+  { symbol: "BTCUSDT", scannedAt: 5 * 60 * 60 * 1000 }).reason, "STALE_OR_INVALID_SIGNAL_TIMESTAMP");
 assert.equal(engine.finalizeDecision({ ...base, side: "WAIT", authorizedForExecution: false },
   { symbol: "BTCUSDT", scannedAt: 1_000_100 }).side, null);
 assert.equal(engine.finalizeDecision({ ...base, agents: { flow: { confirmation: "BLOCKED_HOT_FUNDING" } } },
