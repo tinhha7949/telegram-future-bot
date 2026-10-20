@@ -18,7 +18,7 @@ const DEFAULTS = Object.freeze({
 });
 
 // Event-ledger retention: only terminal/historical documents with a valid old
-// lifecycle timestamp can be removed. Keep at least 90 days of every dataset.
+// lifecycle timestamp can be removed. Retention age is set per dataset and row type.
 // Mutable state/policy collections and unknown collections remain protected.
 // Outcome ledgers are eligible only after they were applied; the legacy ledger
 // also must finish independent-model migration before it can be pruned.
