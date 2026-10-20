@@ -3659,6 +3659,36 @@ activeTrades.push(trade)
 }
 ///////////////////
 const CLOSED_RESULT_FAILS = global.CLOSED_RESULT_FAILS ||= {}
+async function closePartialPosition(symbol, fraction = 0.5) {
+    try {
+        const positions = await getPositionsCached();
+        const position = Array.isArray(positions) ? positions.find(p =>
+            p?.symbol === symbol && Math.abs(Number(p.positionAmt || 0)) > 0
+        ) : null;
+        if (!position) return true;
+        const realQty = Math.abs(Number(position.positionAmt));
+        const info = await getSymbolInfo(symbol);
+        const lot = info?.filters?.find(f => f.filterType === "MARKET_LOT_SIZE") ||
+            info?.filters?.find(f => f.filterType === "LOT_SIZE");
+        const step = Number(lot?.stepSize || 0);
+        if (!(realQty > 0) || !(step > 0)) return false;
+        const decimals = Math.max(0, (String(step).split(".")[1] || "").replace(/0+$/, "").length);
+        const quantity = Number((Math.floor((realQty * fraction) / step) * step).toFixed(decimals));
+        if (!(quantity > 0) || quantity >= realQty) return false;
+        const closeSide = Number(position.positionAmt) > 0 ? "SELL" : "BUY";
+        await binance.futuresOrder({
+            symbol, recvWindow: 20000, side: closeSide, type: "MARKET",
+            quantity, reduceOnly: true
+        });
+        POS_CACHE = null;
+        POS_CACHE_TIME = 0;
+        return true;
+    } catch (error) {
+        console.error("NINE-AI TP1 PARTIAL CLOSE FAILED " + symbol + ":", error?.message || error);
+        return false;
+    }
+}
+
 async function checkTrades(){
 
     if(checkingTrades) return
@@ -3761,13 +3791,82 @@ continue
     DATA_FAILS[t.symbol] = 0
 }
 
-                let price = +data.at(-1)[4]
+                const liveCandle = data.at(-1);
+                let price = +liveCandle[4];
 
-// ===== RESULT CHECK =====
-if(!t.entry) continue
+// ===== POINT-IN-TIME EXCURSION LABELS =====
+if (!t.entry) continue;
+if (!t.enteredAt) t.enteredAt = Number(t.openedAt || t.createdAt) || Date.now();
+const entryForExcursion = Number(t.entry);
+const candleHigh = Number(liveCandle[2]), candleLow = Number(liveCandle[3]);
+if (entryForExcursion > 0 && Number.isFinite(candleHigh) && Number.isFinite(candleLow)) {
+    const adversePct = t.side === "LONG"
+        ? Math.max(0, (entryForExcursion - candleLow) / entryForExcursion)
+        : Math.max(0, (candleHigh - entryForExcursion) / entryForExcursion);
+    const favorablePct = t.side === "LONG"
+        ? Math.max(0, (candleHigh - entryForExcursion) / entryForExcursion)
+        : Math.max(0, (entryForExcursion - candleLow) / entryForExcursion);
+    const nextMae = Math.max(Number(t.maePct) || 0, adversePct);
+    const nextMfe = Math.max(Number(t.mfePct) || 0, favorablePct);
+    if (nextMae > (Number(t.maePct) || 0) || nextMfe > (Number(t.mfePct) || 0)) {
+        t.maePct = nextMae;
+        t.mfePct = nextMfe;
+        try {
+            await trades.updateOne(
+                { _id: t._id, result: "PENDING" },
+                { $set: { maePct: nextMae, mfePct: nextMfe, lastExcursionAt: Date.now() } }
+            );
+        } catch (labelError) {
+            console.error("NINE-AI MAE/MFE SNAPSHOT FAILED " + t.symbol + ":", labelError?.message || labelError);
+        }
+    }
+}
 
-if(!t.enteredAt){
-    t.enteredAt = Date.now()
+// TP1 closes half of the actual position; the exchange's closePosition TP2 remains
+// attached to the residual position.
+const tp1 = Number(t.tp1);
+const tp1Touched = Number.isFinite(tp1) && tp1 > 0 &&
+    (t.side === "LONG" ? candleHigh >= tp1 : candleLow <= tp1);
+if (tp1Touched && t.tp1Hit !== true && !TPSL_CLOSING[t.symbol] &&
+    Date.now() - Number(t.tp1LastAttemptAt || 0) >= 60_000) {
+    TPSL_CLOSING[t.symbol] = true;
+    t.tp1LastAttemptAt = Date.now();
+    try {
+        const partialClosed = await closePartialPosition(t.symbol, Number(t.tp1CloseFraction) || 0.5);
+        if (partialClosed) {
+            t.tp1Hit = true;
+            t.tp1HitAt = Date.now();
+            await trades.updateOne(
+                { _id: t._id, result: "PENDING" },
+                { $set: { tp1Hit: true, tp1HitAt: t.tp1HitAt, updatedAt: Date.now() } }
+            );
+            console.log("NINE-AI TP1 REALIZED " + t.symbol + " closeFraction=0.5");
+        }
+    } finally {
+        delete TPSL_CLOSING[t.symbol];
+    }
+}
+
+// 24 closed 4h bars = 96 hours. This is a hard time exit, not a new signal.
+const maxHoldMs = Number(t.maxHoldMs) || 24 * 4 * 60 * 60 * 1000;
+const enteredAt = Number(t.enteredAt || t.openedAt || t.createdAt);
+if (enteredAt > 0 && Date.now() - enteredAt >= maxHoldMs) {
+    t.timeoutTriggered = true;
+    try {
+        await trades.updateOne(
+            { _id: t._id, result: "PENDING" },
+            { $set: { timeoutTriggered: true, exitReason: "TIMEOUT", updatedAt: Date.now() } }
+        );
+    } catch (timeoutSaveError) {
+        console.error("NINE-AI TIMEOUT STATE SAVE FAILED " + t.symbol + ":", timeoutSaveError?.message || timeoutSaveError);
+    }
+    const qty = Math.abs(Number((await getPositionsCached().catch(() => []))
+        .find(p => p?.symbol === t.symbol)?.positionAmt || 0));
+    if (qty > 0) {
+        const timeoutClosed = await closePosition(t.symbol, t.side, qty);
+        if (!timeoutClosed) console.error("NINE-AI TIMEOUT CLOSE FAILED " + t.symbol);
+    }
+    continue;
 }
 // ===== VERIFY POSITION =====
 let stillOpen = null
@@ -3870,10 +3969,11 @@ await trades.updateOne(
             feesUSDT:Number.isFinite(Number(closed.feesUSDT)) ? Number(closed.feesUSDT) : null,
             exitPrice:Number.isFinite(Number(closed.exitPrice)) ? Number(closed.exitPrice) : null,
             exitQty:Number.isFinite(Number(closed.exitQty)) ? Number(closed.exitQty) : null,
-            exitReason:String(closed.exitOrderId) === String(t.slOrderId || "") && t.slOrderId
-                ? "SL"
-                : String(closed.exitOrderId) === String(t.tpOrderId || "") && t.tpOrderId
-                    ? "TP" : "UNKNOWN",
+            exitReason:t.timeoutTriggered ? "TIMEOUT" :
+                String(closed.exitOrderId) === String(t.slOrderId || "") && t.slOrderId
+                    ? "SL"
+                    : String(closed.exitOrderId) === String(t.tpOrderId || "") && t.tpOrderId
+                        ? "TP" : "UNKNOWN",
             exitOrderId:closed.exitOrderId,
             exitOrderIds:closed.exitOrderIds || [closed.exitOrderId],
             executionFills:closed.executionFills || [],
@@ -3889,6 +3989,36 @@ await trades.updateOne(
         }
     }
 )
+
+try {
+    const riskBudgetForLabel = getTradeActualRisk(t);
+    const tradeIdForLabel = String(t._id || (t.symbol + ":" + t.createdAt));
+    const grossPnl = Number(closed.grossRealizedPnl);
+    const netPnl = Number(closed.pnl);
+    if (t.setup === "NINE_AI_4H" && t.setupFamily && t.nineAiRegime &&
+        riskBudgetForLabel > 0 && Number.isFinite(grossPnl) && Number.isFinite(netPnl) &&
+        Number(t.maePct) > 0 && Number(t.mfePct) > 0) {
+        await db.collection("nine_ai_outcome_labels").updateOne(
+            { tradeId: tradeIdForLabel },
+            { $setOnInsert: {
+                tradeId: tradeIdForLabel, symbol: t.symbol, side: t.side,
+                setupFamily: t.setupFamily, regime: t.nineAiRegime,
+                result: isWin ? "WIN" : "LOSS",
+                grossR: grossPnl / riskBudgetForLabel,
+                netR: netPnl / riskBudgetForLabel,
+                maePct: Number(t.maePct), mfePct: Number(t.mfePct),
+                labelled: true, closedAt: Number(closed.closedAt) || Date.now(),
+                feesUSDT: closed.feesUSDT ?? null, fundingUSDT: closed.fundingUSDT ?? null,
+                slippageEstimate: Number(t.rankMetrics?.features?.slippageEstimate) || null,
+                snapshot: t.nineAiLearningFeatures || null,
+                labelVersion: 1
+            } },
+            { upsert: true }
+        );
+    }
+} catch (outcomeLabelError) {
+    console.error("NINE-AI OUTCOME LABEL SAVE FAILED " + t.symbol + ":", outcomeLabelError?.message || outcomeLabelError);
+}
 
 if (t.nineAiDecisionKey) {
     try {
