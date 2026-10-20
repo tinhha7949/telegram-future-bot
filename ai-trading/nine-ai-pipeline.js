@@ -143,8 +143,11 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const flow={fundingRate:funding,openInterestChange:oiChange,liquidationImbalance:liq,
     confirmation: funding===null || oiChange===null ? "UNAVAILABLE" :
       (fundingHot?"BLOCKED_HOT_FUNDING":(oiChange>0 && ((funding<=0&&liq>=0)||(funding>=0&&liq<=0))?"CONFIRMED":"NEUTRAL"))};
-  const labeled=outcomes.filter(o=>o&&o.setupKey&&Number.isFinite(Number(o.mae))&&Number.isFinite(Number(o.mfe)));
-  const setupKey=regime.regime+":"+(continuationSide||breakoutSide||revertSide||"NONE");
+  const historicalLabels = buildHistoricalOutcomeLabels(cs, now);
+  const labeled=[...outcomes,...historicalLabels].filter(o=>o&&o.setupKey&&Number.isFinite(Number(o.mae))&&Number.isFinite(Number(o.mfe)));
+  // Outcome distributions are regime-conditional. Historical simulations are
+  // explicitly tagged and use only fully matured forward windows.
+  const setupKey=regime.regime;
   const matched=labeled.filter(o=>o.setupKey===setupKey&&o.side);
   const maes=matched.map(o=>Math.abs(Number(o.mae))), mfes=matched.map(o=>Math.abs(Number(o.mfe)));
   const distMAE={p50:percentile(maes,.5),p80:percentile(maes,.8),p90:percentile(maes,.9),samples:maes.length};
