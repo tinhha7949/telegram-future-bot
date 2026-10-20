@@ -2330,6 +2330,47 @@ function logNineAIScanSummary() {
         .join(" | ");
     console.log(`🧠 NINE-AI SCAN DIAGNOSTIC: ${summary}`);
 }
+async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
+    const started = Date.now();
+    const getJson = async (url) => {
+        const response = await safeFetch(url, {}, 1);
+        if (!response?.ok) return null;
+        try { return await response.json(); } catch (_) { return null; }
+    };
+    const encoded = encodeURIComponent(symbol);
+    const [premium, oiNow, oiHistory, book, depth] = await Promise.all([
+        getJson("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=" + encoded),
+        getJson("https://fapi.binance.com/fapi/v1/openInterest?symbol=" + encoded),
+        getJson("https://fapi.binance.com/futures/data/openInterestHist?symbol=" + encoded + "&period=4h&limit=2"),
+        getJson("https://fapi.binance.com/fapi/v1/ticker/bookTicker?symbol=" + encoded),
+        getJson("https://fapi.binance.com/fapi/v1/depth?symbol=" + encoded + "&limit=20")
+    ]);
+    const bid = Number(book?.bidPrice), ask = Number(book?.askPrice);
+    const spreadPct = bid > 0 && ask >= bid ? ((ask - bid) / ((ask + bid) / 2)) * 100 : null;
+    const bidDepth = Array.isArray(depth?.bids) ? depth.bids.reduce((sum, level) => sum + Number(level[0]) * Number(level[1]), 0) : 0;
+    const askDepth = Array.isArray(depth?.asks) ? depth.asks.reduce((sum, level) => sum + Number(level[0]) * Number(level[1]), 0) : 0;
+    let oiChange = null;
+    if (Array.isArray(oiHistory) && oiHistory.length >= 2) {
+        const previous = Number(oiHistory[0]?.sumOpenInterest);
+        const latest = Number(oiHistory[oiHistory.length - 1]?.sumOpenInterest);
+        if (previous > 0 && Number.isFinite(latest)) oiChange = (latest / previous - 1) * 100;
+    }
+    const fundingRate = Number(premium?.lastFundingRate);
+    return {
+        now, snapshotAt: now,
+        fundingRate: Number.isFinite(fundingRate) ? fundingRate : null,
+        openInterest: Number(oiNow?.openInterest),
+        openInterestChange: oiChange,
+        spreadPct,
+        depthNotional: bidDepth + askDepth,
+        latencyMs: Date.now() - started,
+        // Public endpoints do not provide a reliable cross-exchange liquidation
+        // cascade snapshot; unknown is not fabricated into directional evidence.
+        liquidationImbalance: null,
+        roundTripFeePct: envNumber("ROUND_TRIP_FEE_PCT", 0.1, 0, 2),
+        expectedFundingCostPct: Number.isFinite(fundingRate) ? Math.abs(fundingRate) * 100 : null
+    };
+}
 // ================= SCAN =================
 async function scan(symbol){
     try {
@@ -2338,6 +2379,7 @@ async function scan(symbol){
         const data1h = await getData(symbol, "1h", 100);
         const data1d = await getData(symbol, "1d", 100);
         const scanAt = Date.now();
+        const marketSnapshot = await getNineAIMarketSnapshot(symbol, scanAt);
         if (!Array.isArray(data4h)) {
             recordNineAIAbstention("MARKET_DATA_UNAVAILABLE");
             try {
@@ -2371,7 +2413,7 @@ async function scan(symbol){
         const rawDecision = nineAiPipeline.analyzeNineAI({
             symbol, candles4h: data4h, candles1h: data1h || [], candles1d: data1d || [],
             outcomes: labeledOutcomes, equity: ACCOUNT_BALANCE,
-            market: { now: scanAt, snapshotAt: scanAt }
+            market: marketSnapshot
         }) || {
             symbol, side: null, action: "WAIT", reason: "NO_DECISION_RETURNED",
             authorizedForExecution: false
