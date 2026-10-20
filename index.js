@@ -2774,7 +2774,12 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     openedAt: best?.openedAt ?? null,
     closedAt: best?.closedAt ?? null,
     updatedAt: now,
-    result: best?.result ?? 'PENDING'
+    result: best?.result ?? 'PENDING',
+    maxAdverseMove: Number(best?.maxAdverseMove) || 0,
+    maxFavorableMove: Number(best?.maxFavorableMove) || 0,
+    nineAiFeatureSnapshot: best?.featureSnapshot || null,
+    nineAiSetupKey: best?.setupKey || null,
+    timeoutCandles: 24
   };
 }
 
@@ -3850,6 +3855,21 @@ async function checkTrades(){
 }
 
             try{
+                const tradeOpenAt = Number(t.enteredAt || t.openedAt || t.createdAt);
+                if (t.setup === "NINE_AI_4H" && Number.isFinite(tradeOpenAt) &&
+                    Date.now() - tradeOpenAt >= 96 * 60 * 60 * 1000) {
+                    const positionsForTimeout = await getPositionsCached();
+                    const timedPosition = Array.isArray(positionsForTimeout)
+                        ? positionsForTimeout.find(p => p.symbol === t.symbol && Math.abs(Number(p.positionAmt || 0)) > 0)
+                        : null;
+                    if (timedPosition) {
+                        const timeoutQty = Math.abs(Number(timedPosition.positionAmt));
+                        console.log(`⏱️ NINE-AI 24-CANDLE TIMEOUT ${t.symbol} | ageHours=${((Date.now()-tradeOpenAt)/3600000).toFixed(1)}`);
+                        const timeoutClosed = await closePosition(t.symbol, t.side, timeoutQty);
+                        if (!timeoutClosed) console.error(`🚨 NINE-AI TIMEOUT CLOSE FAILED ${t.symbol}`);
+                        continue;
+                    }
+                }
 
                 let data = await Promise.race([
     getData(t.symbol,"15m",2),
@@ -3857,6 +3877,24 @@ async function checkTrades(){
         setTimeout(()=>resolve(null),10000)
     )
 ])
+
+                if (Array.isArray(data) && data.length) {
+                    const lastCandle = data[data.length - 1];
+                    const hi = Number(lastCandle?.[2]), lo = Number(lastCandle?.[3]);
+                    const entryPrice = Number(t.entry);
+                    if (entryPrice > 0 && Number.isFinite(hi) && Number.isFinite(lo)) {
+                        const adverse = t.side === "LONG" ? Math.max(0, entryPrice - lo) : Math.max(0, hi - entryPrice);
+                        const favorable = t.side === "LONG" ? Math.max(0, hi - entryPrice) : Math.max(0, entryPrice - lo);
+                        t.maxAdverseMove = Math.max(Number(t.maxAdverseMove) || 0, adverse);
+                        t.maxFavorableMove = Math.max(Number(t.maxFavorableMove) || 0, favorable);
+                        if (t._id) {
+                            trades.updateOne({ _id: t._id, result: "PENDING" }, { $set: {
+                                maxAdverseMove: t.maxAdverseMove, maxFavorableMove: t.maxFavorableMove,
+                                lastExcursionUpdateAt: Date.now()
+                            }}).catch(error => console.error(`⚠️ EXCURSION SAVE FAILED ${t.symbol}:`, error?.message || error));
+                        }
+                    }
+                }
 
                 if(!data){
 
@@ -4054,6 +4092,27 @@ await trades.updateOne(
         }
     }
 )
+
+if (isWin && t.nineAiSetupKey && Number(t.maxAdverseMove) > 0 && Number(t.maxFavorableMove) > 0) {
+    try {
+        await db.collection("nine_ai_outcome_labels").updateOne(
+            { tradeId: String(t._id || `${t.symbol}:${t.createdAt}`) },
+            { $setOnInsert: {
+                tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
+                setupKey: String(t.nineAiSetupKey),
+                side: String(t.side),
+                mae: Number(t.maxAdverseMove),
+                mfe: Number(t.maxFavorableMove),
+                labeled: true,
+                source: "REALIZED_WINNING_TRADE",
+                closedAt: closed.closedAt
+            }},
+            { upsert: true }
+        );
+    } catch (labelError) {
+        console.error(`⚠️ NINE-AI OUTCOME LABEL SAVE FAILED ${t.symbol}:`, labelError?.message || labelError);
+    }
+}
 
 if (t.nineAiDecisionKey) {
     try {
