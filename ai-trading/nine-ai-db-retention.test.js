@@ -185,7 +185,7 @@ async function testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors() {
                 "candidate scan must exclude active trades");
               return name === "nine_ai_strategy_lab_reports" && reportUsageMB > 400
                 ? [{ _id: "old-report-1", _retentionDate: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000) }]
-                : name === "trades" && reportUsageMB > 4000
+                : name === "trades" && reportUsageMB > 400
                   ? [{ _id: "old-closed-trade", _retentionDate: new Date(Date.now() - 120 * 24 * 60 * 60 * 1000) }]
                   : [];
             }
