@@ -5,8 +5,8 @@
 // allowlist covers historical trade/learning/research events; mutable model state,
 // active policies, pending work, and unknown collections remain protected.
 const DEFAULTS = Object.freeze({
-  limitMB: 5120,
-  triggerRatio: 0.80,
+  limitMB: 500,
+  triggerRatio: 0.86,
   targetRatio: 0.60,
   batchSize: 100,
   maxDeletesPerRun: 500,
@@ -29,7 +29,19 @@ const SPECS = Object.freeze([
     "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
     "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
     "scannedAt", "signalTime", "createdAt"
-  ], days: 90, category: "evaluated_decision", filter: { outcomeStatus: "EVALUATED" } },
+  ], days: 90, category: "evaluated_decision", filter: {
+    outcomeStatus: "EVALUATED", side: { $ne: "WAIT" }
+  } },
+  // WAIT rows remain useful after their forward outcomes mature, but they are
+  // generated much more frequently than trades. Keep one week of evaluated WAIT
+  // evidence; never delete pending or actual-trade records.
+  { name: "nine_ai_decision_journal", dateFields: [
+    "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
+    "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
+    "scannedAt", "signalTime", "createdAt"
+  ], days: 7, category: "evaluated_wait_decision", filter: {
+    outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
+  } },
   { name: "nine_ai_learning_outcomes", dateFields: ["closedAt"], days: 90,
     category: "applied_learning_outcome", filter: {
       closed: true, applied: true, independentModelsMigrated: true
@@ -73,7 +85,7 @@ function configFromEnv() {
     : /^(1|true|yes)$/i.test(String(enabledEnv));
   const triggerRatio = boundedNumber("DB_STORAGE_TRIGGER_RATIO", DEFAULTS.triggerRatio, 0.50, 0.95);
   return {
-    limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 512, 1024 * 1024),
+    limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 100, 1024 * 1024),
     triggerRatio,
     targetRatio: Math.min(
       boundedNumber("DB_STORAGE_TARGET_RATIO", DEFAULTS.targetRatio, 0.25, 0.80),
