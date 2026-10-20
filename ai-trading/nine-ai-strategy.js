@@ -619,6 +619,12 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   // Market setup quality is only a 15% secondary factor, never a replacement
   // for the nine-role score. Contrarian is weighted at 15% and its trap result
   // is visible in the role audit trail.
+  if (!["LONG", "SHORT"].includes(side)) return { ...abstain,
+    reason: entryDecision.reason || "NO_DIRECTIONAL_ENTRY_CANDIDATE",
+    roles: roleResults, candles: candles.length, features: summarize(f),
+    rankMetrics: { dataDerivedConsensus, entryStrategy: entryDecision,
+      fenixBootstrap: entryDecision.source === "FENIXAI_BOOTSTRAP" ? entryDecision.details : null } };
+
   const opposingVotes = side === "LONG" ? shortVotes.length : longVotes.length;
   const directionalVotes = chosenVotes.length;
   const consensusMargin = directionalVotes - opposingVotes;
