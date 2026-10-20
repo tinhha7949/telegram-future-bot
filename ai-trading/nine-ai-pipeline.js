@@ -180,8 +180,10 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const slippage=spread===null||depth===null||oiChange===null||latency===null?null:
     clamp(spread*0.5+0.02/Math.max(depth/100000,0.1)+Math.max(0,latency-100)*0.00001+Math.abs(oiChange)*0.01,0,1);
   const snapshotAt=finite(market.snapshotAt);
+  const featureSnapshot={snapshotAt,closeTime:last.closeTime,close:last.close,atr,atrPct,volumeRatio,funding,oiChange,spread,depth,latency,
+    feePct:fee,fundingCostPct:fundingCost,estSlippagePct:slippage,regime,structureBias};
   if(fee===null||fundingCost===null||slippage===null||snapshotAt===null||Date.now()-snapshotAt>finite(config.maxDataAgeMs,5*60*1000))
-    return wait("EXECUTION_COST_INPUTS_STALE_OR_MISSING",{regime,flow});
+    return wait("EXECUTION_COST_INPUTS_STALE_OR_MISSING",{regime,flow,featureSnapshot});
   const agents={
     regime,
     structure:{structure_bias:structureBias,swingHigh,swingLow,support,resistance,validLongSLBelow:support,validShortSLAbove:resistance},
@@ -201,12 +203,14 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
       const setupKey=regime.regime+"_"+model.type;
       const samples=labeled.filter(o=>o.setupKey===setupKey&&String(o.side).toUpperCase()===side&&
         (o.source==="CLOSED_HISTORICAL_4H_SIMULATION"||String(o.symbol||"").toUpperCase()===String(symbol).toUpperCase()));
-      if(samples.length<30) continue;
-      const mae=percentile(samples.map(o=>Math.abs(Number(o.maePct))),0.8);
-      const mfe50=percentile(samples.map(o=>Math.abs(Number(o.mfePct))),0.5);
-      const mfe90=percentile(samples.map(o=>Math.abs(Number(o.mfePct))),0.9);
+      const winningSamples=samples.filter(o=>o.win===true||(o.win==null&&Number(o.mfePct)>Number(o.maePct)));
+      if(samples.length<30||winningSamples.length<30) continue;
+      // SL/TP distributions are conditioned on winners; p still uses all labeled outcomes.
+      const mae=percentile(winningSamples.map(o=>Math.abs(Number(o.maePct))),0.8);
+      const mfe50=percentile(winningSamples.map(o=>Math.abs(Number(o.mfePct))),0.5);
+      const mfe90=percentile(winningSamples.map(o=>Math.abs(Number(o.mfePct))),0.9);
       if(!(mae>0&&mfe50>0&&mfe90>=mfe50)) continue;
-      const wins=samples.filter(o=>o.win===true||(o.win==null&&Number(o.mfePct)>Number(o.maePct))).length;
+      const wins=winningSamples.length;
       const p=clamp((wins+2)/(samples.length+4),0.01,0.99);
       const er=mfe50/mae;
       applicable.push({...model,setupKey,samples:samples.length,distMAE:{p80:mae,samples:samples.length},distMFE:{p50:mfe50,p90:mfe90,samples:samples.length},p,er});
@@ -224,6 +228,15 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   });
   const [long,short]=candidates;
   const minEdge=finite(config.minEdge,0.05), gapEdge=finite(config.gapEdge,0.1);
+  const directionalGap=Math.abs(long.edge-short.edge);
+  const closeDirectionPenalty=Number.isFinite(directionalGap)?Math.max(0,gapEdge-directionalGap):0;
+  for(const candidate of candidates){
+    if(Number.isFinite(candidate.edge)){
+      candidate.uncertaintyPenalty+=closeDirectionPenalty;
+      candidate.edge-=closeDirectionPenalty;
+    }
+    candidate.directionalGap=directionalGap;
+  }
   let side="WAIT",reason="EDGE_BELOW_THRESHOLD";
   if(!["UPTREND","DOWNTREND"].includes(regime.regime)) reason="REGIME_NOT_TREND";
   else if(flow.confirmation==="BLOCKED_HOT_FUNDING"||flow.confirmation==="UNAVAILABLE") reason="FLOW_BLOCKED_OR_UNAVAILABLE";
@@ -237,18 +250,18 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     dist_MFE:side==="LONG"?long.distMFE:side==="SHORT"?short.distMFE:null,
     setupKey:side==="LONG"?long.setupKey:side==="SHORT"?short.setupKey:null,
     source:"CLOSED_HISTORICAL_4H_SIMULATION_AND_REALIZED_LABELS"};
-  if(side==="WAIT") return wait(reason,{regime,agents,edges:{LONG:long,SHORT:short}});
+  if(side==="WAIT") return wait(reason,{regime,agents,edges:{LONG:long,SHORT:short},featureSnapshot});
   const chosen=side==="LONG"?long:short;
   const entry=last.close, stopDistance=chosen.distMAE.p80*entry/100, tp1Distance=chosen.distMFE.p50*entry/100, tp2Distance=chosen.distMFE.p90*entry/100;
   const sl=side==="LONG"?Math.min(entry-stopDistance,support-atr*0.1):Math.max(entry+stopDistance,resistance+atr*0.1);
   const tp1=side==="LONG"?entry+tp1Distance:entry-tp1Distance, tp2=side==="LONG"?entry+tp2Distance:entry-tp2Distance;
   if(!(stopDistance>0&&tp1Distance>0&&tp2Distance>=tp1Distance&&Number.isFinite(sl)&&Number.isFinite(tp1)&&Number.isFinite(tp2)))
-    return wait("INVALID_OUTCOME_DERIVED_EXIT_PLAN",{regime,agents,edges:{LONG:long,SHORT:short}});
+    return wait("INVALID_OUTCOME_DERIVED_EXIT_PLAN",{regime,agents,edges:{LONG:long,SHORT:short},featureSnapshot});
   return {symbol,side,action:side,authorizedForExecution:true,reason,setup:"NINE_AI_4H",signalAt:last.closeTime,
     entry,price:entry,sl,tp:tp2,tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeframe:"4h",
     riskPerTradePct:0.0075,riskEquity:finite(equity,0)*0.0075,decisionPolicy:{minEdge,gapEdge},
     edges:{LONG:long,SHORT:short},regime,agents,setupKey:chosen.setupKey,
-    featureSnapshot:{snapshotAt,closeTime:last.closeTime,close:entry,atr,atrPct,volumeRatio,funding,oiChange,spread,depth,latency,feePct:fee,fundingCostPct:fundingCost,estSlippagePct:slippage,regime,structureBias},
+    featureSnapshot,
     tradePlan:{stopMethod:"LABELED_MAE_P80_WITH_STRUCTURE_BUFFER",targetMethod:"LABELED_MFE_P50_P90",tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeoutMs:96*60*60*1000},
     candles:cs.length};
 }
