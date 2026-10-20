@@ -55,12 +55,16 @@ function swingPoints(cs, radius = 2) {
 function classifyRegime(cs, higher = []) {
   const closes=cs.map(c=>c.close), logReturns=[];
   for(let i=1;i<closes.length;i++) logReturns.push(Math.log(closes[i]/closes[i-1]));
-  const realized=stdev(logReturns.slice(-90))*Math.sqrt(6)*100;
+  // Four-hour bars: 120 observations ~= 20 days; 540 ~= 90 days.
+  const annualizer=Math.sqrt(6*365)*100;
+  const realized20=logReturns.length>=120 ? stdev(logReturns.slice(-120))*annualizer : null;
+  const realized90=logReturns.length>=540 ? stdev(logReturns.slice(-540))*annualizer : null;
+  const realized=realized90 ?? realized20;
   const volHistory=[];
-  for(let end=20;end<=logReturns.length;end++) volHistory.push(stdev(logReturns.slice(end-20,end))*Math.sqrt(6)*100);
-  const volRank=percentileRank(volHistory, stdev(logReturns.slice(-20))*Math.sqrt(6)*100);
-  const mom20=closes.length>=21 ? closes.at(-1)/closes.at(-21)-1 : 0;
-  const mom5=closes.length>=6 ? closes.at(-1)/closes.at(-6)-1 : 0;
+  for(let end=120;end<=logReturns.length;end++) volHistory.push(stdev(logReturns.slice(end-120,end))*annualizer);
+  const volRank=percentileRank(volHistory, realized20);
+  const mom20=closes.length>=121 ? closes.at(-1)/closes.at(-121)-1 : 0;
+  const mom5=closes.length>=31 ? closes.at(-1)/closes.at(-31)-1 : 0;
   const trendAgreement=higher.length ? higher.filter(x=>x>0?mom20>0:x<0?mom20<0:true).length/higher.length : 1;
   let regime="RANGE";
   if(volRank!==null && volRank>=0.8) regime="HIGH_VOL";
@@ -68,7 +72,7 @@ function classifyRegime(cs, higher = []) {
   else if(mom20< -0.012 && mom5<0 && trendAgreement>=0.5) regime="DOWNTREND";
   const strength=clamp(Math.abs(mom20)/0.04,0,1);
   const regimeConf=clamp(0.45+0.35*strength+0.2*Math.abs((volRank??0.5)-0.5)*2,0,1);
-  return {regime,regime_conf:regimeConf,realized_vol_20_90d:realized,vol_percentile:volRank,momentum20:mom20,momentum5:mom5,trendAgreement};
+  return {regime,regime_conf:regimeConf,realized_vol_20d:realized20,realized_vol_90d:realized90,realized_vol_20_90d:realized,vol_percentile:volRank,momentum20:mom20,momentum5:mom5,trendAgreement};
 }
 function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},outcomes=[],equity=0,config={}}={}) {
   const now=finite(market.now,Date.now()), cs=closedCandles(candles4h,now);
