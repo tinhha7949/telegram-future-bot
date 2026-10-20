@@ -2973,9 +2973,12 @@ for (let s of signals){
             return
         }
 
-        // Rank all valid signals collected during this scan cycle.
-candidates = nineAiStrategyEvolution.rankCandidates(candidates)
-console.log("🧬 NINE-AI STRATEGY SELECTION: " + candidates.slice(0, 5).map(c => `${c.symbol}:${c.strategyClassification.family}[edge=${safeFixed(c.strategyEdge.selectionValue, 3)}R,n=${c.strategyEdge.samples},source=${c.strategyEdge.edgeSource}]`).join(" | "))
+        // AI-9 net edge is the only ranking key. No legacy policy or research
+// module is allowed to reorder the live opportunity set.
+candidates = candidates.sort((a, b) => Number(b.rankScore) - Number(a.rankScore));
+console.log("🧠 NINE-AI NET-EDGE RANK: " + candidates.slice(0, 5).map(c =>
+    `${c.symbol}:${c.side}[edge=${safeFixed(c.rankScore, 4)},regime=${c.regime?.regime || "UNKNOWN"}]`
+).join(" | "))
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
     const cooldownUntil = MIN_NOTIONAL_RISK_COOLDOWN.get(c.symbol) || 0;
@@ -3011,7 +3014,7 @@ let filtered = candidates.filter(c => {
     return true;
 })
 // ===== SORT LẠI =====
-filtered = filtered.sort(nineAiStrategyEvolution.compareCandidates)
+filtered = filtered.sort((a, b) => Number(b.rankScore) - Number(a.rankScore))
 
 // ===== UNIQUE COIN =====
 let unique = []
