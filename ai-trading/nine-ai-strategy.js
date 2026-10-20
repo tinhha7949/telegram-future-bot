@@ -702,11 +702,13 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   const baseRankScore = roleScore * adaptiveDecisionWeights.role +
     setupQuality * adaptiveDecisionWeights.setup + entryQuality * adaptiveDecisionWeights.entry;
   const rankScore = Math.round(clamp(baseRankScore + timingAdjustment, 0, 100) * 100) / 100;
+  const rankedRoles = weighted.roles;
 
   if (!riskAllowed) return { ...abstain,
     reason: entryDecision.reason,
-    roles: roleResults, candles: candles.length, features: summarize(f),
-    rankMetrics: { dataDerivedConsensus, entryStrategy: entryDecision,
+    rankScore, qualityScore: rankScore, roles: rankedRoles, candles: candles.length, features: summarize(f),
+    rankMetrics: { score: rankScore, roleScore, setupQuality, entryQuality, features: summarize(f),
+      dataDerivedConsensus, entryStrategy: entryDecision,
       fenixBootstrap: entryDecision.source === "FENIXAI_BOOTSTRAP" ? entryDecision.details : null } };
 
   // Observed pivots from the preceding 96 closed candles define the initial
@@ -718,8 +720,10 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
   let stopDistance = observedExitPlan.stopDistance;
   let targetDistance = observedExitPlan.targetDistance;
   if (!(Number.isFinite(stopDistance) && stopDistance > 0 && Number.isFinite(targetDistance) && targetDistance > 0)) {
-    return { ...abstain, reason: "NO_OBSERVED_MARKET_PIVOTS_FOR_EXIT_PLAN", roles: roleResults,
-      candles: candles.length, features: summarize(f), rankMetrics: { observedExitPlan } };
+    return { ...abstain, reason: "NO_OBSERVED_MARKET_PIVOTS_FOR_EXIT_PLAN",
+      rankScore, qualityScore: rankScore, roles: rankedRoles, candles: candles.length,
+      features: summarize(f), rankMetrics: { score: rankScore, roleScore, setupQuality,
+        entryQuality, features: summarize(f), observedExitPlan } };
   }
   let targetRR = targetDistance / stopDistance;
   const riskPressure = null;
@@ -777,9 +781,6 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
       features: summarize(f), rankMetrics: { score: rankScore, roleScore, setupQuality, entryQuality,
         features: summarize(f) } };
   }
-
-
-  const rankedRoles = weighted.roles;
   const rankMetrics = {
     score: rankScore, roleScore,
     roleWeight: adaptiveDecisionWeights.role, setupWeight: adaptiveDecisionWeights.setup,
