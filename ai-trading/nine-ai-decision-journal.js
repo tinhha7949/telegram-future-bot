@@ -8,7 +8,7 @@ const crypto = require("crypto");
 // existing execution and capital-protection checks.
 const COLLECTION = "nine_ai_decision_journal";
 const MAX_RECORDS = 5000;
-const MARKET_WINDOW_BARS = 96;
+const MARKET_WINDOW_BARS = 48;
 const HORIZONS = [4, 16];
 const MIN_SAMPLES = 20;
 const MAX_LIVE_BONUS = 3;
@@ -97,9 +97,9 @@ function extractWindowFeatures(raw) {
     ? (lastClose - Math.min(...candles.map(c => c.low))) / totalRange : 0.5;
   const recentRangeRatio = avgRange(ranges.slice(-16)) / Math.max(avgRange(ranges), 1e-12);
   return {
-    return4: returnOver(4), return16: returnOver(16), return48: returnOver(48), return96: returnOver(95),
-    volatility16: volatilityOver(16), volatility48: volatilityOver(48), volatility96: volatilityOver(95),
-    efficiency16: efficiencyOver(16), efficiency48: efficiencyOver(48), efficiency96: efficiencyOver(95),
+    return4: returnOver(4), return16: returnOver(16), return32: returnOver(32), return48: returnOver(47),
+    volatility16: volatilityOver(16), volatility32: volatilityOver(32), volatility48: volatilityOver(47),
+    efficiency16: efficiencyOver(16), efficiency32: efficiencyOver(32), efficiency48: efficiencyOver(47),
     rangePosition, recentRangeRatio,
     volumeRatio: recentVolume != null && priorVolume > 0 ? recentVolume / priorVolume : null,
     takerBuyRatio,
@@ -112,7 +112,7 @@ function extractWindowFeatures(raw) {
 function assessWindowEvidence(rawWindow, side, sourceRecords = records) {
   const current = extractWindowFeatures(rawWindow);
   if (!current || !["LONG", "SHORT"].includes(String(side).toUpperCase())) {
-    return { ready: false, adjustment: 0, samples: 0, reason: "NO_COMPLETE_96_BAR_WINDOW" };
+    return { ready: false, adjustment: 0, samples: 0, reason: "NO_COMPLETE_48_BAR_WINDOW" };
   }
   const outcomeKey = String(side).toLowerCase() + "NetR";
   const candidates = sourceRecords.map(record => {
@@ -167,7 +167,7 @@ function assessWindowEvidence(rawWindow, side, sourceRecords = records) {
     standardError: Number(standardError.toFixed(5)),
     similarWinRate: Number(similarWinRate.toFixed(5)), baselineWinRate: Number(baselineWinRate.toFixed(5)),
     nearestDistance: Number(nearestDistance.toFixed(5)),
-    horizonBars: [4, 16], source: "SIMILAR_96_BAR_WINDOWS_WITH_MATURED_FORWARD_OUTCOMES" };
+    horizonBars: [4, 16], source: "SIMILAR_48_BAR_WINDOWS_WITH_MATURED_FORWARD_OUTCOMES" };
 }
 
 function signalCandleIndex(candles, signalTime) {
@@ -470,7 +470,7 @@ function assess(features = {}, side, { marketWindow = null, signalTime = Infinit
     lowerConfidenceBound = meanR - standardError;
     broadBonus = positiveEvidenceBonus(meanR, standardError, sampleCount);
   }
-  // Similar 96-bar windows contribute evidence from wins and losses. This is
+  // Similar 48-bar windows contribute evidence from wins and losses. This is
   // a soft ranking adjustment: it cannot authorize or veto an entry.
   const bonus = Number((broadBonus + Number(windowEvidence.adjustment || 0)).toFixed(3));
   const ready = sampleCount >= MIN_SAMPLES || windowEvidence.ready;
@@ -478,7 +478,7 @@ function assess(features = {}, side, { marketWindow = null, signalTime = Infinit
     standardError: standardError == null ? null : Number(standardError.toFixed(4)),
     lowerConfidenceBound: lowerConfidenceBound == null ? null : Number(lowerConfidenceBound.toFixed(4)),
     bonus, regime, side: wantedSide, horizonBars: 4,
-    source: windowEvidence.ready ? "REGIME_AND_SIMILAR_96_BAR_WINDOWS" : "HYPOTHETICAL_SKIPPED_AND_TAKEN_SIGNALS",
+    source: windowEvidence.ready ? "REGIME_AND_SIMILAR_48_BAR_WINDOWS" : "HYPOTHETICAL_SKIPPED_AND_TAKEN_SIGNALS",
     windowLearning: windowEvidence,
     reason: ready ? null : windowEvidence.reason || "INSUFFICIENT_SAMPLE" };
 }
