@@ -122,7 +122,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const fee=finite(market.roundTripFeePct,finite(config.roundTripFeePct,0.1));
   const fundingCost=finite(market.expectedFundingCostPct, funding===null?null:Math.abs(funding)*100);
   const slippage=spread===null||depth===null||oiChange===null||latency===null?null:
-    clamp(spread*0.5 + 0.02/Math.max(depth/100000,0.1)+Math.max(0,latency-100)*0.00001+Math.abs(oiChange)<0?0:0,0,1);
+    clamp(spread*0.5 + 0.02/Math.max(depth/100000,0.1)+Math.max(0,latency-100)*0.00001+Math.abs(oiChange)*0.01,0,1);
   const estimatedSlippage=slippage===null?null:slippage;
   if(estimatedSlippage===null||fundingCost===null||fee===null) return wait("EXECUTION_COST_INPUTS_STALE_OR_MISSING",{regime,flow});
   const agents={
