@@ -169,7 +169,7 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const vwapValue=vwap(cs.slice(-24)), deviation=vwapValue?(last.close-vwapValue)/Math.max(atr,1e-12):0;
   const rangeRegime=["RANGE","HIGH_VOL"].includes(regime.regime);
   const liq=finite(market.liquidationImbalance);
-  const revertSide=rangeRegime&&liq!==null&&Math.abs(deviation)>=1.25?(deviation>0&&liq<=0?"SHORT":deviation<0&&liq>=0?"LONG":null):null;
+  const revertSide=rangeRegime&&liq!==null&&Math.abs(liq)>=0.05&&Math.abs(deviation)>=1.25?(deviation>0&&liq< -0.05?"SHORT":deviation<0&&liq>0.05?"LONG":null):null;
   const flowConfirmationSide=oiChange!==null&&oiChange>0&&liq!==null&&!fundingHot?(liq>0&&funding<=0?"LONG":liq<0&&funding>=0?"SHORT":null):null;
   const flow={fundingRate:funding,openInterestChange:oiChange,liquidationImbalance:liq,confirmationSide:flowConfirmationSide,
     confirmation:funding===null||oiChange===null||liq===null?"UNAVAILABLE":fundingHot?"BLOCKED_HOT_FUNDING":flowConfirmationSide?"CONFIRMED":"NEUTRAL"};
