@@ -23,12 +23,13 @@ function envNumber(name, fallback, min, max) {
     return Math.max(min, Math.min(max, value));
 }
 
-// User-adjustable execution limits. The 9-AI strategy owns trade direction
-// and its entry/SL/TP plan; these settings only bound exposure.
+// Canonical user-editable risk setting. Keep this at the top of index.js.
+// 0.0075 = 0.75% of current equity per trade. Do not increase via environment.
+const RISK_PER_TRADE = 0.0075;
 const TRADE_CONFIG = Object.freeze({
-    riskPerTrade: envNumber("RISK_PER_TRADE", 0.05, 0.0001, 0.10),
-    maxRiskPerTrade: envNumber("MAX_RISK_PER_TRADE", 0.05, 0.0001, 0.10),
-    maxPositionPercent: envNumber("MAX_POSITION_PERCENT", 1.0, 0.01, 1),
+    riskPerTrade: RISK_PER_TRADE,
+    maxRiskPerTrade: RISK_PER_TRADE,
+    maxPositionPercent: 1.0,
     maxActivePositions: Math.round(envNumber("MAX_ACTIVE_POSITIONS", 20, 1, 50))
 })
 let SYNCING_TIME = false
@@ -39,7 +40,8 @@ const fs = require("fs")
 const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
-const { analyzeNineAI, compareNineAICandidates } = require("./ai-trading/nine-ai-strategy")
+const { analyzeNineAI: analyzeLegacyNineAI, compareNineAICandidates } = require("./ai-trading/nine-ai-strategy")
+const nineAiPipeline = require("./ai-trading/nine-ai-pipeline")
 const nineAiCentralDecisionEngine = require("./ai-trading/nine-ai-central-decision-engine")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
@@ -2331,15 +2333,17 @@ function logNineAIScanSummary() {
 // ================= SCAN =================
 async function scan(symbol){
     try {
-        // Nine-AI is the only signal source.
-        const data15 = await getData(symbol, "15m", 601);
+        // Canonical strategy runs only on fully closed 4h candles.
+        const data4h = await getData(symbol, "4h", 601);
+        const data1h = await getData(symbol, "1h", 100);
+        const data1d = await getData(symbol, "1d", 100);
         const scanAt = Date.now();
-        if (!Array.isArray(data15)) {
+        if (!Array.isArray(data4h)) {
             recordNineAIAbstention("MARKET_DATA_UNAVAILABLE");
             try {
                 await nineAiDecisionJournal.recordDecision({
                     symbol,
-                    signalTime: Math.floor(scanAt / 900000) * 900000,
+                    signalTime: Math.floor(scanAt / 14400000) * 14400000,
                     scannedAt: scanAt,
                     decision: { side: "WAIT", action: "WAIT", reason: "MARKET_DATA_UNAVAILABLE",
                         authorizedForExecution: false, roles: [], rankMetrics: {} }
@@ -2350,13 +2354,27 @@ async function scan(symbol){
             return null;
         }
         try {
-            await nineAiDecisionJournal.settleMatured(symbol, data15);
+            await nineAiDecisionJournal.settleMatured(symbol, data4h);
         } catch (settleError) {
             console.error("⚠️ NINE-AI OPPORTUNITY SETTLEMENT FAILED " + symbol + ":", settleError?.message || settleError);
         }
-        const rawDecision = analyzeNineAI(data15, symbol) || {
+        // Outcomes must be genuinely labeled; never fabricate MAE/MFE quantiles.
+        let labeledOutcomes = [];
+        try {
+            const outcomeRows = await db.collection("nine_ai_outcome_labels")
+                .find({ labeled: true, mae: { $type: "number" }, mfe: { $type: "number" } })
+                .sort({ closedAt: -1 }).limit(5000).toArray();
+            labeledOutcomes = outcomeRows;
+        } catch (outcomeReadError) {
+            console.error("⚠️ NINE-AI OUTCOME LABEL READ FAILED:", outcomeReadError?.message || outcomeReadError);
+        }
+        const rawDecision = nineAiPipeline.analyzeNineAI({
+            symbol, candles4h: data4h, candles1h: data1h || [], candles1d: data1d || [],
+            outcomes: labeledOutcomes, equity: ACCOUNT_BALANCE,
+            market: { now: scanAt, snapshotAt: scanAt }
+        }) || {
             symbol, side: null, action: "WAIT", reason: "NO_DECISION_RETURNED",
-            authorizedForExecution: false, roles: [], rankMetrics: {}
+            authorizedForExecution: false
         };
         // One authorization boundary. It can preserve Nine-AI's own decision or
         // abstain, but never invent a direction or consult a second trading brain.
@@ -2372,9 +2390,9 @@ async function scan(symbol){
                 const journalResult = await nineAiDecisionJournal.recordDecision({
                     symbol,
                     decision,
-                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 14400000) * 14400000,
                     scannedAt: scanAt,
-                    marketWindow: data15
+                    marketWindow: data4h
                 });
                 if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
             } catch (journalError) {
@@ -2525,7 +2543,7 @@ function safeFixed(value, digits = 2){
 }
 
 function buildTradeFromNineAISignal(best, riskBudget) {
-  if (best?.authorizedForExecution !== true || best?.setup !== "NINE_AI_15M" || best?.rankDirectionMode !== "NINE_AI_PRIMARY") {
+  if (best?.authorizedForExecution !== true || best?.setup !== "NINE_AI_4H" || best?.rankDirectionMode !== "NINE_AI_PRIMARY") {
     console.log(`❌ REJECT NON-NINE-AI SIGNAL ${best?.symbol || 'UNKNOWN'}`);
     return null;
   }
@@ -2569,7 +2587,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     : sourceRisk;
   const qualityScore = Number(best?.qualityScore ?? best?.score ?? best?.quality?.score ?? 0);
   const strategyFeatures = best?.rankMetrics?.features;
-  const nineAiLearningFeatures = best?.setup === "NINE_AI_15M" && strategyFeatures
+  const nineAiLearningFeatures = best?.setup === "NINE_AI_4H" && strategyFeatures
     ? {
         trend: strategyFeatures.trend === "UP" ? 1 : strategyFeatures.trend === "DOWN" ? -1 : 0,
         momentum: Number(strategyFeatures.momentum4) / Math.max(Number(strategyFeatures.atrPercent) || 0, 0.0001),
@@ -3987,7 +4005,7 @@ if (t.nineAiDecisionKey) {
 
 // Train only after Binance confirms the position is closed and the realized PnL
 // has been saved. Learning failures must never interrupt trade reconciliation.
-if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
+if (t.setup === "NINE_AI_4H" && t.nineAiLearningFeatures) {
     try {
         const riskBudget = getTradeActualRisk(t);
         if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
