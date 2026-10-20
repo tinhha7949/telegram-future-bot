@@ -40,6 +40,7 @@ const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
 const { analyzeNineAI, compareNineAICandidates } = require("./ai-trading/nine-ai-strategy")
+const nineAiCentralDecisionEngine = require("./ai-trading/nine-ai-central-decision-engine")
 const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
 const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
 const nineAiContextualLearning = require("./ai-trading/nine-ai-contextual-learning")
@@ -2353,10 +2354,15 @@ async function scan(symbol){
         } catch (settleError) {
             console.error("⚠️ NINE-AI OPPORTUNITY SETTLEMENT FAILED " + symbol + ":", settleError?.message || settleError);
         }
-        const decision = analyzeNineAI(data15, symbol) || {
+        const rawDecision = analyzeNineAI(data15, symbol) || {
             symbol, side: null, action: "WAIT", reason: "NO_DECISION_RETURNED",
             authorizedForExecution: false, roles: [], rankMetrics: {}
         };
+        // One authorization boundary. It can preserve Nine-AI's own decision or
+        // abstain, but never invent a direction or consult a second trading brain.
+        const decision = nineAiCentralDecisionEngine.finalizeDecision(rawDecision, {
+            symbol, scannedAt: scanAt
+        });
         if (
             decision.authorizedForExecution !== true ||
             !["LONG", "SHORT"].includes(decision.side)
@@ -2377,9 +2383,9 @@ async function scan(symbol){
             return null;
         }
 
-        // Learn from similar pre-decision 96-candle windows and their matured
-        // forward outcomes. Evidence adjusts ranking only; execution and capital
-        // protection remain authoritative.
+        // Learning/research modules are observers of the central decision, not
+        // additional live decision-makers. Their evidence is journaled for research
+        // but cannot alter side, authorization, rank, entry, SL/TP, or timing.
         const originalRankScore = Number(decision.rankScore ?? decision.confidence ?? 0);
         const opportunityEvidence = nineAiDecisionJournal.assess(
             decision.rankMetrics?.features || decision.features || {},
@@ -2387,66 +2393,30 @@ async function scan(symbol){
             { marketWindow: data15, signalTime: Number(decision.signalAt) || scanAt }
         );
         decision.originalRankScore = originalRankScore;
-        decision.liveOpportunityAdjustment = Number(opportunityEvidence.bonus) || 0;
-        decision.liveOpportunityBonus = decision.liveOpportunityAdjustment;
-        decision.rankScore = Math.max(0, Math.min(100, originalRankScore + decision.liveOpportunityAdjustment));
-        decision.qualityScore = decision.rankScore;
+        decision.liveOpportunityAdjustment = 0;
+        decision.liveOpportunityBonus = 0;
         decision.rankMetrics = {
             ...(decision.rankMetrics || {}),
-            score: decision.rankScore,
-            liveOpportunityLearning: opportunityEvidence
+            score: originalRankScore,
+            liveOpportunityLearning: opportunityEvidence,
+            liveOpportunityApplied: false
         };
-        // Apply only a separately validated out-of-sample side/regime edge.
-        // This overlay adds a bounded bonus; it never authorizes, vetoes, sizes,
-        // or changes the initial SL/TP of a trade.
-        let decisionResearchEvidence = { bonus: 0, reason: "NOT_INITIALIZED" };
-        try {
-            decisionResearchEvidence = nineAiAutonomousDecisionResearch.assessLive(
-                decision.rankMetrics?.features || decision.features || {},
-                decision.side
-            );
-            const researchBonus = Number(decisionResearchEvidence.bonus) || 0;
-            decision.rankScore = Math.max(0, Math.min(100, Number(decision.rankScore || 0) + researchBonus));
-            decision.qualityScore = decision.rankScore;
-            decision.rankMetrics = {
-                ...(decision.rankMetrics || {}),
-                score: decision.rankScore,
-                autonomousDecisionResearch: decisionResearchEvidence
-            };
-            if (researchBonus > 0) console.log("🧠 NINE-AI OOS EDGE BONUS " + symbol +
-                " | side=" + decision.side + " | bonus=" + researchBonus +
-                " | policy=" + (decisionResearchEvidence.policyId || "N/A") +
-                " | testExpectancyR=" + decisionResearchEvidence.testExpectancyR);
-        } catch (decisionResearchError) {
-            console.error("⚠️ NINE-AI OOS DECISION RESEARCH UNAVAILABLE " + symbol + ":",
-                decisionResearchError?.message || decisionResearchError);
-        }
         let researchPolicyAtEntry = null;
         try {
             const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
-            const appliedPolicy = nineAiAutonomousResearch.applyResearchPolicyEvidence(decision, activePolicy);
-            const policyCheck = appliedPolicy.policyCheck;
             if (activePolicy) {
-                researchPolicyAtEntry = decision.rankMetrics?.researchPolicyEvidence || {
+                researchPolicyAtEntry = {
                     policyId: activePolicy.policyId,
-                    matched: policyCheck.matched,
-                    scoreEvidence: policyCheck.scoreEvidence,
+                    status: activePolicy.status,
                     testUpliftR: Number(activePolicy.testUpliftR) || 0,
-                    adjustmentPoints: appliedPolicy.adjustmentPoints || 0
+                    applicationMode: "RESEARCH_ONLY_NO_LIVE_DECISION_EFFECT"
                 };
-                console.log("🧠 NINE-AI RESEARCH POLICY " + symbol +
-                    " | matched=" + String(policyCheck.matched) +
-                    " | rankAdjustment=" + String(researchPolicyAtEntry.adjustmentPoints) +
-                    " | upliftR=" + String(researchPolicyAtEntry.testUpliftR) +
-                    " | policy=" + activePolicy.policyId +
-                    " | entry remains eligible");
+                decision.rankMetrics.researchPolicyEvidence = researchPolicyAtEntry;
             }
         } catch (policyError) {
-            console.error("⚠️ NINE-AI RESEARCH POLICY UNAVAILABLE " + symbol + ":", policyError?.message || policyError);
+            console.error("⚠️ NINE-AI RESEARCH POLICY DIAGNOSTIC UNAVAILABLE " + symbol + ":",
+                policyError?.message || policyError);
         }
-        // Autonomous adaptation is learned only from confirmed closed trades and
-        // activated only after chronological holdout validation. It can adjust ranking
-        // or veto a repeatedly harmful context, but cannot change SL/TP or position size.
         try {
             const adaptation = nineAiAutonomousAdaptation.assess(
                 decision.rankMetrics?.features || decision.features || {},
@@ -2457,100 +2427,59 @@ async function scan(symbol){
                     roomQuality: decision.rankMetrics?.roomQuality ?? decision.rankMetrics?.features?.roomQuality
                 }
             );
-            decision.rankMetrics = { ...(decision.rankMetrics || {}), autonomousAdaptation: adaptation };
-            if (adaptation.adjustment) {
-                const before = Number(decision.rankScore || 0);
-                decision.rankScore = Math.max(0, Math.min(100, before + adaptation.adjustment));
-                decision.qualityScore = decision.rankScore;
-                decision.rankMetrics.score = decision.rankScore;
-            }
-            if (adaptation.vetoReason) {
-                decision.authorizedForExecution = false;
-                decision.action = "WAIT";
-                decision.reason = adaptation.vetoReason;
-                recordNineAIAbstention(adaptation.vetoReason);
-                try {
-                    const rejected = await nineAiDecisionJournal.recordDecision({
-                        symbol, decision,
-                        signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
-                        scannedAt: scanAt,
-                        marketWindow: data15
-                    });
-                    if (rejected.decisionKey) decision.nineAiDecisionKey = rejected.decisionKey;
-                } catch (journalError) {
-                    console.error("⚠️ NINE-AI ADAPTATION VETO JOURNAL FAILED " + symbol + ":",
-                        journalError?.message || journalError);
-                }
-                console.log("🧠 NINE-AI AUTONOMOUS ADAPTATION VETO " + symbol +
-                    " | side=" + decision.side + " | policy=" + adaptation.vetoReason +
-                    " | version=" + adaptation.version);
-                return null;
-            }
-            if (adaptation.adjustment || adaptation.matched?.length) {
-                console.log("🧠 NINE-AI AUTONOMOUS ADAPTATION " + symbol +
-                    " | adjustment=" + adaptation.adjustment +
-                    " | matched=" + (adaptation.matched || []).map(x => x.policyId).join(",") +
-                    " | version=" + adaptation.version);
-            }
+            decision.rankMetrics.autonomousAdaptation = {
+                ...adaptation,
+                liveApplication: "DIAGNOSTIC_ONLY"
+            };
         } catch (adaptationError) {
-            console.error("⚠️ NINE-AI AUTONOMOUS ADAPTATION UNAVAILABLE " + symbol + ":",
+            console.error("⚠️ NINE-AI ADAPTATION DIAGNOSTIC UNAVAILABLE " + symbol + ":",
                 adaptationError?.message || adaptationError);
         }
-
-        // Apply the rank threshold selected from chronological journal
-        // outcomes. The live vote threshold is applied inside analyzeNineAI.
-        if (decision.authorizedForExecution === true) {
-            try {
-                const livePolicy = nineAiDataDerivedConsensus.assessLive(
-                    decision.roles || [],
-                    decision.rankMetrics?.features?.marketRegime || decision.marketState || "UNKNOWN",
-                    Number(decision.rankScore), decision.rankMetrics?.features || decision.features || {}
-                );
-                decision.rankMetrics = { ...(decision.rankMetrics || {}), dataDerivedConsensus: livePolicy };
-                if (livePolicy.ready && livePolicy.rankAllowed === false) {
-                    decision.originalSideBeforeDataPolicy = decision.side;
-                    decision.side = "WAIT";
-                    decision.action = "WAIT";
-                    decision.authorizedForExecution = false;
-                    decision.reason = livePolicy.reason;
-                    recordNineAIAbstention(livePolicy.reason);
-                }
-            } catch (policyError) {
-                console.error("⚠️ NINE-AI DATA-DERIVED CONSENSUS FAILED " + symbol + ":",
-                    policyError?.message || policyError);
-                decision.authorizedForExecution = false;
-                decision.side = "WAIT";
-                decision.action = "WAIT";
-                decision.reason = "DATA_DERIVED_POLICY_UNAVAILABLE";
-                recordNineAIAbstention(decision.reason);
-            }
-        }
-
-        // A validated delay policy is an actual execution timing policy, not a report-only finding.
-        // Persist the pending signal so repeated scans cannot restart the delay indefinitely.
         try {
-            const timingGate = await nineAiAutonomousDeployment.gateLiveEntry({
-                symbol,
-                side: decision.side,
-                signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
-                features: decision.rankMetrics?.features || decision.features || {}
-            });
-            decision.rankMetrics = { ...(decision.rankMetrics || {}), autonomousTimingGate: timingGate };
-            if (!timingGate.allowed) {
-                decision.originalSideBeforeTimingGate = decision.side;
-                decision.side = "WAIT";
-                decision.action = "WAIT";
-                decision.authorizedForExecution = false;
-                decision.reason = timingGate.reason;
-                recordNineAIAbstention(timingGate.reason);
-                console.log("⏳ NINE-AI VALIDATED ENTRY TIMING " + symbol +
-                    " | originalSide=" + decision.originalSideBeforeTimingGate +
-                    " | variant=" + (timingGate.variant || "N/A") +
-                    " | bars=" + (timingGate.delayBars ?? timingGate.barsRemaining ?? "N/A") +
-                    " | policy=" + (timingGate.policyId || "N/A"));
+            const livePolicy = nineAiDataDerivedConsensus.assessLive(
+                decision.roles || [],
+                decision.rankMetrics?.features?.marketRegime || decision.marketState || "UNKNOWN",
+                Number(decision.rankScore),
+                decision.rankMetrics?.features || decision.features || {}
+            );
+            decision.rankMetrics.dataDerivedConsensus = {
+                ...livePolicy,
+                liveApplication: "DIAGNOSTIC_ONLY"
+            };
+        } catch (policyError) {
+            console.error("⚠️ NINE-AI DATA-DERIVED RESEARCH DIAGNOSTIC FAILED " + symbol + ":",
+                policyError?.message || policyError);
+        }
+        try {
+            const timingEvidence = nineAiAutonomousDeployment.assess(
+                decision.rankMetrics?.features || decision.features || {},
+                decision.side
+            );
+            decision.rankMetrics.autonomousTimingDeployment = {
+                ...timingEvidence,
+                appliedAdjustment: 0,
+                liveApplication: "DIAGNOSTIC_ONLY"
+            };
+        } catch (timingError) {
+            console.error("⚠️ NINE-AI TIMING RESEARCH DIAGNOSTIC FAILED " + symbol + ":",
+                timingError?.message || timingError);
+        }
+        if (decision.authorizedForExecution !== true) {
+            recordNineAIAbstention(decision.reason || "CENTRAL_ENGINE_ABSTAINED");
+            try {
+                const journalResult = await nineAiDecisionJournal.recordDecision({
+                    symbol, decision,
+                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                    scannedAt: scanAt,
+                    learningEvidence: opportunityEvidence,
+                    marketWindow: data15
+                });
+                if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
+            } catch (journalError) {
+                console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":",
+                    journalError?.message || journalError);
             }
-        } catch (timingGateError) {
-            console.error("⚠️ NINE-AI ENTRY TIMING GATE FAILED " + symbol + ":", timingGateError?.message || timingGateError);
+            return null;
         }
         try {
             const journalResult = await nineAiDecisionJournal.recordDecision({
