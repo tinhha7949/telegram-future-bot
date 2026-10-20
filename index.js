@@ -2415,7 +2415,7 @@ async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
         // cascade snapshot; unknown is not fabricated into directional evidence.
         liquidationImbalance: null,
         roundTripFeePct: envNumber("ROUND_TRIP_FEE_PCT", 0.1, 0, 2),
-        expectedFundingCostPct: Number.isFinite(fundingRate) ? Math.abs(fundingRate) * 100 : null
+        expectedFundingCostPct: Number.isFinite(fundingRate) ? Math.abs(fundingRate) * 100 * 12 : null
     };
 }
 // ================= SCAN =================
