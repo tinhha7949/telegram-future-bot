@@ -179,15 +179,17 @@ function createOfflineLearning(db, options = {}) {
     if (!trade || !closed || realizedR === null) return { recorded: false, reason: "MISSING_REALIZED_R" };
     const tradeId = String(trade._id || trade.tradeId || (trade.symbol + ":" + trade.createdAt));
     const pred = trade.nineAiPredictionSnapshot || {};
+    const grossPnl = finite(closed.grossRealizedPnl);
     const row = {
       tradeId, symbol: String(trade.symbol || ""), side: String(trade.side || ""),
       setup: String(trade.setup || ""), signalAt: Number(trade.signalAt) || null,
       closedAt: Number(closed.closedAt) || now(), predictedEdgeR: finite(pred.predictedEdgeR),
       predictedProbability: finite(pred.predictedProbability), predictedExpectedR: finite(pred.predictedExpectedR),
-      realizedR, netPnl, grossPnl: finite(closed.grossRealizedPnl),
-      grossR: riskBudget > 0 ? finite(closed.grossRealizedPnl) / riskBudget : null,
-      fees: finite(closed.feesUSDT),
-      funding: finite(closed.fundingUSDT), slippagePct: finite(trade.nineAiFeatureSnapshot?.estSlippagePct),
+      realizedR, netPnl, grossPnl,
+      grossR: riskBudget > 0 && grossPnl !== null ? grossPnl / riskBudget : null,
+      fees: finite(closed.feesUSDT), funding: finite(closed.fundingUSDT),
+      estimatedSlippagePct: finite(trade.nineAiFeatureSnapshot?.estSlippagePct),
+      actualEntrySlippage: finite(trade.entryExecution?.entrySlippage),
       mae: finite(trade.maxAdverseMove), mfe: finite(trade.maxFavorableMove),
       featureSnapshot: trade.nineAiFeatureSnapshot || null, edges: pred.edges || null,
       source: "REALIZED_CLOSED_TRADE", createdAt: new Date(now())
@@ -220,8 +222,9 @@ function createOfflineLearning(db, options = {}) {
       if (age >= SHADOW_MS && candidateScore.opportunities >= MIN_SHADOW_ROWS &&
           candidateScore.trades >= MIN_TEST_ROWS &&
           Number(candidateScore.averageNetR) > Number(championScore.averageNetR) + 0.02) {
+        const currentChampion = await championState.findOne({ _id: "active" });
         await championState.updateOne({ _id: "active" }, { $set: {
-          params: activeShadow.params, version: Number(activeShadow.version || 1) + 1,
+          params: activeShadow.params, version: Number(currentChampion?.version || 1) + 1,
           promotedCandidateId: activeShadow._id, promotedAt: new Date(runAt), updatedAt: new Date(runAt)
         } }, { upsert: true });
         await candidates.updateOne({ _id: activeShadow._id }, { $set: {
