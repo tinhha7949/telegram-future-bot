@@ -344,8 +344,8 @@ function analyzeNineAI(raw4h, symbol, context = {}, asOf = Date.now()) {
   const structuralRoom = chosen.side === "LONG"
     ? (Number.isFinite(structure.resistance) ? structure.resistance - last.close : Infinity)
     : (Number.isFinite(structure.support) ? last.close - structure.support : Infinity);
-  if (structuralRoom <= tp1Distance) {
-    return waitResult(symbol, "STRUCTURE_BLOCKS_TP1_ROOM", { regime, structure, chosen, structuralRoom });
+  if (structuralRoom < tp2Distance) {
+    return waitResult(symbol, "STRUCTURE_BLOCKS_TP2_ROOM", { regime, structure, chosen, structuralRoom });
   }
   if (![slDistance, tp1Distance, tp2Distance].every(Number.isFinite) ||
       slDistance <= 0 || tp1Distance <= 0 || tp2Distance < tp1Distance) {
