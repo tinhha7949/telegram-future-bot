@@ -150,6 +150,24 @@ function createOfflineLearning(db, options = {}) {
     return { ...DEFAULT_CHAMPION, ...(state?.params || {}) };
   }
 
+  async function getTrackRecord() {
+    const rows = await actuals.find({ closedAt: { $gte: now() - 180 * DAY_MS } })
+      .sort({ closedAt: -1 }).limit(5000).toArray();
+    const buckets = {};
+    for (const row of rows) {
+      const regime = String(row.featureSnapshot?.regime?.regime || "").toUpperCase();
+      const side = String(row.side || "").toUpperCase();
+      const grossR = finite(row.grossR);
+      if (!["UPTREND", "DOWNTREND"].includes(regime) || !["LONG", "SHORT"].includes(side) || grossR === null) continue;
+      const key = regime + "_" + side;
+      (buckets[key] ||= []).push(grossR);
+    }
+    return Object.fromEntries(Object.entries(buckets).map(([key, values]) => [key, {
+      samples: values.length, meanGrossR: mean(values),
+      medianGrossR: values.slice().sort((a,b)=>a-b)[Math.floor(values.length/2)]
+    }]));
+  }
+
   async function recordClosedTrade(trade, closed) {
     const riskBudget = finite(trade?.risk);
     const netPnl = finite(closed?.pnl);
@@ -162,7 +180,9 @@ function createOfflineLearning(db, options = {}) {
       setup: String(trade.setup || ""), signalAt: Number(trade.signalAt) || null,
       closedAt: Number(closed.closedAt) || now(), predictedEdgeR: finite(pred.predictedEdgeR),
       predictedProbability: finite(pred.predictedProbability), predictedExpectedR: finite(pred.predictedExpectedR),
-      realizedR, netPnl, grossPnl: finite(closed.grossRealizedPnl), fees: finite(closed.feesUSDT),
+      realizedR, netPnl, grossPnl: finite(closed.grossRealizedPnl),
+      grossR: riskBudget > 0 ? finite(closed.grossRealizedPnl) / riskBudget : null,
+      fees: finite(closed.feesUSDT),
       funding: finite(closed.fundingUSDT), slippagePct: finite(trade.nineAiFeatureSnapshot?.estSlippagePct),
       mae: finite(trade.maxAdverseMove), mfe: finite(trade.maxFavorableMove),
       featureSnapshot: trade.nineAiFeatureSnapshot || null, edges: pred.edges || null,
@@ -251,7 +271,7 @@ function createOfflineLearning(db, options = {}) {
     return report;
   }
 
-  return { initialize, getChampionConfig, recordClosedTrade, runDailyCycle, calibrationSummary,
+  return { initialize, getChampionConfig, getTrackRecord, recordClosedTrade, runDailyCycle, calibrationSummary,
     trainCandidate, evaluatePolicy, walkForwardSplits };
 }
 
