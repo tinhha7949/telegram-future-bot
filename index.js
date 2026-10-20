@@ -1728,27 +1728,21 @@ async function openPositionWithTPSL(trade, qty){
         return false
     }
 
-    // Preserve the Nine-AI plan's original reward/risk ratio after fill.
-    // The execution fill may differ from the signal entry, but a legacy RR
-    // default must never overwrite the TP selected by Nine-AI.
+    // Preserve the p80-MAE stop and p50/p90-MFE target distances after the actual fill.
     const plannedRisk = Math.abs(plannedEntry - plannedSL)
-    const plannedReward = Math.abs(plannedTP - plannedEntry)
-    const plannedRR = plannedRisk > 0 ? plannedReward / plannedRisk : NaN
-
-    if (!Number.isFinite(plannedRR) || plannedRR < MIN_TRADE_RR) {
-        console.log(
-            `❌ INVALID ORIGINAL NINE-AI RR ${symbol} ENTRY=${plannedEntry} SL=${plannedSL} TP=${plannedTP} RR=${plannedRR}`
-        )
+    const plannedTP1Distance = Math.abs(Number(trade.tp1) - plannedEntry)
+    const plannedTP2Distance = Math.abs(plannedTP - plannedEntry)
+    if (![plannedRisk, plannedTP1Distance, plannedTP2Distance].every(Number.isFinite) ||
+        plannedRisk <= 0 || plannedTP1Distance <= 0 || plannedTP2Distance < plannedTP1Distance) {
+        console.log(`❌ INVALID NINE-AI MAE/MFE PLAN ${symbol}`)
         return false
     }
-
     trade.entry = realEntry
-    trade.initialRisk = Math.abs(realEntry - plannedSL)
-
-    const targetDistance = trade.initialRisk * plannedRR
-    trade.tp = trade.side === "LONG"
-        ? realEntry + targetDistance
-        : realEntry - targetDistance
+    trade.sl = trade.side === "LONG" ? realEntry - plannedRisk : realEntry + plannedRisk
+    trade.initialRisk = plannedRisk
+    trade.tp1 = trade.side === "LONG" ? realEntry + plannedTP1Distance : realEntry - plannedTP1Distance
+    trade.tp = trade.side === "LONG" ? realEntry + plannedTP2Distance : realEntry - plannedTP2Distance
+    trade.tp2 = trade.tp
 
     if(
         !Number.isFinite(trade.initialRisk) ||
@@ -2468,7 +2462,8 @@ function buildTradeFromNineAISignal(best, riskBudget) {
   const side = String(best?.side || '').toUpperCase();
   const entry = Number(best?.entry ?? best?.price);
   const sl = Number(best?.sl);
-  const tp = Number(best?.tp);
+  const tp = Number(best?.tp2 ?? best?.tp);
+  const tp1 = Number(best?.tp1);
   const priceRisk = Math.abs(entry - sl);
   const budget = Number(riskBudget);
   const rr = priceRisk > 0 ? Math.abs(tp - entry) / priceRisk : NaN;
@@ -2479,6 +2474,7 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     !Number.isFinite(entry) || entry <= 0 ||
     !Number.isFinite(sl) || sl <= 0 ||
     !Number.isFinite(tp) || tp <= 0 ||
+    !Number.isFinite(tp1) || tp1 <= 0 ||
     !Number.isFinite(priceRisk) || priceRisk <= 0 ||
     !Number.isFinite(budget) || budget <= 0 ||
     !Number.isFinite(rr) || rr < MIN_TRADE_RR
@@ -2488,8 +2484,8 @@ function buildTradeFromNineAISignal(best, riskBudget) {
   }
 
   if (
-    (side === 'LONG' && (sl >= entry || tp <= entry)) ||
-    (side === 'SHORT' && (sl <= entry || tp >= entry))
+    (side === 'LONG' && (sl >= entry || tp1 <= entry || tp <= entry || tp1 > tp)) ||
+    (side === 'SHORT' && (sl <= entry || tp1 >= entry || tp >= entry || tp1 < tp))
   ) {
     console.log(
       `❌ INVALID TPSL DIRECTION ${best.symbol} ` +
@@ -2504,41 +2500,34 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     ? best.riskDetail
     : sourceRisk;
   const qualityScore = Number(best?.qualityScore ?? best?.score ?? best?.quality?.score ?? 0);
-  const strategyFeatures = best?.rankMetrics?.features;
-  const nineAiLearningFeatures = best?.setup === "NINE_AI_4H" && strategyFeatures
+  const strategyFeatures = best?.rankMetrics?.features || {};
+  const nineAiLearningFeatures = best?.setup === "NINE_AI_4H"
     ? {
-        trend: strategyFeatures.trend === "UP" ? 1 : strategyFeatures.trend === "DOWN" ? -1 : 0,
-        momentum: Number(strategyFeatures.momentum4) / Math.max(Number(strategyFeatures.atrPercent) || 0, 0.0001),
-        rsi: Number(strategyFeatures.rsi14),
-        volume: Number(strategyFeatures.volumeRatio),
-        extension: Number(strategyFeatures.extensionAtr),
-        candleBody: Number(strategyFeatures.candleBodyRatio) || 0,
-        wickImbalance: (Number(strategyFeatures.lowerWickRatio) || 0) - (Number(strategyFeatures.upperWickRatio) || 0),
-        breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
-        regime: strategyFeatures.marketRegime === "TREND_UP" ? 1 : strategyFeatures.marketRegime === "TREND_DOWN" ? -1 :
-          strategyFeatures.marketRegime === "SIDEWAYS" ? -0.5 : 0,
-        volatilityRegime: strategyFeatures.volatilityRegime === "HIGH" ? 1 : strategyFeatures.volatilityRegime === "LOW" ? -1 : 0,
-        structurePosition: Number(strategyFeatures.structurePosition) || 0,
-        roomToResistance: Number(strategyFeatures.roomToResistanceAtr) || 0,
-        roomToSupport: Number(strategyFeatures.roomToSupportAtr) || 0,
-        falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
-        directionalStreak: Number(strategyFeatures.directionalStreak) || 0,
-        longEntryQuality: Number.isFinite(Number(strategyFeatures.longEntryQuality))
-          ? Number(strategyFeatures.longEntryQuality) : 50,
-        shortEntryQuality: Number.isFinite(Number(strategyFeatures.shortEntryQuality))
-          ? Number(strategyFeatures.shortEntryQuality) : 50
+        regimeConfidence: Number(best?.rankMetrics?.regime?.regime_conf) || 0,
+        regime: String(best?.rankMetrics?.regime?.regime || "UNKNOWN"),
+        structureBias: String(best?.rankMetrics?.structure?.structure_bias || "UNKNOWN"),
+        volumeRatio: Number(strategyFeatures.volumeRatio) || 0,
+        atrPercent: Number(strategyFeatures.atrPercent) || 0,
+        fundingRate: Number(strategyFeatures.fundingRate) || 0,
+        openInterestChangePct: Number(strategyFeatures.openInterestChangePct) || 0,
+        spreadBps: Number(strategyFeatures.spreadBps) || 0,
+        slippageEstimate: Number(strategyFeatures.slippageEstimate) || 0,
+        setupFamily: String(best.setupFamily || "UNKNOWN"),
+        p: Number(best.p) || 0,
+        expectedR: Number(best.expectedR) || 0,
+        edge: Number(best.edge) || 0
       }
     : null;
   const nineAiLearningContext = best?.setup === "NINE_AI_4H" && strategyFeatures
     ? {
-        marketRegime: String(strategyFeatures.marketRegime || best.marketState || "UNKNOWN"),
-        strategyFamily: String(best?.strategyClassification?.family || "CONSENSUS_FALLBACK"),
-        strategyFit: Number(best?.strategyClassification?.fit) || 0,
-        strategyEdgeR: Number(best?.strategyEdge?.selectionValue) || 0,
-        strategyEdgeSamples: Number(best?.strategyEdge?.samples) || 0,
-        strategyEdgeSource: String(best?.strategyEdge?.edgeSource || "COLD_START"),
-        volatilityRegime: String(strategyFeatures.volatilityRegime || best.volatility || "UNKNOWN"),
-        structureTrend: String(strategyFeatures.structureTrend || "UNKNOWN"),
+        marketRegime: String(best?.rankMetrics?.regime?.regime || "UNKNOWN"),
+        strategyFamily: String(best?.setupFamily || "UNKNOWN"),
+        strategyFit: Number(best?.p) || 0,
+        strategyEdgeR: Number(best?.edge) || 0,
+        strategyEdgeSamples: Number(best?.rankMetrics?.selectedCandidate?.outcomeDistribution?.samples) || 0,
+        strategyEdgeSource: "NINE_AI_4H_EMPIRICAL_OUTCOMES",
+        volatilityRegime: String(best?.rankMetrics?.regime?.regime || "UNKNOWN"),
+        structureTrend: String(best?.rankMetrics?.structure?.structure_bias || "UNKNOWN"),
         breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
         falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
         roleScore: Number(best.rankMetrics?.roleScore) || 0,
@@ -2568,6 +2557,17 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     price: entry,
     sl,
     tp,
+    tp1,
+    tp2: tp,
+    tp1CloseFraction: 0.5,
+    maxHoldBars: 24,
+    maxHoldMs: 24 * 4 * 60 * 60 * 1000,
+    setupFamily: String(best.setupFamily || "UNKNOWN"),
+    nineAiRegime: String(best?.rankMetrics?.regime?.regime || "UNKNOWN"),
+    riskFraction: 0.0075,
+    tp1Hit: false,
+    maePct: 0,
+    mfePct: 0,
     setup: best.setup,
     pullbackType: best.pullbackType ?? null,
     triggerType: best.triggerType ?? null,
@@ -2800,8 +2800,8 @@ for (let s of signals){
         }
 
         // Rank all valid signals collected during this scan cycle.
-candidates = nineAiStrategyEvolution.rankCandidates(candidates)
-console.log("🧬 NINE-AI STRATEGY SELECTION: " + candidates.slice(0, 5).map(c => `${c.symbol}:${c.strategyClassification.family}[edge=${safeFixed(c.strategyEdge.selectionValue, 3)}R,n=${c.strategyEdge.samples},source=${c.strategyEdge.edgeSource}]`).join(" | "))
+candidates = candidates.sort(compareNineAICandidates)
+console.log("🧠 NINE-AI META EDGE SELECTION: " + candidates.slice(0, 5).map(c => `${c.symbol}:${c.setupFamily}[edge=${safeFixed(c.edge, 3)}R]`).join(" | "))
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
     const cooldownUntil = MIN_NOTIONAL_RISK_COOLDOWN.get(c.symbol) || 0;
@@ -2837,7 +2837,7 @@ let filtered = candidates.filter(c => {
     return true;
 })
 // ===== SORT LẠI =====
-filtered = filtered.sort(nineAiStrategyEvolution.compareCandidates)
+filtered = filtered.sort(compareNineAICandidates)
 
 // ===== UNIQUE COIN =====
 let unique = []
