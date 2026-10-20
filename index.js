@@ -47,7 +47,6 @@ const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const nineAiDbRetention = require("./ai-trading/nine-ai-db-retention")
 const nineAiOfflineLearning = require("./ai-trading/nine-ai-offline-learning");
-const { summarizeClosedTrade } = require("./ai-trading/nine-ai-execution-ledger");
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -2154,34 +2153,6 @@ TELEGRAM_LOCK = Date.now()
 
     }finally{
         TELEGRAM_LOCK = 0
-    }
-}
-function ema(arr, p){
-    let k = 2 / (p + 1)
-    let e = arr[0]
-
-    for(let i = 1; i < arr.length; i++){
-        e = arr[i] * k + e * (1 - k)
-    }
-
-    return e
-}
-async function getNineAiResearchCandles(symbol, entryTime, closedAt) {
-    const end = Number(closedAt) || Date.now();
-    const start = Math.max(0, (Number(entryTime) || end) - 30 * 15 * 60 * 1000);
-    const url = "https://fapi.binance.com/fapi/v1/klines?symbol=" + encodeURIComponent(symbol) + "&interval=15m&startTime=" + Math.floor(start) + "&endTime=" + Math.floor(end) + "&limit=1000";
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        const res = await safeFetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, signal: controller.signal }, 1);
-        clearTimeout(timeout);
-        if (!res || !res.ok) return null;
-        const candles = await res.json();
-        if (!Array.isArray(candles)) return null;
-        return candles.filter(row => Array.isArray(row) && Number(row[6]) <= end);
-    } catch (error) {
-        console.error("⚠️ NINE-AI RESEARCH CANDLE FETCH FAILED " + symbol + ":", error?.message || error);
-        return null;
     }
 }
 async function getData(symbol, interval, limit){
@@ -5123,119 +5094,6 @@ await new Promise(r =>
         process.exit(1)
     }
 }
-async function getDBStats(setup, market, side, volatility){
-
-    if(!trades){
-        return { winrate: 0.5, total: 0 }
-    }
-
-    try{
-        const col = trades
-
-        // ===== lấy dữ liệu db =====
-        let totalDB = await col.countDocuments({
-            result: { $in: ["WIN", "LOSS"] }
-        })
-
-        let minSample = Math.min(Math.max(10, Math.floor(totalDB * 0.1)), 50)
-        const sampleLimit = 2000
-
-        // ===== QUERY CHÍNH =====
-        let data = await col.find({
-    setup,
-    marketState: market,
-    side,
-    result: { $in:["WIN","LOSS"] }
-}).sort({ createdAt: -1 }).limit(sampleLimit).toArray()
-
-        // ===== FILTER VOL =====
-        let filtered = data.filter(t => !t.volatility || t.volatility === volatility)
-
-        // ===== ƯU TIÊN VOL =====
-        if(filtered.length >= minSample){
-    data = filtered
-}
-        if(data.length < minSample){
-
-    data = await col.find({
-        setup,
-        side,
-        result: { $in:["WIN","LOSS"] }
-    }).sort({ createdAt: -1 }).limit(sampleLimit).toArray()
-}
-
-        // ===== FALLBACK 2 =====
-        if(data.length < minSample){
-            data = await col.find({
-                side,
-                result: { $in:["WIN","LOSS"] }
-            }).sort({ createdAt: -1 }).limit(sampleLimit).toArray()
-        }
-
-        // ===== FINAL =====
-        if(data.length === 0){
-            return { winrate: 0.5, total: 0 }
-        }
-
-        // ===== TIME DECAY AI =====
-        let winScore = 0
-        let lossScore = 0
-
-        for(let t of data){
-
-            let ageHours = t.createdAt
-                ? (Date.now() - t.createdAt) / 3600000
-                : 999
-
-            // 🔥 decay 48h
-            let weight = Math.exp(-ageHours / 48)
-
-            if(t.result === "WIN"){
-                winScore += weight
-            }
-            else if(t.result === "LOSS"){
-                lossScore += weight
-            }
-        }
-
-        // ===== TRÁNH CHIA 0 =====
-        let rawWR = (winScore + lossScore) > 0
-            ? winScore / (winScore + lossScore)
-            : 0.5
-
-        // ===== CONFIDENCE =====
-        let confidence = Math.min(data.length / 40, 1)
-
-        let finalWR = 0.5 + (rawWR - 0.5) * confidence
-
-        if(DEBUG_AI){
-            console.log(
-                `🤖 AI ${setup}-${market}-${side}-${volatility} | WR:${finalWR.toFixed(2)} | N:${data.length}`
-            )
-        }   
-
-        if(DEBUG_AI){ 
-            console.log("📊 DB used:", data.length)
-        }
-
-        return {
-            winrate: finalWR,
-            total: data.length
-        }
-
-    }catch(e){
-
-    DB_READY = false
-
-    console.log(
-        "❌ DB ERROR:",
-        e?.message || e
-    )
-
-    return null
-}
-}
-            
 start()
 
 async function syncActiveTrades(){
