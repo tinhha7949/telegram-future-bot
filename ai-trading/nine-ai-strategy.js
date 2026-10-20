@@ -580,6 +580,7 @@ function analyzeNineAI(raw, symbol, now = Date.now()) {
     sideEvidence[roleSide] += weight * conviction;
     sideWeights[roleSide] += weight;
   }
+  const longCount = longVotes.length, shortCount = shortVotes.length;
   const winningSide = sideEvidence.LONG > sideEvidence.SHORT ? "LONG"
     : sideEvidence.SHORT > sideEvidence.LONG ? "SHORT" : null;
   const totalDirectionalWeight = sideWeights.LONG + sideWeights.SHORT;
