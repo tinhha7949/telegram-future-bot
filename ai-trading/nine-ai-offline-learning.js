@@ -132,6 +132,8 @@ function createOfflineLearning(db, options = {}) {
   const candidates = db.collection("nine_ai_policy_candidates");
   const championState = db.collection("nine_ai_policy_champion");
   const now = options.now || (() => Date.now());
+  let trackRecordCache = null;
+  let trackRecordCacheAt = 0;
 
   async function initialize() {
     await actuals.createIndex({ tradeId: 1 }, { unique: true, name: "uniq_nine_ai_actual_trade" });
@@ -150,6 +152,7 @@ function createOfflineLearning(db, options = {}) {
   }
 
   async function getTrackRecord() {
+    if (trackRecordCache && now() - trackRecordCacheAt < 5 * 60 * 1000) return trackRecordCache;
     const rows = await actuals.find({ closedAt: { $gte: now() - 180 * DAY_MS } })
       .sort({ closedAt: -1 }).limit(5000).toArray();
     const buckets = {};
@@ -161,10 +164,12 @@ function createOfflineLearning(db, options = {}) {
       const key = regime + "_" + side;
       (buckets[key] ||= []).push(grossR);
     }
-    return Object.fromEntries(Object.entries(buckets).map(([key, values]) => [key, {
+    trackRecordCache = Object.fromEntries(Object.entries(buckets).map(([key, values]) => [key, {
       samples: values.length, meanGrossR: mean(values),
       medianGrossR: values.slice().sort((a,b)=>a-b)[Math.floor(values.length/2)]
     }]));
+    trackRecordCacheAt = now();
+    return trackRecordCache;
   }
 
   async function recordClosedTrade(trade, closed) {
