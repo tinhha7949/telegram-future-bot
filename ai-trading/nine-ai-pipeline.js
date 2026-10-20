@@ -157,8 +157,13 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const trendLong=regime.regime==="UPTREND", trendShort=regime.regime==="DOWNTREND";
   const pullbackLong=trendLong && last.close<prev.close && last.close>last.open && last.close>closes.at(-4);
   const pullbackShort=trendShort && last.close>prev.close && last.close<last.open && last.close<closes.at(-4);
-  const continuationSide=pullbackLong?"LONG":pullbackShort?"SHORT":null;
-  const continuationP=continuationSide ? clamp(0.54+Math.min(0.18,Math.abs(regime.momentum20)*3)+(volumeRatio>1?0.05:0),0.5,0.78):0.5;
+  const impulseConfirmed = Math.abs(last.close-last.open) >= atr*0.25 && volumeRatio >= 0.8;
+  const continuationDataReady = !fundingHot && funding!==null && oiChange!==null && oiChange > -0.5;
+  const continuationSide=continuationDataReady&&impulseConfirmed?(pullbackLong?"LONG":pullbackShort?"SHORT":null):null;
+  const continuationP=continuationSide ? clamp(
+    0.54+Math.min(0.18,Math.abs(regime.momentum20)*3)+(volumeRatio>1?0.05:0)+
+    clamp(oiChange*0.02,-0.05,0.05)+(continuationSide==="LONG"?(funding<=0?0.03:-0.03):(funding>=0?0.03:-0.03)),
+    0.5,0.78):0.5;
   const breakoutP=breakoutSide&&breakoutHeld&&volumeRatio>=1.25&&spread!==null&&spread<=finite(config.maxSpreadPct,0.15)&&extension<2.5 ? clamp(0.55+Math.min(0.2,(volumeRatio-1)*0.1),0.5,0.78):0.5;
   const vwapValue=vwap(cs.slice(-24)), deviation=vwapValue?(last.close-vwapValue)/Math.max(atr,1e-12):0;
   const rangeRegime=["RANGE","HIGH_VOL"].includes(regime.regime);
@@ -175,6 +180,14 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
     confirmationSide:flowConfirmationSide,
     confirmation: funding===null || oiChange===null || liq===null ? "UNAVAILABLE" :
       (fundingHot?"BLOCKED_HOT_FUNDING":(flowConfirmationSide?"CONFIRMED":"NEUTRAL"))};
+  const fee=finite(market.roundTripFeePct,finite(config.roundTripFeePct,0.1));
+  const fundingCost=finite(market.expectedFundingCostPct, funding===null?null:Math.abs(funding)*100);
+  const slippage=spread===null||depth===null||oiChange===null||latency===null?null:
+    clamp(spread*0.5 + 0.02/Math.max(depth/100000,0.1)+Math.max(0,latency-100)*0.00001+Math.abs(oiChange)*0.01,0,1);
+  const estimatedSlippage=slippage===null?null:slippage;
+  const featureSnapshot={snapshotAt:finite(market.snapshotAt,now),closeTime:last.closeTime,close:last.close,atr,atrPct,
+    volumeRatio,funding,oiChange,spread,depth,latency,feePct:fee,fundingCostPct:fundingCost,
+    estSlippagePct:estimatedSlippage,regime,structureBias};
   const historicalLabels = buildHistoricalOutcomeLabels(cs, now, 24, symbol);
   const labeled=[...outcomes,...historicalLabels].filter(o=>o&&o.setupKey&&Number.isFinite(Number(o.maePct))&&Number.isFinite(Number(o.mfePct)));
   // Percent-normalized movement distributions can be pooled across symbols
@@ -186,13 +199,9 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   const distMFE={p50:percentile(mfes,.5),p90:percentile(mfes,.9),samples:mfes.length};
   // No fabricated MAE/MFE quantiles. Insufficient labels means no live trade.
   if(matched.length<30 || distMAE.p80===null || distMFE.p50===null || distMFE.p90===null)
-    return wait("INSUFFICIENT_LABELED_OUTCOMES_FOR_QUANTILES",{regime,structure:{structure_bias:structureBias,support,resistance},dist_MAE:distMAE,dist_MFE:distMFE,setupKey});
-  const fee=finite(market.roundTripFeePct,finite(config.roundTripFeePct,0.1));
-  const fundingCost=finite(market.expectedFundingCostPct, funding===null?null:Math.abs(funding)*100);
-  const slippage=spread===null||depth===null||oiChange===null||latency===null?null:
-    clamp(spread*0.5 + 0.02/Math.max(depth/100000,0.1)+Math.max(0,latency-100)*0.00001+Math.abs(oiChange)*0.01,0,1);
-  const estimatedSlippage=slippage===null?null:slippage;
-  if(estimatedSlippage===null||fundingCost===null||fee===null) return wait("EXECUTION_COST_INPUTS_STALE_OR_MISSING",{regime,flow});
+    return wait("INSUFFICIENT_LABELED_OUTCOMES_FOR_QUANTILES",{regime,structure:{structure_bias:structureBias,support,resistance},dist_MAE:distMAE,dist_MFE:distMFE,setupKey,featureSnapshot});
+  if(estimatedSlippage===null||fundingCost===null||fee===null)
+    return wait("EXECUTION_COST_INPUTS_STALE_OR_MISSING",{regime,flow,featureSnapshot});
   const agents={
     regime,structure:{structure_bias:structureBias,swingHigh,swingLow,support,resistance},
     continuation:{side:continuationSide,p:continuationP,expectedR:continuationSide?Math.max(0.1,distMFE.p50/Math.max(distMAE.p80,1e-12)):0},
@@ -233,17 +242,17 @@ function analyzeNineAI({symbol,candles4h,candles1h=[],candles1d=[],market={},out
   else if(flow.confirmation==="BLOCKED_HOT_FUNDING"||flow.confirmation==="UNAVAILABLE") reason="FLOW_BLOCKED_OR_UNAVAILABLE";
   else if(long.edge>minEdge && long.edge-short.edge>gapEdge && (!flow.confirmationSide||flow.confirmationSide==="LONG") && (trendLong?structureBias!=="BEARISH":true)) {side="LONG";reason="LONG_NET_EDGE_WINS";}
   else if(short.edge>minEdge && short.edge-long.edge>gapEdge && (!flow.confirmationSide||flow.confirmationSide==="SHORT") && (trendShort?structureBias!=="BULLISH":true)) {side="SHORT";reason="SHORT_NET_EDGE_WINS";}
-  if(side==="WAIT") return wait(reason,{regime,agents,edges:{LONG:long,SHORT:short},setupKey});
+  if(side==="WAIT") return wait(reason,{regime,agents,edges:{LONG:long,SHORT:short},setupKey,featureSnapshot});
   const entry=last.close;
   const stopDistance=distMAE.p80*entry/100, tp1Distance=distMFE.p50*entry/100, tp2Distance=distMFE.p90*entry/100;
   const sl=side==="LONG"?Math.min(entry-stopDistance,support-atr*.1):Math.max(entry+stopDistance,resistance+atr*.1);
   const tp1=side==="LONG"?entry+tp1Distance:entry-tp1Distance, tp2=side==="LONG"?entry+tp2Distance:entry-tp2Distance;
   if(!(stopDistance>0&&tp1Distance>0&&tp2Distance>=tp1Distance&&Number.isFinite(sl)&&Number.isFinite(tp1)&&Number.isFinite(tp2)))
-    return wait("INVALID_OUTCOME_DERIVED_EXIT_PLAN",{regime,agents,edges:{LONG:long,SHORT:short}});
+    return wait("INVALID_OUTCOME_DERIVED_EXIT_PLAN",{regime,agents,edges:{LONG:long,SHORT:short},featureSnapshot});
   return {symbol,side,action:side,authorizedForExecution:true,reason,setup:"NINE_AI_4H",signalAt:last.closeTime,
     entry,price:entry,sl,tp:tp2,tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeframe:"4h",
     riskPerTradePct:0.0075,riskEquity:finite(equity,0)*0.0075,
-    edges:{LONG:long,SHORT:short},regime,agents,setupKey,featureSnapshot:{snapshotAt:finite(market.snapshotAt,now),closeTime:last.closeTime,close:entry,atr,atrPct,volumeRatio,funding,oiChange,spread,depth,latency,feePct:fee,fundingCostPct:fundingCost,estSlippagePct:estimatedSlippage,regime,structureBias},
+    edges:{LONG:long,SHORT:short},regime,agents,setupKey,featureSnapshot,
     tradePlan:{stopMethod:"LABELED_MAE_P80_WITH_STRUCTURE_BUFFER",targetMethod:"LABELED_MFE_P50_P90",tp1,tp2,closePercentAtTP1:50,timeoutCandles:24,timeoutMs:96*60*60*1000},
     candles:cs.length};
 }
