@@ -2541,10 +2541,10 @@ async function scan(symbol){
         try {
             const journalResult = await nineAiDecisionJournal.recordDecision({
                 symbol, decision,
-                signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                signalTime: Number(decision.signalAt) || Math.floor(scanAt / 14400000) * 14400000,
                 scannedAt: scanAt,
                 learningEvidence: opportunityEvidence,
-                marketWindow: data15
+                marketWindow: data4h
             });
             if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
         } catch (journalError) {
@@ -2569,8 +2569,8 @@ async function scan(symbol){
             setup: "NINE_AI_4H",
             triggerType: "NINE_AI_CONSENSUS",
             rankDirectionMode: "NINE_AI_PRIMARY",
-            rankScore: Number(decision.rankScore ?? decision.confidence),
-            qualityScore: Number(decision.qualityScore ?? decision.confidence)
+            rankScore: Number.isFinite(netEdge) ? netEdge : -Infinity,
+            qualityScore: Number.isFinite(netEdge) ? netEdge : 0
         };
     } catch (e) {
         console.error(`🔥 NINE-AI SCAN ERROR ${symbol}:`, e?.message || e);
