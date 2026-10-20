@@ -4,11 +4,12 @@ const {percentile,closedCandles,swingPoints,classifyRegime,buildHistoricalOutcom
 assert.equal(percentile([1,2,3,4,5],.5),3);
 assert.equal(percentile([], .5),null);
 const now=Date.now();
-const candles=Array.from({length:700},(_,i)=>{const close=100+i*.2;return [now-(150-i)*4*3600000,close-.1,close+.4,close-.4,close,100+i,now-(150-i)*4*3600000+4*3600000-1]});
-assert.equal(closedCandles(candles,now).length,150);
+const candles=Array.from({length:700},(_,i)=>{const close=100+i*.2-(i%13===0?0.15:0);const open=close-.1;const volume=i%13===0?300:100;return [now-(700-i)*4*3600000,open,close+.1,close-.2,close,volume,now-(700-i)*4*3600000+4*3600000-1]});
+assert.equal(closedCandles(candles,now).length,700);
 assert.ok(swingPoints(closedCandles(candles,now),2));
 assert.ok(["UPTREND","DOWNTREND","RANGE","HIGH_VOL"].includes(classifyRegime(closedCandles(candles,now)).regime));
 const labels=buildHistoricalOutcomeLabels(candles,now);
+assert.ok(labels.length > 0);
 assert.ok(labels.every(x=>x.source==="CLOSED_HISTORICAL_4H_SIMULATION"));
 assert.ok(labels.every(x=>x.outcomeClosedAt < now));
 assert.ok(labels.every(x=>["UPTREND_CONTINUATION","UPTREND_BREAKOUT","DOWNTREND_CONTINUATION","DOWNTREND_BREAKOUT"].includes(x.setupKey)));
