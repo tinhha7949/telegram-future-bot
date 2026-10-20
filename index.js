@@ -3961,6 +3961,13 @@ if(!verifyOK){
 
 if(!stillOpen){
 
+    // Clear the sibling TP/SL algo order after the exchange confirms the position is flat.
+    try {
+        const clearedOrders = await cancelAllOrders(t.symbol);
+        if (!clearedOrders) console.error("⚠️ CLOSED POSITION HAS UNCONFIRMED STALE ORDERS " + t.symbol);
+    } catch (cleanupError) {
+        console.error("⚠️ CLOSED POSITION ORDER CLEANUP FAILED " + t.symbol + ":", cleanupError?.message || cleanupError);
+    }
     const closed = await getClosedTradeResult(t)
 
     // ===== ĐÃ TÌM THẤY RESULT =====
