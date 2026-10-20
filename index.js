@@ -1,7 +1,7 @@
 // Load VPS .env before reading any environment-backed configuration.
 require("dotenv").config();
 
-// Fixed Nine-AI risk: 0.75% of equity per trade. Never override from .env.
+// Manually tune per-trade equity risk here. Use a fraction: 0.0075 = 0.75%.
 const RISK_PER_TRADE = 0.0075;
 
 let DB_READY = false
