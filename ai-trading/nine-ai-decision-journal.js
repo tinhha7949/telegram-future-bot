@@ -215,6 +215,21 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
       agents: d.agents || null,
       featureSnapshot: d.featureSnapshot || null,
       tradePlan: d.tradePlan || null,
+      executionDecision: {
+        symbol: String(symbol || d.symbol || "UNKNOWN"),
+        setup: d.setup || null, side, action: String(d.action || side),
+        authorizedForExecution: d.authorizedForExecution === true,
+        reason: String(d.reason || "NOT_AUTHORIZED"),
+        signalAt: num(d.signalAt, num(signalTime)),
+        entry: num(d.entry, null), price: num(d.price, null), sl: num(d.sl, null),
+        tp: num(d.tp, null), tp1: num(d.tp1, null), tp2: num(d.tp2, null),
+        closePercentAtTP1: num(d.closePercentAtTP1, 50),
+        timeoutCandles: num(d.timeoutCandles, 24), timeframe: d.timeframe || "4h",
+        riskPerTradePct: 0.0075, riskEquity: num(d.riskEquity, null),
+        edges: d.edges || null, regime: d.regime || null, agents: d.agents || null,
+        setupKey: d.setupKey || null, featureSnapshot: d.featureSnapshot || null,
+        tradePlan: d.tradePlan || null, candles: num(d.candles, null)
+      },
       predictedEdgeR: num(d.edges?.[side]?.edge, null),
       predictedProbability: num(d.edges?.[side]?.p, null),
       predictedExpectedR: num(d.edges?.[side]?.expectedR, null)
@@ -305,14 +320,20 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function getDecisionForCandle(symbol, signalTime) {
+  const key = String(symbol || "").toUpperCase();
+  const time = num(signalTime);
+  if (!key || !Number.isFinite(time)) return null;
+  let row = records.find(item => String(item.symbol).toUpperCase() === key && Number(item.signalTime) === time);
+  if (!row && collection) row = await collection.findOne({ symbol: key, signalTime: time });
+  return row || null;
+}
+
 async function hasDecisionForCandle(symbol, signalTime) {
   const key = String(symbol || "").toUpperCase();
   const time = num(signalTime);
   if (!key || !Number.isFinite(time)) return false;
-  if (records.some(row => String(row.symbol).toUpperCase() === key && Number(row.signalTime) === time)) return true;
-  if (!collection) return false;
-  const found = await collection.findOne({ symbol: key, signalTime: time }, { projection: { _id: 1 } });
-  return Boolean(found);
+  return Boolean(await getDecisionForCandle(key, time));
 }
 
 async function recordDecision(args) {
@@ -526,5 +547,5 @@ function status() {
 }
 
 module.exports = { COLLECTION, MAX_RECORDS, HORIZONS, MIN_SAMPLES, MARKET_WINDOW_BARS, normalizeCandles, snapshotMarketWindow,
-  extractWindowFeatures, assessWindowEvidence, snapshotDecision, initialize, hasDecisionForCandle, recordDecision, settleMatured,
+  extractWindowFeatures, assessWindowEvidence, snapshotDecision, initialize, getDecisionForCandle, hasDecisionForCandle, recordDecision, settleMatured,
   computeEvaluations, positiveEvidenceBonus, recordActualOutcome, assess, status };
