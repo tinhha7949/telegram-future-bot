@@ -1,4 +1,8 @@
+// USER-EDITABLE FIXED RISK: 0.75% of equity per trade.
+const RISK_PER_TRADE = 0.0075;
+
 let DB_READY = false
+let nineAiOfflineLearningService = null;
 let STOP_NEW_ENTRIES = false
 let signalClaims = null
 let ORPHAN_RECOVERY_RUNNING = false
@@ -11,7 +15,7 @@ const TPSL_CLOSING = {}
 const MIN_NOTIONAL_RISK_COOLDOWN = new Map()
 const MIN_NOTIONAL_RISK_COOLDOWN_MS = 15 * 60 * 1000
 const MAX_CANDIDATE_ATTEMPTS_PER_SCAN = 10
-const MIN_TRADE_RR = 0.8
+const MIN_TRADE_RR = 0
 function envNumber(name, fallback, min, max) {
     const raw = process.env[name];
     if (raw == null || String(raw).trim() === "") return fallback;
@@ -23,12 +27,10 @@ function envNumber(name, fallback, min, max) {
     return Math.max(min, Math.min(max, value));
 }
 
-// User-adjustable execution limits. The 9-AI strategy owns trade direction
-// and its entry/SL/TP plan; these settings only bound exposure.
 const TRADE_CONFIG = Object.freeze({
-    riskPerTrade: envNumber("RISK_PER_TRADE", 0.05, 0.0001, 0.10),
-    maxRiskPerTrade: envNumber("MAX_RISK_PER_TRADE", 0.05, 0.0001, 0.10),
-    maxPositionPercent: envNumber("MAX_POSITION_PERCENT", 1.0, 0.01, 1),
+    riskPerTrade: RISK_PER_TRADE,
+    maxRiskPerTrade: RISK_PER_TRADE,
+    maxPositionPercent: 1.0,
     maxActivePositions: Math.round(envNumber("MAX_ACTIVE_POSITIONS", 20, 1, 50))
 })
 let SYNCING_TIME = false
@@ -39,24 +41,14 @@ const fs = require("fs")
 const path = require("path")
 const os = require("os")
 const crypto = require("crypto")
-const { analyzeNineAI, compareNineAICandidates } = require("./ai-trading/nine-ai-strategy")
+const nineAiPipeline = require("./ai-trading/nine-ai-pipeline")
 const nineAiCentralDecisionEngine = require("./ai-trading/nine-ai-central-decision-engine")
-const nineAiLearningMemory = require("./ai-trading/nine-ai-learning-memory")
-const nineAiIndependentModels = require("./ai-trading/nine-ai-independent-models")
-const nineAiContextualLearning = require("./ai-trading/nine-ai-contextual-learning")
-const nineAiCounterfactualResearch = require("./ai-trading/nine-ai-counterfactual-research")
-const nineAiLossDiagnosis = require("./ai-trading/nine-ai-loss-diagnosis")
-const nineAiAutonomousResearch = require("./ai-trading/nine-ai-autonomous-research")
-const nineAiStrategyEvolution = require("./ai-trading/nine-ai-strategy-evolution")
-const nineAiRewardModel = require("./ai-trading/nine-ai-reward-model")
 const nineAiDecisionJournal = require("./ai-trading/nine-ai-decision-journal")
-const nineAiAutonomousDecisionResearch = require("./ai-trading/nine-ai-autonomous-decision-research")
-const nineAiAutonomousDeployment = require("./ai-trading/nine-ai-autonomous-deployment")
-const nineAiDataDerivedConsensus = require("./ai-trading/nine-ai-data-derived-consensus")
 const { assessMinNotionalRisk, isRiskWithinBudget } = require("./ai-trading/execution-risk")
 const nineAiDbRetention = require("./ai-trading/nine-ai-db-retention")
-const nineAiAutonomousAdaptation = require("./ai-trading/nine-ai-autonomous-adaptation")
-const { summarizeClosedTrade } = require("./ai-trading/nine-ai-execution-ledger")
+const nineAiOfflineLearning = require("./ai-trading/nine-ai-offline-learning");
+const nineAiLiquidationFeed = require("./ai-trading/binance-liquidation-feed");
+nineAiLiquidationFeed.start();
 
 // Use a machine-local lock keyed to this script, independent of the launch
 // directory and outside OneDrive sync.
@@ -1250,7 +1242,8 @@ async function placeTPSLWithRetry(
     symbol,
     side,
     type,
-    stopPrice
+    stopPrice,
+    partialQuantity = null
 ){
     const closeSide = side === "LONG" ? "SELL" : "BUY"
     // Binance requires clientAlgoId to be shorter than 36 characters.
@@ -1278,16 +1271,22 @@ async function placeTPSLWithRetry(
     }
 
     try{
-        const result = await signedRequest("/fapi/v1/algoOrder", "POST", {
+        const orderParams = {
             algoType: "CONDITIONAL",
             symbol,
             side: closeSide,
             type,
             triggerPrice: String(stopPrice),
-            closePosition: "true",
             workingType: "MARK_PRICE",
             clientAlgoId
-        })
+        };
+        if (Number.isFinite(Number(partialQuantity)) && Number(partialQuantity) > 0) {
+            orderParams.quantity = String(partialQuantity);
+            orderParams.reduceOnly = "true";
+        } else {
+            orderParams.closePosition = "true";
+        }
+        const result = await signedRequest("/fapi/v1/algoOrder", "POST", orderParams)
         if(result?.algoId) return result
 
         // POST may have reached Binance even if its response was lost. Query by
@@ -1412,12 +1411,15 @@ async function setInitialTPSL(trade){
 
         const rawTP =
             Number(trade.tp)
+        const rawTP1 =
+            Number(trade.tp1)
 
         if(
             !Number.isFinite(rawSL) ||
             !Number.isFinite(rawTP) ||
             rawSL <= 0 ||
-            rawTP <= 0
+            rawTP <= 0 ||
+            !Number.isFinite(rawTP1) || rawTP1 <= 0
         ){
 
             console.log(
@@ -1430,6 +1432,7 @@ async function setInitialTPSL(trade){
 
         let sl
         let tp
+        let tp1
 
         if(positionSide === "LONG"){
 
@@ -1439,6 +1442,8 @@ async function setInitialTPSL(trade){
                 ) * tickSize
 
             // Round TP inward to a valid tick while preserving the researched level.
+            tp1 =
+                Math.floor(rawTP1 / tickSize) * tickSize
             tp =
                 Math.floor(
                     rawTP / tickSize
@@ -1451,6 +1456,8 @@ async function setInitialTPSL(trade){
                     rawSL / tickSize
                 ) * tickSize
 
+            tp1 =
+                Math.ceil(rawTP1 / tickSize) * tickSize
             tp =
                 Math.ceil(
                     rawTP / tickSize
@@ -1470,6 +1477,7 @@ async function setInitialTPSL(trade){
                 sl.toFixed(decimals)
             )
 
+        tp1 = Number(tp1.toFixed(decimals))
         tp =
             Number(
                 tp.toFixed(decimals)
@@ -1494,6 +1502,7 @@ async function setInitialTPSL(trade){
 
             if(
                 sl >= entry ||
+                tp1 <= entry || tp1 >= tp ||
                 tp <= entry
             ){
 
@@ -1509,6 +1518,7 @@ async function setInitialTPSL(trade){
 
             if(
                 sl <= entry ||
+                tp1 >= entry || tp1 <= tp ||
                 tp >= entry
             ){
 
@@ -1583,11 +1593,34 @@ async function setInitialTPSL(trade){
     slRes.orderId
 
         // =========================================
-        // SET TP
+        // SET TP1: close 50% of the actual position, TP2 protects remainder.
         // =========================================
+        const lotFilter = info.filters.find(f => f.filterType === "LOT_SIZE");
+        const stepSize = Number(lotFilter?.stepSize);
+        const rawHalfQty = Math.abs(positionAmt) * 0.5;
+        const tp1Qty = stepSize > 0 ? Math.floor((rawHalfQty + 1e-12) / stepSize) * stepSize : 0;
+        const qtyPrecision = stepSize > 0 ? Math.max(0, (String(stepSize).split(".")[1] || "").length) : 0;
+        const roundedTP1Qty = Number(tp1Qty.toFixed(qtyPrecision));
+        if (!(roundedTP1Qty > 0) || roundedTP1Qty >= Math.abs(positionAmt)) {
+            console.log(`❌ TP1 HALF-POSITION QTY INVALID ${symbol}`);
+            await cancelAllOrders(symbol);
+            return false;
+        }
+        const tp1Res = await placeTPSLWithRetry(
+            symbol, positionSide, "TAKE_PROFIT_MARKET", tp1, roundedTP1Qty
+        );
+        if (!tp1Res || !(tp1Res.algoId || tp1Res.orderId)) {
+            console.log(`❌ TP1 INVALID RESPONSE ${symbol}`);
+            await cancelAllOrders(symbol);
+            return false;
+        }
+        const tp1OrderId = tp1Res.algoId || tp1Res.orderId;
 
+        // =========================================
+        // SET TP2: close remaining position after TP1 partial fill.
+        // =========================================
         console.log(
-            `🎯 SET TP ${symbol}: ${tp}`
+            `🎯 SET TP2 ${symbol}: ${tp}`
         )
 
         const tpRes =
@@ -1633,8 +1666,10 @@ const tpOrderId =
         return {
     ok: true,
     sl,
+    tp1,
     tp,
     slOrderId,
+    tp1OrderId,
     tpOrderId
 }
 
@@ -1663,6 +1698,7 @@ async function openPositionWithTPSL(trade, qty){
     const plannedEntry = Number(trade.entry ?? trade.price)
     const plannedSL = Number(trade.sl)
     const plannedTP = Number(trade.tp)
+    const plannedTP1 = Number(trade.tp1)
 
     const order =
         await openPosition(
@@ -1728,27 +1764,28 @@ async function openPositionWithTPSL(trade, qty){
         return false
     }
 
-    // Preserve the Nine-AI plan's original reward/risk ratio after fill.
-    // The execution fill may differ from the signal entry, but a legacy RR
-    // default must never overwrite the TP selected by Nine-AI.
+    // Preserve the AI-7 p50/p90 price distances when execution slippage shifts
+    // the actual entry. Never reconstruct targets from an arbitrary RR ratio.
     const plannedRisk = Math.abs(plannedEntry - plannedSL)
     const plannedReward = Math.abs(plannedTP - plannedEntry)
+    const plannedTP1Distance = Math.abs(plannedTP1 - plannedEntry)
     const plannedRR = plannedRisk > 0 ? plannedReward / plannedRisk : NaN
-
-    if (!Number.isFinite(plannedRR) || plannedRR < MIN_TRADE_RR) {
-        console.log(
-            `❌ INVALID ORIGINAL NINE-AI RR ${symbol} ENTRY=${plannedEntry} SL=${plannedSL} TP=${plannedTP} RR=${plannedRR}`
-        )
-        return false
+    if (!Number.isFinite(plannedRR) || plannedRR < MIN_TRADE_RR ||
+        !Number.isFinite(plannedTP1Distance) || plannedTP1Distance <= 0 ||
+        (trade.side === "LONG" && !(plannedEntry < plannedTP1 && plannedTP1 < plannedTP)) ||
+        (trade.side === "SHORT" && !(plannedEntry > plannedTP1 && plannedTP1 > plannedTP))) {
+        console.log(`❌ INVALID ORIGINAL NINE-AI TP PLAN ${symbol}`);
+        return false;
     }
 
     trade.entry = realEntry
     trade.initialRisk = Math.abs(realEntry - plannedSL)
-
-    const targetDistance = trade.initialRisk * plannedRR
+    trade.tp1 = trade.side === "LONG"
+        ? realEntry + plannedTP1Distance
+        : realEntry - plannedTP1Distance
     trade.tp = trade.side === "LONG"
-        ? realEntry + targetDistance
-        : realEntry - targetDistance
+        ? realEntry + plannedReward
+        : realEntry - plannedReward
 
     if(
         !Number.isFinite(trade.initialRisk) ||
@@ -1898,6 +1935,8 @@ async function openPositionWithTPSL(trade, qty){
         trade.sl =
             Number(tpslResult.sl)
 
+        trade.tp1 = Number(tpslResult.tp1)
+        trade.tp1OrderId = tpslResult.tp1OrderId
         trade.tp =
             Number(tpslResult.tp)
 
@@ -1959,6 +1998,7 @@ async function openPositionWithTPSL(trade, qty){
             tp: trade.tp,
             initialRisk: trade.initialRisk,
             slOrderId: tpslResult.slOrderId,
+            tp1OrderId: tpslResult.tp1OrderId,
             tpOrderId: tpslResult.tpOrderId,
             entryExecution: {
                 orderId: order.orderId == null ? null : String(order.orderId),
@@ -2115,34 +2155,6 @@ TELEGRAM_LOCK = Date.now()
 
     }finally{
         TELEGRAM_LOCK = 0
-    }
-}
-function ema(arr, p){
-    let k = 2 / (p + 1)
-    let e = arr[0]
-
-    for(let i = 1; i < arr.length; i++){
-        e = arr[i] * k + e * (1 - k)
-    }
-
-    return e
-}
-async function getNineAiResearchCandles(symbol, entryTime, closedAt) {
-    const end = Number(closedAt) || Date.now();
-    const start = Math.max(0, (Number(entryTime) || end) - 30 * 15 * 60 * 1000);
-    const url = "https://fapi.binance.com/fapi/v1/klines?symbol=" + encodeURIComponent(symbol) + "&interval=15m&startTime=" + Math.floor(start) + "&endTime=" + Math.floor(end) + "&limit=1000";
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        const res = await safeFetch(url, { headers: { "User-Agent": "Mozilla/5.0" }, signal: controller.signal }, 1);
-        clearTimeout(timeout);
-        if (!res || !res.ok) return null;
-        const candles = await res.json();
-        if (!Array.isArray(candles)) return null;
-        return candles.filter(row => Array.isArray(row) && Number(row[6]) <= end);
-    } catch (error) {
-        console.error("⚠️ NINE-AI RESEARCH CANDLE FETCH FAILED " + symbol + ":", error?.message || error);
-        return null;
     }
 }
 async function getData(symbol, interval, limit){
@@ -2328,18 +2340,87 @@ function logNineAIScanSummary() {
         .join(" | ");
     console.log(`🧠 NINE-AI SCAN DIAGNOSTIC: ${summary}`);
 }
+async function getNineAIMarketSnapshot(symbol, now = Date.now()) {
+    const started = Date.now();
+    const getJson = async (url) => {
+        const response = await safeFetch(url, {}, 1);
+        if (!response?.ok) return null;
+        try { return await response.json(); } catch (_) { return null; }
+    };
+    const encoded = encodeURIComponent(symbol);
+    const [premium, oiNow, oiHistory, book, depth] = await Promise.all([
+        getJson("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=" + encoded),
+        getJson("https://fapi.binance.com/fapi/v1/openInterest?symbol=" + encoded),
+        getJson("https://fapi.binance.com/futures/data/openInterestHist?symbol=" + encoded + "&period=4h&limit=2"),
+        getJson("https://fapi.binance.com/fapi/v1/ticker/bookTicker?symbol=" + encoded),
+        getJson("https://fapi.binance.com/fapi/v1/depth?symbol=" + encoded + "&limit=20")
+    ]);
+    const snapshotAt = Date.now();
+    const liquidationImbalance = nineAiLiquidationFeed.getImbalance(symbol, snapshotAt);
+    const bid = Number(book?.bidPrice), ask = Number(book?.askPrice);
+    const spreadPct = bid > 0 && ask >= bid ? ((ask - bid) / ((ask + bid) / 2)) * 100 : null;
+    const bidDepth = Array.isArray(depth?.bids) ? depth.bids.reduce((sum, level) => sum + Number(level[0]) * Number(level[1]), 0) : 0;
+    const askDepth = Array.isArray(depth?.asks) ? depth.asks.reduce((sum, level) => sum + Number(level[0]) * Number(level[1]), 0) : 0;
+    let oiChange = null;
+    if (Array.isArray(oiHistory) && oiHistory.length >= 2) {
+        const previous = Number(oiHistory[0]?.sumOpenInterest);
+        const latest = Number(oiHistory[oiHistory.length - 1]?.sumOpenInterest);
+        if (previous > 0 && Number.isFinite(latest)) oiChange = (latest / previous - 1) * 100;
+    }
+    const fundingRate = Number(premium?.lastFundingRate);
+    return {
+        now: snapshotAt, snapshotAt,
+        fundingRate: Number.isFinite(fundingRate) ? fundingRate : null,
+        openInterest: Number(oiNow?.openInterest),
+        openInterestChange: oiChange,
+        spreadPct,
+        depthNotional: Array.isArray(depth?.bids) && depth.bids.length && Array.isArray(depth?.asks) && depth.asks.length ? bidDepth + askDepth : null,
+        latencyMs: Date.now() - started,
+        liquidationImbalance,
+        roundTripFeePct: envNumber("ROUND_TRIP_FEE_PCT", 0.1, 0, 2),
+        expectedFundingCostPct: Number.isFinite(fundingRate) ? Math.abs(fundingRate) * 100 * 12 : null
+    };
+}
 // ================= SCAN =================
 async function scan(symbol){
     try {
-        // Nine-AI is the only signal source.
-        const data15 = await getData(symbol, "15m", 601);
+        // Probe only the latest few candles first. Once this closed 4h candle
+        // has a journal decision, skip the expensive 1500-bar/history/API work.
         const scanAt = Date.now();
-        if (!Array.isArray(data15)) {
+        const probe4h = await getData(symbol, "4h", 3);
+        const probeClosedCandle = nineAiPipeline.closedCandles(probe4h, scanAt).at(-1);
+        if (probeClosedCandle) {
+            const priorDecision = await nineAiDecisionJournal.getDecisionForCandle(symbol, probeClosedCandle.closeTime);
+            if (priorDecision) {
+                const cached = priorDecision.decisionSnapshot?.executionDecision;
+                if (cached?.authorizedForExecution === true && ["LONG", "SHORT"].includes(cached.side)) {
+                    const signalKey = `${symbol}:${Number(cached.signalAt)}`;
+                    const claim = signalClaims ? await signalClaims.findOne({ signalKey }) : null;
+                    if (!claim) {
+                        const cachedEdge = Number(cached.edges?.[cached.side]?.edge);
+                        return {
+                            ...cached,
+                            confidence: Number.isFinite(cachedEdge) ? Math.max(0, Math.min(100, 50 + cachedEdge * 10)) : 0,
+                            rankScore: Number.isFinite(cachedEdge) ? cachedEdge : -Infinity,
+                            qualityScore: Number.isFinite(cachedEdge) ? cachedEdge : 0,
+                            nineAiDecisionKey: priorDecision.decisionKey,
+                            symbol, setup: "NINE_AI_4H", triggerType: "NINE_AI_4H_EDGE",
+                            rankDirectionMode: "NINE_AI_PRIMARY"
+                        };
+                    }
+                }
+                return null;
+            }
+        }
+        const data4h = await getData(symbol, "4h", 1500);
+        const data1h = await getData(symbol, "1h", 100);
+        const data1d = await getData(symbol, "1d", 100);
+        if (!Array.isArray(data4h)) {
             recordNineAIAbstention("MARKET_DATA_UNAVAILABLE");
             try {
                 await nineAiDecisionJournal.recordDecision({
                     symbol,
-                    signalTime: Math.floor(scanAt / 900000) * 900000,
+                    signalTime: Math.floor(scanAt / 14400000) * 14400000,
                     scannedAt: scanAt,
                     decision: { side: "WAIT", action: "WAIT", reason: "MARKET_DATA_UNAVAILABLE",
                         authorizedForExecution: false, roles: [], rankMetrics: {} }
@@ -2349,14 +2430,45 @@ async function scan(symbol){
             }
             return null;
         }
+        const latestClosedCandle = nineAiPipeline.closedCandles(data4h, scanAt).at(-1);
+        if (!latestClosedCandle) {
+            recordNineAIAbstention("NO_CLOSED_4H_CANDLE");
+            return null;
+        }
+        if (await nineAiDecisionJournal.hasDecisionForCandle(symbol, latestClosedCandle.closeTime)) {
+            return null;
+        }
+        const marketSnapshot = await getNineAIMarketSnapshot(symbol, scanAt);
         try {
-            await nineAiDecisionJournal.settleMatured(symbol, data15);
+            await nineAiDecisionJournal.settleMatured(symbol, data4h);
         } catch (settleError) {
             console.error("⚠️ NINE-AI OPPORTUNITY SETTLEMENT FAILED " + symbol + ":", settleError?.message || settleError);
         }
-        const rawDecision = analyzeNineAI(data15, symbol) || {
+        // Outcomes must be genuinely labeled; never fabricate MAE/MFE quantiles.
+        let labeledOutcomes = [];
+        try {
+            const outcomeRows = await db.collection("nine_ai_outcome_labels")
+                .find({ labeled: true, maePct: { $type: "number" }, mfePct: { $type: "number" } })
+                .sort({ closedAt: -1 }).limit(5000).toArray();
+            labeledOutcomes = outcomeRows;
+        } catch (outcomeReadError) {
+            console.error("⚠️ NINE-AI OUTCOME LABEL READ FAILED:", outcomeReadError?.message || outcomeReadError);
+        }
+        let championConfig = {};
+        try {
+            championConfig = nineAiOfflineLearningService
+                ? await nineAiOfflineLearningService.getChampionConfig() : {};
+        } catch (configError) {
+            console.error("⚠️ NINE-AI CHAMPION CONFIG READ FAILED:", configError?.message || configError);
+        }
+        const rawDecision = nineAiPipeline.analyzeNineAI({
+            symbol, candles4h: data4h, candles1h: data1h || [], candles1d: data1d || [],
+            outcomes: labeledOutcomes, equity: ACCOUNT_BALANCE,
+            market: { ...marketSnapshot, now: scanAt, candleCutoffAt: scanAt, trackRecord: await nineAiOfflineLearningService?.getTrackRecord?.() },
+            config: championConfig
+        }) || {
             symbol, side: null, action: "WAIT", reason: "NO_DECISION_RETURNED",
-            authorizedForExecution: false, roles: [], rankMetrics: {}
+            authorizedForExecution: false
         };
         // One authorization boundary. It can preserve Nine-AI's own decision or
         // abstain, but never invent a direction or consult a second trading brain.
@@ -2372,9 +2484,9 @@ async function scan(symbol){
                 const journalResult = await nineAiDecisionJournal.recordDecision({
                     symbol,
                     decision,
-                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 14400000) * 14400000,
                     scannedAt: scanAt,
-                    marketWindow: data15
+                    marketWindow: data4h
                 });
                 if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
             } catch (journalError) {
@@ -2383,130 +2495,32 @@ async function scan(symbol){
             return null;
         }
 
-        // Learning/research modules are observers of the central decision, not
-        // additional live decision-makers. Their evidence is journaled for research
-        // but cannot alter side, authorization, rank, entry, SL/TP, or timing.
-        const originalRankScore = Number(decision.rankScore ?? decision.confidence ?? 0);
-        const opportunityEvidence = nineAiDecisionJournal.assess(
-            decision.rankMetrics?.features || decision.features || {},
-            decision.side,
-            { marketWindow: data15, signalTime: Number(decision.signalAt) || scanAt }
-        );
-        decision.originalRankScore = originalRankScore;
-        decision.liveOpportunityAdjustment = 0;
-        decision.liveOpportunityBonus = 0;
-        decision.rankMetrics = {
-            ...(decision.rankMetrics || {}),
-            score: originalRankScore,
-            liveOpportunityLearning: opportunityEvidence,
-            liveOpportunityApplied: false
-        };
-        let researchPolicyAtEntry = null;
-        try {
-            const activePolicy = await nineAiAutonomousResearch.getActivePolicy();
-            if (activePolicy) {
-                researchPolicyAtEntry = {
-                    policyId: activePolicy.policyId,
-                    status: activePolicy.status,
-                    testUpliftR: Number(activePolicy.testUpliftR) || 0,
-                    applicationMode: "RESEARCH_ONLY_NO_LIVE_DECISION_EFFECT"
-                };
-                decision.rankMetrics.researchPolicyEvidence = researchPolicyAtEntry;
-            }
-        } catch (policyError) {
-            console.error("⚠️ NINE-AI RESEARCH POLICY DIAGNOSTIC UNAVAILABLE " + symbol + ":",
-                policyError?.message || policyError);
-        }
-        try {
-            const adaptation = nineAiAutonomousAdaptation.assess(
-                decision.rankMetrics?.features || decision.features || {},
-                decision.side,
-                {
-                    marketRegime: decision.rankMetrics?.features?.marketRegime || decision.marketState || "UNKNOWN",
-                    strategyFamily: decision.strategyFamily || decision.rankMetrics?.strategyFamily || "UNKNOWN",
-                    roomQuality: decision.rankMetrics?.roomQuality ?? decision.rankMetrics?.features?.roomQuality
-                }
-            );
-            decision.rankMetrics.autonomousAdaptation = {
-                ...adaptation,
-                liveApplication: "DIAGNOSTIC_ONLY"
-            };
-        } catch (adaptationError) {
-            console.error("⚠️ NINE-AI ADAPTATION DIAGNOSTIC UNAVAILABLE " + symbol + ":",
-                adaptationError?.message || adaptationError);
-        }
-        try {
-            const livePolicy = nineAiDataDerivedConsensus.assessLive(
-                decision.roles || [],
-                decision.rankMetrics?.features?.marketRegime || decision.marketState || "UNKNOWN",
-                Number(decision.rankScore),
-                decision.rankMetrics?.features || decision.features || {}
-            );
-            decision.rankMetrics.dataDerivedConsensus = {
-                ...livePolicy,
-                liveApplication: "DIAGNOSTIC_ONLY"
-            };
-        } catch (policyError) {
-            console.error("⚠️ NINE-AI DATA-DERIVED RESEARCH DIAGNOSTIC FAILED " + symbol + ":",
-                policyError?.message || policyError);
-        }
-        try {
-            const timingEvidence = nineAiAutonomousDeployment.assess(
-                decision.rankMetrics?.features || decision.features || {},
-                decision.side
-            );
-            decision.rankMetrics.autonomousTimingDeployment = {
-                ...timingEvidence,
-                appliedAdjustment: 0,
-                liveApplication: "DIAGNOSTIC_ONLY"
-            };
-        } catch (timingError) {
-            console.error("⚠️ NINE-AI TIMING RESEARCH DIAGNOSTIC FAILED " + symbol + ":",
-                timingError?.message || timingError);
-        }
-        if (decision.authorizedForExecution !== true) {
-            recordNineAIAbstention(decision.reason || "CENTRAL_ENGINE_ABSTAINED");
-            try {
-                const journalResult = await nineAiDecisionJournal.recordDecision({
-                    symbol, decision,
-                    signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
-                    scannedAt: scanAt,
-                    learningEvidence: opportunityEvidence,
-                    marketWindow: data15
-                });
-                if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
-            } catch (journalError) {
-                console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":",
-                    journalError?.message || journalError);
-            }
-            return null;
-        }
         try {
             const journalResult = await nineAiDecisionJournal.recordDecision({
                 symbol, decision,
-                signalTime: Number(decision.signalAt) || Math.floor(scanAt / 900000) * 900000,
+                signalTime: Number(decision.signalAt) || Math.floor(scanAt / 14400000) * 14400000,
                 scannedAt: scanAt,
-                learningEvidence: opportunityEvidence,
-                marketWindow: data15
+                marketWindow: data4h
             });
             if (journalResult.decisionKey) decision.nineAiDecisionKey = journalResult.decisionKey;
         } catch (journalError) {
             console.error("⚠️ NINE-AI DECISION JOURNAL WRITE FAILED " + symbol + ":", journalError?.message || journalError);
         }
         if (decision.authorizedForExecution !== true) return null;
+        const netEdge = Number(decision.edges?.[decision.side]?.edge);
         console.log(
-            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | CONF=${decision.confidence} | ROLE_SCORE=${safeFixed(decision.rankMetrics?.roleScore, 2)} | RANK=${safeFixed(decision.rankScore, 2)} | OPPORTUNITY_BONUS=${safeFixed(decision.liveOpportunityBonus, 3)} | VOTES=${decision.rankMetrics?.directionalVotes || 0}-${decision.rankMetrics?.opposingVotes || 0} | CONTRA=${decision.rankMetrics?.contrarian?.reason || "N/A"} | RR=${safeFixed(decision.rr, 2)} | ROLES=${decision.roles?.length || 0}`
+            `🧠 NINE-AI SIGNAL: ${symbol} | SIDE=${decision.side} | REGIME=${decision.regime?.regime || "UNKNOWN"} | EDGE=${safeFixed(netEdge, 4)} | REASON=${decision.reason}`
         );
         return {
             ...decision,
+            confidence: Number.isFinite(netEdge) ? Math.max(0, Math.min(100, 50 + netEdge * 10)) : 0,
+            rankScore: Number.isFinite(netEdge) ? netEdge : -Infinity,
+            qualityScore: Number.isFinite(netEdge) ? netEdge : 0,
             nineAiDecisionKey: decision.nineAiDecisionKey || null,
-            nineAiResearchPolicy: researchPolicyAtEntry,
             symbol,
-            setup: "NINE_AI_15M",
-            triggerType: "NINE_AI_CONSENSUS",
-            rankDirectionMode: "NINE_AI_PRIMARY",
-            rankScore: Number(decision.rankScore ?? decision.confidence),
-            qualityScore: Number(decision.qualityScore ?? decision.confidence)
+            setup: "NINE_AI_4H",
+            triggerType: "NINE_AI_4H_EDGE",
+            rankDirectionMode: "NINE_AI_PRIMARY"
         };
     } catch (e) {
         console.error(`🔥 NINE-AI SCAN ERROR ${symbol}:`, e?.message || e);
@@ -2525,7 +2539,7 @@ function safeFixed(value, digits = 2){
 }
 
 function buildTradeFromNineAISignal(best, riskBudget) {
-  if (best?.authorizedForExecution !== true || best?.setup !== "NINE_AI_15M" || best?.rankDirectionMode !== "NINE_AI_PRIMARY") {
+  if (best?.authorizedForExecution !== true || best?.setup !== "NINE_AI_4H" || best?.rankDirectionMode !== "NINE_AI_PRIMARY") {
     console.log(`❌ REJECT NON-NINE-AI SIGNAL ${best?.symbol || 'UNKNOWN'}`);
     return null;
   }
@@ -2563,65 +2577,10 @@ function buildTradeFromNineAISignal(best, riskBudget) {
   }
 
   const now = Date.now();
-  const sourceRisk = best?.risk && typeof best.risk === 'object' ? best.risk : {};
-  const riskDetail = best?.riskDetail && typeof best.riskDetail === 'object'
-    ? best.riskDetail
-    : sourceRisk;
-  const qualityScore = Number(best?.qualityScore ?? best?.score ?? best?.quality?.score ?? 0);
-  const strategyFeatures = best?.rankMetrics?.features;
-  const nineAiLearningFeatures = best?.setup === "NINE_AI_15M" && strategyFeatures
-    ? {
-        trend: strategyFeatures.trend === "UP" ? 1 : strategyFeatures.trend === "DOWN" ? -1 : 0,
-        momentum: Number(strategyFeatures.momentum4) / Math.max(Number(strategyFeatures.atrPercent) || 0, 0.0001),
-        rsi: Number(strategyFeatures.rsi14),
-        volume: Number(strategyFeatures.volumeRatio),
-        extension: Number(strategyFeatures.extensionAtr),
-        candleBody: Number(strategyFeatures.candleBodyRatio) || 0,
-        wickImbalance: (Number(strategyFeatures.lowerWickRatio) || 0) - (Number(strategyFeatures.upperWickRatio) || 0),
-        breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
-        regime: strategyFeatures.marketRegime === "TREND_UP" ? 1 : strategyFeatures.marketRegime === "TREND_DOWN" ? -1 :
-          strategyFeatures.marketRegime === "SIDEWAYS" ? -0.5 : 0,
-        volatilityRegime: strategyFeatures.volatilityRegime === "HIGH" ? 1 : strategyFeatures.volatilityRegime === "LOW" ? -1 : 0,
-        structurePosition: Number(strategyFeatures.structurePosition) || 0,
-        roomToResistance: Number(strategyFeatures.roomToResistanceAtr) || 0,
-        roomToSupport: Number(strategyFeatures.roomToSupportAtr) || 0,
-        falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
-        directionalStreak: Number(strategyFeatures.directionalStreak) || 0,
-        longEntryQuality: Number.isFinite(Number(strategyFeatures.longEntryQuality))
-          ? Number(strategyFeatures.longEntryQuality) : 50,
-        shortEntryQuality: Number.isFinite(Number(strategyFeatures.shortEntryQuality))
-          ? Number(strategyFeatures.shortEntryQuality) : 50
-      }
-    : null;
-  const nineAiLearningContext = best?.setup === "NINE_AI_15M" && strategyFeatures
-    ? {
-        marketRegime: String(strategyFeatures.marketRegime || best.marketState || "UNKNOWN"),
-        strategyFamily: String(best?.strategyClassification?.family || "CONSENSUS_FALLBACK"),
-        strategyFit: Number(best?.strategyClassification?.fit) || 0,
-        strategyEdgeR: Number(best?.strategyEdge?.selectionValue) || 0,
-        strategyEdgeSamples: Number(best?.strategyEdge?.samples) || 0,
-        strategyEdgeSource: String(best?.strategyEdge?.edgeSource || "COLD_START"),
-        volatilityRegime: String(strategyFeatures.volatilityRegime || best.volatility || "UNKNOWN"),
-        structureTrend: String(strategyFeatures.structureTrend || "UNKNOWN"),
-        breakoutStrength: Number(strategyFeatures.breakoutStrength) || 0,
-        falseBreakoutRisk: Number(strategyFeatures.falseBreakoutRisk) || 0,
-        roleScore: Number(best.rankMetrics?.roleScore) || 0,
-        setupQuality: Number(best.rankMetrics?.setupQuality) || 0,
-        entryQuality: Number(best.rankMetrics?.entryQuality) || 0,
-        breakoutQuality: Number(best.rankMetrics?.breakoutQuality) || 0,
-        roomQuality: Number(best.rankMetrics?.roomQuality) || 0,
-        grossRR: Number(best.rr) || 0,
-        netRR: Number.isFinite(Number(best.rankMetrics?.netRR)) ? Number(best.rankMetrics.netRR) : null,
-        netRRStatus: String(best.rankMetrics?.netRRStatus || "NOT_CONFIGURED"),
-        rankScore: Number(best.rankScore) || 0,
-        confidence: Number(best.confidence) || 0,
-        roleVotes: Array.isArray(best.roles) ? best.roles.map(role => ({
-          name: String(role.name || ""),
-          side: String(role.side || "NEUTRAL"),
-          confidence: Number(role.confidence) || 0
-        })) : []
-      }
-    : null;
+  const sourceRisk = best?.risk && typeof best.risk === "object" ? best.risk : {};
+  const riskDetail = best?.riskDetail && typeof best.riskDetail === "object" ? best.riskDetail : sourceRisk;
+  const edgeScore = Number(best?.edges?.[side]?.edge);
+  const qualityScore = Number.isFinite(edgeScore) ? edgeScore : 0;
 
   return {
     // Preserve the authoritative Nine-AI decision and plan through execution.
@@ -2633,15 +2592,10 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     sl,
     tp,
     setup: best.setup,
-    pullbackType: best.pullbackType ?? null,
-    triggerType: best.triggerType ?? null,
-    marketState: best.marketState ?? null,
-    volatility: best.volatility ?? null,
+    marketState: best.regime?.regime || "UNKNOWN",
+    volatility: best.regime?.regime || "UNKNOWN",
+    triggerType: "NINE_AI_4H_EDGE",
     qualityScore: Number.isFinite(qualityScore) ? qualityScore : 0,
-    nineAiLearningFeatures,
-    nineAiLearningContext,
-    nineAiStrategyFamily: String(best?.strategyClassification?.family || "CONSENSUS_FALLBACK"),
-    nineAiResearchPolicy: best.nineAiResearchPolicy ?? null,
     nineAiDecisionKey: best.nineAiDecisionKey ?? null,
 
     // `risk` remains the monetary sizing budget expected by the execution code.
@@ -2665,7 +2619,21 @@ function buildTradeFromNineAISignal(best, riskBudget) {
     openedAt: best?.openedAt ?? null,
     closedAt: best?.closedAt ?? null,
     updatedAt: now,
-    result: best?.result ?? 'PENDING'
+    result: best?.result ?? 'PENDING',
+    maxAdverseMove: Number(best?.maxAdverseMove) || 0,
+    maxFavorableMove: Number(best?.maxFavorableMove) || 0,
+    nineAiFeatureSnapshot: best?.featureSnapshot ? {
+      ...best.featureSnapshot,
+      estSlippagePct: Number(best.featureSnapshot.estSlippagePct ?? best.agents?.fill?.est_slippage)
+    } : null,
+    nineAiPredictionSnapshot: {
+      edges: best?.edges || null,
+      predictedEdgeR: Number.isFinite(Number(best?.edges?.[side]?.edge)) ? Number(best.edges[side].edge) : null,
+      predictedProbability: Number.isFinite(Number(best?.edges?.[side]?.p)) ? Number(best.edges[side].p) : null,
+      predictedExpectedR: Number.isFinite(Number(best?.edges?.[side]?.expectedR)) ? Number(best.edges[side].expectedR) : null
+    },
+    nineAiSetupKey: best?.setupKey || null,
+    timeoutCandles: 24
   };
 }
 
@@ -2854,9 +2822,12 @@ for (let s of signals){
             return
         }
 
-        // Rank all valid signals collected during this scan cycle.
-candidates = nineAiStrategyEvolution.rankCandidates(candidates)
-console.log("🧬 NINE-AI STRATEGY SELECTION: " + candidates.slice(0, 5).map(c => `${c.symbol}:${c.strategyClassification.family}[edge=${safeFixed(c.strategyEdge.selectionValue, 3)}R,n=${c.strategyEdge.samples},source=${c.strategyEdge.edgeSource}]`).join(" | "))
+        // AI-9 net edge is the only ranking key. No legacy policy or research
+// module is allowed to reorder the live opportunity set.
+candidates = candidates.sort((a, b) => Number(b.rankScore) - Number(a.rankScore));
+console.log("🧠 NINE-AI NET-EDGE RANK: " + candidates.slice(0, 5).map(c =>
+    `${c.symbol}:${c.side}[edge=${safeFixed(c.rankScore, 4)},regime=${c.regime?.regime || "UNKNOWN"}]`
+).join(" | "))
 // ===== LỌC TẦNG 2 =====
 let filtered = candidates.filter(c => {
     const cooldownUntil = MIN_NOTIONAL_RISK_COOLDOWN.get(c.symbol) || 0;
@@ -2892,7 +2863,7 @@ let filtered = candidates.filter(c => {
     return true;
 })
 // ===== SORT LẠI =====
-filtered = filtered.sort(nineAiStrategyEvolution.compareCandidates)
+filtered = filtered.sort((a, b) => Number(b.rankScore) - Number(a.rankScore))
 
 // ===== UNIQUE COIN =====
 let unique = []
@@ -2910,7 +2881,7 @@ filtered = unique
 // Diagnostic shortlist only; execution attempts remain bounded by the risk and exchange guards.
 if(filtered.length > 0){
     const shortlist = filtered.slice(0, 5).map(c =>
-        `${c.symbol}(RANK=${safeFixed(c.rankScore, 2)},CONF=${safeFixed(c.confidence, 1)},VOTES=${c.rankMetrics?.directionalVotes || 0}-${c.rankMetrics?.opposingVotes || 0})`
+        `${c.symbol}(${c.side},EDGE=${safeFixed(c.rankScore, 4)},REGIME=${c.regime?.regime || "UNKNOWN"})`
     ).join(" | ")
     console.log(`🧠 NINE-AI TOP ${Math.min(5, filtered.length)}: ${shortlist}`)
 }
@@ -2943,7 +2914,7 @@ if (
 // No legacy RF counter/follow branch. Keep the approved nine-AI
 // direction and ATR-derived SL/TP; downstream risk/position caps remain.
 best.side = side;
-best.triggerType = "NINE_AI_CONSENSUS";
+best.triggerType = "NINE_AI_4H_EDGE";
 best.rankDirectionMode = "NINE_AI_PRIMARY";
 console.log(
     `🧠 NINE-AI PRIMARY ${best.symbol} | SIDE=${best.side} | CONF=${best.confidence} | RANK=${safeFixed(best.rankScore, 2)} | SL=${best.sl} | TP=${best.tp}`
@@ -3463,7 +3434,7 @@ if(!execution?.ok){
                 trade.sl = Number(recoveredTPSL.sl)
                 trade.tp = Number(recoveredTPSL.tp)
                 execution = { ok: true, initialRisk: Math.abs(trade.entry - trade.sl), recovered: true,
-                    slOrderId: recoveredTPSL.slOrderId, tpOrderId: recoveredTPSL.tpOrderId }
+                    slOrderId: recoveredTPSL.slOrderId, tp1OrderId: recoveredTPSL.tp1OrderId, tpOrderId: recoveredTPSL.tpOrderId }
                 trade.emergencyProtectionNeeded = false
                 console.log(`🛡 RECOVERED TPSL ${trade.symbol} SL=${trade.sl} TP=${trade.tp}`)
             }else{
@@ -3502,6 +3473,7 @@ if(!execution?.ok){
 
 trade.waitingEntry = false
 trade.slOrderId = execution?.slOrderId || trade.slOrderId || null
+trade.tp1OrderId = execution?.tp1OrderId || trade.tp1OrderId || null
 trade.tpOrderId = execution?.tpOrderId || trade.tpOrderId || null
 trade.entryExecution = execution?.entryExecution || {
     plannedEntry: Number(trade.price), plannedSL: Number(trade.sl), plannedTP: Number(trade.tp),
@@ -3740,6 +3712,21 @@ async function checkTrades(){
 }
 
             try{
+                const tradeOpenAt = Number(t.enteredAt || t.openedAt || t.createdAt);
+                if (t.setup === "NINE_AI_4H" && Number.isFinite(tradeOpenAt) &&
+                    Date.now() - tradeOpenAt >= 96 * 60 * 60 * 1000) {
+                    const positionsForTimeout = await getPositionsCached();
+                    const timedPosition = Array.isArray(positionsForTimeout)
+                        ? positionsForTimeout.find(p => p.symbol === t.symbol && Math.abs(Number(p.positionAmt || 0)) > 0)
+                        : null;
+                    if (timedPosition) {
+                        const timeoutQty = Math.abs(Number(timedPosition.positionAmt));
+                        console.log(`⏱️ NINE-AI 24-CANDLE TIMEOUT ${t.symbol} | ageHours=${((Date.now()-tradeOpenAt)/3600000).toFixed(1)}`);
+                        const timeoutClosed = await closePosition(t.symbol, t.side, timeoutQty);
+                        if (!timeoutClosed) console.error(`🚨 NINE-AI TIMEOUT CLOSE FAILED ${t.symbol}`);
+                        continue;
+                    }
+                }
 
                 let data = await Promise.race([
     getData(t.symbol,"15m",2),
@@ -3747,6 +3734,24 @@ async function checkTrades(){
         setTimeout(()=>resolve(null),10000)
     )
 ])
+
+                if (Array.isArray(data) && data.length) {
+                    const lastCandle = data[data.length - 1];
+                    const hi = Number(lastCandle?.[2]), lo = Number(lastCandle?.[3]);
+                    const entryPrice = Number(t.entry);
+                    if (entryPrice > 0 && Number.isFinite(hi) && Number.isFinite(lo)) {
+                        const adverse = t.side === "LONG" ? Math.max(0, entryPrice - lo) : Math.max(0, hi - entryPrice);
+                        const favorable = t.side === "LONG" ? Math.max(0, hi - entryPrice) : Math.max(0, entryPrice - lo);
+                        t.maxAdverseMove = Math.max(Number(t.maxAdverseMove) || 0, adverse);
+                        t.maxFavorableMove = Math.max(Number(t.maxFavorableMove) || 0, favorable);
+                        if (t._id) {
+                            trades.updateOne({ _id: t._id, result: "PENDING" }, { $set: {
+                                maxAdverseMove: t.maxAdverseMove, maxFavorableMove: t.maxFavorableMove,
+                                lastExcursionUpdateAt: Date.now()
+                            }}).catch(error => console.error(`⚠️ EXCURSION SAVE FAILED ${t.symbol}:`, error?.message || error));
+                        }
+                    }
+                }
 
                 if(!data){
 
@@ -3886,6 +3891,13 @@ if(!verifyOK){
 
 if(!stillOpen){
 
+    // Clear the sibling TP/SL algo order after the exchange confirms the position is flat.
+    try {
+        const clearedOrders = await cancelAllOrders(t.symbol);
+        if (!clearedOrders) console.error("⚠️ CLOSED POSITION HAS UNCONFIRMED STALE ORDERS " + t.symbol);
+    } catch (cleanupError) {
+        console.error("⚠️ CLOSED POSITION ORDER CLEANUP FAILED " + t.symbol + ":", cleanupError?.message || cleanupError);
+    }
     const closed = await getClosedTradeResult(t)
 
     // ===== ĐÃ TÌM THẤY RESULT =====
@@ -3945,6 +3957,32 @@ await trades.updateOne(
     }
 )
 
+if (t.nineAiSetupKey && Number(t.entry) > 0 && Number.isFinite(Number(t.maxAdverseMove)) && Number.isFinite(Number(t.maxFavorableMove)) && Number(t.maxAdverseMove) >= 0 && Number(t.maxFavorableMove) >= 0) {
+    try {
+        await db.collection("nine_ai_outcome_labels").updateOne(
+            { tradeId: String(t._id || `${t.symbol}:${t.createdAt}`) },
+            { $setOnInsert: {
+                tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
+                symbol: String(t.symbol),
+                setupKey: String(t.nineAiSetupKey),
+                side: String(t.side),
+                mae: Number(t.maxAdverseMove),
+                mfe: Number(t.maxFavorableMove),
+                entryPrice: Number(t.entry),
+                maePct: Number(t.entry) > 0 ? Number(t.maxAdverseMove) / Number(t.entry) * 100 : null,
+                mfePct: Number(t.entry) > 0 ? Number(t.maxFavorableMove) / Number(t.entry) * 100 : null,
+                labeled: true,
+                win: Number(closed.pnl) > 0,
+                source: "REALIZED_CLOSED_TRADE",
+                closedAt: closed.closedAt
+            }},
+            { upsert: true }
+        );
+    } catch (labelError) {
+        console.error(`⚠️ NINE-AI OUTCOME LABEL SAVE FAILED ${t.symbol}:`, labelError?.message || labelError);
+    }
+}
+
 if (t.nineAiDecisionKey) {
     try {
         const riskBudget = getTradeActualRisk(t);
@@ -3985,135 +4023,14 @@ if (t.nineAiDecisionKey) {
     }
 }
 
-// Train only after Binance confirms the position is closed and the realized PnL
-// has been saved. Learning failures must never interrupt trade reconciliation.
-if (t.setup === "NINE_AI_15M" && t.nineAiLearningFeatures) {
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
-            const learning = await nineAiLearningMemory.learnClosedTrade({
-                tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
-                features: t.nineAiLearningFeatures,
-                context: t.nineAiLearningContext || null,
-                researchPolicy: t.nineAiResearchPolicy || null,
-                side: t.side,
-                realizedR: closed.pnl / riskBudget,
-                closed: true,
-                closedAt: closed.closedAt
-            });
-            if (learning.updated) {
-                console.log(`🧠 NINE-AI MEMORY UPDATED: samples=${learning.samples} trade=${t.symbol}`);
-            } else if (learning.reason === "DUPLICATE_TRADE") {
-                console.log(`🧠 NINE-AI MEMORY: duplicate outcome ignored for ${t.symbol}`);
-            }
-        }
-    } catch (learningError) {
-        console.error(`⚠️ NINE-AI MEMORY UPDATE FAILED ${t.symbol}:`, learningError?.message || learningError);
+// Persist realized outcomes for daily calibration only after Binance confirms closure.
+try {
+    if (nineAiOfflineLearningService) {
+        const recorded = await nineAiOfflineLearningService.recordClosedTrade(t, closed);
+        if (recorded.recorded) console.log("🧠 NINE-AI REALIZED OUTCOME SAVED: " + t.symbol + " R=" + recorded.realizedR);
     }
-
-    // General reward learner trains on realized net-R and full entry-time context.
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl) && t.nineAiLearningFeatures) {
-            const rewardLearning = await nineAiRewardModel.recordClosedTrade({
-                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
-                features: t.nineAiLearningFeatures, context: t.nineAiLearningContext || null,
-                side: t.side, realizedR: closed.pnl / riskBudget, closed: true, closedAt: closed.closedAt
-            });
-            if (rewardLearning.updated) console.log("🧠 NINE-AI REWARD MODEL UPDATED: long=" + rewardLearning.longSamples + " short=" + rewardLearning.shortSamples + " " + t.symbol);
-        }
-    } catch (rewardLearningError) {
-        console.error("⚠️ NINE-AI REWARD MODEL UPDATE FAILED " + t.symbol + ":", rewardLearningError?.message || rewardLearningError);
-    }
-    // Every independent model learns separately from this confirmed closed trade.
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
-            const independentLearning = await nineAiIndependentModels.learnClosedTrade({
-                tradeId: String(t._id || `${t.symbol}:${t.createdAt}`),
-                features: t.nineAiLearningFeatures,
-                context: t.nineAiLearningContext || null,
-                side: t.side,
-                realizedR: closed.pnl / riskBudget,
-                closed: true,
-                closedAt: closed.closedAt
-            });
-            if (independentLearning.updated) {
-                console.log(`🧠 NINE INDEPENDENT ML MODELS UPDATED: ${independentLearning.updatedModels}/9 ${t.symbol}`);
-            }
-        }
-    } catch (independentLearningError) {
-        console.error(`⚠️ NINE INDEPENDENT ML UPDATE FAILED ${t.symbol}:`,
-            independentLearningError?.message || independentLearningError);
-    }
-
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
-            const diagnosis = await nineAiLossDiagnosis.recordClosedTrade({
-                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)), symbol: t.symbol, side: t.side,
-                realizedR: closed.pnl / riskBudget,
-                features: { ...t.nineAiLearningFeatures, marketRegime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN" },
-                context: t.nineAiLearningContext || null, entry: Number(t.entry), sl: Number(t.sl), tp: Number(t.tp),
-                exitReason: String(closed.exitOrderId) === String(t.slOrderId || "") && t.slOrderId
-                    ? "SL"
-                    : String(closed.exitOrderId) === String(t.tpOrderId || "") && t.tpOrderId
-                        ? "TP" : "UNKNOWN",
-                exitPrice: Number(closed.exitPrice), feesUSDT: Number(closed.feesUSDT),
-                grossRealizedPnl: Number(closed.grossRealizedPnl),
-                regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
-            });
-            if (diagnosis.recorded) console.log("🧠 NINE-AI LOSS DIAGNOSIS: " + diagnosis.diagnosis.tags.join(",") + " outcome=" + diagnosis.diagnosis.outcome + " " + t.symbol);
-        }
-    } catch (diagnosisError) { console.error("⚠️ NINE-AI LOSS DIAGNOSIS FAILED " + t.symbol + ":", diagnosisError?.message || diagnosisError); }
-
-    try {
-        const riskBudget = getTradeActualRisk(t);
-        if (riskBudget > 0 && Number.isFinite(closed.pnl)) {
-            const contextual = await nineAiContextualLearning.recordClosedTrade({
-                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
-                symbol: t.symbol,
-                features: { ...t.nineAiLearningFeatures,
-                    marketRegime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN" },
-                context: t.nineAiLearningContext || null,
-                side: t.side,
-                realizedR: closed.pnl / riskBudget,
-                closed: true,
-                closedAt: closed.closedAt
-            });
-            if (contextual.updated) console.log("🧠 NINE-AI CONTEXT LEARNED: tags=" + contextual.tags.join(",") + " samples=" + contextual.samples + " " + t.symbol);
-        }
-    } catch (contextualError) {
-        console.error("⚠️ NINE-AI CONTEXTUAL LEARNING FAILED " + t.symbol + ":",
-            contextualError?.message || contextualError);
-    }
-
-    // Run retrospective alternatives only after confirmed close. These simulated
-    // results are kept separate from actual PnL and never force an opposite trade.
-    try {
-        const researchCandles = await getNineAiResearchCandles(t.symbol, t.createdAt, closed.closedAt);
-        if (researchCandles && researchCandles.length >= 4) {
-            const research = await nineAiCounterfactualResearch.researchClosedTrade({
-                tradeId: String(t._id || (t.symbol + ":" + t.createdAt)),
-                symbol: t.symbol, side: t.side, entry: Number(t.entry),
-                sl: Number(t.sl), tp: Number(t.tp), entryTime: Number(t.createdAt),
-                createdAt: Number(t.createdAt), closedAt: closed.closedAt,
-                realizedR: Number.isFinite(Number(closed.pnl)) && getTradeActualRisk(t) > 0 ? Number(closed.pnl) / getTradeActualRisk(t) : null,
-                features: { ...(t.nineAiLearningFeatures || {}), ...(t.nineAiLearningContext || {}) },
-                feeRate: Number(t.notional) > 0 ? Number(closed.feesUSDT || 0) / Number(t.notional) : null,
-                feeR: getTradeActualRisk(t) > 0
-                    ? Number(closed.feesUSDT || 0) / getTradeActualRisk(t) : null,
-                maxRR: Number(t.tradePlan?.maxRiskReward ?? Infinity),
-                minRR: 0,
-                regime: (t.nineAiLearningContext && t.nineAiLearningContext.marketRegime) || t.marketState || "UNKNOWN"
-            }, researchCandles);
-            if (research.variants) console.log("🧪 NINE-AI COUNTERFACTUAL RESEARCH: variants=" + research.variants +
-                " samples=" + research.samples + " candidates=" + research.candidates + " " + t.symbol);
-        }
-    } catch (researchError) {
-        console.error("⚠️ NINE-AI COUNTERFACTUAL RESEARCH FAILED " + t.symbol + ":",
-            researchError?.message || researchError);
-    }
+} catch (offlineLearningError) {
+    console.error("⚠️ NINE-AI REALIZED OUTCOME SAVE FAILED " + t.symbol + ":", offlineLearningError?.message || offlineLearningError);
 }
 
         const latestBalance = await updateBalance()
@@ -4651,7 +4568,11 @@ if(existingIndex !== -1){
         const protection = await setInitialTPSL(orphanTrade)
         if(protection?.ok){
             orphanTrade.sl = Number(protection.sl)
+            orphanTrade.tp1 = Number(protection.tp1)
+            orphanTrade.tp1OrderId = protection.tp1OrderId
             orphanTrade.tp = Number(protection.tp)
+            orphanTrade.slOrderId = protection.slOrderId
+            orphanTrade.tpOrderId = protection.tpOrderId
             orphanTrade.initialRisk = Math.abs(entry - orphanTrade.sl)
             orphanTrade.emergencyProtectionNeeded = false
             TPSL_PHASE[symbol] = "ACTIVE"
@@ -4818,18 +4739,6 @@ try {
     }
 }
 
-try {
-    const evolutionStatus = await nineAiStrategyEvolution.initialize(db);
-    console.log(`🧬 NINE-AI STRATEGY EVOLUTION READY: groups=${evolutionStatus.familyGroups} families=${evolutionStatus.families.join(",")}`);
-    setInterval(() => {
-        nineAiStrategyEvolution.refreshPerformance().then(status => {
-            if (!status.cached) console.log(`🧬 NINE-AI STRATEGY EDGE REFRESH: outcomes=${status.outcomes} groups=${status.families}`);
-        }).catch(error => console.error("⚠️ NINE-AI STRATEGY EDGE REFRESH FAILED:", error?.message || error));
-    }, 30 * 60 * 1000);
-} catch (evolutionError) {
-    console.error("⚠️ NINE-AI STRATEGY EVOLUTION INIT FAILED:", evolutionError?.message || evolutionError);
-}
-
 // Tự xóa bản ghi sau 10 ngày tính từ createdAt
 await signalClaims.createIndex(
     { createdAt: 1 },
@@ -4839,147 +4748,30 @@ await signalClaims.createIndex(
     }
 );
 
-// Load all learning state before scan loops. Each of the nine models owns
-// separate MongoDB state/outcome collections; no paid API is used.
-const rewardModelStatus = await nineAiRewardModel.initialize(db);
-console.log("🧠 NINE-AI GENERAL REWARD MODEL READY: long=" + rewardModelStatus.longSamples + " short=" + rewardModelStatus.shortSamples);
+// The canonical journal and daily offline learner are the only Nine-AI learning path.
 const decisionJournalStatus = await nineAiDecisionJournal.initialize(db);
 console.log("🧠 NINE-AI DECISION JOURNAL READY: samples=" + decisionJournalStatus.samples +
-    " pending=" + decisionJournalStatus.pending +
-    " 96barSnapshots=" + decisionJournalStatus.windowSnapshots +
-    " matured96barSamples=" + decisionJournalStatus.maturedWindowSamples +
-    " windowResearch=" + (decisionJournalStatus.maturedWindowSamples >= decisionJournalStatus.minWindowSamples ? "READY" : "COLLECTING"));
-try {
-    const consensusStatus = await nineAiDataDerivedConsensus.initialize(db);
-    console.log("🧬 NINE-AI DATA-DERIVED RESEARCH READY (NOT LIVE-APPLIED): activePolicies=" + consensusStatus.activePolicies);
-    const runConsensusResearch = async () => {
-        try {
-            const result = await nineAiDataDerivedConsensus.runResearchCycle();
-            console.log("🧬 NINE-AI CONSENSUS RESEARCH: status=" + result.status +
-                " rows=" + result.rows + " regimes=" + result.regimes +
-                " activePolicies=" + result.activePolicies);
-        } catch (error) {
-            console.error("⚠️ NINE-AI CONSENSUS RESEARCH FAILED:", error?.message || error);
-        }
-    };
-    void runConsensusResearch();
-    setInterval(runConsensusResearch, 6 * 60 * 60 * 1000);
-} catch (consensusError) {
-    console.error("⚠️ NINE-AI DATA-DERIVED CONSENSUS INIT FAILED:", consensusError?.message || consensusError);
-}
-try {
-    const adaptationStatus = await nineAiAutonomousAdaptation.initialize(db, trades);
-    console.log("🧠 NINE-AI AUTONOMOUS ADAPTATION READY: version=" + adaptationStatus.version +
-        " trades=" + adaptationStatus.trades + " policies=" + adaptationStatus.policies);
-    setInterval(() => {
-        nineAiAutonomousAdaptation.refresh().then(status => {
-            if (!status.cached) console.log("🧠 NINE-AI ADAPTATION REFRESH: version=" + status.version +
-                " trades=" + status.trades + " policies=" + status.policies);
-        }).catch(error => console.error("⚠️ NINE-AI ADAPTATION REFRESH FAILED:", error?.message || error));
-    }, 15 * 60 * 1000);
-} catch (adaptationInitError) {
-    console.error("⚠️ NINE-AI AUTONOMOUS ADAPTATION INIT FAILED:", adaptationInitError?.message || adaptationInitError);
-}
-try {
-    const decisionResearchStatus = await nineAiAutonomousDecisionResearch.initialize(db);
-    console.log("🧪 NINE-AI AUTONOMOUS DECISION RESEARCH READY: activePolicies=" + decisionResearchStatus.activePolicies);
-    const runDecisionResearch = async () => {
-        try {
-            const result = await nineAiAutonomousDecisionResearch.runResearchCycle();
-            console.log("🧪 NINE-AI DECISION RESEARCH: status=" + result.status +
-                " rows=" + result.usableRows + " groups=" + result.groups +
-                " validatedPolicies=" + result.activatedPolicies);
-        } catch (error) {
-            console.error("⚠️ NINE-AI DECISION RESEARCH CYCLE FAILED:", error?.message || error);
-        }
-    };
-    void runDecisionResearch();
-    setInterval(runDecisionResearch, 6 * 60 * 60 * 1000);
-} catch (decisionResearchInitError) {
-    console.error("⚠️ NINE-AI AUTONOMOUS DECISION RESEARCH INIT FAILED:",
-        decisionResearchInitError?.message || decisionResearchInitError);
-}
-const learningStatus = await nineAiLearningMemory.initialize(db);
-console.log(`🧠 NINE-AI LEGACY MEMORY READY: samples=${learningStatus.samples} trained=${learningStatus.trained}`);
-const independentModelStatus = await nineAiIndependentModels.initialize(
-    db, db.collection("nine_ai_learning_outcomes")
-);
-console.log(`🧠 NINE INDEPENDENT ML MODELS READY: migratedTrades=${independentModelStatus.migratedLegacyTrades} allTrained=${independentModelStatus.allTrained}`);
-for (const model of nineAiIndependentModels.status()) {
-    console.log(`🧠 MODEL ${model.role}: samples=${model.samples} trained=${model.trained} accuracy=${model.evaluation.accuracy ?? "N/A"} brier=${model.evaluation.brierScore ?? "N/A"}`);
-}
+    " pending=" + decisionJournalStatus.pending + " matured24barSamples=" +
+    decisionJournalStatus.maturedWindowSamples);
+nineAiOfflineLearningService = nineAiOfflineLearning.createOfflineLearning(db);
+const offlineLearningStatus = await nineAiOfflineLearningService.initialize();
+console.log("🧠 NINE-AI OFFLINE LEARNING READY: champion=" +
+    JSON.stringify(offlineLearningStatus.champion));
+const runDailyNineAIOfflineLearning = async () => {
+    try {
+        const report = await nineAiOfflineLearningService.runDailyCycle();
+        console.log("🧪 NINE-AI DAILY LEARNING: calibrationSamples=" + report.calibration.samples +
+            " biasR=" + report.calibration.biasR +
+            " candidate=" + (report.candidateResult?.status || "NONE") +
+            " shadow=" + (report.shadowResult?.status || "NONE"));
+    } catch (error) {
+        console.error("⚠️ NINE-AI DAILY OFFLINE LEARNING FAILED:", error?.message || error);
+    }
+};
+void runDailyNineAIOfflineLearning();
+setInterval(runDailyNineAIOfflineLearning, 24 * 60 * 60 * 1000);
 
-try {
-    const contextualStatus = await nineAiContextualLearning.initialize(db);
-    console.log("🧠 NINE-AI CONTEXTUAL LEARNING READY: samples=" + contextualStatus.samples + " uniqueTrades=" + contextualStatus.uniqueTrades);
-} catch (contextualError) {
-    console.error("⚠️ NINE-AI CONTEXTUAL LEARNING INIT FAILED:", contextualError?.message || contextualError);
-}
-
-
-try {
-    const counterfactualStatus = await nineAiCounterfactualResearch.initialize(db);
-    console.log("NINE-AI COUNTERFACTUAL RESEARCH READY: samples=" + counterfactualStatus.samples + " validatedPolicies=" + counterfactualStatus.policies);
-} catch (counterfactualError) {
-    console.error("NINE-AI COUNTERFACTUAL RESEARCH INIT FAILED:", counterfactualError?.message || counterfactualError);
-}
-
-try {
-    const deploymentStatus = await nineAiAutonomousDeployment.initialize(db);
-    console.log("🧪 NINE-AI TIMING RESEARCH REGISTRY READY (NOT LIVE-APPLIED): activePolicies=" + deploymentStatus.activePolicies);
-    const runTimingDeployment = async () => {
-        try {
-            const result = await nineAiAutonomousDeployment.runResearchCycle();
-            console.log("🚀 NINE-AI TIMING POLICY CYCLE: status=" + result.status +
-                " outcomes=" + (result.rows ?? 0) + " candidates=" + (result.candidates ?? 0) +
-                " active=" + (result.activePolicies ?? 0));
-        } catch (error) {
-            console.error("⚠️ NINE-AI TIMING POLICY CYCLE FAILED:", error?.message || error);
-        }
-    };
-    void runTimingDeployment();
-    setInterval(runTimingDeployment, 6 * 60 * 60 * 1000);
-} catch (deploymentInitError) {
-    console.error("⚠️ NINE-AI AUTONOMOUS DEPLOYMENT INIT FAILED:", deploymentInitError?.message || deploymentInitError);
-}
-
-try {
-    const diagnosisStatus = await nineAiLossDiagnosis.initialize(db);
-    console.log("🧠 NINE-AI CAUSAL DIAGNOSIS + STRATEGY LAB READY: " + diagnosisStatus.ready);
-    const runDiagnosisResearch = async () => {
-        try {
-            const result = await nineAiLossDiagnosis.runResearchCycle();
-            console.log("🧪 NINE-AI STRATEGY LAB: trades=" + result.closedTradesAnalyzed + " losses=" + result.lossesAnalyzed + " hypotheses=" + result.hypotheses + " validated=" + result.validatedCandidates);
-        } catch (error) { console.error("⚠️ NINE-AI STRATEGY LAB CYCLE FAILED:", error?.message || error); }
-    };
-    void runDiagnosisResearch();
-    setInterval(runDiagnosisResearch, 6 * 60 * 60 * 1000);
-} catch (diagnosisInitError) { console.error("⚠️ NINE-AI CAUSAL DIAGNOSIS INIT FAILED:", diagnosisInitError?.message || diagnosisInitError); }
-
-// Autonomous strategy research mines confirmed closed-trade memory and validates
-// hypotheses on chronological holdouts. Policies remain research metadata only;
-// the central Nine-AI decision engine is the sole live decision authority.
-try {
-    const researchStatus = await nineAiAutonomousResearch.initialize(db);
-    console.log(`🧪 NINE-AI AUTONOMOUS RESEARCH READY: mode=${researchStatus.mode} minSamples=${researchStatus.minSamples}`);
-    const runResearch = async () => {
-        try {
-            const result = await nineAiAutonomousResearch.runResearchCycle();
-            console.log(`🧪 NINE-AI RESEARCH: status=${result.status} samples=${result.sampleCount} candidates=${result.storedCandidates ?? 0}`); 
-            if (result.activatedPolicy) console.log(`🧪 NINE-AI RESEARCH POLICY PROMOTED (NOT LIVE-APPLIED): policy=${result.activatedPolicy.policyId} rule=${result.activatedPolicy.description}`);
-            if (result.rolledBackPolicy) console.warn(`↩️ NINE-AI POLICY ROLLED BACK: policy=${result.rolledBackPolicy.policyId} matchedVsUnmatchedUpliftR=${result.rolledBackPolicy.livePerformance.matchedVsUnmatchedUpliftR}`);
-        } catch (researchError) {
-            console.error("⚠️ NINE-AI RESEARCH CYCLE FAILED:", researchError?.message || researchError);
-        }
-    };
-    void runResearch();
-    setInterval(runResearch, 6 * 60 * 60 * 1000);
-} catch (researchError) {
-    // Research is optional and must never block market scanning or risk controls.
-    console.error("⚠️ NINE-AI RESEARCH INIT FAILED:", researchError?.message || researchError);
-}
-
-        // Capacity-aware retention: old evaluated/research history is pruned only after
+// Capacity-aware retention: old evaluated/research history is pruned only after
 // estimated collection storage crosses the configured threshold. Failure is non-fatal.
 try {
     const dbRetention = nineAiDbRetention.createRetention(db);
@@ -5252,119 +5044,6 @@ await new Promise(r =>
         process.exit(1)
     }
 }
-async function getDBStats(setup, market, side, volatility){
-
-    if(!trades){
-        return { winrate: 0.5, total: 0 }
-    }
-
-    try{
-        const col = trades
-
-        // ===== lấy dữ liệu db =====
-        let totalDB = await col.countDocuments({
-            result: { $in: ["WIN", "LOSS"] }
-        })
-
-        let minSample = Math.min(Math.max(10, Math.floor(totalDB * 0.1)), 50)
-        const sampleLimit = 2000
-
-        // ===== QUERY CHÍNH =====
-        let data = await col.find({
-    setup,
-    marketState: market,
-    side,
-    result: { $in:["WIN","LOSS"] }
-}).sort({ createdAt: -1 }).limit(sampleLimit).toArray()
-
-        // ===== FILTER VOL =====
-        let filtered = data.filter(t => !t.volatility || t.volatility === volatility)
-
-        // ===== ƯU TIÊN VOL =====
-        if(filtered.length >= minSample){
-    data = filtered
-}
-        if(data.length < minSample){
-
-    data = await col.find({
-        setup,
-        side,
-        result: { $in:["WIN","LOSS"] }
-    }).sort({ createdAt: -1 }).limit(sampleLimit).toArray()
-}
-
-        // ===== FALLBACK 2 =====
-        if(data.length < minSample){
-            data = await col.find({
-                side,
-                result: { $in:["WIN","LOSS"] }
-            }).sort({ createdAt: -1 }).limit(sampleLimit).toArray()
-        }
-
-        // ===== FINAL =====
-        if(data.length === 0){
-            return { winrate: 0.5, total: 0 }
-        }
-
-        // ===== TIME DECAY AI =====
-        let winScore = 0
-        let lossScore = 0
-
-        for(let t of data){
-
-            let ageHours = t.createdAt
-                ? (Date.now() - t.createdAt) / 3600000
-                : 999
-
-            // 🔥 decay 48h
-            let weight = Math.exp(-ageHours / 48)
-
-            if(t.result === "WIN"){
-                winScore += weight
-            }
-            else if(t.result === "LOSS"){
-                lossScore += weight
-            }
-        }
-
-        // ===== TRÁNH CHIA 0 =====
-        let rawWR = (winScore + lossScore) > 0
-            ? winScore / (winScore + lossScore)
-            : 0.5
-
-        // ===== CONFIDENCE =====
-        let confidence = Math.min(data.length / 40, 1)
-
-        let finalWR = 0.5 + (rawWR - 0.5) * confidence
-
-        if(DEBUG_AI){
-            console.log(
-                `🤖 AI ${setup}-${market}-${side}-${volatility} | WR:${finalWR.toFixed(2)} | N:${data.length}`
-            )
-        }   
-
-        if(DEBUG_AI){ 
-            console.log("📊 DB used:", data.length)
-        }
-
-        return {
-            winrate: finalWR,
-            total: data.length
-        }
-
-    }catch(e){
-
-    DB_READY = false
-
-    console.log(
-        "❌ DB ERROR:",
-        e?.message || e
-    )
-
-    return null
-}
-}
-            
 start()
 
 async function syncActiveTrades(){
@@ -5676,7 +5355,11 @@ async function runDynamicTPSL(){
                     const protection = await setInitialTPSL(trade)
                     if(protection?.ok){
                         trade.sl = Number(protection.sl)
+                        trade.tp1 = Number(protection.tp1)
+                        trade.tp1OrderId = protection.tp1OrderId
                         trade.tp = Number(protection.tp)
+                        trade.slOrderId = protection.slOrderId
+                        trade.tpOrderId = protection.tpOrderId
                         trade.initialRisk = Math.abs(Number(trade.entry) - trade.sl)
                         trade.emergencyProtectionNeeded = false
                         TPSL_PHASE[symbol] = "ACTIVE"
@@ -5684,7 +5367,11 @@ async function runDynamicTPSL(){
                             { symbol, result: "PENDING" },
                             { $set: {
                                 sl: trade.sl,
+                                tp1: trade.tp1,
+                                tp1OrderId: trade.tp1OrderId,
                                 tp: trade.tp,
+                                slOrderId: trade.slOrderId,
+                                tpOrderId: trade.tpOrderId,
                                 initialRisk: trade.initialRisk,
                                 emergencyProtectionNeeded: false,
                                 updatedAt: Date.now()

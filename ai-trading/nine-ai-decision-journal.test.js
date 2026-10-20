@@ -6,12 +6,12 @@ assert.equal(journal.MARKET_WINDOW_BARS, 48, "the journal must retain 12 hours o
 
 const raw = [];
 const base = 1_800_000_000_000;
-for (let i = 0; i < 24; i++) {
+for (let i = 0; i < 40; i++) {
   const close = 100 + i * 0.2;
   raw.push([base + i * 900_000, close - 0.1, close + 0.5, close - 0.5, close, 100, base + (i + 1) * 900_000 - 1]);
 }
 const candles = journal.normalizeCandles(raw);
-assert.equal(candles.length, 24);
+assert.equal(candles.length, 40);
 
 const wait = journal.snapshotDecision({
   symbol: "TESTUSDT",
@@ -68,6 +68,7 @@ const evaluations = journal.computeEvaluations(wait, candles);
 assert.ok(evaluations);
 assert.ok(evaluations.evaluations["4"]);
 assert.ok(evaluations.evaluations["16"]);
+assert.ok(evaluations.evaluations["24"], "the timeout horizon must be evaluated after 24 closed 4h bars");
 assert.equal(evaluations.evaluations["4"].source, "HYPOTHETICAL_FORWARD_CLOSES_NOT_EXECUTED_PNL");
 assert.ok(Number.isFinite(evaluations.evaluations["4"].longNetR));
 assert.ok(Number.isFinite(evaluations.evaluations["4"].shortNetR));
@@ -159,6 +160,8 @@ assert.ok(learnedLossWindow.adjustment < 0);
   assert.equal(result.recorded, true);
   assert.equal(attempts, 3, "transient network failures should be retried with a fresh insert attempt");
   assert.equal(inserted.length, 1);
+  assert.equal(await journal.hasDecisionForCandle("RETRYTESTUSDT", base), true,
+    "the journal must block a second decision on the same closed candle");
   const duplicate = await journal.recordDecision(args);
   assert.equal(duplicate.reason, "DUPLICATE_DECISION");
   assert.equal(attempts, 3, "duplicate decisions must not trigger another database write");

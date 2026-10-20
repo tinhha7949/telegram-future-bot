@@ -9,7 +9,7 @@ const crypto = require("crypto");
 const COLLECTION = "nine_ai_decision_journal";
 const MAX_RECORDS = 5000;
 const MARKET_WINDOW_BARS = 48;
-const HORIZONS = [4, 16];
+const HORIZONS = [4, 16, 24];
 const MIN_SAMPLES = 20;
 const MAX_LIVE_BONUS = 3;
 const DEFAULT_ROUND_TRIP_COST_RATE = 0.0008;
@@ -207,6 +207,33 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
   })) : [];
   const window = snapshotMarketWindow(marketWindow, MARKET_WINDOW_BARS, num(signalTime, Infinity));
   const snapshot = {
+    decisionSnapshot: d && typeof d === "object" ? {
+      setup: d.setup || null,
+      side,
+      edges: d.edges || null,
+      regime: d.regime || null,
+      agents: d.agents || null,
+      featureSnapshot: d.featureSnapshot || null,
+      tradePlan: d.tradePlan || null,
+      executionDecision: {
+        symbol: String(symbol || d.symbol || "UNKNOWN"),
+        setup: d.setup || null, side, action: String(d.action || side),
+        authorizedForExecution: d.authorizedForExecution === true,
+        reason: String(d.reason || "NOT_AUTHORIZED"),
+        signalAt: num(d.signalAt, num(signalTime)),
+        entry: num(d.entry, null), price: num(d.price, null), sl: num(d.sl, null),
+        tp: num(d.tp, null), tp1: num(d.tp1, null), tp2: num(d.tp2, null),
+        closePercentAtTP1: num(d.closePercentAtTP1, 50),
+        timeoutCandles: num(d.timeoutCandles, 24), timeframe: d.timeframe || "4h",
+        riskPerTradePct: 0.0075, riskEquity: num(d.riskEquity, null),
+        edges: d.edges || null, regime: d.regime || null, agents: d.agents || null,
+        setupKey: d.setupKey || null, featureSnapshot: d.featureSnapshot || null,
+        tradePlan: d.tradePlan || null, candles: num(d.candles, null)
+      },
+      predictedEdgeR: num(d.edges?.[side]?.edge, null),
+      predictedProbability: num(d.edges?.[side]?.p, null),
+      predictedExpectedR: num(d.edges?.[side]?.expectedR, null)
+    } : null,
     symbol: String(symbol || d.symbol || "UNKNOWN"),
     side,
     action: String(d.action || side),
@@ -275,7 +302,8 @@ async function initialize(db) {
     maturedWindowSamples: records.filter(r => r.outcomeStatus === "EVALUATED" &&
       Array.isArray(r.marketWindow) && r.marketWindow.length === MARKET_WINDOW_BARS &&
       Number.isFinite(Number(r.evaluations?.["4"]?.longNetR)) &&
-      Number.isFinite(Number(r.evaluations?.["16"]?.longNetR))).length,
+       Number.isFinite(Number(r.evaluations?.["16"]?.longNetR)) &&
+       Number.isFinite(Number(r.evaluations?.["24"]?.longNetR))).length,
     minWindowSamples: MIN_SAMPLES };
 }
 
@@ -290,6 +318,22 @@ function isTransientJournalWriteError(error) {
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function getDecisionForCandle(symbol, signalTime) {
+  const key = String(symbol || "").toUpperCase();
+  const time = num(signalTime);
+  if (!key || !Number.isFinite(time)) return null;
+  let row = records.find(item => String(item.symbol).toUpperCase() === key && Number(item.signalTime) === time);
+  if (!row && collection) row = await collection.findOne({ symbol: key, signalTime: time });
+  return row || null;
+}
+
+async function hasDecisionForCandle(symbol, signalTime) {
+  const key = String(symbol || "").toUpperCase();
+  const time = num(signalTime);
+  if (!key || !Number.isFinite(time)) return false;
+  return Boolean(await getDecisionForCandle(key, time));
 }
 
 async function recordDecision(args) {
@@ -334,7 +378,11 @@ function computeEvaluations(record, candles) {
   const atr = num(record.features?.atr14, atrAt(candles, idx));
   if (!(baseEntry > 0 && atr > 0)) return null;
   const configuredCost = num(process.env.NINE_AI_ROUND_TRIP_COST_RATE, DEFAULT_ROUND_TRIP_COST_RATE);
-  const costRate = clamp(configuredCost, 0, 0.02);
+  const snapCosts = record.decisionSnapshot?.featureSnapshot || {};
+  const explicitCostPct = [snapCosts.feePct, snapCosts.fundingCostPct, snapCosts.estSlippagePct].map(value => num(value));
+  const costRate = explicitCostPct.every(Number.isFinite)
+    ? clamp(explicitCostPct.reduce((sum, value) => sum + value, 0) / 100, 0, 0.05)
+    : clamp(configuredCost, 0, 0.02);
   const evaluations = { ...(record.evaluations || {}) };
   const researchVariants = { ...(record.researchVariants || {}) };
   let changed = false;
@@ -491,12 +539,13 @@ function status() {
   const maturedWindowSamples = records.filter(r => r.outcomeStatus === "EVALUATED" &&
     Array.isArray(r.marketWindow) && r.marketWindow.length === MARKET_WINDOW_BARS &&
     Number.isFinite(Number(r.evaluations?.["4"]?.longNetR)) &&
-    Number.isFinite(Number(r.evaluations?.["16"]?.longNetR))).length;
+       Number.isFinite(Number(r.evaluations?.["16"]?.longNetR)) &&
+       Number.isFinite(Number(r.evaluations?.["24"]?.longNetR))).length;
   return { samples: records.length, evaluated, pending: records.length - evaluated,
     windowSnapshots, maturedWindowSamples, windowResearchReady: maturedWindowSamples >= MIN_SAMPLES,
     minSamples: MIN_SAMPLES, horizons: [...HORIZONS], maxLiveBonus: MAX_LIVE_BONUS };
 }
 
 module.exports = { COLLECTION, MAX_RECORDS, HORIZONS, MIN_SAMPLES, MARKET_WINDOW_BARS, normalizeCandles, snapshotMarketWindow,
-  extractWindowFeatures, assessWindowEvidence, snapshotDecision, initialize, recordDecision, settleMatured,
+  extractWindowFeatures, assessWindowEvidence, snapshotDecision, initialize, getDecisionForCandle, hasDecisionForCandle, recordDecision, settleMatured,
   computeEvaluations, positiveEvidenceBonus, recordActualOutcome, assess, status };
