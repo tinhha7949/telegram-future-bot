@@ -4851,7 +4851,7 @@ console.log("🧠 NINE-AI DECISION JOURNAL READY: samples=" + decisionJournalSta
     " windowResearch=" + (decisionJournalStatus.maturedWindowSamples >= decisionJournalStatus.minWindowSamples ? "READY" : "COLLECTING"));
 try {
     const consensusStatus = await nineAiDataDerivedConsensus.initialize(db);
-    console.log("🧬 NINE-AI DATA-DERIVED CONSENSUS READY: activePolicies=" + consensusStatus.activePolicies);
+    console.log("🧬 NINE-AI DATA-DERIVED RESEARCH READY (NOT LIVE-APPLIED): activePolicies=" + consensusStatus.activePolicies);
     const runConsensusResearch = async () => {
         try {
             const result = await nineAiDataDerivedConsensus.runResearchCycle();
@@ -4926,7 +4926,7 @@ try {
 
 try {
     const deploymentStatus = await nineAiAutonomousDeployment.initialize(db);
-    console.log("🚀 NINE-AI AUTONOMOUS TIMING DEPLOYMENT READY: activePolicies=" + deploymentStatus.activePolicies);
+    console.log("🧪 NINE-AI TIMING RESEARCH REGISTRY READY (NOT LIVE-APPLIED): activePolicies=" + deploymentStatus.activePolicies);
     const runTimingDeployment = async () => {
         try {
             const result = await nineAiAutonomousDeployment.runResearchCycle();
@@ -4956,9 +4956,9 @@ try {
     setInterval(runDiagnosisResearch, 6 * 60 * 60 * 1000);
 } catch (diagnosisInitError) { console.error("⚠️ NINE-AI CAUSAL DIAGNOSIS INIT FAILED:", diagnosisInitError?.message || diagnosisInitError); }
 
-// Autonomous strategy research mines confirmed closed-trade memory, validates
-// candidates on chronological holdout data, and can auto-promote qualified policies
-// into bounded live ranking evidence. Live matched-vs-unmatched outcomes drive rollback.
+// Autonomous strategy research mines confirmed closed-trade memory and validates
+// hypotheses on chronological holdouts. Policies remain research metadata only;
+// the central Nine-AI decision engine is the sole live decision authority.
 try {
     const researchStatus = await nineAiAutonomousResearch.initialize(db);
     console.log(`🧪 NINE-AI AUTONOMOUS RESEARCH READY: mode=${researchStatus.mode} minSamples=${researchStatus.minSamples}`);
@@ -4966,7 +4966,7 @@ try {
         try {
             const result = await nineAiAutonomousResearch.runResearchCycle();
             console.log(`🧪 NINE-AI RESEARCH: status=${result.status} samples=${result.sampleCount} candidates=${result.storedCandidates ?? 0}`); 
-            if (result.activatedPolicy) console.log(`🚀 NINE-AI POLICY AUTO-PROMOTED LIVE: policy=${result.activatedPolicy.policyId} rule=${result.activatedPolicy.description}`);
+            if (result.activatedPolicy) console.log(`🧪 NINE-AI RESEARCH POLICY PROMOTED (NOT LIVE-APPLIED): policy=${result.activatedPolicy.policyId} rule=${result.activatedPolicy.description}`);
             if (result.rolledBackPolicy) console.warn(`↩️ NINE-AI POLICY ROLLED BACK: policy=${result.rolledBackPolicy.policyId} matchedVsUnmatchedUpliftR=${result.rolledBackPolicy.livePerformance.matchedVsUnmatchedUpliftR}`);
         } catch (researchError) {
             console.error("⚠️ NINE-AI RESEARCH CYCLE FAILED:", researchError?.message || researchError);
