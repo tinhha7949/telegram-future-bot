@@ -49,6 +49,19 @@ test("same exit contract handles 50% TP1, remaining stop, TP2 and timeout conser
   assert.equal(r.exitReason, "TIMEOUT");
   assert.equal(r.grossR, 0.5);
 });
+test("the shared live/offline contract accepts coincident p50/p90 targets", () => {
+  const r = evaluatePlan(
+    { ...plan, tp2: plan.tp1 },
+    "LONG",
+    [{ open: 100, low: 99.5, high: 103, close: 102 }],
+    { totalCostPct: 0.1 },
+  );
+  assert.equal(r.tp1Hit, true);
+  assert.equal(r.grossR, 2);
+  assert.equal(r.netR, 1.9);
+  assert.equal(r.exitReason, "TP2");
+});
+
 test("24-bar evaluation waits for the final closed bar and freezes only the matured outcome", () => {
   const now = Date.now(),
     bar = 14400000;

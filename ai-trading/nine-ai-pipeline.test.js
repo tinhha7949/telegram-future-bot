@@ -33,7 +33,7 @@ for (const side of ["LONG", "SHORT"])
       assert.equal(other.p, 0);
     },
   );
-test("missing outcomes, simulated labels, duplicates, future labels and missing flow cannot authorize", () => {
+test("invalid or simulated labels never masquerade as an AI-7 model", () => {
   const f = fixture();
   for (const outcomes of [
     [],
@@ -41,10 +41,23 @@ test("missing outcomes, simulated labels, duplicates, future labels and missing 
       ...o,
       source: "CLOSED_HISTORICAL_4H_SIMULATION",
     })),
-    Array(60).fill(f.outcomes[0]),
     f.outcomes.map((o) => ({ ...o, closedAt: f.market.now + 1 })),
-  ])
-    assert.equal(p.analyzeNineAI({ ...f, outcomes }).action, "WAIT");
+  ]) {
+    const d = p.analyzeNineAI({ ...f, outcomes });
+    assert.equal(d.action, "LONG");
+    assert.equal(d.agents.outcome.enabled, false);
+    assert.equal(d.agents.outcome.mode, "AI2_INITIAL");
+    assert.equal(d.agents.outcome.dist_MAE, null);
+    assert.equal(d.agents.outcome.dist_MFE, null);
+  }
+  const deduplicated = p.analyzeNineAI({
+    ...f,
+    outcomes: Array(60).fill(f.outcomes[0]),
+  });
+  assert.equal(deduplicated.agents.outcome.dist_MAE.samples, 1);
+});
+test("initial trades preserve missing-flow and hot-funding vetoes", () => {
+  const f = { ...fixture(), outcomes: [] };
   for (const field of [
     "fundingRate",
     "liquidationImbalance",
@@ -62,17 +75,139 @@ test("missing outcomes, simulated labels, duplicates, future labels and missing 
     "WAIT",
   );
 });
+for (const side of ["LONG", "SHORT"]) {
+  test(
+    "empty history can authorize " +
+      side +
+      " using AI-2, without bypassing AI-9",
+    () => {
+      const f = { ...fixture(side), outcomes: [] };
+      const d = p.analyzeNineAI(f);
+      assert.equal(d.action, side);
+      assert.equal(d.agents.outcome.enabled, false);
+      assert.equal(d.agents.outcome.source, "AI2_STRUCTURE_INITIAL_PLAN");
+      assert.equal(d.tradePlan.outcomeMode, "AI2_INITIAL");
+      assert.equal(d.tradePlan.stopMethod, "AI2_STRUCTURE_INITIAL_STOP");
+      assert.equal(
+        d.edges[side].probabilitySource,
+        "FEATURE_SCORE_UNCALIBRATED",
+      );
+      assert.equal(d.closePercentAtTP1, 50);
+      assert.equal(d.timeoutCandles, 24);
+      assert.equal(
+        central.finalizeDecision(d, {
+          symbol: f.symbol,
+          scannedAt: f.market.now + 1,
+        }).action,
+        side,
+      );
+      const c = d.edges[side];
+      assert.ok(
+        Math.abs(c.edge - (c.p * c.expectedR - c.cost - c.uncertaintyPenalty)) <
+          1e-12,
+      );
+      assert.equal(
+        p.analyzeNineAI({ ...f, config: { minEdge: 100 } }).action,
+        "WAIT",
+      );
+    },
+  );
+  test(
+    "first winning " +
+      side +
+      " label switches directly to AI-7 even if targets coincide",
+    () => {
+      const f = fixture(side);
+      for (const count of [1, 2]) {
+        const outcomes = f.outcomes.slice(0, count);
+        const d = p.analyzeNineAI({ ...f, outcomes });
+        assert.equal(d.action, side);
+        assert.equal(d.agents.outcome.enabled, true);
+        assert.equal(d.tradePlan.outcomeMode, "AI7_LABELED");
+        assert.equal(
+          d.agents.outcome.dist_MAE.p80,
+          p.percentile(
+            outcomes.map((o) => o.maePct),
+            0.8,
+          ),
+        );
+        assert.equal(
+          d.agents.outcome.dist_MFE.p50,
+          p.percentile(
+            outcomes.map((o) => o.mfePct),
+            0.5,
+          ),
+        );
+        assert.equal(
+          d.agents.outcome.dist_MFE.p90,
+          p.percentile(
+            outcomes.map((o) => o.mfePct),
+            0.9,
+          ),
+        );
+        if (count === 1) assert.equal(d.tp1, d.tp2);
+        assert.equal(
+          central.finalizeDecision(d, {
+            symbol: f.symbol,
+            scannedAt: f.market.now + 1,
+          }).action,
+          side,
+        );
+      }
+    },
+  );
+}
+test("a losing first label contributes to probability but cannot invent winning quantiles", () => {
+  const f = fixture();
+  const d = p.analyzeNineAI({
+    ...f,
+    outcomes: [{ ...f.outcomes[0], win: false }],
+  });
+  assert.equal(d.agents.outcome.mode, "AI2_INITIAL");
+  assert.equal(d.edges.LONG.samples, 1);
+  assert.equal(d.edges.LONG.p, 2 / 5);
+  assert.equal(d.agents.outcome.dist_MAE, null);
+  assert.equal(d.agents.outcome.dist_MFE, null);
+});
 test("labeled outcome quantiles do not require 30 winning live trades", () => {
   for (const side of ["LONG", "SHORT"]) {
     const f = fixture(side);
-    const outcomes = f.outcomes.filter((o) => o.setupKey.endsWith("CONTINUATION")).slice(0, 3);
+    const outcomes = f.outcomes
+      .filter((o) => o.setupKey.endsWith("CONTINUATION"))
+      .slice(0, 3);
     const d = p.analyzeNineAI({ ...f, outcomes });
     assert.equal(d.action, side);
     assert.equal(d.agents.outcome.dist_MAE.samples, 3);
     assert.equal(d.agents.outcome.dist_MFE.samples, 3);
-    assert.equal(d.agents.outcome.dist_MAE.p80, p.percentile(outcomes.map((o) => o.maePct), 0.8));
-    assert.equal(d.tp1, d.entry * (1 + (side === "LONG" ? 1 : -1) * p.percentile(outcomes.map((o) => o.mfePct), 0.5) / 100));
-    assert.equal(d.tp2, d.entry * (1 + (side === "LONG" ? 1 : -1) * p.percentile(outcomes.map((o) => o.mfePct), 0.9) / 100));
+    assert.equal(
+      d.agents.outcome.dist_MAE.p80,
+      p.percentile(
+        outcomes.map((o) => o.maePct),
+        0.8,
+      ),
+    );
+    assert.equal(
+      d.tp1,
+      d.entry *
+        (1 +
+          ((side === "LONG" ? 1 : -1) *
+            p.percentile(
+              outcomes.map((o) => o.mfePct),
+              0.5,
+            )) /
+            100),
+    );
+    assert.equal(
+      d.tp2,
+      d.entry *
+        (1 +
+          ((side === "LONG" ? 1 : -1) *
+            p.percentile(
+              outcomes.map((o) => o.mfePct),
+              0.9,
+            )) /
+            100),
+    );
   }
 });
 test("stale/future data, a gap in 90d history and contradictory higher timeframes abstain", () => {

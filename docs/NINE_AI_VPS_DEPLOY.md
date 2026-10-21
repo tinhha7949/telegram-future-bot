@@ -33,7 +33,17 @@ Tests cover LONG/SHORT/WAIT, missing/stale inputs, flow vetoes, one shared live/
 
 No production credentials, MongoDB instance, Binance account or VPS was used during implementation. Production API permissions, network/rate limits and real fills still require deployment verification. Fee conversion and MAE/MFE measurement precision are documented in NINE_AI_CANONICAL_PIPELINE.md. A passing test suite is not a profitability result.
 
-There is no 30-winning-trade prerequisite and the daily learner does not unlock live trading. AI-7 still needs initial labeled MAE/MFE or an initial trained outcome model to define the requested SL/TP quantiles. This repository does not include that initial model/dataset. An empty database therefore still cannot produce a valid first trade; this remains an unresolved initialization requirement, not an intentional live-trade-count gate. No paper portfolio, simulated labels or fixed substitute exits are enabled.
+An empty database no longer blocks the first trade. As authorized, initial trades use AI-2 structure SL/TP while AI-7 has no usable winning label, with at most two such positions active concurrently while awaiting feedback. The original momentum/volume feature-score probabilities are explicitly uncalibrated; all normal trend, flow, funding, current execution-cost, edge and sizing checks still apply. No entry is forced.
+
+Entry messages show AI7 OFF: AI2 initial SL/TP or AI7 MAE/MFE. After the first usable winning label for the matching symbol/regime/setup/side, the next candle can use AI-7 immediately. A loss contributes to empirical win probability but cannot define winning quantiles, so AI-2 exits remain in use until such quantiles exist. A new unmatched setup likewise uses AI-2. No 30-trade count or daily-training unlock applies. Labels and entry mode persist through restart. Coincident p50/p90 targets close two separately tracked reduce-only halves at the same price.
+
+For an existing VPS checkout on main, stop its old process, preserve .env and MongoDB, then run:
+
+```sh
+git pull --ff-only origin main && npm ci --ignore-scripts && npm start
+```
+
+If using an existing supervisor, restart through that supervisor instead of starting a second process with npm start. A mid-candle restart still waits for the next fresh closed-4h decision window.
 
 ## API references
 

@@ -6,12 +6,15 @@ const { analyzeNineAI } = require("./nine-ai-pipeline");
 const { newTrade, TradeLifecycle, TIMEOUT_MS } = require("./trade-lifecycle");
 const { createOfflineLearning } = require("./nine-ai-offline-learning");
 
-function harness() {
+function harness({ initial = false, shared = false } = {}) {
   let now = Date.now(),
     qty = 0,
     sequence = 1;
   const f = fixture("LONG", now),
-    d = analyzeNineAI(f);
+    d = analyzeNineAI({
+      ...f,
+      outcomes: initial ? [] : shared ? [f.outcomes[0]] : f.outcomes,
+    });
   d.nineAiDecisionKey = "decision";
   const rules = {
     step: 0.1,
@@ -105,9 +108,12 @@ function harness() {
         side: "SELL",
         orderType: kind === "sl" ? "STOP_MARKET" : "TAKE_PROFIT_MARKET",
         triggerPrice: t[kind],
-        quantity: kind === "tp1" ? t.actualQuantity / 2 : 0,
-        reduceOnly: kind === "tp1",
-        closePosition: kind !== "tp1",
+        quantity:
+          kind === "tp1" || (kind === "tp2" && t.tp1 === t.tp2)
+            ? t.actualQuantity / 2
+            : 0,
+        reduceOnly: kind === "tp1" || (kind === "tp2" && t.tp1 === t.tp2),
+        closePosition: kind === "sl" || (kind === "tp2" && t.tp1 !== t.tp2),
         algoStatus: "NEW",
         kind,
       };
@@ -149,7 +155,10 @@ function harness() {
         (a) => a.kind === kind && a.algoStatus === "NEW",
       );
       assert.ok(a);
-      const amount = kind === "tp1" ? trade.actualQuantity / 2 : qty;
+      const amount =
+        kind === "tp1" || (kind === "tp2" && trade.tp1 === trade.tp2)
+          ? trade.actualQuantity / 2
+          : qty;
       qty -= amount;
       const orderId = sequence++;
       a.algoStatus = "FINISHED";
@@ -204,6 +213,99 @@ function harness() {
     },
   };
 }
+test("at most two initial positions await feedback without limiting AI-7 entries", async () => {
+  const h = harness({ initial: true });
+  const l = h.create();
+  await l.initialize();
+  l.active.set("one", { tradePlan: { outcomeMode: "AI2_INITIAL" } });
+  l.active.set("two", { tradePlan: { outcomeMode: "AI2_INITIAL" } });
+  assert.equal(await l.enter(h.trade), false);
+  assert.equal(h.calls.filter((c) => c === "entry").length, 0);
+  const f = fixture();
+  const d = analyzeNineAI(f);
+  const t = newTrade(d, {
+    quantity: 2,
+    sl: d.sl,
+    tp1: d.tp1,
+    tp2: d.tp2,
+    risk: 2 * Math.abs(d.entry - d.sl),
+    rules: h.trade.rules,
+  });
+  h.exchange.entryPrice = d.entry;
+  assert.equal(await l.enter(t), true);
+});
+
+test("empty database -> AI-2 initial trade -> restart -> close -> first real label -> AI-7", async () => {
+  const h = harness({ initial: true });
+  assert.equal(h.trade.tradePlan.outcomeMode, "AI2_INITIAL");
+  let l = h.create();
+  await l.initialize();
+  assert.equal(await l.enter(h.trade), true);
+  l = h.create();
+  await l.initialize();
+  await l.tick();
+  h.exchange.trigger("tp1");
+  await l.tick();
+  h.exchange.trigger("tp2");
+  await l.tick();
+  assert.equal(l.active.size, 0);
+  const outcomes = await h.db
+    .collection("nine_ai_outcome_labels")
+    .find({ labeled: true })
+    .toArray();
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].entryOutcomeMode, "AI2_INITIAL");
+  assert.equal(outcomes[0].win, true);
+  const f = fixture("LONG", Math.max(Date.now(), outcomes[0].closedAt + 2000));
+  const next = analyzeNineAI({ ...f, outcomes });
+  assert.equal(next.action, "LONG");
+  assert.equal(next.agents.outcome.enabled, true);
+  assert.equal(next.tradePlan.outcomeMode, "AI7_LABELED");
+  assert.equal(next.agents.outcome.dist_MAE.p80, outcomes[0].maePct);
+  assert.equal(next.agents.outcome.dist_MFE.p50, outcomes[0].mfePct);
+  assert.equal(next.agents.outcome.dist_MFE.p90, outcomes[0].mfePct);
+  assert.equal(next.tp1, next.tp2);
+});
+
+for (const first of ["tp1", "tp2"])
+  test(
+    "coincident quantile targets close separate halves and recover after " +
+      first,
+    async () => {
+      const h = harness({ shared: true });
+      let l = h.create();
+      await l.initialize();
+      assert.equal(await l.enter(h.trade), true);
+      assert.equal(h.trade.tp1, h.trade.tp2);
+      l = h.create();
+      await l.initialize();
+      await l.tick();
+      const active = [...l.active.values()][0];
+      assert.notEqual(active.protectionIds.tp1, active.protectionIds.tp2);
+      const second = first === "tp1" ? "tp2" : "tp1";
+      h.exchange.trigger(first);
+      await l.tick();
+      assert.equal(
+        Math.abs(Number((await h.exchange.positions())[0].positionAmt)),
+        h.trade.actualQuantity / 2,
+      );
+      const other = [...h.algos.values()].find(
+        (a) => a.kind === second && a.algoStatus === "NEW",
+      );
+      other.algoStatus = "CANCELED";
+      l = h.create();
+      await l.initialize();
+      await l.tick();
+      assert.equal(h.calls.filter((c) => c === first).length, 1);
+      assert.equal(h.calls.filter((c) => c === second).length, 2);
+      h.exchange.trigger(second);
+      await l.tick();
+      assert.equal(l.active.size, 0);
+      assert.equal(h.db.collection("nine_ai_outcome_labels").rows.length, 1);
+      assert.equal(h.db.collection("nine_ai_actual_outcomes").rows.length, 1);
+    },
+  );
+
 test("entry -> durable full plan -> restart -> TP1 -> restart -> TP2 -> complete accounting and labels", async () => {
   const h = harness();
   let l = h.create();
