@@ -21,9 +21,9 @@ is gradually pruned.
 ## Capacity behavior
 
 - Estimated logical usage is calculated from each collection's data size plus indexes.
-- Default configured limit: 5,120 MB.
-- Cleanup starts at 80% of that limit (4,096 MB).
-- Target is 60% (3,072 MB).
+- Default configured limit: 500 MB.
+- Cleanup starts at 86% of that limit (430 MB).
+- Target is 60% (300 MB).
 - The controller checks at startup and every 6 hours. By default it performs bounded deletion of eligible old event records when usage crosses the trigger threshold.
 - Each deletion batch is at most 100 documents by default.
 - A run deletes at most 500 documents by default.
@@ -36,8 +36,8 @@ is gradually pruned.
 
 ## Configuration
 
-- `DB_STORAGE_LIMIT_MB`: storage limit in MB (default `5120`).
-- `DB_STORAGE_TRIGGER_RATIO`: trigger ratio (default `0.80`).
+- `DB_STORAGE_LIMIT_MB`: storage limit in MB (default `500`).
+- `DB_STORAGE_TRIGGER_RATIO`: trigger ratio (default `0.86`).
 - `DB_STORAGE_TARGET_RATIO`: target ratio (default `0.60`, always kept below the trigger).
 - `DB_RETENTION_BATCH_SIZE`: batch size (default `100`, bounded).
 - `DB_RETENTION_MAX_DELETES_PER_RUN`: run cap (default `500`, bounded).
@@ -53,4 +53,6 @@ This is a per-collection logical-size estimate, not a guaranteed measurement of 
 
 ## What remains intentionally unclaimed
 
-This module prunes old event rows; it does not create a separate archival copy. Model state and active policies are retained, but consumers that recompute research from raw events will have a rolling 90-day history after old rows are pruned. The 3,072 MB target is best-effort: it does not override the 90-day age rule or protected-state rules.
+This module prunes old event rows; it does not create a separate archival copy. Model state and active policies are retained, but consumers that recompute research from raw events will have a rolling 90-day history after old rows are pruned. The 300 MB target is best-effort: it does not override the 90-day age rule or protected-state rules.
+
+Version-2 WAIT opportunity rows also retain 90 days. Keeping them for one week would remove opportunities needed for the 14-day shadow comparison plus outcome maturity. Closed signal claims expire separately 90 days after closedAt; active claims have no TTL date.

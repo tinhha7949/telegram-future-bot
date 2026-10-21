@@ -1,34 +1,64 @@
-# Nine-AI canonical trading pipeline
+# Nine-AI canonical flow
 
-This branch keeps one live decision authority: `ai-trading/nine-ai-pipeline.js`. The rest of the application is execution, persistence, exchange protection, and offline evaluation. Legacy competing strategy/research modules were removed from the runtime and repository.
+The live path is index.js → nine-ai-pipeline.js → nine-ai-policy.js → central invariant checks → execution validation → TradeLifecycle. The same policy function is used by live decisions, cached decisions, candidate evaluation and shadow evaluation. Only AI-9 selects LONG, SHORT or WAIT. Exchange protection can reject/close unsafe exposure, but cannot invent a trading direction.
 
-## Live decision cadence
+## Inputs and responsibilities
 
-- Scan only a fully closed 4-hour candle and record at most one decision per symbol and candle.
-- Require 4-hour history sufficient for the 90-day realized-volatility window, plus closed 1-hour and 1-day context. Missing required data means `WAIT`.
-- AI-1 classifies `UPTREND`, `DOWNTREND`, `RANGE`, or `HIGH_VOL` from multi-timeframe momentum and 20/90-day realized volatility.
-- AI-2 extracts fractal swing highs/lows and support/resistance for structure and stop placement.
-- AI-3 evaluates trend pullback continuation. AI-4 evaluates range breakouts with volume expansion, hold, spread, and extension guards. AI-5 evaluates VWAP deviation only in range/high-volatility conditions. They cannot bypass the final regime gate.
-- AI-6 reads funding, OI change, and Binance force-order liquidation imbalance. It is confirmation/blocking evidence, never an independent direction generator. Hot funding or missing required market data blocks a trade.
-- AI-7 estimates p80 MAE and p50/p90 MFE from labeled outcomes. Cold-start historical bootstrap samples use the same trend-pullback/breakout entry rules, only after the full 24-candle outcome window has matured. Historical simulations remain explicitly tagged and separate from realized trade outcomes.
-- AI-8 estimates slippage from depth, spread, OI change, and API latency. The exact fee/funding/slippage snapshot is saved with the decision and used in forward opportunity evaluations.
-- AI-9 compares net edge for both sides, subtracts cost and uncertainty, applies the minimum-edge and direction-gap thresholds, and emits exactly one `LONG`, `SHORT`, or `WAIT`.
+1. **Regime:** closed 4h OHLCV spanning at least 90 days (541 contiguous bars), plus closed 1h/day context; 20/90-day realized volatility, volatility percentile and momentum agreeing across timeframes. Outputs regime and confidence in [0,1]. Missing/stale/gapped context means WAIT.
+2. **Structure:** confirmed fractal highs/lows, channel slopes, support/resistance and directional bias. Right-hand fractal bars must already be closed. The structure buffer can move the initial stop beyond support/resistance.
+3. **Continuation:** a pullback in earlier bars, then a completed confirming impulse in the trend direction, increasing OI and non-hot funding. Probability comes from labeled outcomes, not a fixed invented success rate.
+4. **Breakout:** range break in the matching trend, volume expansion, a held level, acceptable spread and an extension guard. Outputs a labeled probability when the setup is active.
+5. **Mean reversion:** VWAP deviation plus liquidation evidence, enabled only in RANGE/HIGH_VOL. Its diagnostic output cannot bypass the final trend gate: the requested live loop trades only UPTREND/DOWNTREND.
+6. **Flow:** funding, OI change and observed liquidation imbalance. Confirms or blocks a model's direction; never creates a direction. Missing flow or hot funding means WAIT. The liquidation socket has a heartbeat and reconnect handling.
+7. **Outcome:** deduplicated, matured REALIZED_CLOSED_TRADE labels for the same symbol, regime/setup and side. Wins and losses estimate probability using a Beta(2,2) prior. At least 30 winning labeled trades are required for the winning MAE/MFE quantiles. Historical price excursions are not silently relabeled as actual trading wins.
+8. **Fill/slippage:** a transparent heuristic using depth, spread, OI change and measured request latency, returning a round-trip slippage estimate and estimated fill price per side. This is an estimate, not a claim of a trained fill model or a guaranteed fill.
+9. **Meta:** applies the formula below once, compares both directions and returns one action. E[R|success] uses the 50/50 quantile exit payoff, optionally blended with the matching realized winning gross-R track record. Calibration remains a diagnostic; it does not silently alter live parameters.
+
+## The single decision formula
+
+edge(a) = p(a) × E[R | a, regime] − cost(a) − uncertainty_penalty
+
+cost(a) = fee + funding(a) + round-trip slippage
+
+All costs are converted to R using the same side's entry-to-initial-stop distance. Funding uses the symbol's funding interval over the maximum 96h hold, charges the paying side and does not assume uncertain future funding receipts as profit. Original fee/funding/slippage inputs and normalized costs are preserved.
+
+The uncertainty penalty increases with lower regime confidence, aging input data and similar directional edges. Data older than five minutes is rejected. LONG requires its edge > minEdge and LONG edge − SHORT edge > gapEdge; SHORT is symmetric. Missing estimates for an active setup mean WAIT. A side with no active setup has p=0 and eligible=false; it remains a finite comparison alternative but cannot execute. This distinction removes the old deadlock requiring two simultaneous opposing setups.
+
+## Cadence and point-in-time snapshots
+
+Each closed 4h candle has at most one durable version-2 decision per symbol, enforced by a partial unique MongoDB index. Market data observed shortly after the close is timestamped honestly at observation time; it is not backdated to the candle close. Decisions older than five minutes cannot execute. Starting midway through a candle therefore waits for the next decision window.
+
+An authorized but unclaimed decision may be reused only within that window. It passes the same central checks and a fresh execution check for flow, funding, cost/uncertainty and price geometry before MARKET. The original decision snapshot stays immutable; the fresh validation snapshot is stored separately.
 
 ## Risk and exits
 
-- Fixed risk budget: `RISK_PER_TRADE = 0.0075` at the top of `index.js`, equal to 0.75% of equity per trade. No martingale or risk escalation.
-- Stop distance uses the p80 adverse-movement quantile with a structure-zone buffer.
-- TP1 uses p50 MFE and closes 50% of the actual filled position; TP2 uses p90 MFE for the remainder.
-- A still-open `NINE_AI_4H` position is closed after 24 four-hour bars (96 hours).
-- Exchange order IDs and realized gross PnL, fees, funding, slippage, MAE, MFE, and net R are persisted for reconciliation and learning.
+- RISK_PER_TRADE is the single manually editable numeric literal at the top of index.js. Its supplied value is 0.0075. Environment variables and learned policies do not override it.
+- Sizing uses current USDT equity, including unrealized PnL, and the actual tick-rounded stop distance. Quantity is rounded down to an even number of valid exchange lots so TP1 can close exactly 50%; exchange size limits still apply. Leverage/margin configuration is left with the account; an insufficient-margin rejection does not increase risk or retry a different size.
+- Initial SL is winning MAE p80 plus a structure-zone buffer. TP1 is winning MFE p50, TP2 winning MFE p90. No independent minimum-RR filter or martingale is added.
+- After the actual fill, keep the researched stop and shift target distances to the actual entry. Recalculate monetary risk from filled quantity and the rounded stop. Excess risk, invalid geometry or an unrepresentable 50% split triggers a reduce-only close rather than acceptance of extra exposure.
+- TP1 reduces exactly half of the original filled quantity; TP2 and SL close remaining exposure. Confirm a triggered TP1's actual child order before treating it as filled. Do not re-arm TP1 after a partial exit/restart.
+- The original entry time and full plan are durable before/after submission; the 96h deadline survives restarts. Protection/timeout management runs independently of Telegram, scanning and CPU-heavy offline training.
+- Missing/canceled protection is repaired without canceling healthy sibling orders. A failed protection recovery attempts a reduce-only close. A signed API outage is never treated as proof that a position is flat.
+- Ambiguous MARKET responses are queried by their saved client ID, never blindly resubmitted. Unknown entries pause new entries until reconciled. Unknown external positions are reported and block new entries; the bot does not invent their strategy plan.
+
+## Accounting and outcome quality
+
+After confirmed flat, reconcile entry fills and all partial exits, deduplicate fill IDs, paginate trade/funding history and preserve raw amounts, assets, order IDs and times. Net PnL = realized gross PnL − commissions + signed funding income. Missing history/conversion remains pending and is retried; it is not converted to a fake LOSS or discarded after three attempts. Actual R uses the immutable actual initial monetary risk in both journal and learner.
+
+USDT commissions are native amounts. Other fee assets are valued using the historical spot 1m close, with the conversion method retained; that USDT valuation is an estimate. Log entry/exit slippage separately from fees and actual exchange realized PnL to avoid double deduction.
+
+MAE/MFE use closed 1m bars fully inside the holding interval plus observed mark/fill prices. The entry/exit minute boundaries have sampled precision, not tick-complete coverage; this source/precision is saved. Missing full-minute history prevents creating an outcome-distribution label. A websocket/tick recorder would be needed for exact tick-level extrema.
 
 ## Daily offline learning
 
-- Every closed trade is saved as a point-in-time feature snapshot plus its realized accounting outcome.
-- Daily calibration reports compare predicted net edge with realized net R. Calibration is diagnostic and does not blindly tune live parameters.
-- Candidate policies are evaluated on the same matured 24-bar opportunity set and the same per-opportunity cost snapshot. Walk-forward train/validation/test splits use a 24-bar purge/embargo.
-- A candidate must beat the champion on the held-out test set, then remain in shadow for at least 14 days. Only then can the candidate become champion; the champion controls only the min-edge/gap thresholds. If evidence is insufficient or the shadow result does not beat the champion, no promotion occurs.
+Closed trades save decision-time feature/prediction snapshots alongside realized accounting. Daily calibration compares predicted edge R with realized net R and reports drift, without blind tuning.
 
-## Safety behavior
+Candidates change only minEdge/gapEdge. Each policy is evaluated on the exact same eligible opportunities and snapshotted directional costs, using the actual SL → 50% TP1 → TP2/96h timeout contract. If a bar touches both stop and target, assume the stop first. These hypothetical evaluations are explicitly separate from exchange PnL. No open candle is settled or frozen as a final outcome.
 
-Missing/stale inputs, insufficient 90-day history, missing multi-timeframe candles, unavailable liquidation data, invalid exit geometry, or insufficient outcome samples produce `WAIT`. The system does not invent liquidation values or MAE/MFE quantiles. This is intentionally conservative during cold start.
+Chronological train/validation/test splits use a 24-bar purge/embargo on each split boundary. Select on train/validation, compare once on held-out test, and start shadow only for a qualified improvement. Shadow uses 14 full days of new opportunities and waits another 96h for the final labels to mature before promotion (earliest day 18). Insufficient evidence, a changed champion or a losing candidate prevents promotion. Training runs in a worker so it cannot block the live watchdog. WAIT history is retained 90 days so it remains available during shadow.
+
+## Cold start and upgrades
+
+Without sufficient real labeled outcomes, the outcome model returns WAIT. Historical OHLCV alone cannot manufacture those labels. Seed/migrate only independently reconciled real trading history with correct symbol/setup/side, unique trade ID, MAE/MFE percentages, win flag and closedAt. If no such data exists, the system deliberately waits; it does not secretly enable paper trades or bootstrap live trading with fabricated statistics.
+
+Legacy pending Nine-AI records are migrated in place and their exchange protection is verified. Preserve old entry times. A legacy record missing a valid plan/risk cannot be repaired by inventing TP1. Older research evaluations are retained for audit but excluded from version-2 policy training.

@@ -1,44 +1,41 @@
-# VPS deployment: Nine-AI canonical bot
+# Deploying the Nine-AI flow
 
-## Requirements
-- Linux VPS with Node.js 22 (see `.nvmrc`)
-- MongoDB reachable from the VPS
-- Binance USD-M Futures API key with trading permission, IP-restricted to the VPS, and withdrawals disabled
-- Telegram bot token and destination chat ID
+Use Node.js 22 and a reachable MongoDB database. The bot requires a Binance USDT single-asset account in One-way Mode; it validates mode before starting. No account mode or leverage setting is changed automatically.
 
-## First installation
-```bash
-git clone https://github.com/tinhha7949/telegram-future-bot.git
-cd telegram-future-bot
+## Install and check
+
+```sh
 cp .env.example .env
-nano .env
-npm install
+# Fill your own required values in .env.
+npm ci --ignore-scripts
 npm test
 ```
 
-Fill in the real values for `MONGO_URI`, `BINANCE_KEY`, `BINANCE_SECRET`, `BOT_TOKEN`, and `CHAT_ID` in `.env`. Keep `.env` private and never commit it. Optional Telegram destinations may be left blank.
+Required environment variables: MONGO_URI, BINANCE_KEY and BINANCE_SECRET. Telegram BOT_TOKEN/CHAT_ID are optional for command/status reporting. BOT_TOKEN_2/AI_CHAT_ID may route trade reports to a second destination. Telegram outages do not block position management.
 
-## Start and monitor
-```bash
+Only the numeric RISK_PER_TRADE literal at the top of index.js controls per-trade equity risk. MAX_ACTIVE_POSITIONS controls the simultaneous position cap. ROUND_TRIP_FEE_PCT is an execution-cost estimate in percentage points. The .env file never overrides the manual risk literal.
+
+## First start / upgrade
+
+Review existing exchange positions and saved pending trades before replacing a running deployment. Preserve the MongoDB trading database and existing claims. The startup migration removes createdAt-based claim TTL indexes and expires only reconciled closed claims, so pending/ambiguous orders are not forgotten.
+
+The migration adds a partial unique index for one version-2 decision per symbol/candle and a partial unique trade signal key. Pending legacy Nine-AI records with an existing Mongo ID are updated in place. Incomplete or unrecognized positions block new entries or take the explicitly logged protection/close path; no missing strategy plan is invented.
+
+```sh
 npm start
 ```
 
-Keep the process under your existing supervisor (systemd/PM2) only after the first foreground run passes startup checks. Review startup logs for MongoDB READY, time synchronization, decision-journal initialization, offline-learning initialization, and the liquidation WebSocket. If required data is unavailable, the canonical strategy should emit WAIT rather than invent missing inputs.
+Run only one managed process against this account/database. A local PID lock prevents the same checkout from starting twice; it is not a cross-host account lock. Inspect NINE-AI READY, position reconciliation/protection logs, ENTRY WAIT reasons, and DAILY CALIBRATION. Use the existing supervisor only after startup checks succeed. A restart halfway through a 4h candle waits for the next fresh decision window.
 
-## Updating
-For future updates after this release:
-```bash
-git switch main
-git pull --ff-only origin main
-npm install
-npm test
-```
+## What verification covers
 
-Before restarting an existing live bot, verify the exchange has no unprotected position. The process uses a local PID lock, but that does not protect against a second copy on another VPS.
+Tests cover LONG/SHORT/WAIT, missing/stale inputs, flow vetoes, one shared live/offline policy, risk after tick rounding/fill, exact half quantities, lost MARKET responses, restart recovery, TP1 idempotency, canceled-stop repair, timeout during DB failure, fill/funding accounting, matured 24-bar opportunities, purge/embargo and shadow promotion timing. They use fake exchange/database responses and do not submit live orders.
 
-## Fixed risk and strategy
-- To change per-trade risk, manually edit the numeric literal in `index.js`: `const RISK_PER_TRADE = 0.0075` means 0.75% of equity. For example, `0.01` means 1%. Both risk limits use this constant; `.env` does not override it. Run `npm test` after editing.
-- The decision cycle uses closed 4-hour candles and requires about 90 days of 4-hour history plus closed 1-hour and 1-day context.
-- New entries default to WAIT when market inputs, liquidation confirmation, outcome distributions, or exchange protection are unavailable.
-- The initial champion policy can trade when the Nine-AI entry contract passes. Candidate policies cannot replace the champion until the same-opportunity/cost walk-forward test passes and a 14-day shadow period beats the champion.
-- Do not treat passing unit tests as proof of profitability. Start with a small, explicitly risked account and inspect fills, funding, SL/TP orders, and daily calibration before increasing exposure.
+No production credentials, MongoDB instance, Binance account or VPS was used during implementation. Production API permissions, network/rate limits and real fills still require deployment verification. Fee conversion and MAE/MFE measurement precision are documented in NINE_AI_CANONICAL_PIPELINE.md. A passing test suite is not a profitability result.
+
+Cold start requires real labeled outcomes. If those are absent, WAIT is the expected result. The bot does not fabricate historical winners, silently turn on a paper portfolio, or bypass the outcome contract to force a first trade.
+
+## API references
+
+- [Binance USD-M trade endpoints](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/trade): conditional orders, actual child order IDs and account trade pagination.
+- [Binance market-data endpoints](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data): klines, premium/funding inputs and adjusted funding intervals.
