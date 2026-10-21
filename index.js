@@ -15,6 +15,7 @@ const central = require("./ai-trading/nine-ai-central-decision-engine");
 const journal = require("./ai-trading/nine-ai-decision-journal");
 const {
   createOfflineLearning,
+  formatDailyLearningReport,
 } = require("./ai-trading/nine-ai-offline-learning");
 const { createRetention } = require("./ai-trading/nine-ai-db-retention");
 const liquidationFeed = require("./ai-trading/binance-liquidation-feed");
@@ -318,14 +319,7 @@ async function main() {
       }
     }
     const report = await learner.runDailyCycle();
-    console.log(
-      "DAILY CALIBRATION",
-      JSON.stringify(report.calibration),
-      "CANDIDATE",
-      report.candidateResult?.status,
-      "SHADOW",
-      report.shadowResult?.status,
-    );
+    console.log(formatDailyLearningReport(report));
   });
   void daily();
   let scanReasons = new Map();
@@ -379,8 +373,17 @@ async function main() {
       : null;
   }
   const scan = every(120000, async () => {
-    if (entriesPaused || lifecycle.uncertain || lifecycle.untracked.size)
+    if (entriesPaused || lifecycle.uncertain || lifecycle.untracked.size) {
+      console.log(
+        "NINE-AI SCAN PAUSED",
+        entriesPaused
+          ? "RUNTIME_ERROR"
+          : lifecycle.uncertain
+            ? "POSITION_STATE_UNCERTAIN"
+            : "UNTRACKED_EXCHANGE_POSITION",
+      );
       return;
+    }
     await db.command({ ping: 1 });
     const cutoffAt = Date.now();
     const [symbols, champion, track, outcomes] = await Promise.all([
@@ -398,6 +401,12 @@ async function main() {
         .limit(5000)
         .toArray(),
     ]);
+    console.log(
+      "NINE-AI SCAN START",
+      "symbols=" + symbols.length,
+      "realizedLabels=" + outcomes.length,
+      "timeframe=4h",
+    );
     const signals = [];
     scanReasons = new Map();
     for (let i = 0; i < symbols.length && !stopped; i += 5) {
@@ -414,6 +423,8 @@ async function main() {
     }
     console.log(
       "NINE-AI SCAN",
+      "symbols=" + symbols.length,
+      "signals=" + signals.length,
       [...scanReasons]
         .sort((a, b) => b[1] - a[1])
         .slice(0, 6)
