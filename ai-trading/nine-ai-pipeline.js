@@ -468,7 +468,8 @@ function analyzeNineAI({
       const setupKey = regime.regime + "_" + m.type;
       const samples = validLabels(outcomes, symbol, setupKey, side, now),
         wins = samples.filter((o) => o.win);
-      if (samples.length < 30 || wins.length < 30) continue;
+      // AI-7 needs defined winning quantiles, not an invented trade-count gate.
+      if (!wins.length) continue;
       const distMAE = {
         p80: percentile(
           wins.map((o) => o.maePct),

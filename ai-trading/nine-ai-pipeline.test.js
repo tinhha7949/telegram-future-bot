@@ -33,7 +33,7 @@ for (const side of ["LONG", "SHORT"])
       assert.equal(other.p, 0);
     },
   );
-test("cold start, simulated labels, duplicates, future labels and missing flow cannot authorize", () => {
+test("missing outcomes, simulated labels, duplicates, future labels and missing flow cannot authorize", () => {
   const f = fixture();
   for (const outcomes of [
     [],
@@ -61,6 +61,19 @@ test("cold start, simulated labels, duplicates, future labels and missing flow c
       .action,
     "WAIT",
   );
+});
+test("labeled outcome quantiles do not require 30 winning live trades", () => {
+  for (const side of ["LONG", "SHORT"]) {
+    const f = fixture(side);
+    const outcomes = f.outcomes.filter((o) => o.setupKey.endsWith("CONTINUATION")).slice(0, 3);
+    const d = p.analyzeNineAI({ ...f, outcomes });
+    assert.equal(d.action, side);
+    assert.equal(d.agents.outcome.dist_MAE.samples, 3);
+    assert.equal(d.agents.outcome.dist_MFE.samples, 3);
+    assert.equal(d.agents.outcome.dist_MAE.p80, p.percentile(outcomes.map((o) => o.maePct), 0.8));
+    assert.equal(d.tp1, d.entry * (1 + (side === "LONG" ? 1 : -1) * p.percentile(outcomes.map((o) => o.mfePct), 0.5) / 100));
+    assert.equal(d.tp2, d.entry * (1 + (side === "LONG" ? 1 : -1) * p.percentile(outcomes.map((o) => o.mfePct), 0.9) / 100));
+  }
 });
 test("stale/future data, a gap in 90d history and contradictory higher timeframes abstain", () => {
   const f = fixture();

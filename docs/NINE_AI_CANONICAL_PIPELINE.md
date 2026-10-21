@@ -10,7 +10,7 @@ The live path is index.js → nine-ai-pipeline.js → nine-ai-policy.js → cent
 4. **Breakout:** range break in the matching trend, volume expansion, a held level, acceptable spread and an extension guard. Outputs a labeled probability when the setup is active.
 5. **Mean reversion:** VWAP deviation plus liquidation evidence, enabled only in RANGE/HIGH_VOL. Its diagnostic output cannot bypass the final trend gate: the requested live loop trades only UPTREND/DOWNTREND.
 6. **Flow:** funding, OI change and observed liquidation imbalance. Confirms or blocks a model's direction; never creates a direction. Missing flow or hot funding means WAIT. The liquidation socket has a heartbeat and reconnect handling.
-7. **Outcome:** deduplicated, matured REALIZED_CLOSED_TRADE labels for the same symbol, regime/setup and side. Wins and losses estimate probability using a Beta(2,2) prior. At least 30 winning labeled trades are required for the winning MAE/MFE quantiles. Historical price excursions are not silently relabeled as actual trading wins.
+7. **Outcome:** deduplicated, matured REALIZED_CLOSED_TRADE labels for the same symbol, regime/setup and side. Wins and losses estimate probability using a Beta(2,2) prior. Winning MAE/MFE quantiles have no minimum-trade-count gate. An empty winning set has undefined quantiles; missing data is not replaced with invented SL/TP values. Historical price excursions are not relabeled as actual trading wins.
 8. **Fill/slippage:** a transparent heuristic using depth, spread, OI change and measured request latency, returning a round-trip slippage estimate and estimated fill price per side. This is an estimate, not a claim of a trained fill model or a guaranteed fill.
 9. **Meta:** applies the formula below once, compares both directions and returns one action. E[R|success] uses the 50/50 quantile exit payoff, optionally blended with the matching realized winning gross-R track record. Calibration remains a diagnostic; it does not silently alter live parameters.
 
@@ -59,6 +59,8 @@ Chronological train/validation/test splits use a 24-bar purge/embargo on each sp
 
 ## Cold start and upgrades
 
-Without sufficient real labeled outcomes, the outcome model returns WAIT. Historical OHLCV alone cannot manufacture those labels. Seed/migrate only independently reconciled real trading history with correct symbol/setup/side, unique trade ID, MAE/MFE percentages, win flag and closedAt. If no such data exists, the system deliberately waits; it does not secretly enable paper trades or bootstrap live trading with fabricated statistics.
+The daily learning cycle and candidate promotion are not prerequisites for a live decision. No requirement to accumulate 30 winning live trades applies. Any existing valid labeled winners can supply the requested quantiles, provided the resulting exit geometry is valid.
+
+An unresolved initialization requirement remains: this repository contains neither an initial trained AI-7 outcome model nor an initial labeled trade dataset. With an empty dataset, p80 winning MAE and p50/p90 winning MFE are undefined, so a conforming exit plan cannot be created. Removing the sample-count gate alone does not make an empty database capable of its first trade. This implementation does not claim otherwise or silently introduce paper trades, simulated labels, or fixed substitute exits.
 
 Legacy pending Nine-AI records are migrated in place and their exchange protection is verified. Preserve old entry times. A legacy record missing a valid plan/risk cannot be repaired by inventing TP1. Older research evaluations are retained for audit but excluded from version-2 policy training.

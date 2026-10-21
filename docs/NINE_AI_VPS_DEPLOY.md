@@ -33,7 +33,7 @@ Tests cover LONG/SHORT/WAIT, missing/stale inputs, flow vetoes, one shared live/
 
 No production credentials, MongoDB instance, Binance account or VPS was used during implementation. Production API permissions, network/rate limits and real fills still require deployment verification. Fee conversion and MAE/MFE measurement precision are documented in NINE_AI_CANONICAL_PIPELINE.md. A passing test suite is not a profitability result.
 
-Cold start requires real labeled outcomes. If those are absent, WAIT is the expected result. The bot does not fabricate historical winners, silently turn on a paper portfolio, or bypass the outcome contract to force a first trade.
+There is no 30-winning-trade prerequisite and the daily learner does not unlock live trading. AI-7 still needs initial labeled MAE/MFE or an initial trained outcome model to define the requested SL/TP quantiles. This repository does not include that initial model/dataset. An empty database therefore still cannot produce a valid first trade; this remains an unresolved initialization requirement, not an intentional live-trade-count gate. No paper portfolio, simulated labels or fixed substitute exits are enabled.
 
 ## API references
 
