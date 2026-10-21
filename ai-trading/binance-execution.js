@@ -1,6 +1,9 @@
 "use strict";
 const crypto = require("node:crypto");
 const { isRiskWithinBudget } = require("./execution-risk");
+const { RequestBudget } = require("./binance-request-budget");
+const { FourHourHistory } = require("./four-hour-history");
+const { BinanceMarketFeed } = require("./binance-market-feed");
 
 class ExchangeError extends Error {
   constructor(message, { code, ambiguous = false } = {}) {
@@ -107,6 +110,8 @@ class BinanceExchange {
     fetchImpl = globalThis.fetch,
     now = () => Date.now(),
     wait = sleep,
+    budget,
+    marketFeed,
   } = {}) {
     this.key = key;
     this.secret = secret;
@@ -116,6 +121,17 @@ class BinanceExchange {
     this.offset = 0;
     this.exchangeInfo = null;
     this.exchangeInfoAt = 0;
+    this.budget = budget || new RequestBudget({ now, wait });
+    this.requestCache = new Map();
+    this.requestPending = new Map();
+    this.observations = new WeakMap();
+    this.marketFeed =
+      marketFeed ||
+      new BinanceMarketFeed({ now, serverNow: () => this.now() + this.offset });
+    this.history4h = new FourHourHistory(
+      (symbol, limit, extra) => this.rawCandles(symbol, "4h", limit, extra),
+      () => this.now() + this.offset,
+    );
   }
   async request(
     path,
@@ -129,6 +145,9 @@ class BinanceExchange {
   ) {
     const attempts = method === "GET" ? 2 : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
+      // Queue before signing: recvWindow starts at actual dispatch, not while
+      // a background history request waits for the shared IP budget.
+      await this.budget.acquire({ host, path, params, signed, method });
       const values = { ...params };
       if (signed) {
         values.recvWindow = 10000;
@@ -144,6 +163,7 @@ class BinanceExchange {
           "&signature=" +
           crypto.createHmac("sha256", this.secret).update(query).digest("hex");
       let response, data;
+      const sentAt = this.now();
       try {
         response = await this.fetch(host + path + (query ? "?" + query : ""), {
           method,
@@ -152,6 +172,7 @@ class BinanceExchange {
         });
         data = await response.json();
       } catch (error) {
+        if (response) this.budget.observe(host, response, data);
         if (method === "GET" && attempt + 1 < attempts) {
           await this.wait(250);
           continue;
@@ -160,6 +181,7 @@ class BinanceExchange {
           ambiguous: method !== "GET",
         });
       }
+      this.budget.observe(host, response, data);
       if (!response.ok || Number(data?.code) < 0) {
         const error = new ExchangeError(
           String(data?.msg || "EXCHANGE_HTTP_" + response.status),
@@ -172,22 +194,67 @@ class BinanceExchange {
         );
         if (
           method === "GET" &&
+          ([429, 418].includes(response.status) || Number(data?.code) === -1003)
+        ) {
+          // Rate limiting is a shared, timed pause, not a reason for the startup
+          // process to exit and let PM2 create a new client against the same ban.
+          attempt--;
+          continue;
+        }
+        if (
+          method === "GET" &&
           attempt + 1 < attempts &&
-          (response.status >= 500 || response.status === 429)
+          response.status >= 500
         ) {
           await this.wait(1000);
           continue;
         }
         throw error;
       }
+      if (data && typeof data === "object")
+        this.observations.set(data, {
+          sentAt,
+          observedAt: this.now(),
+          latencyMs: this.now() - sentAt,
+          source: "REST",
+        });
       return data;
     }
+  }
+  async cachedRequest(path, params = {}, ttlMs = 0) {
+    const key = path + ":" + JSON.stringify(params),
+      cached = this.requestCache.get(key);
+    if (cached && this.now() - cached.at < ttlMs) return cached.data;
+    if (this.requestPending.has(key)) return this.requestPending.get(key);
+    const pending = this.request(path, params).then((data) => {
+      this.requestCache.set(key, { at: this.now(), data });
+      return data;
+    });
+    this.requestPending.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      this.requestPending.delete(key);
+    }
+  }
+  startMarketData() {
+    this.marketFeed.start();
+  }
+  stopMarketData() {
+    this.marketFeed.stop();
+  }
+  close() {
+    this.stopMarketData();
+    this.budget.stop?.();
   }
   async syncTime() {
     const start = this.now(),
       r = await this.request("/fapi/v1/time");
     if (!Number.isFinite(r?.serverTime)) throw new Error("INVALID_SERVER_TIME");
-    this.offset = r.serverTime - (start + this.now()) / 2;
+    const timing = this.observations.get(r);
+    this.offset =
+      r.serverTime -
+      ((timing?.sentAt ?? start) + (timing?.observedAt ?? this.now())) / 2;
   }
   async initialize() {
     await this.syncTime();
@@ -228,10 +295,15 @@ class BinanceExchange {
   }
   async symbols() {
     if (!this.exchangeInfo || this.now() - this.exchangeInfoAt > 3600000) {
-      const info = await this.request("/fapi/v1/exchangeInfo");
+      const info = await this.cachedRequest(
+        "/fapi/v1/exchangeInfo",
+        {},
+        3600000,
+      );
       if (!Array.isArray(info?.symbols))
         throw new Error("INVALID_EXCHANGE_INFO");
       this.exchangeInfo = info.symbols;
+      this.budget.configure(info.rateLimits);
       this.exchangeInfoAt = this.now();
     }
     return this.exchangeInfo;
@@ -241,7 +313,11 @@ class BinanceExchange {
   }
   async fundingInterval(symbol) {
     if (!this.fundingInfo || this.now() - (this.fundingInfoAt || 0) > 3600000) {
-      const rows = await this.request("/fapi/v1/fundingInfo");
+      const rows = await this.cachedRequest(
+        "/fapi/v1/fundingInfo",
+        {},
+        3600000,
+      );
       if (!Array.isArray(rows))
         throw new Error("INVALID_FUNDING_INTERVAL_INFO");
       this.fundingInfo = rows;
@@ -254,6 +330,11 @@ class BinanceExchange {
     return hours;
   }
   async candles(symbol, interval, limit = 1500, extra = {}) {
+    if (interval === "4h" && Object.keys(extra).length === 0)
+      return this.history4h.get(symbol, limit);
+    return this.rawCandles(symbol, interval, limit, extra);
+  }
+  async rawCandles(symbol, interval, limit = 1500, extra = {}) {
     const rows = await this.request("/fapi/v1/klines", {
       symbol,
       interval,

@@ -95,20 +95,57 @@ async function telegram(token, chatId, text) {
   }
 }
 async function marketSnapshot(exchange, symbol, now = Date.now()) {
-  const started = now;
-  const [premium, oiHistory, book, depth, fundingIntervalHours] =
-    await Promise.all([
-      exchange.request("/fapi/v1/premiumIndex", { symbol }),
-      exchange.request("/futures/data/openInterestHist", {
-        symbol,
-        period: "4h",
-        limit: 2,
+  const observe = async (route, params, ttl = 0) => {
+    const started = Date.now();
+    const data =
+      ttl && exchange.cachedRequest
+        ? await exchange.cachedRequest(route, params, ttl)
+        : await exchange.request(route, params);
+    const timing = exchange.observations?.get(data);
+    return {
+      data,
+      ...(timing || {
+        observedAt: Date.now(),
+        latencyMs: Date.now() - started,
+        source: "REST",
       }),
-      exchange.request("/fapi/v1/ticker/bookTicker", { symbol }),
-      exchange.request("/fapi/v1/depth", { symbol, limit: 20 }),
-      exchange.fundingInterval(symbol),
-    ]);
+    };
+  };
+  const [
+    premiumRecord,
+    oiRecord,
+    bookRecord,
+    depthRecord,
+    fundingIntervalHours,
+  ] = await Promise.all([
+    exchange.marketFeed?.get("mark", symbol) ||
+      observe("/fapi/v1/premiumIndex", { symbol }),
+    observe(
+      "/futures/data/openInterestHist",
+      { symbol, period: "4h", limit: 2 },
+      60000,
+    ),
+    exchange.marketFeed?.get("book", symbol) ||
+      observe("/fapi/v1/ticker/bookTicker", { symbol }),
+    observe("/fapi/v1/depth", { symbol, limit: 20 }, 500),
+    exchange.fundingInterval(symbol),
+  ]);
+  const premium = premiumRecord.data,
+    oiHistory = oiRecord.data,
+    book = bookRecord.data,
+    depth = depthRecord.data;
   const observedAt = Date.now(),
+    snapshotAt = Math.min(
+      premiumRecord.observedAt,
+      bookRecord.observedAt,
+      depthRecord.observedAt,
+    ),
+    latencyMs = Math.max(
+      premiumRecord.latencyMs,
+      oiRecord.latencyMs,
+      bookRecord.latencyMs,
+      depthRecord.latencyMs,
+    ),
     bid = Number(book?.bidPrice),
     ask = Number(book?.askPrice);
   const funding =
@@ -127,7 +164,7 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
     asks = notional(depth?.asks);
   return {
     now: observedAt,
-    snapshotAt: observedAt,
+    snapshotAt,
     fundingRate: Number.isFinite(funding) ? funding : null,
     openInterestChange:
       oiFresh && previous > 0 && Number.isFinite(latest)
@@ -136,7 +173,12 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
     spreadPct:
       bid > 0 && ask >= bid ? ((ask - bid) / ((ask + bid) / 2)) * 100 : null,
     depthNotional: bids > 0 && asks > 0 ? bids + asks : null,
-    latencyMs: observedAt - started,
+    latencyMs,
+    marketDataSources: {
+      funding: premiumRecord.source,
+      book: bookRecord.source,
+      depth: depthRecord.source,
+    },
     oiObservedAt: oiFresh ? Number(oiHistory.at(-1).timestamp) : null,
     liquidationImbalance: liquidationFeed.getImbalance(symbol, observedAt),
     markPrice: Number(premium?.markPrice),
@@ -215,6 +257,33 @@ async function executeDecisions(
     }
   }
 }
+async function loadDecisionInput(
+  exchange,
+  journalStore,
+  symbol,
+  now = Date.now(),
+) {
+  const expectedClose =
+    Math.floor((now + (exchange.offset || 0)) / pipeline.BAR_MS) *
+      pipeline.BAR_MS -
+    1;
+  let prior = await journalStore.getDecisionForCandle(
+    symbol,
+    expectedClose,
+    DECISION_SCHEMA_VERSION,
+  );
+  if (prior) return { prior };
+  const h4 = await exchange.candles(symbol, "4h", 1500);
+  const probe = pipeline.closedCandles(h4, Date.now()).at(-1);
+  if (!probe) return null;
+  if (probe.closeTime !== expectedClose)
+    prior = await journalStore.getDecisionForCandle(
+      symbol,
+      probe.closeTime,
+      DECISION_SCHEMA_VERSION,
+    );
+  return { prior, h4, probe };
+}
 async function main() {
   for (const name of ["MONGO_URI", "BINANCE_KEY", "BINANCE_SECRET"]) {
     if (!process.env[name]) throw new Error("MISSING_" + name);
@@ -252,6 +321,7 @@ async function main() {
     stopped = true;
     intervals.forEach(clearInterval);
     liquidationFeed.stop();
+    exchange.close();
     await client.close();
     releaseLock();
   };
@@ -277,6 +347,7 @@ async function main() {
   });
   await lifecycle.initialize();
   liquidationFeed.start();
+  exchange.startMarketData();
   function every(ms, job) {
     let running = false;
     const run = async () => {
@@ -326,15 +397,9 @@ async function main() {
   const countWait = (reason) =>
     scanReasons.set(reason, (scanReasons.get(reason) || 0) + 1);
   async function scanSymbol(symbol, champion, trackRecord, outcomes) {
-    const probe = pipeline
-      .closedCandles(await exchange.candles(symbol, "4h", 3), Date.now())
-      .at(-1);
-    if (!probe) return null;
-    const prior = await journal.getDecisionForCandle(
-      symbol,
-      probe.closeTime,
-      DECISION_SCHEMA_VERSION,
-    );
+    const input = await loadDecisionInput(exchange, journal, symbol);
+    if (!input) return null;
+    const { prior, h4, probe } = input;
     if (prior) {
       const cached = central.finalizeDecision(
         prior.decisionSnapshot?.executionDecision,
@@ -345,7 +410,6 @@ async function main() {
         ? { ...cached, nineAiDecisionKey: prior.decisionKey }
         : null;
     }
-    const h4 = await exchange.candles(symbol, "4h", 1500);
     await journal.settleMatured(symbol, h4);
     const market = await marketSnapshot(exchange, symbol);
     let decision = pipeline.analyzeNineAI({
@@ -420,6 +484,12 @@ async function main() {
         else if (r.status === "rejected")
           console.error("SCAN", r.reason.message);
       }
+      if ((i + 5) % 50 === 0)
+        console.log(
+          "NINE-AI SCAN PROGRESS",
+          "scanned=" + Math.min(i + 5, symbols.length) + "/" + symbols.length,
+          "signals=" + signals.length,
+        );
     }
     console.log(
       "NINE-AI SCAN",
@@ -480,4 +550,5 @@ module.exports = {
   marketSnapshot,
   universe,
   executeDecisions,
+  loadDecisionInput,
 };
