@@ -209,7 +209,7 @@ test("labeled outcome quantiles do not require 30 winning live trades", () => {
     );
   }
 });
-test("stale/future data, a gap in 90d history and contradictory higher timeframes abstain", () => {
+test("stale/future data and a gap in 90d closed 4h history abstain", () => {
   const f = fixture();
   for (const snapshotAt of [f.market.now - 30 * 86400000, f.market.now + 1])
     assert.equal(
@@ -223,16 +223,6 @@ test("stale/future data, a gap in 90d history and contradictory higher timeframe
     }).action,
     "WAIT",
   );
-  const reversed = f.candles1d.map((c) => [
-    c[0],
-    500 - c[1],
-    500 - c[3],
-    500 - c[2],
-    500 - c[4],
-    c[5],
-    c[6],
-  ]);
-  assert.equal(p.analyzeNineAI({ ...f, candles1d: reversed }).action, "WAIT");
 });
 test("unclosed candles never change point-in-time features", () => {
   const f = fixture(),
@@ -241,4 +231,39 @@ test("unclosed candles never change point-in-time features", () => {
   f.candles4h.push([time, 100, 999, 1, 900, 999, time + 14399999]);
   assert.deepEqual(p.analyzeNineAI(f), before);
   assert.equal(p.percentile([1, 2, 3, 4, 5], 0.5), 3);
+});
+
+test("20/90-day realized volatility and momentum use only closed 4h returns", () => {
+  for (const side of ["LONG", "SHORT"]) {
+    const f = fixture(side),
+      d = p.analyzeNineAI(f),
+      cs = p.closedCandles(f.candles4h, f.market.now),
+      closes = cs.map((c) => c.close),
+      returns = closes.slice(1).map((close, i) => Math.log(close / closes[i]));
+    const realized = (bars) => {
+      const xs = returns.slice(-bars),
+        avg = xs.reduce((sum, v) => sum + v, 0) / xs.length;
+      return (
+        Math.sqrt(xs.reduce((sum, v) => sum + (v - avg) ** 2, 0) / xs.length) *
+        Math.sqrt(6 * 365) *
+        100
+      );
+    };
+    assert.equal(d.action, side);
+    assert.equal(d.timeframe, "4h");
+    assert.ok(Math.abs(d.regime.realized_vol_20d - realized(120)) < 1e-12);
+    assert.ok(Math.abs(d.regime.realized_vol_90d - realized(540)) < 1e-12);
+    assert.equal(d.regime.momentum5, closes.at(-1) / closes.at(-31) - 1);
+    assert.equal(d.regime.momentum20, closes.at(-1) / closes.at(-121) - 1);
+  }
+});
+
+test("opposing momentum within 4h history cannot classify an uptrend", () => {
+  const f = fixture(),
+    cs = p.closedCandles(f.candles4h, f.market.now);
+  cs.at(-1).close = cs.at(-31).close * 0.999;
+  const regime = p.classifyRegime(cs);
+  assert.ok(regime.momentum20 > 0);
+  assert.ok(regime.momentum5 < 0);
+  assert.notEqual(regime.regime, "UPTREND");
 });

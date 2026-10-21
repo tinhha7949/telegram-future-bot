@@ -7,6 +7,7 @@ const {
   applyPolicy,
   selectDirectionCandidate,
   netEdge,
+  DECISION_SCHEMA_VERSION,
 } = require("./nine-ai-policy");
 const { finalizeDecision } = require("./nine-ai-central-decision-engine");
 const { validateExecution } = require("./execution-validation");
@@ -245,19 +246,21 @@ test("Breakout uses volume expansion and a held range, with spread priced as cos
   last[3] = hi - 0.001;
   assert.equal(analyzeNineAI(f).agents.breakout.side, null);
 });
-test("old cached decisions cannot reintroduce v2 hybrid stops or entry gates", async () => {
+test("old cached decisions cannot reintroduce prior stops, gates or timeframe context", async () => {
   const journal = require("./nine-ai-decision-journal"),
     { memoryDb } = require("./test-fixtures.cjs"),
     db = memoryDb();
   const f = fixture(),
     d = analyzeNineAI(f);
-  assert.equal(
-    finalizeDecision(
-      { ...d, decisionSchemaVersion: 2 },
-      { symbol: f.symbol, scannedAt: f.market.now },
-    ).reason,
-    "LEGACY_DECISION_REJECTED",
-  );
+  for (const version of [2, 3]) {
+    assert.equal(
+      finalizeDecision(
+        { ...d, decisionSchemaVersion: version },
+        { symbol: f.symbol, scannedAt: f.market.now },
+      ).reason,
+      "LEGACY_DECISION_REJECTED",
+    );
+  }
   await journal.initialize(db);
   const args = {
     symbol: f.symbol,
@@ -265,19 +268,30 @@ test("old cached decisions cannot reintroduce v2 hybrid stops or entry gates", a
     scannedAt: f.market.now,
     marketWindow: f.candles4h,
   };
-  await journal.recordDecision({
-    ...args,
-    decision: { ...d, decisionSchemaVersion: 2 },
-  });
+  for (const version of [2, 3]) {
+    await journal.recordDecision({
+      ...args,
+      decision: { ...d, decisionSchemaVersion: version },
+    });
+  }
   assert.equal(
-    await journal.getDecisionForCandle(f.symbol, d.signalAt, 3),
+    await journal.getDecisionForCandle(
+      f.symbol,
+      d.signalAt,
+      DECISION_SCHEMA_VERSION,
+    ),
     null,
   );
   await journal.recordDecision({ ...args, decision: d });
   assert.equal(
-    (await journal.getDecisionForCandle(f.symbol, d.signalAt, 3))
-      .decisionSchemaVersion,
-    3,
+    (
+      await journal.getDecisionForCandle(
+        f.symbol,
+        d.signalAt,
+        DECISION_SCHEMA_VERSION,
+      )
+    ).decisionSchemaVersion,
+    DECISION_SCHEMA_VERSION,
   );
-  assert.equal(db.collection(journal.COLLECTION).rows.length, 2);
+  assert.equal(db.collection(journal.COLLECTION).rows.length, 3);
 });

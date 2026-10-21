@@ -1,5 +1,5 @@
 "use strict";
-const { applyPolicy } = require("./nine-ai-policy");
+const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const { CONTRACT } = require("./opportunity-outcome");
 const { getTradeActualRisk } = require("./trade-accounting");
 const { Worker } = require("node:worker_threads");
@@ -66,13 +66,14 @@ function trainCandidateAsync(rows, champion) {
 }
 
 function policyAction(row, params) {
-  if (row?.decisionSnapshot?.decisionSchemaVersion !== 3) return "WAIT";
+  if (row?.decisionSnapshot?.decisionSchemaVersion !== DECISION_SCHEMA_VERSION)
+    return "WAIT";
   return applyPolicy(row.decisionSnapshot, params).side;
 }
 
 function usableOpportunity(row) {
   if (
-    row?.decisionSnapshot?.decisionSchemaVersion !== 3 ||
+    row?.decisionSnapshot?.decisionSchemaVersion !== DECISION_SCHEMA_VERSION ||
     row.outcomeStatus !== "EVALUATED" ||
     row.evaluations?.["24"]?.contract !== CONTRACT
   )
@@ -425,7 +426,10 @@ function createOfflineLearning(db, options = {}) {
       actualRows.filter((r) => r.accountingSchemaVersion === 2),
     );
     const activeShadow = await candidates.findOne(
-      { status: "SHADOW_PENDING", policySchemaVersion: 3 },
+      {
+        status: "SHADOW_PENDING",
+        policySchemaVersion: DECISION_SCHEMA_VERSION,
+      },
       { sort: { createdAt: -1 } },
     );
     let shadowResult = null;
@@ -437,7 +441,7 @@ function createOfflineLearning(db, options = {}) {
         .find(
           {
             signalTime: { $gte: shadowStart, $lt: shadowStart + SHADOW_MS },
-            "decisionSnapshot.decisionSchemaVersion": 3,
+            "decisionSnapshot.decisionSchemaVersion": DECISION_SCHEMA_VERSION,
           },
           { projection: OPPORTUNITY_PROJECTION },
         )
@@ -524,7 +528,7 @@ function createOfflineLearning(db, options = {}) {
             outcomeStatus: "EVALUATED",
             "decisionSnapshot.setup": "NINE_AI_4H",
             "evaluations.24.contract": CONTRACT,
-            "decisionSnapshot.decisionSchemaVersion": 3,
+            "decisionSnapshot.decisionSchemaVersion": DECISION_SCHEMA_VERSION,
           },
           { projection: OPPORTUNITY_PROJECTION },
         )
@@ -536,7 +540,7 @@ function createOfflineLearning(db, options = {}) {
         if (candidateResult.status === "SHADOW_PENDING") {
           const insert = await candidates.insertOne({
             status: "SHADOW_PENDING",
-            policySchemaVersion: 3,
+            policySchemaVersion: DECISION_SCHEMA_VERSION,
             params: candidateResult.candidate,
             championParams: champion,
             createdAt: new Date(runAt),

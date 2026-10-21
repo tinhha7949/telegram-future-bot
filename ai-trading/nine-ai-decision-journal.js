@@ -1,6 +1,7 @@
 "use strict";
 const crypto = require("crypto");
 const { CONTRACT, evaluatePlan } = require("./opportunity-outcome");
+const { DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 
 // Durable journal for every Nine-AI scan decision, including WAIT/abstentions.
 // Hypothetical forward outcomes are explicitly separate from actual trade PnL.
@@ -526,16 +527,20 @@ function snapshotDecision({
     .update(signature)
     .digest("hex")
     .slice(0, 12);
-  // Repeated WAIT scans inside the same 15-minute candle add little value.
+  // Repeated WAIT scans inside the same candle add little value.
   // Collapse them to one WAIT row per symbol/candle while retaining the richer
   // signature-based key for authorized directional decisions.
   snapshot.decisionKey =
     side === "WAIT"
       ? snapshot.symbol + ":" + String(snapshot.signalTime) + ":WAIT"
       : snapshot.symbol + ":" + String(snapshot.signalTime) + ":" + digest;
-  if (snapshot.decisionSchemaVersion === 3)
+  if ([3, DECISION_SCHEMA_VERSION].includes(snapshot.decisionSchemaVersion))
     snapshot.decisionKey =
-      snapshot.symbol + ":" + String(snapshot.signalTime) + ":V3";
+      snapshot.symbol +
+      ":" +
+      String(snapshot.signalTime) +
+      ":V" +
+      snapshot.decisionSchemaVersion;
   return snapshot;
 }
 
@@ -565,6 +570,16 @@ async function initialize(db) {
       unique: true,
       name: "uniq_nine_ai_v3_symbol_candle",
       partialFilterExpression: { decisionSchemaVersion: 3 },
+    },
+  );
+  await collection.createIndex(
+    { symbol: 1, signalTime: 1 },
+    {
+      unique: true,
+      name: "uniq_nine_ai_v4_symbol_candle",
+      partialFilterExpression: {
+        decisionSchemaVersion: DECISION_SCHEMA_VERSION,
+      },
     },
   );
   // Supports the global newest-record scan below. The symbol-prefixed index
@@ -687,8 +702,10 @@ async function recordDecision(args) {
         const existing = await collection.findOne({
           symbol: snapshot.symbol,
           signalTime: snapshot.signalTime,
-          ...(snapshot.decisionSchemaVersion === 3
-            ? { decisionSchemaVersion: 3 }
+          ...([3, DECISION_SCHEMA_VERSION].includes(
+            snapshot.decisionSchemaVersion,
+          )
+            ? { decisionSchemaVersion: snapshot.decisionSchemaVersion }
             : {}),
         });
         return {
@@ -721,7 +738,11 @@ function computeEvaluations(record, candles, now = Date.now()) {
   candles = candles.filter((c) => c.closeTime < now);
   const idx = signalCandleIndex(candles, num(record.signalTime));
   if (idx < 0) return null;
-  if ([2, 3].includes(record.decisionSnapshot?.decisionSchemaVersion)) {
+  if (
+    [2, 3, DECISION_SCHEMA_VERSION].includes(
+      record.decisionSnapshot?.decisionSchemaVersion,
+    )
+  ) {
     if (
       record.evaluations?.["24"]?.contract === CONTRACT ||
       idx + 24 >= candles.length

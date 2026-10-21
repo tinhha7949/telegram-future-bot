@@ -22,23 +22,14 @@ function fixture(side = "LONG", now = Date.now()) {
   last[2] = last[4] + 0.1;
   last[3] = last[1] - 0.1;
   last[5] = 180;
-  const context = (interval, n, base, increment) =>
-    Array.from({ length: n }, (_, i) => {
-      const time = end - (n - i) * interval + 1,
-        c = base + i * increment;
-      return [time, c - 0.05, c + 0.1, c - 0.1, c, 100, time + interval - 1];
-    });
-  const candles1h = context(3600000, 100, 200, 0.1),
-    candles1d = context(86400000, 100, 300, 0.2);
   if (side === "SHORT")
-    for (const series of [candles4h, candles1h, candles1d])
-      for (const c of series) {
-        const [o, h, l, close] = [c[1], c[2], c[3], c[4]];
-        c[1] = 500 - o;
-        c[2] = 500 - l;
-        c[3] = 500 - h;
-        c[4] = 500 - close;
-      }
+    for (const c of candles4h) {
+      const [o, h, l, close] = [c[1], c[2], c[3], c[4]];
+      c[1] = 500 - o;
+      c[2] = 500 - l;
+      c[3] = 500 - h;
+      c[4] = 500 - close;
+    }
   const regime = side === "LONG" ? "UPTREND" : "DOWNTREND",
     outcomes = [];
   for (const setup of ["CONTINUATION", "BREAKOUT"])
@@ -60,8 +51,6 @@ function fixture(side = "LONG", now = Date.now()) {
   return {
     symbol: "TESTUSDT",
     candles4h,
-    candles1h,
-    candles1d,
     outcomes,
     market: {
       now,
