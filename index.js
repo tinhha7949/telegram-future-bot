@@ -2,7 +2,7 @@
 require("dotenv").config();
 
 // Manually tune per-trade equity risk here. Use a fraction: 0.0075 = 0.75%.
-const RISK_PER_TRADE = 0.0075;
+const RISK_PER_TRADE = 0.075;
 
 const fs = require("node:fs"),
   path = require("node:path"),
