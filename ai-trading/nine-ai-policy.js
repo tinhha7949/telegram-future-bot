@@ -1,6 +1,6 @@
 "use strict";
 const BAR_MS = 4 * 60 * 60 * 1000;
-const DECISION_SCHEMA_VERSION = 4;
+const DECISION_SCHEMA_VERSION = 5;
 const FUNDING_HOT_RATE = 0.0008;
 const fundingIsHot = (rate) =>
   Number.isFinite(rate) && Math.abs(rate) > FUNDING_HOT_RATE;
@@ -68,8 +68,7 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
       !c ||
       ![c.p, c.expectedR, c.cost, c.baseUncertainty].every(finite) ||
       c.p < 0 ||
-      c.p > 1 ||
-      c.cost < 0
+      c.p > 1
     )
       return { ...result, reason: "MISSING_DIRECTIONAL_ESTIMATE" };
     const baseEdge = netEdge(c);

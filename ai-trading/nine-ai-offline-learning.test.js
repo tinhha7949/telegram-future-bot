@@ -92,7 +92,7 @@ test("realized R uses actual initial position risk and accounting must be comple
 test("calibration flags drift without changing champion parameters", () => {
   assert.equal(
     l.calibrationSummary(
-      Array.from({ length: 40 }, () => ({ predictedEdgeR: 1, realizedR: -1 })),
+      Array.from({ length: 40 }, () => ({ predictedR: 1, realizedR: -1 })),
     ).status,
     "RED_FLAG_CALIBRATION_DRIFT",
   );
@@ -190,15 +190,35 @@ test("candidate qualification has no 400-row, trade-count or extra .02R-uplift g
   assert.equal(result.status, "SHADOW_PENDING");
   assert.equal(result.uplift, 0.01);
 });
+
+test("candidate selection is fit on train and a validation loss cannot be rescued by future test gains", () => {
+  const rows = Array.from({ length: 30 }, (_, i) => {
+    const r = row(i);
+    r.signalTime = 1700000000000 + i * 7 * l.DAY_MS;
+    Object.assign(r.decisionSnapshot.edges.LONG, {
+      p: 0.6,
+      expectedR: 0.4,
+      cost: 0.1,
+      baseUncertainty: 0.1,
+    });
+    r.evaluations[24].longNetR = i < 18 || i >= 24 ? 1 : -1;
+    return r;
+  });
+  const result = l.trainCandidate(rows, l.DEFAULT_CHAMPION);
+  assert.equal(result.status, "CANDIDATE_DID_NOT_BEAT_CHAMPION_VALIDATION");
+  assert.equal(result.candidateTrain.averageNetR, 1);
+  assert.equal(result.candidateValidation.averageNetR, -1);
+  assert.equal(result.championValidation.averageNetR, 0);
+});
 test("one realized calibration deviation is reported without a 30-trade prerequisite", () => {
   assert.equal(
-    l.calibrationSummary([{ predictedEdgeR: 0.5, realizedR: 0.49 }]).status,
+    l.calibrationSummary([{ predictedR: 0.5, realizedR: 0.49 }]).status,
     "RED_FLAG_CALIBRATION_DRIFT",
   );
   assert.equal(
     l.calibrationSummary([
-      { predictedEdgeR: 1, realizedR: 0 },
-      { predictedEdgeR: 0, realizedR: 1 },
+      { predictedR: 1, realizedR: 0 },
+      { predictedR: 0, realizedR: 1 },
     ]).status,
     "RED_FLAG_CALIBRATION_DRIFT",
   );

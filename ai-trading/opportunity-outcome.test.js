@@ -8,6 +8,40 @@ const {
   normalizeCandles,
 } = require("./nine-ai-decision-journal");
 const plan = { entry: 100, sl: 99, tp1: 102, tp2: 104 };
+test("funding credits use the identical signed cost in offline evaluation", () => {
+  const start = 1700000000000,
+    bar = 14400000;
+  const candles = Array.from({ length: 25 }, (_, i) => ({
+    time: start + i * bar,
+    closeTime: start + (i + 1) * bar - 1,
+    open: 100,
+    high: 100.1,
+    low: 99.9,
+    close: 100,
+  }));
+  const record = {
+    signalTime: candles[0].closeTime,
+    decisionSnapshot: {
+      decisionSchemaVersion: DECISION_SCHEMA_VERSION,
+      featureSnapshot: {
+        feePct: 0.1,
+        estSlippagePct: 0.1,
+        fundingCostPctBySide: { LONG: -0.5, SHORT: 0.5 },
+      },
+      edges: {
+        LONG: { eligible: true, plan },
+        SHORT: { eligible: false, plan: null },
+      },
+    },
+  };
+  const evaluated = computeEvaluations(record, candles, start + 26 * bar);
+  assert.equal(evaluated.outcomeStatus, "EVALUATED");
+  assert.ok(
+    Math.abs(evaluated.evaluations[24].costPctBySide.LONG + 0.3) < 1e-12,
+  );
+  assert.ok(Math.abs(evaluated.evaluations[24].longNetR - 0.3) < 1e-12);
+  assert.ok(evaluated.evaluations[24].longOutcome.costR < 0);
+});
 test("same exit contract handles 50% TP1, remaining stop, TP2 and timeout conservatively", () => {
   const costs = { totalCostPct: 0.1 };
   let r = evaluatePlan(

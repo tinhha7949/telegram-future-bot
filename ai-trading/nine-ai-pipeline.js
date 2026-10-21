@@ -419,7 +419,7 @@ function analyzeNineAI({
     funding === null ||
     fee === null ||
     fee < 0 ||
-    Object.values(fundingBySide).some((v) => v === null || v < 0) ||
+    Object.values(fundingBySide).some((v) => v === null) ||
     slip === null ||
     age < 0
   )
@@ -467,17 +467,17 @@ function analyzeNineAI({
             samples: wins.length,
           }
         : null;
-      let distMFE = wins.length
+      let distMFE = samples.length
         ? {
             p50: percentile(
-              wins.map((o) => o.mfePct),
+              samples.map((o) => o.mfePct),
               0.5,
             ),
             p90: percentile(
-              wins.map((o) => o.mfePct),
+              samples.map((o) => o.mfePct),
               0.9,
             ),
-            samples: wins.length,
+            samples: samples.length,
           }
         : null;
       // One valid winning label is enough to start AI-7; p50 may equal p90.
@@ -495,7 +495,7 @@ function analyzeNineAI({
             closePercentAtTP1: 50,
             timeoutCandles: 24,
             stopMethod: "WINNING_MAE_P80",
-            targetMethod: "WINNING_MFE_P50_P90",
+            targetMethod: "LABELED_MFE_P50_P90",
             maePct: distMAE.p80,
             mfe50Pct: distMFE.p50,
             mfe90Pct: distMFE.p90,
@@ -551,11 +551,25 @@ function analyzeNineAI({
       // Update the feature model with real outcomes, without a minimum-count gate
       // or forcing the probability to zero/one after a single observed trade.
       const p = (probabilityWins + modelP) / (probabilitySamples + 1);
-      // E[R|success] uses the 50/50 exits. AI-9 keeps the specified p*E[R]-cost formula.
+      // Before realized returns exist, AI-2/7 exit geometry supplies the initial
+      // payoff estimate. Observed gross R then supplies E[R|a,regime,setup];
+      // AI-9 subtracts execution cost once, in the same R unit.
       const quantileRewardR =
         ((Math.abs(plan.tp1 - entry) + Math.abs(plan.tp2 - entry)) * 0.5) /
         Math.abs(entry - plan.sl);
-      const expectedR = quantileRewardR;
+      const realizedReturns = directionalSamples
+        .filter(
+          (o) => typeof o.grossR === "number" && Number.isFinite(o.grossR),
+        )
+        .map((o) => o.grossR);
+      const trackedExpectedR =
+        track?.samples > 0 &&
+        typeof track.meanGrossR === "number" &&
+        Number.isFinite(track.meanGrossR)
+          ? track.meanGrossR
+          : null;
+      const expectedR =
+        trackedExpectedR ?? mean(realizedReturns) ?? quantileRewardR;
       estimates.push({
         ...m,
         setupKey,
@@ -572,6 +586,10 @@ function analyzeNineAI({
           : "AI2_STRUCTURE_INITIAL_PLAN",
         p,
         expectedR,
+        expectedRSource:
+          realizedReturns.length || trackedExpectedR !== null
+            ? "REALIZED_GROSS_R_BY_DIRECTION_REGIME_SETUP"
+            : "INITIAL_EXIT_GEOMETRY_UNCALIBRATED",
         distMAE,
         distMFE,
         plan,

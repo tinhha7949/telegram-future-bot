@@ -252,7 +252,7 @@ test("old cached decisions cannot reintroduce prior stops, gates or timeframe co
     db = memoryDb();
   const f = fixture(),
     d = analyzeNineAI(f);
-  for (const version of [2, 3]) {
+  for (const version of [2, 3, 4]) {
     assert.equal(
       finalizeDecision(
         { ...d, decisionSchemaVersion: version },
@@ -268,7 +268,7 @@ test("old cached decisions cannot reintroduce prior stops, gates or timeframe co
     scannedAt: f.market.now,
     marketWindow: f.candles4h,
   };
-  for (const version of [2, 3]) {
+  for (const version of [2, 3, 4]) {
     await journal.recordDecision({
       ...args,
       decision: { ...d, decisionSchemaVersion: version },
@@ -293,5 +293,5 @@ test("old cached decisions cannot reintroduce prior stops, gates or timeframe co
     ).decisionSchemaVersion,
     DECISION_SCHEMA_VERSION,
   );
-  assert.equal(db.collection(journal.COLLECTION).rows.length, 3);
+  assert.equal(db.collection(journal.COLLECTION).rows.length, 4);
 });

@@ -34,7 +34,6 @@ function envNumber(name, fallback, min, max) {
 const TRADE_CONFIG = Object.freeze({
   riskPerTrade: RISK_PER_TRADE,
   maxRiskPerTrade: RISK_PER_TRADE,
-  maxActivePositions: Math.round(envNumber("MAX_ACTIVE_POSITIONS", 20, 1, 50)),
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function acquirePidLock() {
@@ -144,10 +143,8 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
     fundingIntervalHours,
     expectedFundingCostPctBySide: Number.isFinite(funding)
       ? {
-          LONG:
-            Math.max(0, funding) * 100 * Math.ceil(96 / fundingIntervalHours),
-          SHORT:
-            Math.max(0, -funding) * 100 * Math.ceil(96 / fundingIntervalHours),
+          LONG: funding * 100 * Math.ceil(96 / fundingIntervalHours),
+          SHORT: -funding * 100 * Math.ceil(96 / fundingIntervalHours),
         }
       : null,
   };
@@ -164,6 +161,58 @@ async function universe(exchange) {
       .map((s) => s.symbol),
   );
   return [...eligible].sort();
+}
+async function executeDecisions(
+  signals,
+  {
+    exchange,
+    lifecycle,
+    report,
+    isStopped = () => false,
+    entriesPaused = () => false,
+  },
+) {
+  signals.sort((a, b) => b.edges[b.side].edge - a.edges[a.side].edge);
+  for (const decision of signals) {
+    if (
+      isStopped() ||
+      entriesPaused() ||
+      lifecycle.uncertain ||
+      lifecycle.untracked.size
+    )
+      break;
+    if (
+      [...lifecycle.active.values()].some((t) => t.symbol === decision.symbol)
+    )
+      continue;
+    if (
+      await lifecycle.claims.findOne({
+        signalKey: `${decision.symbol}:${decision.signalAt}`,
+      })
+    )
+      continue;
+    const fresh = await marketSnapshot(exchange, decision.symbol);
+    const validation = validateExecution(decision, fresh, Date.now());
+    if (!validation.ok) {
+      console.log("ENTRY WAIT", decision.symbol, validation.reason);
+      continue;
+    }
+    const equity = await exchange.equity();
+    const sizing = sizeTrade(
+      decision,
+      equity,
+      TRADE_CONFIG.riskPerTrade,
+      await exchange.info(decision.symbol),
+    );
+    if (!sizing) continue;
+    const trade = newTrade(decision, sizing);
+    trade.executionValidation = validation;
+    if (await lifecycle.enter(trade)) {
+      await report(
+        `${trade.symbol} ${trade.side} | Entry ${trade.entry} | SL ${trade.sl} | TP1 ${trade.tp1} | TP2 ${trade.tp2} | ${trade.tradePlan?.outcomeMode === "AI7_LABELED" ? "AI7 MAE/MFE" : "AI7 OFF: AI2 initial SL/TP"}`,
+      );
+    }
+  }
 }
 async function main() {
   for (const name of ["MONGO_URI", "BINANCE_KEY", "BINANCE_SECRET"]) {
@@ -279,7 +328,6 @@ async function main() {
     );
   });
   void daily();
-  let lastEntryAt = 0;
   let scanReasons = new Map();
   const countWait = (reason) =>
     scanReasons.set(reason, (scanReasons.get(reason) || 0) + 1);
@@ -331,21 +379,14 @@ async function main() {
       : null;
   }
   const scan = every(120000, async () => {
-    if (
-      entriesPaused ||
-      lifecycle.uncertain ||
-      lifecycle.untracked.size ||
-      Date.now() - lastEntryAt < 60000
-    )
+    if (entriesPaused || lifecycle.uncertain || lifecycle.untracked.size)
       return;
     await db.command({ ping: 1 });
-    const positions = await exchange.positions();
-    if (positions.length >= TRADE_CONFIG.maxActivePositions) return;
     const cutoffAt = Date.now();
     const [symbols, champion, track, outcomes] = await Promise.all([
       universe(exchange),
       learner.getChampionConfig(),
-      learner.getTrackRecord(),
+      learner.getTrackRecord(cutoffAt),
       db
         .collection("nine_ai_outcome_labels")
         .find({
@@ -379,51 +420,13 @@ async function main() {
         .map(([reason, n]) => reason + "=" + n)
         .join(" | "),
     );
-    signals.sort((a, b) => b.edges[b.side].edge - a.edges[a.side].edge);
-    for (const decision of signals.slice(0, 10)) {
-      if (
-        stopped ||
-        entriesPaused ||
-        lifecycle.uncertain ||
-        lifecycle.untracked.size
-      )
-        break;
-      if (
-        [...lifecycle.active.values()].some((t) => t.symbol === decision.symbol)
-      )
-        continue;
-      if (
-        await lifecycle.claims.findOne({
-          signalKey: `${decision.symbol}:${decision.signalAt}`,
-        })
-      )
-        continue;
-      const fresh = await marketSnapshot(exchange, decision.symbol);
-      const validation = validateExecution(decision, fresh, Date.now());
-      if (!validation.ok) {
-        console.log("ENTRY WAIT", decision.symbol, validation.reason);
-        continue;
-      }
-      const equity = await exchange.equity();
-      const sizing = sizeTrade(
-        decision,
-        equity,
-        TRADE_CONFIG.riskPerTrade,
-        await exchange.info(decision.symbol),
-      );
-      if (!sizing) continue;
-      const livePositions = await exchange.positions();
-      if (livePositions.length >= TRADE_CONFIG.maxActivePositions) break;
-      const trade = newTrade(decision, sizing);
-      trade.executionValidation = validation;
-      if (await lifecycle.enter(trade)) {
-        lastEntryAt = Date.now();
-        await report(
-          `${trade.symbol} ${trade.side} | Entry ${trade.entry} | SL ${trade.sl} | TP1 ${trade.tp1} | TP2 ${trade.tp2} | ${trade.tradePlan?.outcomeMode === "AI7_LABELED" ? "AI7 MAE/MFE" : "AI7 OFF: AI2 initial SL/TP"}`,
-        );
-        break;
-      }
-    }
+    await executeDecisions(signals, {
+      exchange,
+      lifecycle,
+      report,
+      isStopped: () => stopped,
+      entriesPaused: () => entriesPaused,
+    });
   });
   // Commands have their own loop. A Telegram outage cannot stall SL/TP/timeout management.
   let updateId = 0;
@@ -460,4 +463,10 @@ if (require.main === module)
     console.error("START FAILED", e.message);
     process.exit(1);
   });
-module.exports = { RISK_PER_TRADE, TRADE_CONFIG, marketSnapshot, universe };
+module.exports = {
+  RISK_PER_TRADE,
+  TRADE_CONFIG,
+  marketSnapshot,
+  universe,
+  executeDecisions,
+};
