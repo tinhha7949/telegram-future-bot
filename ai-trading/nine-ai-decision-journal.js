@@ -1,5 +1,6 @@
 "use strict";
 const crypto = require("crypto");
+const { CONTRACT, evaluatePlan } = require("./opportunity-outcome");
 
 // Durable journal for every Nine-AI scan decision, including WAIT/abstentions.
 // Hypothetical forward outcomes are explicitly separate from actual trade PnL.
@@ -207,7 +208,10 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
   })) : [];
   const window = snapshotMarketWindow(marketWindow, MARKET_WINDOW_BARS, num(signalTime, Infinity));
   const snapshot = {
+    decisionSchemaVersion: d.decisionSchemaVersion || null,
     decisionSnapshot: d && typeof d === "object" ? {
+      decisionSchemaVersion: d.decisionSchemaVersion || null,
+      decisionPolicy: d.decisionPolicy || null,
       setup: d.setup || null,
       side,
       edges: d.edges || null,
@@ -216,6 +220,8 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
       featureSnapshot: d.featureSnapshot || null,
       tradePlan: d.tradePlan || null,
       executionDecision: {
+        decisionSchemaVersion: d.decisionSchemaVersion || null,
+        decisionPolicy: d.decisionPolicy || null,
         symbol: String(symbol || d.symbol || "UNKNOWN"),
         setup: d.setup || null, side, action: String(d.action || side),
         authorizedForExecution: d.authorizedForExecution === true,
@@ -225,7 +231,7 @@ function snapshotDecision({ symbol, decision, signalTime, scannedAt, learningEvi
         tp: num(d.tp, null), tp1: num(d.tp1, null), tp2: num(d.tp2, null),
         closePercentAtTP1: num(d.closePercentAtTP1, 50),
         timeoutCandles: num(d.timeoutCandles, 24), timeframe: d.timeframe || "4h",
-        riskPerTradePct: 0.0075, riskEquity: num(d.riskEquity, null),
+        riskPerTradePct: num(d.riskPerTradePct, null), riskEquity: num(d.riskEquity, null),
         edges: d.edges || null, regime: d.regime || null, agents: d.agents || null,
         setupKey: d.setupKey || null, featureSnapshot: d.featureSnapshot || null,
         tradePlan: d.tradePlan || null, candles: num(d.candles, null)
@@ -286,6 +292,8 @@ async function initialize(db) {
   collection = db.collection(COLLECTION);
   await collection.createIndex({ decisionKey: 1 }, { unique: true, name: "uniq_nine_ai_decision_key" });
   await collection.createIndex({ symbol: 1, signalTime: -1 }, { name: "nine_ai_decision_symbol_time" });
+  await collection.createIndex({symbol:1,signalTime:1},{unique:true,name:"uniq_nine_ai_v2_symbol_candle",
+    partialFilterExpression:{decisionSchemaVersion:2}});
   // Supports the global newest-record scan below. The symbol-prefixed index
   // cannot serve a sort over the entire collection and caused Mongo's 32 MB
   // in-memory sort limit to abort startup on a large journal.
@@ -353,7 +361,8 @@ async function recordDecision(args) {
     } catch (error) {
       if (error?.code === 11000) {
         seen.add(snapshot.decisionKey);
-        return { recorded: false, reason: "DUPLICATE_DECISION", decisionKey: snapshot.decisionKey };
+        const existing=await collection.findOne({symbol:snapshot.symbol,signalTime:snapshot.signalTime});
+        return { recorded: false, reason: "DUPLICATE_DECISION", decisionKey: existing?.decisionKey||snapshot.decisionKey };
       }
       lastError = error;
       if (!isTransientJournalWriteError(error) || attempt === 2) throw error;
@@ -371,9 +380,30 @@ async function recordDecision(args) {
   return { recorded: true, decisionKey: snapshot.decisionKey, side: snapshot.side };
 }
 
-function computeEvaluations(record, candles) {
+function computeEvaluations(record, candles, now = Date.now()) {
+  candles = candles.filter(c => c.closeTime < now);
   const idx = signalCandleIndex(candles, num(record.signalTime));
   if (idx < 0) return null;
+  if (record.decisionSnapshot?.decisionSchemaVersion === 2) {
+    if (record.evaluations?.["24"]?.contract === CONTRACT || idx + 24 >= candles.length) return null;
+    const future = candles.slice(idx + 1, idx + 25);
+    if (future.some((c,i) => c.time - candles[idx+i].time !== 14400000)) return null;
+    const snapshot = record.decisionSnapshot.featureSnapshot || {};
+    const costs = [snapshot.feePct, snapshot.estSlippagePct];
+    if (!costs.every(v => typeof v === "number" && Number.isFinite(v) && v >= 0)) return {outcomeStatus:"UNUSABLE_FOR_POLICY_EVALUATION",evaluationReason:"MISSING_POINT_IN_TIME_COSTS"};
+    const evaluation = { contract: CONTRACT, horizonBars:24, evaluatedAt:new Date(future.at(-1).closeTime),costPctBySide:{} };
+    for (const side of ["LONG","SHORT"]) {
+      const fundingCost=snapshot.fundingCostPctBySide?.[side];
+      if(typeof fundingCost!=="number"||!Number.isFinite(fundingCost)||fundingCost<0)return {outcomeStatus:"UNUSABLE_FOR_POLICY_EVALUATION",evaluationReason:"MISSING_POINT_IN_TIME_COSTS"};
+      const totalCostPct=costs.reduce((sum,v)=>sum+v,0)+fundingCost;
+      evaluation.costPctBySide[side]=totalCostPct;
+      const candidate = record.decisionSnapshot.edges?.[side];
+      const outcome = candidate?.eligible === true ? evaluatePlan(candidate.plan,side,future,{totalCostPct}) : null;
+      evaluation[side.toLowerCase()+"NetR"] = outcome?.netR ?? null;
+      evaluation[side.toLowerCase()+"Outcome"] = outcome;
+    }
+    return { evaluations:{...record.evaluations,"24":evaluation}, outcomeStatus:"EVALUATED" };
+  }
   const baseEntry = num(record.features?.close, candles[idx].close);
   const atr = num(record.features?.atr14, atrAt(candles, idx));
   if (!(baseEntry > 0 && atr > 0)) return null;
@@ -444,17 +474,20 @@ function computeEvaluations(record, candles) {
       Object.keys(evaluations).length || Object.keys(researchVariants).length ? "PARTIALLY_EVALUATED" : "PENDING_HORIZON_EVALUATION"
   };
 }
-async function settleMatured(symbol, rawCandles) {
+async function settleMatured(symbol, rawCandles, now = Date.now()) {
   if (!collection) throw new Error("NINE_AI_DECISION_JOURNAL_NOT_INITIALIZED");
-  const candles = normalizeCandles(rawCandles);
+  const candles = normalizeCandles(rawCandles).filter(c=>c.closeTime < now);
   if (candles.length < 18) return { evaluated: 0 };
-  const pending = records.filter(r => r.symbol === String(symbol) && (r.outcomeStatus !== "EVALUATED" || !r.researchVariants?.now_4 || !r.researchVariants?.wait1_4 || !r.researchVariants?.wait2_16));
+  const pending = await collection.find({symbol:String(symbol),outcomeStatus:{$in:["PENDING_HORIZON_EVALUATION","PARTIALLY_EVALUATED"]}})
+    .sort({signalTime:1}).limit(MAX_RECORDS).toArray();
   let evaluated = 0;
   for (const record of pending) {
-    const result = computeEvaluations(record, candles);
+    const result = computeEvaluations(record, candles, now);
     if (!result) continue;
     await collection.updateOne({ decisionKey: record.decisionKey }, { $set: result });
     Object.assign(record, result);
+    const cached = records.find(r=>r.decisionKey===record.decisionKey);
+    if(cached)Object.assign(cached,result);
     evaluated++;
   }
   return { evaluated };

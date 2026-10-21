@@ -88,7 +88,7 @@ assert.strictEqual(journalSpecs.find(s => s.category === "evaluated_decision").d
 assert.deepStrictEqual(journalSpecs.find(s => s.category === "evaluated_decision").filter, {
   outcomeStatus: "EVALUATED", side: { $ne: "WAIT" }
 });
-assert.strictEqual(journalSpecs.find(s => s.category === "evaluated_wait_decision").days, 7);
+assert.strictEqual(journalSpecs.find(s => s.category === "evaluated_wait_decision").days, 90);
 assert.deepStrictEqual(journalSpecs.find(s => s.category === "evaluated_wait_decision").filter, {
   outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
 });
@@ -250,7 +250,7 @@ async function testExpiredWaitRowsArePrunedBelowCapacityThreshold() {
               assert.deepStrictEqual(pipeline[0].$match, {
                 outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
               });
-              return [{ _id: "expired-wait", _retentionDate: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000) }];
+              return [{ _id: "expired-wait", _retentionDate: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000) }];
             }
           };
         },

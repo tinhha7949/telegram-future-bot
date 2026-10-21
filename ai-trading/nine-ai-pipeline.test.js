@@ -1,34 +1,97 @@
 "use strict";
-const assert=require("node:assert/strict");
-const {percentile,closedCandles,swingPoints,classifyRegime,buildHistoricalOutcomeLabels,analyzeNineAI}=require("./nine-ai-pipeline");
-assert.equal(percentile([1,2,3,4,5],.5),3);
-assert.equal(percentile([], .5),null);
-const now=Date.now();
-const candles=Array.from({length:700},(_,i)=>{const close=100+i*.3-(i%13===0?0.4:0);const open=close-.1;const volume=i%13===0?300:100;return [now-(700-i)*4*3600000,open,close+.1,close-.2,close,volume,now-(700-i)*4*3600000+4*3600000-1]});
-assert.equal(closedCandles(candles,now).length,700);
-assert.ok(swingPoints(closedCandles(candles,now),2));
-assert.ok(["UPTREND","DOWNTREND","RANGE","HIGH_VOL"].includes(classifyRegime(closedCandles(candles,now)).regime));
-const labels=buildHistoricalOutcomeLabels(candles,now);
-assert.ok(labels.length > 0);
-assert.ok(labels.every(x=>x.source==="CLOSED_HISTORICAL_4H_SIMULATION"));
-assert.ok(labels.every(x=>x.outcomeClosedAt < now));
-assert.ok(labels.every(x=>["UPTREND_CONTINUATION","UPTREND_BREAKOUT","DOWNTREND_CONTINUATION","DOWNTREND_BREAKOUT"].includes(x.setupKey)));
-assert.ok(labels.every(x=>Number.isFinite(x.maePct)&&Number.isFinite(x.mfePct)));
-assert.ok(labels.every(x=>typeof x.win==="boolean"));
-assert.equal(analyzeNineAI({symbol:"TEST",candles4h:candles,market:{now}}).action,"WAIT");
-const candles1h=Array.from({length:100},(_,i)=>{const close=200+i*.1;const time=now-(100-i)*3600000;return [time,close-.05,close+.1,close-.1,close,100,time+3600000-1]});
-const candles1d=Array.from({length:100},(_,i)=>{const close=300+i*.5;const time=now-(100-i)*86400000;return [time,close-.2,close+.3,close-.3,close,100,time+86400000-1]});
-const market={now,snapshotAt:now,fundingRate:0.0001,openInterestChange:1,spreadPct:0.01,depthNotional:1_000_000,latencyMs:100,liquidationImbalance:0.3,roundTripFeePct:0.1,expectedFundingCostPct:0.12};
-const flowLong=analyzeNineAI({symbol:"TEST",candles4h:candles,candles1h,candles1d,market});
-assert.equal(flowLong.agents.flow.confirmation,"CONFIRMED");
-assert.equal(flowLong.agents.flow.confirmationSide,"LONG");
-const flowShort=analyzeNineAI({symbol:"TEST",candles4h:candles,candles1h,candles1d,market:{...market,liquidationImbalance:-0.3}});
-assert.equal(flowShort.agents.flow.confirmation,"CONFIRMED");
-assert.equal(flowShort.agents.flow.confirmationSide,"SHORT");
-const flowHot=analyzeNineAI({symbol:"TEST",candles4h:candles,candles1h,candles1d,market:{...market,fundingRate:0.002}});
-assert.equal(flowHot.agents.flow.confirmation,"BLOCKED_HOT_FUNDING");
-assert.equal(flowHot.agents.flow.confirmationSide,null);
-const flowUnavailable=analyzeNineAI({symbol:"TEST",candles4h:candles,candles1h,candles1d,market:{...market,liquidationImbalance:null}});
-assert.equal(flowUnavailable.agents.flow.confirmation,"UNAVAILABLE");
-
-console.log("nine-ai-pipeline tests passed");
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const p = require("./nine-ai-pipeline");
+const central = require("./nine-ai-central-decision-engine");
+const { fixture } = require("./test-fixtures.cjs");
+for (const side of ["LONG", "SHORT"])
+  test(
+    "closed-candle " + side + " reaches the sole authorization boundary",
+    () => {
+      const f = fixture(side),
+        d = p.analyzeNineAI(f);
+      assert.equal(d.side, side);
+      assert.equal(d.agents.continuation.side, side);
+      assert.equal(d.agents.meanReversion.enabled, false);
+      assert.equal(d.edges[side].distMAE.samples, 45);
+      assert.equal(d.tradePlan.closePercentAtTP1, 50);
+      assert.equal(d.tradePlan.timeoutMs, 96 * 3600000);
+      assert.equal(
+        central.finalizeDecision(d, {
+          symbol: f.symbol,
+          scannedAt: f.market.now + 1,
+        }).authorizedForExecution,
+        true,
+      );
+      const c = d.edges[side];
+      assert.ok(
+        Math.abs(c.edge - (c.p * c.expectedR - c.cost - c.uncertaintyPenalty)) <
+          1e-12,
+      );
+      const other = d.edges[side === "LONG" ? "SHORT" : "LONG"];
+      assert.equal(other.eligible, false);
+      assert.equal(other.p, 0);
+    },
+  );
+test("cold start, simulated labels, duplicates, future labels and missing flow cannot authorize", () => {
+  const f = fixture();
+  for (const outcomes of [
+    [],
+    f.outcomes.map((o) => ({
+      ...o,
+      source: "CLOSED_HISTORICAL_4H_SIMULATION",
+    })),
+    Array(60).fill(f.outcomes[0]),
+    f.outcomes.map((o) => ({ ...o, closedAt: f.market.now + 1 })),
+  ])
+    assert.equal(p.analyzeNineAI({ ...f, outcomes }).action, "WAIT");
+  for (const field of [
+    "fundingRate",
+    "liquidationImbalance",
+    "openInterestChange",
+    "depthNotional",
+    "spreadPct",
+  ])
+    assert.equal(
+      p.analyzeNineAI({ ...f, market: { ...f.market, [field]: null } }).action,
+      "WAIT",
+    );
+  assert.equal(
+    p.analyzeNineAI({ ...f, market: { ...f.market, fundingRate: 0.002 } })
+      .action,
+    "WAIT",
+  );
+});
+test("stale/future data, a gap in 90d history and contradictory higher timeframes abstain", () => {
+  const f = fixture();
+  for (const snapshotAt of [f.market.now - 300001, f.market.now + 1])
+    assert.equal(
+      p.analyzeNineAI({ ...f, market: { ...f.market, snapshotAt } }).action,
+      "WAIT",
+    );
+  assert.equal(
+    p.analyzeNineAI({
+      ...f,
+      candles4h: f.candles4h.filter((_, i) => i !== 300),
+    }).action,
+    "WAIT",
+  );
+  const reversed = f.candles1d.map((c) => [
+    c[0],
+    500 - c[1],
+    500 - c[3],
+    500 - c[2],
+    500 - c[4],
+    c[5],
+    c[6],
+  ]);
+  assert.equal(p.analyzeNineAI({ ...f, candles1d: reversed }).action, "WAIT");
+});
+test("unclosed candles never change point-in-time features", () => {
+  const f = fixture(),
+    before = p.analyzeNineAI(f),
+    time = f.market.now;
+  f.candles4h.push([time, 100, 999, 1, 900, 999, time + 14399999]);
+  assert.deepEqual(p.analyzeNineAI(f), before);
+  assert.equal(p.percentile([1, 2, 3, 4, 5], 0.5), 3);
+});

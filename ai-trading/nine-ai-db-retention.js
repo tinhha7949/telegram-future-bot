@@ -39,7 +39,7 @@ const SPECS = Object.freeze([
     "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
     "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
     "scannedAt", "signalTime", "createdAt"
-  ], days: 7, category: "evaluated_wait_decision", filter: {
+  ], days: 90, category: "evaluated_wait_decision", filter: {
     outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
   } },
   { name: "nine_ai_learning_outcomes", dateFields: ["closedAt"], days: 90,

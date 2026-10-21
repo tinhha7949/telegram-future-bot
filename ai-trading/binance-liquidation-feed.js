@@ -10,6 +10,7 @@ const STALE_MS = 10 * 60 * 1000;
 let socket = null;
 let started = false;
 let reconnectTimer = null;
+let heartbeatTimer = null;
 let lastPongAt = 0;
 const eventsBySymbol = new Map();
 
@@ -42,7 +43,7 @@ function connect() {
         const symbol = String(order?.s || order?.symbol || "").toUpperCase();
         const side = String(order?.S || order?.side || "").toUpperCase();
         const price = Number(order?.ap || order?.avgPrice || order?.p || order?.price);
-        const quantity = Number(order?.q || order?.origQty || order?.z || order?.executedQty);
+        const quantity = Number(order?.z ?? order?.executedQty ?? 0);
         const eventTime = Number(order?.T || item?.E || now);
         if (!symbol || !["BUY", "SELL"].includes(side) || !(price > 0 && quantity > 0) || !Number.isFinite(eventTime)) continue;
         const list = eventsBySymbol.get(symbol) || [];
@@ -69,6 +70,17 @@ function start() {
   if (started) return;
   started = true;
   connect();
+  heartbeatTimer=setInterval(()=>{
+    if(!socket||socket.readyState!==WebSocket.OPEN)return;
+    if(Date.now()-lastPongAt>STALE_MS){socket.terminate();return;}
+    try{socket.ping();}catch(_){socket.terminate();}
+    const cutoff=Date.now()-WINDOW_MS;
+    for(const [symbol,list] of eventsBySymbol){
+      const kept=list.filter(e=>e.time>=cutoff);
+      if(kept.length)eventsBySymbol.set(symbol,kept);else eventsBySymbol.delete(symbol);
+    }
+  },30000);
+  heartbeatTimer.unref?.();
 }
 
 function getImbalance(symbol, now = Date.now()) {
@@ -85,6 +97,8 @@ function getImbalance(symbol, now = Date.now()) {
 }
 
 function stop() {
+  if(heartbeatTimer)clearInterval(heartbeatTimer);
+  heartbeatTimer=null;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
   started = false;
