@@ -2,7 +2,7 @@
 
 const WebSocket = require("ws");
 
-const STREAM_URL = "wss://fstream.binance.com/ws/!forceOrder@arr";
+const STREAM_URL = "wss://fstream.binance.com/market/ws/!forceOrder@arr";
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_EVENTS_PER_SYMBOL = 2000;
 const STALE_MS = 10 * 60 * 1000;
