@@ -1,4 +1,5 @@
 "use strict";
+const { FUNDING_HOT_RATE } = require("./nine-ai-policy");
 
 // The user-authorized initial trades use AI-2 zones, not invented AI-7 quantiles.
 // A measured range/channel projection supplies targets when price is beyond old highs/lows.
@@ -53,17 +54,21 @@ function initialStructurePlan({
 
 // Preserve the initial feature-score models from the original repository.
 // These are uncalibrated estimates, not probabilities learned from nonexistent trades.
-function initialProbability(type, momentum, volumeRatio) {
-  const clamp = (v) => Math.max(0.5, Math.min(0.78, v));
+function initialProbability(type, momentum, volumeRatio, market = {}) {
+  const sigmoid = (value) => 1 / (1 + Math.exp(-value));
   if (type === "CONTINUATION")
-    return clamp(
-      0.54 +
-        Math.min(0.18, Math.abs(momentum) * 3) +
-        (volumeRatio > 1 ? 0.05 : 0),
+    return sigmoid(
+      Math.abs(momentum) * 3 +
+        Math.log1p(Math.max(-0.999, Number(market.openInterestChange) / 100)) +
+        1 -
+        Math.abs(Number(market.fundingRate)) / FUNDING_HOT_RATE,
     );
   if (type === "BREAKOUT")
-    return clamp(0.55 + Math.min(0.2, (volumeRatio - 1) * 0.1));
-  return 0.55;
+    return sigmoid(volumeRatio - 1 - Math.max(0, Number(market.spreadPct)));
+  return sigmoid(
+    Math.abs(Number(market.deviationAtr)) *
+      Math.abs(Number(market.liquidationImbalance)),
+  );
 }
 
 module.exports = { initialStructurePlan, initialProbability };

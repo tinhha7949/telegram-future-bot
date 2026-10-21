@@ -10,9 +10,6 @@ const BAR_MS = 4 * 60 * 60 * 1000;
 const HORIZON_BARS = 24;
 const PURGE_EMBARGO_MS = HORIZON_BARS * BAR_MS;
 const SHADOW_MS = 14 * DAY_MS;
-const MIN_TOTAL_ROWS = 400;
-const MIN_TEST_ROWS = 20;
-const MIN_SHADOW_ROWS = 30;
 const DEFAULT_CHAMPION = Object.freeze({
   minEdge: 0.05,
   gapEdge: 0.1,
@@ -69,13 +66,13 @@ function trainCandidateAsync(rows, champion) {
 }
 
 function policyAction(row, params) {
-  if (row?.decisionSnapshot?.decisionSchemaVersion !== 2) return "WAIT";
+  if (row?.decisionSnapshot?.decisionSchemaVersion !== 3) return "WAIT";
   return applyPolicy(row.decisionSnapshot, params).side;
 }
 
 function usableOpportunity(row) {
   if (
-    row?.decisionSnapshot?.decisionSchemaVersion !== 2 ||
+    row?.decisionSnapshot?.decisionSchemaVersion !== 3 ||
     row.outcomeStatus !== "EVALUATED" ||
     row.evaluations?.["24"]?.contract !== CONTRACT
   )
@@ -116,7 +113,7 @@ function evaluatePolicy(rows, params) {
 
 function walkForwardSplits(rows, purgeEmbargoMs = PURGE_EMBARGO_MS) {
   const sorted = [...rows].sort(sortTime);
-  if (sorted.length < 5)
+  if (sorted.length < 3)
     return { train: [], validation: [], test: [], purgeEmbargoMs };
   const n = sorted.length;
   const trainEnd = Math.floor(n * 0.6);
@@ -145,9 +142,9 @@ function walkForwardSplits(rows, purgeEmbargoMs = PURGE_EMBARGO_MS) {
 function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
   const splits = walkForwardSplits(rows.filter(usableOpportunity));
   if (
-    splits.train.length < 30 ||
-    splits.validation.length < 15 ||
-    splits.test.length < MIN_TEST_ROWS
+    !splits.train.length ||
+    !splits.validation.length ||
+    !splits.test.length
   ) {
     return {
       status: "INSUFFICIENT_WALK_FORWARD_SAMPLES",
@@ -161,7 +158,7 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
   const grid = [];
   const edgeValues = [
     ...new Set([
-      Math.max(0.01, champion.minEdge - 0.025),
+      Math.max(0, champion.minEdge - 0.025),
       champion.minEdge,
       champion.minEdge + 0.025,
       champion.minEdge + 0.05,
@@ -169,7 +166,7 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
   ];
   const gapValues = [
     ...new Set([
-      Math.max(0.025, champion.gapEdge - 0.05),
+      Math.max(0, champion.gapEdge - 0.05),
       champion.gapEdge,
       champion.gapEdge + 0.05,
       champion.gapEdge + 0.1,
@@ -181,8 +178,6 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
       const train = evaluatePolicy(splits.train, params);
       const validation = evaluatePolicy(splits.validation, params);
       if (
-        train.trades >= 10 &&
-        validation.trades >= 5 &&
         Number.isFinite(train.averageNetR) &&
         Number.isFinite(validation.averageNetR)
       ) {
@@ -190,7 +185,7 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
           params,
           train,
           validation,
-          objective: validation.averageNetR * 0.7 + train.averageNetR * 0.3,
+          objective: validation.averageNetR,
         });
       }
     }
@@ -208,11 +203,7 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
   const candidateTest = evaluatePolicy(splits.test, selected.params);
   const championTest = evaluatePolicy(splits.test, champion);
   const uplift = candidateTest.averageNetR - championTest.averageNetR;
-  if (
-    candidateTest.trades < MIN_TEST_ROWS ||
-    !Number.isFinite(uplift) ||
-    uplift <= 0.02
-  ) {
+  if (!Number.isFinite(uplift) || uplift <= 0) {
     return {
       status: "CANDIDATE_DID_NOT_BEAT_CHAMPION",
       sampleCounts: {
@@ -267,12 +258,7 @@ function calibrationSummary(rows) {
     meanRealizedR: mean(realized),
     biasR,
     maeR,
-    status:
-      usable.length < 30
-        ? "COLLECTING"
-        : Math.abs(biasR) > 0.25 || maeR > 0.75
-          ? "RED_FLAG_CALIBRATION_DRIFT"
-          : "CALIBRATION_WITHIN_GUARDRAILS",
+    status: maeR > 0 ? "RED_FLAG_CALIBRATION_DRIFT" : "CALIBRATION_MATCH",
   };
 }
 
@@ -439,7 +425,7 @@ function createOfflineLearning(db, options = {}) {
       actualRows.filter((r) => r.accountingSchemaVersion === 2),
     );
     const activeShadow = await candidates.findOne(
-      { status: "SHADOW_PENDING" },
+      { status: "SHADOW_PENDING", policySchemaVersion: 3 },
       { sort: { createdAt: -1 } },
     );
     let shadowResult = null;
@@ -451,18 +437,23 @@ function createOfflineLearning(db, options = {}) {
         .find(
           {
             signalTime: { $gte: shadowStart, $lt: shadowStart + SHADOW_MS },
-            outcomeStatus: "EVALUATED",
-            "evaluations.24.contract": CONTRACT,
-            "decisionSnapshot.decisionSchemaVersion": 2,
+            "decisionSnapshot.decisionSchemaVersion": 3,
           },
           { projection: OPPORTUNITY_PROJECTION },
         )
         .sort({ signalTime: 1 })
-        .limit(20000)
         .toArray();
       const candidateScore = evaluatePolicy(rows, activeShadow.params);
       const championScore = evaluatePolicy(rows, champion);
       const age = runAt - shadowStart;
+      const labelsMature =
+        rows.length > 0 &&
+        rows.every(
+          (row) =>
+            Number(row.signalTime) + PURGE_EMBARGO_MS <= runAt &&
+            row.outcomeStatus === "EVALUATED" &&
+            row.evaluations?.["24"]?.contract === CONTRACT,
+        );
       shadowResult = {
         ageMs: age,
         rows: candidateScore.opportunities,
@@ -474,12 +465,10 @@ function createOfflineLearning(db, options = {}) {
       );
       if (
         sameChampion &&
-        age >= SHADOW_MS + PURGE_EMBARGO_MS &&
-        rows.length < 20000 &&
-        candidateScore.opportunities >= MIN_SHADOW_ROWS &&
-        candidateScore.trades >= MIN_TEST_ROWS &&
-        Number(candidateScore.averageNetR) >
-          Number(championScore.averageNetR) + 0.02
+        age >= SHADOW_MS &&
+        labelsMature &&
+        candidateScore.opportunities > 0 &&
+        Number(candidateScore.averageNetR) > Number(championScore.averageNetR)
       ) {
         const currentChampion = await championState.findOne({ _id: "active" });
         await championState.updateOne(
@@ -506,7 +495,10 @@ function createOfflineLearning(db, options = {}) {
           },
         );
         shadowResult.status = "PROMOTED_CHAMPION";
-      } else if (!sameChampion || age >= 21 * DAY_MS) {
+      } else if (
+        !sameChampion ||
+        (age >= SHADOW_MS && (labelsMature || !rows.length))
+      ) {
         await candidates.updateOne(
           { _id: activeShadow._id },
           {
@@ -532,18 +524,19 @@ function createOfflineLearning(db, options = {}) {
             outcomeStatus: "EVALUATED",
             "decisionSnapshot.setup": "NINE_AI_4H",
             "evaluations.24.contract": CONTRACT,
-            "decisionSnapshot.decisionSchemaVersion": 2,
+            "decisionSnapshot.decisionSchemaVersion": 3,
           },
           { projection: OPPORTUNITY_PROJECTION },
         )
         .sort({ signalTime: -1 })
         .limit(50000)
         .toArray();
-      if (rows.length >= MIN_TOTAL_ROWS) {
+      if (rows.length) {
         candidateResult = await trainCandidateAsync(rows, champion);
         if (candidateResult.status === "SHADOW_PENDING") {
           const insert = await candidates.insertOne({
             status: "SHADOW_PENDING",
+            policySchemaVersion: 3,
             params: candidateResult.candidate,
             championParams: champion,
             createdAt: new Date(runAt),
@@ -565,7 +558,6 @@ function createOfflineLearning(db, options = {}) {
         candidateResult = {
           status: "COLLECTING_MATURED_24_BAR_OPPORTUNITIES",
           samples: rows.length,
-          required: MIN_TOTAL_ROWS,
         };
       }
     }

@@ -1,69 +1,62 @@
-# Nine-AI canonical flow
+# Nine-AI decision contract
 
-The live path is index.js → nine-ai-pipeline.js → nine-ai-policy.js → central invariant checks → execution validation → TradeLifecycle. The same policy function is used by live decisions, cached decisions, candidate evaluation and shadow evaluation. Only AI-9 selects LONG, SHORT or WAIT. Exchange protection can reject/close unsafe exposure, but cannot invent a trading direction.
+The live sequence is index.js -> Nine-AI pipeline -> shared AI-9 policy -> execution validation -> durable TradeLifecycle. The same netEdge function is used to select the best setup per direction and to compare LONG/SHORT. Only AI-9 selects a trading direction. Exchange validation checks executable prices, quantities and account state; it does not add technical-analysis filters.
 
-## Inputs and responsibilities
+## Specialist roles
 
-1. **Regime:** closed 4h OHLCV spanning at least 90 days (541 contiguous bars), plus closed 1h/day context; 20/90-day realized volatility, volatility percentile and momentum agreeing across timeframes. Outputs regime and confidence in [0,1]. Missing/stale/gapped context means WAIT.
-2. **Structure:** confirmed fractal highs/lows, channel slopes, support/resistance and directional bias. Right-hand fractal bars must already be closed. The structure buffer can move the initial stop beyond support/resistance.
-3. **Continuation:** a pullback in earlier bars, then a completed confirming impulse in the trend direction, increasing OI and non-hot funding. Before trade labels exist, the original repository's momentum/volume feature-score model supplies an explicitly uncalibrated probability estimate. Real labeled wins and losses replace that estimate when available.
-4. **Breakout:** range break in the matching trend, volume expansion, a held level, acceptable spread and an extension guard. Uses the original volume-based initial estimate before real setup labels exist.
-5. **Mean reversion:** VWAP deviation plus liquidation evidence, enabled only in RANGE/HIGH_VOL. Its diagnostic output cannot bypass the final trend gate: the requested live loop trades only UPTREND/DOWNTREND.
-6. **Flow:** funding, OI change and observed liquidation imbalance. Confirms or blocks a model's direction; never creates a direction. Missing flow or hot funding means WAIT. The liquidation socket has a heartbeat and reconnect handling.
-7. **Outcome:** deduplicated, matured REALIZED_CLOSED_TRADE labels for the same symbol, regime/setup and side. Wins and losses estimate probability using a Beta(2,2) prior. The user-authorized initial phase bypasses AI-7 exits and uses AI-2 structure instead. The first usable winning label enables winning MAE p80 and MFE p50/p90 immediately; there is no 30-trade gate. Historical price excursions are not relabeled as actual trading wins.
-8. **Fill/slippage:** a transparent heuristic using depth, spread, OI change and measured request latency, returning a round-trip slippage estimate and estimated fill price per side. This is an estimate, not a claim of a trained fill model or a guaranteed fill.
-9. **Meta:** applies the formula below once, compares both directions and returns one action. E[R|success] uses the 50/50 payoff of the actual proposed exits (AI-2 initially, AI-7 quantiles afterwards), optionally blended with the matching realized winning gross-R track record. Calibration remains a diagnostic; it does not silently alter live parameters.
+1. Regime uses closed 4h OHLCV, closed 1h/day context and 20/90-day realized volatility. Positive/negative momentum must agree across timeframes; volatility is ranked by percentile. Outputs UPTREND, DOWNTREND, RANGE or HIGH_VOL and confidence in [0,1]. The requested live loop returns WAIT outside a trend. There is no separate 1.2% momentum prerequisite.
+2. Structure uses a three-candle fractal: the middle high/low must exceed/be below its two neighbors. Confirmed swings define support, resistance and projected channels. Structure bias is an output, not an additional veto on AI-9. AI-2 supplies temporary exits only when winning outcome quantiles do not yet exist, as authorized by the user.
+3. Continuation requires a prior pullback and a confirming push in the trend, with non-hot funding. OI change participates in the probability estimate. No separate volume threshold, minimum ATR body size or positive-OI-only gate is imposed on this role.
+4. Breakout uses a range of prior closed bars, volume expansion on the break and a subsequent closed bar holding the broken level. It avoids chasing after a complete measured range extension. Spread contributes to probability and execution cost; there is no independent 0.15% spread veto or fixed role priority. These calculations implement the requested volume/hold/no-chase behavior.
+5. Mean reversion uses VWAP, deviation and liquidation only in RANGE/HIGH_VOL. The user's final trend-only live loop still returns WAIT in those regimes, so this specialist remains diagnostic there.
+6. Flow reports funding, OI and liquidation direction/confirmation. It never creates an order. Hot funding blocks an entry. Neutral, missing or opposing liquidation is not an extra mandatory trade gate. Funding heat has a single numerical definition in nine-ai-policy.js (absolute rate above 0.0008 per funding interval).
+7. Outcome groups deduplicated, matured REALIZED_CLOSED_TRADE excursion labels by regime/setup, without an additional symbol/side prerequisite. Winning MAE p80 and winning MFE p50/p90 define the exit quantiles. No minimum number of winning trades is required. A valid positive stop distance and favorable targets are necessary to represent an executable plan; zero MAE is not replaced with ATR or structure.
+8. Fill/slippage estimates round-trip impact from depth, spread, OI and observed latency. It remains an explicit numerical estimate, not a claim that a separate trained fill model exists.
+9. Meta selects the best available setup in each direction by the shared net-edge formula, then returns one LONG/SHORT/WAIT decision for the symbol. There are no fixed Continuation/Breakout role weights or structure/liquidation vetoes.
 
-## The single decision formula
+## One decision formula
 
-edge(a) = p(a) × E[R | a, regime] − cost(a) − uncertainty_penalty
+    edge(a) = p(a) * E[R | a, regime] - cost(a) - uncertainty_penalty
+    cost(a) = fee + funding(a) + slippage
+    LONG if edge(LONG) > minEdge and edge(LONG)-edge(SHORT) > gapEdge
+    SHORT symmetrically; otherwise WAIT
 
-cost(a) = fee + funding(a) + round-trip slippage
+Costs and payoffs use the same entry-to-stop R unit. Fee is configured in percentage points; expected funding uses the observed rate and funding interval over the 96h holding horizon, without assuming uncertain funding credits. Slippage is estimated from the snapshotted inputs. Actual closure accounting uses real exchange fees/funding.
 
-All costs are converted to R using the same side's entry-to-initial-stop distance. Funding uses the symbol's funding interval over the maximum 96h hold, charges the paying side and does not assume uncertain future funding receipts as profit. Original fee/funding/slippage inputs and normalized costs are preserved.
+Uncertainty increases as regime confidence falls, observations/candle/OI context age, or directional edges approach one another. Stale values are penalized through edge rather than a separate five-minute/30-second entry window. Missing/nonfinite required cost inputs and impossible future timestamps cannot be converted into an estimate. The current numerical probability models, percentile definitions and uncertainty scale are visible in source; they are not additional trade-count unlocks.
 
-The uncertainty penalty increases with lower regime confidence, aging input data and similar directional edges. Data older than five minutes is rejected. LONG requires its edge > minEdge and LONG edge − SHORT edge > gapEdge; SHORT is symmetric. Missing estimates for an active setup mean WAIT. A side with no active setup has p=0 and eligible=false; it remains a finite comparison alternative but cannot execute. This distinction removes the old deadlock requiring two simultaneous opposing setups.
+Before real outcomes exist, each role's own feature model supplies an explicitly uncalibrated probability. Continuation uses trend/funding/OI; Breakout uses expansion/spread; Mean Reversion uses VWAP deviation/liquidation. Real directional setup outcomes update that model as (wins + current feature-model probability)/(observations + 1), without a minimum count or an immediate probability of exactly zero/one after one trade. Track-record counts may supply observations if excursion labels are unavailable. E[R] uses the proposed 50/50 exit payoff divided by stop distance; no 20-win threshold or arbitrary 50/50 blend with track record is added.
 
-## Cadence and point-in-time snapshots
+An inactive direction has no executable plan, probability zero and execution cost zero. It remains a finite comparison alternative but cannot execute. A competing active setup is selected by its net edge, never a fixed role order.
 
-Each closed 4h candle has at most one durable version-2 decision per symbol, enforced by a partial unique MongoDB index. Market data observed shortly after the close is timestamped honestly at observation time; it is not backdated to the candle close. Decisions older than five minutes cannot execute. Starting midway through a candle therefore waits for the next decision window.
+## Exact AI-7 exits and actual fills
 
-An authorized but unclaimed decision may be reused only within that window. It passes the same central checks and a fresh execution check for flow, funding, cost/uncertainty and price geometry before MARKET. The original decision snapshot stays immutable; the fresh validation snapshot is stored separately.
+For LONG:
 
-## Risk and exits
+    SL  = actual_entry * (1 - MAE_p80/100)
+    TP1 = actual_entry * (1 + MFE_p50/100)
+    TP2 = actual_entry * (1 + MFE_p90/100)
 
-- RISK_PER_TRADE is the single manually editable numeric literal at the top of index.js. Its supplied value is 0.0075. Environment variables and learned policies do not override it.
-- Sizing uses current USDT equity, including unrealized PnL, and the actual tick-rounded stop distance. Quantity is rounded down to an even number of valid exchange lots so TP1 can close exactly 50%; exchange size limits still apply. Leverage/margin configuration is left with the account; an insufficient-margin rejection does not increase risk or retry a different size.
-- In AI2_INITIAL mode, SL is beyond the nearest valid confirmed structure zone with the existing ATR buffer. Targets use the next favorable swing/channel zones, with measured range/channel-width projections when price is beyond old highs/lows. These are actual structure-based prices, never presented as MAE/MFE quantiles.
-- In AI7_LABELED mode, SL is winning MAE p80 plus a structure-zone buffer. TP1 is winning MFE p50, TP2 winning MFE p90. No independent minimum-RR filter or martingale is added.
-- After the actual fill, keep the researched stop and shift target distances to the actual entry. Recalculate monetary risk from filled quantity and the rounded stop. Excess risk, invalid geometry or an unrepresentable 50% split triggers a reduce-only close rather than acceptance of extra exposure.
-- TP1 reduces exactly half of the original filled quantity; TP2 and SL close remaining exposure. With one winner p50 equals p90, and tick rounding can also coincide. In that case submit two distinct reduce-only half-position targets at the same price, keep each fill/client ID separate, and accept either fill order. SL still protects all remaining exposure. Confirm each child fill before treating a half as closed; restart must not re-arm a filled half.
-- The original entry time and full plan are durable before/after submission; the 96h deadline survives restarts. Protection/timeout management runs independently of Telegram, scanning and CPU-heavy offline training.
-- Missing/canceled protection is repaired without canceling healthy sibling orders. A failed protection recovery attempts a reduce-only close. A signed API outage is never treated as proof that a position is flat.
-- Ambiguous MARKET responses are queried by their saved client ID, never blindly resubmitted. Unknown entries pause new entries until reconciled. Unknown external positions are reported and block new entries; the bot does not invent their strategy plan.
+SHORT reverses the signs. There is no structure, ATR or fixed-RR adjustment to an AI-7 stop or target. Raw quantile prices and actual exchange-rounded prices are saved separately. SL rounds toward entry to the exchange price tick, so it is never widened beyond p80. A target rounds toward entry as well. Invalid/zero-distance or unrepresentable geometry is rejected instead of inventing replacement prices.
 
-## Accounting and outcome quality
+Initial plans without winning quantiles use AI-2 structure exits only. They are recorded as AI2_INITIAL, never as measured quantiles. The first usable labeled winner for the setup enables AI7_LABELED for subsequent decisions across symbols. Losing trades are recorded and update probability but cannot manufacture winning quantiles. There is no extra two-concurrent-initial-position strategy veto; the existing configured account position capacity still applies.
 
-After confirmed flat, reconcile entry fills and all partial exits, deduplicate fill IDs, paginate trade/funding history and preserve raw amounts, assets, order IDs and times. Net PnL = realized gross PnL − commissions + signed funding income. Missing history/conversion remains pending and is retried; it is not converted to a fake LOSS or discarded after three attempts. Actual R uses the immutable actual initial monetary risk in both journal and learner.
+TP1 closes exactly half the original quantity. TP2 closes the remainder; SL protects remaining exposure. Coincident p50/p90 targets use two distinct reduce-only half-position orders, with separate role/client IDs and fill reconciliation in either order. After TP1, the remaining original stop is preserved; no automatic breakeven rule is added. The original 24-candle/96h timeout survives restart.
 
-USDT commissions are native amounts. Other fee assets are valued using the historical spot 1m close, with the conversion method retained; that USDT valuation is an estimate. Log entry/exit slippage separately from fees and actual exchange realized PnL to avoid double deduction.
+Sizing uses the manually editable risk constant in index.js and current equity. Exchange tick/lot/minimum-order constraints and the risk budget remain execution checks. Actual fill quantile prices are recomputed from the real entry; exposure beyond the budget is not silently accepted.
 
-MAE/MFE use closed 1m bars fully inside the holding interval plus observed mark/fill prices. The entry/exit minute boundaries have sampled precision, not tick-complete coverage; this source/precision is saved. Missing full-minute history prevents creating an outcome-distribution label. A websocket/tick recorder would be needed for exact tick-level extrema.
+## Snapshots, execution and labels
 
-## Daily offline learning
+Each symbol/closed-4h candle has one durable version-3 decision. Data timestamps are recorded at actual observation and never backdated. Before MARKET, current cost/funding/price geometry and the same AI-9 rule are rechecked. Full plans and order client IDs are saved before POST; ambiguous responses are queried rather than blindly resubmitted. Protection and timeout management operate independently of Telegram and offline CPU work.
 
-Closed trades save decision-time feature/prediction snapshots alongside realized accounting. Daily calibration compares predicted edge R with realized net R and reports drift, without blind tuning.
+After confirmed flat, reconcile all fills, partial exits, commissions and signed funding. Net PnL is actual gross PnL minus fees plus signed funding. Slippage is logged separately and is not subtracted twice from exchange PnL. R uses actual initial monetary risk. MAE/MFE use complete 1m bars within the holding interval plus observed mark/fill boundary samples. Missing measurement intervals keep the closed trade pending and are retried from entry before labeling; no incomplete/future interval becomes a final outcome.
 
-Candidates change only minEdge/gapEdge. Each policy is evaluated on the exact same eligible opportunities and snapshotted directional costs, using the actual SL → 50% TP1 → TP2/96h timeout contract. If a bar touches both stop and target, assume the stop first. These hypothetical evaluations are explicitly separate from exchange PnL. No open candle is settled or frozen as a final outcome.
+Non-USDT fee conversion uses a matured historical spot 1m close with source/precision recorded. Entry/exit boundary extrema are sampled, not tick-complete. Fake exchange/database responses are used in tests; no real order or production database is exercised by the suite.
 
-Chronological train/validation/test splits use a 24-bar purge/embargo on each split boundary. Select on train/validation, compare once on held-out test, and start shadow only for a qualified improvement. Shadow uses 14 full days of new opportunities and waits another 96h for the final labels to mature before promotion (earliest day 18). Insufficient evidence, a changed champion or a losing candidate prevents promotion. Training runs in a worker so it cannot block the live watchdog. WAIT history is retained 90 days so it remains available during shadow.
+## Daily learning
 
-## Cold start and upgrades
+Actual closed trades retain decision-time features/predictions and real results. Daily calibration reports realized versus predicted R and flags discrepancies without a trade-count prerequisite; it does not blindly change parameters. Candidate policy fitting currently varies minEdge/gapEdge, not nine separately trained neural networks.
 
-The user authorized the first one or two trades to bypass AI-7. This implementation uses the earliest permitted switch: one valid reconciled winning label for the matching symbol/regime/setup/side. Before those winning quantiles exist, AI2_INITIAL supplies the structure stop/targets and AI-9 still applies its unchanged edge/cost/uncertainty decision. At most two AI2_INITIAL positions can be active concurrently while awaiting feedback; this uses durable active trade plans, not a counter reset by restart. Empty-history LONG and SHORT can execute when all remaining requirements pass; entries are never forced just to collect labels.
+Candidate and champion use the same eligible opportunities, cost snapshots and SL/half-TP1/TP2/timeout simulation. Closed-bar evaluation uses SL first when intrabar ordering is ambiguous. Chronological train/validation/test partitions are purged/embargoed by the 24-bar horizon. Empty partitions cannot produce a validated candidate, but no 400/30/20 row/trade-count prerequisites are added. A candidate must strictly beat the champion on held-out data; there is no extra 0.02R uplift requirement.
 
-Actual closures are labeled immediately after accounting, independently of the daily worker. On the next candle, AI-7 uses an available winning label without waiting for daily training or shadow promotion. p50 and p90 may coincide with one sample; that is supported end to end. Losing labels also reduce the empirical win probability. If no usable winner exists yet, or a different setup has no matching labels, its exits continue to use AI-2 rather than fabricating winning quantiles. This transition follows durable MongoDB labels and survives restarts; no process-local trade counter, paper portfolio or synthetic outcome dataset is used.
-
-The journal, durable trade plan, feature snapshot and entry report identify AI2_INITIAL versus AI7_LABELED. Initial feature-score probabilities are marked FEATURE_SCORE_UNCALIBRATED; they are not claimed to be calibrated model outputs. Tests cover an empty database through the first completed real-accounting-shaped trade into an AI-7 decision using its saved label. Exchange/database responses in tests are fake; no live trade was submitted during development.
-
-Legacy pending Nine-AI records are migrated in place and their exchange protection is verified. Preserve old entry times. A legacy record missing a valid plan/risk cannot be repaired by inventing TP1. Older research evaluations are retained for audit but excluded from version-2 policy training.
+A qualified candidate shadows a full two-week opportunity cohort. Promotion requires winning on that same cohort and complete matured labels. There is no fixed extra four-day wait when all labels are already mature, and no arbitrary day-21 rejection timer. If the end-of-shadow opportunities still need their forward labels, promotion waits for those labels. A completed losing shadow is rejected; an empty cohort cannot prove a win. Version-2 candidates/decisions are retained for audit but cannot be promoted or reused by the version-3 engine. Existing open positions retain their saved protection plans rather than being silently rewritten.

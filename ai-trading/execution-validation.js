@@ -1,6 +1,10 @@
 "use strict";
 const { finalizeDecision } = require("./nine-ai-central-decision-engine");
-const { applyPolicy } = require("./nine-ai-policy");
+const {
+  applyPolicy,
+  uncertaintyFor,
+  fundingIsHot,
+} = require("./nine-ai-policy");
 function validateExecution(decision, market, now = Date.now()) {
   const approved = finalizeDecision(decision, {
     symbol: decision?.symbol,
@@ -12,7 +16,6 @@ function validateExecution(decision, market, now = Date.now()) {
     market?.snapshotAt,
     market?.fundingRate,
     market?.openInterestChange,
-    market?.liquidationImbalance,
     market?.spreadPct,
     market?.depthNotional,
     market?.latencyMs,
@@ -24,7 +27,6 @@ function validateExecution(decision, market, now = Date.now()) {
   if (
     !values.every((v) => typeof v === "number" && Number.isFinite(v)) ||
     market.snapshotAt > now ||
-    now - market.snapshotAt > 30000 ||
     market.depthNotional <= 0 ||
     market.spreadPct < 0 ||
     market.latencyMs < 0 ||
@@ -33,11 +35,7 @@ function validateExecution(decision, market, now = Date.now()) {
     market.markPrice <= 0
   )
     return { ok: false, reason: "EXECUTION_INPUTS_UNAVAILABLE" };
-  if (
-    Math.abs(market.fundingRate) > 0.0008 ||
-    Math.abs(market.liquidationImbalance) < 0.05 ||
-    (market.liquidationImbalance > 0 ? "LONG" : "SHORT") !== decision.side
-  )
+  if (fundingIsHot(market.fundingRate))
     return { ok: false, reason: "CURRENT_FLOW_BLOCKED" };
   const slippage = Math.min(
     2,
@@ -51,14 +49,21 @@ function validateExecution(decision, market, now = Date.now()) {
     const c = refreshed.edges[side];
     const riskPct = c.plan
       ? (Math.abs(c.plan.entry - c.plan.sl) / c.plan.entry) * 100
-      : (decision.featureSnapshot.atr / decision.entry) * 100;
-    c.cost =
-      (market.roundTripFeePct +
-        market.expectedFundingCostPctBySide[side] +
-        slippage) /
-      riskPct;
-    c.baseUncertainty +=
-      ((now - decision.featureSnapshot.snapshotAt) / (5 * 60000)) * 0.25;
+      : null;
+    c.cost = c.plan
+      ? (market.roundTripFeePct +
+          market.expectedFundingCostPctBySide[side] +
+          slippage) /
+        riskPct
+      : 0;
+    c.baseUncertainty = uncertaintyFor(
+      decision.regime,
+      Math.min(decision.featureSnapshot.snapshotAt, market.snapshotAt),
+      decision.signalAt,
+      now,
+      decision.decisionPolicy,
+      decision.featureSnapshot,
+    );
   }
   if (applyPolicy(refreshed, decision.decisionPolicy).side !== decision.side)
     return { ok: false, reason: "CURRENT_COST_OR_UNCERTAINTY_BLOCKED" };

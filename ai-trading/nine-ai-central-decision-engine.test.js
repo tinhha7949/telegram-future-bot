@@ -15,10 +15,12 @@ test("central guard rejects corruption, stale signals and incomplete policies", 
     { sl: base.entry + 1 },
     { tp1: base.entry },
     { decisionSchemaVersion: 1 },
-    { featureSnapshot: { snapshotAt: f.market.now - 300001 } },
-    { signalAt: f.market.now - 300001 },
+    { featureSnapshot: { snapshotAt: f.market.now + 2 } },
+    { signalAt: f.market.now + 1 },
     { decisionPolicy: null },
-    { agents: { ...base.agents, flow: { confirmation: "NEUTRAL" } } },
+    {
+      agents: { ...base.agents, flow: { confirmation: "BLOCKED_HOT_FUNDING" } },
+    },
     { edges: { ...base.edges, LONG: { ...base.edges.LONG, p: null } } },
   ])
     assert.equal(

@@ -59,7 +59,13 @@ function sizeTrade(decision, equity, riskFraction, info) {
   const r = symbolRules(info),
     long = decision.side === "LONG",
     entry = Number(decision.entry);
-  const sl = roundStep(Number(decision.sl), r.tick, long ? "floor" : "ceil");
+  const ai7 = decision.tradePlan?.outcomeMode === "AI7_LABELED";
+  // Exchange tick rounding never widens an AI-7 p80 stop beyond its quantile.
+  const sl = roundStep(
+    Number(decision.sl),
+    r.tick,
+    ai7 ? (long ? "ceil" : "floor") : long ? "floor" : "ceil",
+  );
   const tp1 = roundStep(Number(decision.tp1), r.tick, long ? "floor" : "ceil");
   const tp2 = roundStep(
     Number(decision.tp2 ?? decision.tp),

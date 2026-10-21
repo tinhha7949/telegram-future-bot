@@ -1,6 +1,9 @@
 "use strict";
-const { applyPolicy } = require("./nine-ai-policy");
-const { MAX_DATA_AGE_MS } = require("./nine-ai-pipeline");
+const {
+  applyPolicy,
+  uncertaintyFor,
+  DECISION_SCHEMA_VERSION,
+} = require("./nine-ai-policy");
 
 // The single authorization boundary for live Nine-AI signals.
 // This module never creates a direction: it can only preserve a valid
@@ -17,8 +20,6 @@ const REQUIRED_ROLES = Object.freeze([
   "AI-9 Meta/Decision",
 ]);
 const MIN_CANDLES = 541;
-const MAX_SIGNAL_AGE_MS = MAX_DATA_AGE_MS;
-const MIN_RR = 0; // Edge-based policy owns trade selection; no extra RR gate.
 
 function wait(decision, reason) {
   return {
@@ -48,7 +49,7 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   }
   if (decision.setup !== "NINE_AI_4H")
     return wait(decision, "NON_CANONICAL_NINE_AI_SETUP_REJECTED");
-  if (decision.decisionSchemaVersion !== 2)
+  if (decision.decisionSchemaVersion !== DECISION_SCHEMA_VERSION)
     return wait(decision, "LEGACY_DECISION_REJECTED");
   // The canonical pipeline exposes exactly eight specialist outputs plus one
   // meta decision. Legacy role-based outputs are not accepted on the live path.
@@ -68,20 +69,6 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   ) {
     return wait(decision, "REGIME_NOT_TREND");
   }
-  if (
-    decision.agents.flow?.confirmation === "BLOCKED_HOT_FUNDING" ||
-    decision.agents.flow?.confirmation === "UNAVAILABLE" ||
-    decision.agents.flow?.confirmation !== "CONFIRMED" ||
-    decision.agents.flow?.confirmationSide !== side
-  ) {
-    return wait(decision, "FLOW_CONFIRMATION_BLOCKED_OR_MISMATCHED");
-  }
-  if (
-    !decision.decisionPolicy ||
-    applyPolicy(decision, decision.decisionPolicy).side !== side
-  ) {
-    return wait(decision, "META_EDGE_POLICY_NOT_SATISFIED");
-  }
   const candleCount = Number(decision.candles);
   if (!Number.isFinite(candleCount) || candleCount < MIN_CANDLES) {
     return wait(decision, "INSUFFICIENT_CLOSED_CANDLES");
@@ -98,7 +85,6 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
     tp <= 0 ||
     tp1 <= 0 ||
     entry === sl ||
-    rr < MIN_RR ||
     (side === "LONG" && !(sl < entry && entry < tp1 && tp1 <= tp)) ||
     (side === "SHORT" && !(tp <= tp1 && tp1 < entry && entry < sl))
   ) {
@@ -106,22 +92,38 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   }
   const signalAt = Number(decision.signalAt);
   const snapshotAt = Number(decision.featureSnapshot?.snapshotAt);
-  if (
-    !Number.isFinite(signalAt) ||
-    signalAt >= Number(scannedAt) ||
-    Number(scannedAt) - signalAt > MAX_SIGNAL_AGE_MS
-  ) {
+  if (!Number.isFinite(signalAt) || signalAt >= Number(scannedAt)) {
     return wait(decision, "STALE_OR_INVALID_SIGNAL_TIMESTAMP");
   }
-  if (
-    !Number.isFinite(snapshotAt) ||
-    snapshotAt > scannedAt ||
-    scannedAt - snapshotAt > MAX_DATA_AGE_MS
-  ) {
+  if (!Number.isFinite(snapshotAt) || snapshotAt > scannedAt) {
     return wait(decision, "STALE_OR_INVALID_EXECUTION_SNAPSHOT");
   }
+  if (!decision.decisionPolicy) return wait(decision, "MISSING_META_POLICY");
+  const timed = {
+    ...decision,
+    edges: Object.fromEntries(
+      Object.entries(decision.edges).map(([side, c]) => [
+        side,
+        {
+          ...c,
+          baseUncertainty: uncertaintyFor(
+            decision.regime,
+            snapshotAt,
+            signalAt,
+            Number(scannedAt),
+            decision.decisionPolicy,
+            decision.featureSnapshot,
+          ),
+        },
+      ]),
+    ),
+  };
+  const meta = applyPolicy(timed, decision.decisionPolicy);
+  if (meta.side !== side)
+    return wait(decision, "META_EDGE_POLICY_NOT_SATISFIED");
   return {
     ...decision,
+    edges: meta.edges,
     symbol: String(symbol || decision.symbol).toUpperCase(),
     side,
     action: side,
@@ -141,7 +143,5 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
 module.exports = {
   REQUIRED_ROLES,
   MIN_CANDLES,
-  MAX_SIGNAL_AGE_MS,
-  MIN_RR,
   finalizeDecision,
 };

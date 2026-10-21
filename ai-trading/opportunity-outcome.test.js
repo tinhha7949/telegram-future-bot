@@ -74,7 +74,7 @@ test("24-bar evaluation waits for the final closed bar and freezes only the matu
   const record = {
     signalTime: candles[5].closeTime,
     decisionSnapshot: {
-      decisionSchemaVersion: 2,
+      decisionSchemaVersion: 3,
       edges: { LONG: { eligible: true, plan }, SHORT: { eligible: false } },
       featureSnapshot: {
         feePct: 0.1,
