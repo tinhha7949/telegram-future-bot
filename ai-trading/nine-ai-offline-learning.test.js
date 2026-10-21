@@ -2,14 +2,14 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const l = require("./nine-ai-offline-learning");
-const { applyPolicy } = require("./nine-ai-policy");
+const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const { CONTRACT } = require("./opportunity-outcome");
 const plan = { entry: 100, sl: 99, tp1: 102, tp2: 104 };
 const row = (i = 0) => ({
   signalTime: 1700000000000 + i * l.BAR_MS,
   outcomeStatus: "EVALUATED",
   decisionSnapshot: {
-    decisionSchemaVersion: 3,
+    decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     setup: "NINE_AI_4H",
     regime: { regime: "UPTREND" },
     agents: { flow: { confirmation: "CONFIRMED", confirmationSide: "LONG" } },
@@ -119,7 +119,7 @@ test("shadow cannot promote before 14 complete days plus 24-bar outcome maturity
   await db.collection("nine_ai_policy_candidates").insertOne({
     _id: "shadow",
     status: "SHADOW_PENDING",
-    policySchemaVersion: 3,
+    policySchemaVersion: DECISION_SCHEMA_VERSION,
     params: { ...l.DEFAULT_CHAMPION, minEdge: 0.025 },
     championParams: { ...l.DEFAULT_CHAMPION },
     shadowStartedAt: start,
@@ -212,7 +212,7 @@ test("a winning fully matured shadow can promote at 14 days, without a fixed ext
   await service.initialize();
   await db.collection("nine_ai_policy_candidates").insertOne({
     _id: "small-shadow",
-    policySchemaVersion: 3,
+    policySchemaVersion: DECISION_SCHEMA_VERSION,
     status: "SHADOW_PENDING",
     params: { ...l.DEFAULT_CHAMPION, minEdge: 0.025 },
     championParams: { ...l.DEFAULT_CHAMPION },

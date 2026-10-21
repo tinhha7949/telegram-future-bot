@@ -10,6 +10,7 @@ const fs = require("node:fs"),
   crypto = require("node:crypto");
 const { MongoClient } = require("mongodb");
 const pipeline = require("./ai-trading/nine-ai-pipeline");
+const { DECISION_SCHEMA_VERSION } = require("./ai-trading/nine-ai-policy");
 const central = require("./ai-trading/nine-ai-central-decision-engine");
 const journal = require("./ai-trading/nine-ai-decision-journal");
 const {
@@ -252,7 +253,7 @@ async function main() {
   void clean();
   const daily = every(24 * 3600000, async () => {
     const symbols = await db.collection(journal.COLLECTION).distinct("symbol", {
-      "decisionSnapshot.decisionSchemaVersion": 3,
+      "decisionSnapshot.decisionSchemaVersion": DECISION_SCHEMA_VERSION,
       outcomeStatus: {
         $in: ["PENDING_HORIZON_EVALUATION", "PARTIALLY_EVALUATED"],
       },
@@ -290,7 +291,7 @@ async function main() {
     const prior = await journal.getDecisionForCandle(
       symbol,
       probe.closeTime,
-      3,
+      DECISION_SCHEMA_VERSION,
     );
     if (prior) {
       const cached = central.finalizeDecision(
@@ -302,18 +303,12 @@ async function main() {
         ? { ...cached, nineAiDecisionKey: prior.decisionKey }
         : null;
     }
-    const [h4, h1, d1] = await Promise.all([
-      exchange.candles(symbol, "4h", 1500),
-      exchange.candles(symbol, "1h", 100),
-      exchange.candles(symbol, "1d", 100),
-    ]);
+    const h4 = await exchange.candles(symbol, "4h", 1500);
     await journal.settleMatured(symbol, h4);
     const market = await marketSnapshot(exchange, symbol);
     let decision = pipeline.analyzeNineAI({
       symbol,
       candles4h: h4,
-      candles1h: h1,
-      candles1d: d1,
       outcomes,
       market: { ...market, trackRecord },
       config: champion,

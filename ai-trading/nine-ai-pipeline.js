@@ -94,7 +94,7 @@ function swingPoints(cs, radius = 1) {
   }
   return { highs, lows };
 }
-function classifyRegime(cs, higher = []) {
+function classifyRegime(cs) {
   const closes = cs.map((c) => c.close),
     returns = closes.slice(1).map((v, i) => Math.log(v / closes[i]));
   const scale = Math.sqrt(6 * 365) * 100,
@@ -111,17 +111,10 @@ function classifyRegime(cs, higher = []) {
   const momentum20 =
     closes.length > 120 ? closes.at(-1) / closes.at(-121) - 1 : 0;
   const momentum5 = closes.length > 30 ? closes.at(-1) / closes.at(-31) - 1 : 0;
-  const contexts = higher.filter(Number.isFinite);
-  const agreement = contexts.length
-    ? contexts.filter((v) => Math.sign(v) === Math.sign(momentum20)).length /
-      contexts.length
-    : 0;
   let regime = "RANGE";
   if (rank !== null && rank >= 0.8) regime = "HIGH_VOL";
-  else if (momentum20 > 0 && momentum5 > 0 && agreement === 1)
-    regime = "UPTREND";
-  else if (momentum20 < 0 && momentum5 < 0 && agreement === 1)
-    regime = "DOWNTREND";
+  else if (momentum20 > 0 && momentum5 > 0) regime = "UPTREND";
+  else if (momentum20 < 0 && momentum5 < 0) regime = "DOWNTREND";
   return {
     regime,
     regime_conf: clamp(
@@ -136,7 +129,6 @@ function classifyRegime(cs, higher = []) {
     vol_percentile: rank,
     momentum20,
     momentum5,
-    trendAgreement: agreement,
   };
 }
 function validLabels(outcomes, symbol, setupKey, side, now) {
@@ -166,8 +158,6 @@ function validLabels(outcomes, symbol, setupKey, side, now) {
 function analyzeNineAI({
   symbol,
   candles4h,
-  candles1h = [],
-  candles1d = [],
   market = {},
   outcomes = [],
   config = {},
@@ -188,21 +178,11 @@ function analyzeNineAI({
   });
   if (!hasContiguousHistory(cs, BAR_MS, 541))
     return wait("INSUFFICIENT_90D_CLOSED_4H_HISTORY");
-  const h = closedCandles(candles1h, now),
-    d = closedCandles(candles1d, now);
-  if (
-    !hasContiguousHistory(h, 3600000, 25) ||
-    !hasContiguousHistory(d, 86400000, 21)
-  )
-    return wait("MISSING_MULTITIMEFRAME_CLOSED_CANDLES");
   const last = cs.at(-1),
     prev = cs.at(-2),
     before = cs.at(-3),
     closes = cs.map((c) => c.close);
-  const regime = classifyRegime(cs, [
-    h.at(-1).close / h.at(-25).close - 1,
-    d.at(-1).close / d.at(-21).close - 1,
-  ]);
+  const regime = classifyRegime(cs);
   const ranges = cs
     .slice(1)
     .map((c, i) =>
@@ -377,8 +357,6 @@ function analyzeNineAI({
     observedAt: now,
     trackRecord: market.trackRecord || {},
     candleCutoffAt: now,
-    closed1hAt: h.at(-1).closeTime,
-    closed1dAt: d.at(-1).closeTime,
     closedOIAt: finite(market.oiObservedAt),
   };
   const policy = { ...DEFAULT_POLICY, ...config };

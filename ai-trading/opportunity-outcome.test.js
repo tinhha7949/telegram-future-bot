@@ -2,6 +2,7 @@
 const { test } = require("node:test"),
   assert = require("node:assert/strict");
 const { evaluatePlan, CONTRACT } = require("./opportunity-outcome");
+const { DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const {
   computeEvaluations,
   normalizeCandles,
@@ -74,7 +75,7 @@ test("24-bar evaluation waits for the final closed bar and freezes only the matu
   const record = {
     signalTime: candles[5].closeTime,
     decisionSnapshot: {
-      decisionSchemaVersion: 3,
+      decisionSchemaVersion: DECISION_SCHEMA_VERSION,
       edges: { LONG: { eligible: true, plan }, SHORT: { eligible: false } },
       featureSnapshot: {
         feePct: 0.1,

@@ -1,6 +1,6 @@
 "use strict";
 const BAR_MS = 4 * 60 * 60 * 1000;
-const DECISION_SCHEMA_VERSION = 3;
+const DECISION_SCHEMA_VERSION = 4;
 const FUNDING_HOT_RATE = 0.0008;
 const fundingIsHot = (rate) =>
   Number.isFinite(rate) && Math.abs(rate) > FUNDING_HOT_RATE;
@@ -41,12 +41,6 @@ function uncertaintyFor(
     (1 - regime.regime_conf) * policy.uncertaintyPenalty +
     Math.max(0, now - snapshotAt) / BAR_MS +
     Math.max(0, now - signalAt) / BAR_MS +
-    (finite(context.closed1hAt)
-      ? Math.max(0, now - context.closed1hAt - 3600000) / 3600000
-      : 0) +
-    (finite(context.closed1dAt)
-      ? Math.max(0, now - context.closed1dAt - 86400000) / 86400000
-      : 0) +
     (finite(context.closedOIAt)
       ? Math.max(0, now - context.closedOIAt - BAR_MS) / BAR_MS
       : 0)

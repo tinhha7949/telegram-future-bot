@@ -1,5 +1,11 @@
 # Đối chiếu bản thiết kế 9 AI
 
+## Khung nến ra quyết định
+
+Chỉ dùng nến 4h đã đóng để phân tích và ra quyết định. Regime, structure và các setup dùng cùng lịch sử 4h; không tải nến khung khác để xác nhận trend hoặc phạt dữ liệu cũ. Volatility 20/90 ngày lần lượt lấy 120/540 biến động giá từ nến 4h. Momentum 5/20 ngày cũng lấy từ 30/120 nến 4h. Lịch học mỗi ngày vẫn giữ như thiết kế; đây là lịch chạy công việc, không phải một khung nến phân tích.
+
+Cache/quyết định và candidate từ phiên bản trước được giữ để tra cứu, không tái sử dụng trong engine phiên bản 4 chỉ dùng 4h. Nhãn MAE/MFE thật vẫn được dùng; không đổi SL/TP đã lưu của vị thế đang mở.
+
 ## Quy tắc đặt SL/TP
 
 - Khi AI-7 dùng được: SL chỉ lấy phân vị MAE p80; TP1/TP2 chỉ lấy MFE p50/p90. Không trộn hỗ trợ, kháng cự hoặc ATR vào SL AI-7. Mức giá được tính lại theo entry khớp thực tế; làm tròn SL về phía entry theo tick của sàn, không nới xa phân vị.
@@ -11,7 +17,7 @@
 
 | Phần | Đã gỡ | Luồng hiện tại |
 | --- | --- | --- |
-| AI-1 | Sàn momentum 1,2% riêng | Momentum cùng pha xác định hướng, volatility theo phân vị |
+| AI-1 | Sàn momentum 1,2% riêng và xác nhận từ khung nến khác | Chỉ lịch sử 4h; momentum cùng pha xác định hướng, volatility theo phân vị |
 | AI-2 | Fractal 5 nến và quyền phủ quyết theo bias | Fractal giữa 2 nến kề; bias/vùng giá là đầu ra |
 | AI-3 | Bắt thêm volume, thân nến tối thiểu theo ATR, OI bắt buộc tăng | Pullback + đẩy xác nhận đúng trend; funding/OI tham gia ước lượng |
 | AI-4 | Spread 0,15% như veto riêng; volume phải nở 25%; đuổi giá đo bằng ATR | Volume nở trên range, bar xác nhận giữ vùng, không vượt cả độ rộng range; spread vào p/chi phí |
@@ -31,6 +37,6 @@ Vòng live ngoài regime không xu hướng vẫn WAIT theo đúng pseudocode ng
 
 ## Kiểm thử đối chiếu
 
-nine-ai-spec.test.js kiểm tra trực tiếp SL/TP phân vị trước/sau fill, pooling theo setup, MAE bằng 0 không bị thay bằng ATR, fractal 3 nến, liquidation không tạo veto, Continuation không nhận thêm bộ lọc volume/OI, Breakout giữ vùng, chọn setup bằng edge, stale penalty, danh sách coin và loại cache cũ.
+nine-ai-spec.test.js kiểm tra trực tiếp SL/TP phân vị trước/sau fill, pooling theo setup, MAE bằng 0 không bị thay bằng ATR, fractal 3 nến, liquidation không tạo veto, Continuation không nhận thêm bộ lọc volume/OI, Breakout giữ vùng, chọn setup bằng edge, stale penalty, danh sách coin và loại cache cũ. nine-ai-pipeline.test.js xác nhận LONG/SHORT chỉ cần nến 4h, kiểm độc lập volatility 120/540 returns, momentum cùng lịch sử 4h và loại nến chưa đóng.
 
 Các bài kiểm tra lifecycle/accounting giữ nguyên yêu cầu chốt nửa, restart, timeout, đối soát fee/funding/slippage/R và bổ sung phục hồi dữ liệu MAE/MFE thiếu. Các bài kiểm tra học xác nhận candidate có thể thắng với ít cơ hội và uplift dương nhỏ, calibration không cần đợi 30 lệnh, shadow đủ 14 ngày có thể promote khi mọi nhãn đã chín. Chưa dùng VPS hay tài khoản thật để thực thi lệnh trong quá trình kiểm thử.
