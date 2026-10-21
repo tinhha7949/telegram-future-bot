@@ -69,15 +69,31 @@ function hydrateFill(trade, order) {
   const sign = trade.side === "LONG" ? 1 : -1;
   trade.entry = entry;
   trade.price = p.entry;
-  trade.sl = p.sl;
+  const quantiles = trade.tradePlan;
+  const ai7 =
+    quantiles?.outcomeMode === "AI7_LABELED" &&
+    [quantiles.maePct, quantiles.mfe50Pct, quantiles.mfe90Pct].every(
+      Number.isFinite,
+    );
   const rules = trade.rules;
+  trade.sl = ai7
+    ? roundStep(
+        entry * (1 - (sign * quantiles.maePct) / 100),
+        rules.tick,
+        sign > 0 ? "ceil" : "floor",
+      )
+    : p.sl;
   trade.tp1 = roundStep(
-    entry + sign * Math.abs(p.tp1 - p.entry),
+    ai7
+      ? entry * (1 + (sign * quantiles.mfe50Pct) / 100)
+      : entry + sign * Math.abs(p.tp1 - p.entry),
     rules.tick,
     sign > 0 ? "floor" : "ceil",
   );
   trade.tp2 = roundStep(
-    entry + sign * Math.abs(p.tp2 - p.entry),
+    ai7
+      ? entry * (1 + (sign * quantiles.mfe90Pct) / 100)
+      : entry + sign * Math.abs(p.tp2 - p.entry),
     rules.tick,
     sign > 0 ? "floor" : "ceil",
   );
@@ -104,6 +120,13 @@ function hydrateFill(trade, order) {
     plannedTP: p.tp2,
     actualEntry: entry,
     actualSL: trade.sl,
+    rawQuantileSL: ai7 ? entry * (1 - (sign * quantiles.maePct) / 100) : null,
+    rawQuantileTP1: ai7
+      ? entry * (1 + (sign * quantiles.mfe50Pct) / 100)
+      : null,
+    rawQuantileTP2: ai7
+      ? entry * (1 + (sign * quantiles.mfe90Pct) / 100)
+      : null,
     actualTP1: trade.tp1,
     actualTP: trade.tp2,
     entrySlippage: entry - p.entry,
@@ -183,6 +206,12 @@ class TradeLifecycle {
       .createIndex(
         { tradeId: 1 },
         { unique: true, name: "uniq_nine_ai_outcome_trade" },
+      );
+    await this.db
+      .collection("nine_ai_outcome_labels")
+      .createIndex(
+        { source: 1, labeled: 1, closedAt: -1 },
+        { name: "nine_ai_labeled_outcomes_by_close" },
       );
     const pending = await this.trades.find({ result: "PENDING" }).toArray();
     for (const t of pending) {
@@ -321,16 +350,6 @@ class TradeLifecycle {
   }
   async enter(trade) {
     if (this.entryRunning || this.uncertain || this.untracked.size)
-      return false;
-    // Keep the user-authorized initial phase to one or two concurrent trades
-    // while awaiting its first usable real outcomes. This counts durable active
-    // trade plans, so restarting cannot reset the initial-position allowance.
-    if (
-      trade.tradePlan?.outcomeMode === "AI2_INITIAL" &&
-      [...this.active.values()].filter(
-        (t) => t.tradePlan?.outcomeMode === "AI2_INITIAL",
-      ).length >= 2
-    )
       return false;
     this.entryRunning = true;
     trade.opening = true;
@@ -553,6 +572,10 @@ class TradeLifecycle {
     t.maxFavorableMove = Math.max(Number(t.maxFavorableMove) || 0, move);
   }
   async excursions(t, until = this.now()) {
+    // Retry incomplete measurement from entry, rather than permanently losing
+    // a missing interval and then treating a partially measured trade as labeled.
+    if (t.excursionDataIncomplete) t.excursionCursor = 0;
+    t.excursionDataIncomplete = false;
     let cursor = Math.max(
       Math.ceil(Number(t.enteredAt) / 60000) * 60000,
       Number(t.excursionCursor) || 0,
@@ -570,6 +593,7 @@ class TradeLifecycle {
       for (const row of rows) {
         if (Number(row[0]) !== cursor) {
           t.excursionDataIncomplete = true;
+          break;
         }
         if (Number(row[0]) >= t.enteredAt && Number(row[6]) <= until) {
           this.observe(t, row[2]);
@@ -577,8 +601,10 @@ class TradeLifecycle {
         }
         cursor = Number(row[0]) + 60000;
       }
+      if (t.excursionDataIncomplete) break;
       if (rows.length < 1500) break;
     }
+    if (cursor <= end) t.excursionDataIncomplete = true;
     t.excursionCursor = cursor;
     t.excursionSource = "CLOSED_1M_BARS_AND_OBSERVED_MARK_AND_FILL_PRICES";
     t.excursionBoundaryPrecision = "SAMPLED_WITHIN_ENTRY_AND_EXIT_MINUTES";
@@ -641,6 +667,7 @@ class TradeLifecycle {
     t.closedAccounting = closed;
     t.accountingPending = true;
     await this.persist(t);
+    if (t.excursionDataIncomplete) return false;
     const actualRisk = getTradeActualRisk(t),
       tradeId = t.signalKey;
     if (!(actualRisk > 0)) throw new Error("ACTUAL_INITIAL_RISK_MISSING");

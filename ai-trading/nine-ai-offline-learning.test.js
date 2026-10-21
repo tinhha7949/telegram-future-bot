@@ -9,7 +9,7 @@ const row = (i = 0) => ({
   signalTime: 1700000000000 + i * l.BAR_MS,
   outcomeStatus: "EVALUATED",
   decisionSnapshot: {
-    decisionSchemaVersion: 2,
+    decisionSchemaVersion: 3,
     setup: "NINE_AI_4H",
     regime: { regime: "UPTREND" },
     agents: { flow: { confirmation: "CONFIRMED", confirmationSide: "LONG" } },
@@ -119,6 +119,7 @@ test("shadow cannot promote before 14 complete days plus 24-bar outcome maturity
   await db.collection("nine_ai_policy_candidates").insertOne({
     _id: "shadow",
     status: "SHADOW_PENDING",
+    policySchemaVersion: 3,
     params: { ...l.DEFAULT_CHAMPION, minEdge: 0.025 },
     championParams: { ...l.DEFAULT_CHAMPION },
     shadowStartedAt: start,
@@ -170,5 +171,70 @@ test("accounting retries use the stable trade key even when Mongo IDs appear aft
   assert.equal(
     db.collection("nine_ai_actual_outcomes").rows[0].tradeId,
     "TEST:1",
+  );
+});
+test("candidate qualification has no 400-row, trade-count or extra .02R-uplift gate", () => {
+  const rows = Array.from({ length: 30 }, (_, i) => {
+    const r = row(i);
+    r.signalTime = 1700000000000 + i * 7 * l.DAY_MS;
+    Object.assign(r.decisionSnapshot.edges.LONG, {
+      p: 0.6,
+      expectedR: 0.4,
+      cost: 0.1,
+      baseUncertainty: 0.1,
+    });
+    r.evaluations[24].longNetR = 0.01;
+    return r;
+  });
+  const result = l.trainCandidate(rows, l.DEFAULT_CHAMPION);
+  assert.equal(result.status, "SHADOW_PENDING");
+  assert.equal(result.uplift, 0.01);
+});
+test("one realized calibration deviation is reported without a 30-trade prerequisite", () => {
+  assert.equal(
+    l.calibrationSummary([{ predictedEdgeR: 0.5, realizedR: 0.49 }]).status,
+    "RED_FLAG_CALIBRATION_DRIFT",
+  );
+  assert.equal(
+    l.calibrationSummary([
+      { predictedEdgeR: 1, realizedR: 0 },
+      { predictedEdgeR: 0, realizedR: 1 },
+    ]).status,
+    "RED_FLAG_CALIBRATION_DRIFT",
+  );
+});
+test("a winning fully matured shadow can promote at 14 days, without a fixed extra timer", async () => {
+  const { memoryDb } = require("./test-fixtures.cjs"),
+    db = memoryDb(),
+    start = 1700000000000;
+  let now = start + 14 * l.DAY_MS - 1;
+  const service = l.createOfflineLearning(db, { now: () => now });
+  await service.initialize();
+  await db.collection("nine_ai_policy_candidates").insertOne({
+    _id: "small-shadow",
+    policySchemaVersion: 3,
+    status: "SHADOW_PENDING",
+    params: { ...l.DEFAULT_CHAMPION, minEdge: 0.025 },
+    championParams: { ...l.DEFAULT_CHAMPION },
+    shadowStartedAt: start,
+  });
+  const r = row(0);
+  r.signalTime = start;
+  Object.assign(r.decisionSnapshot.edges.LONG, {
+    p: 0.6,
+    expectedR: 0.4,
+    cost: 0.1,
+    baseUncertainty: 0.1,
+  });
+  r.evaluations[24].longNetR = 0.01;
+  await db.collection("nine_ai_decision_journal").insertOne(r);
+  assert.equal(
+    (await service.runDailyCycle()).shadowResult.status,
+    "SHADOW_CONTINUES",
+  );
+  now = start + 14 * l.DAY_MS;
+  assert.equal(
+    (await service.runDailyCycle()).shadowResult.status,
+    "PROMOTED_CHAMPION",
   );
 });

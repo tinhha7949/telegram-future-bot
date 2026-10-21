@@ -213,26 +213,14 @@ function harness({ initial = false, shared = false } = {}) {
     },
   };
 }
-test("at most two initial positions await feedback without limiting AI-7 entries", async () => {
-  const h = harness({ initial: true });
-  const l = h.create();
+test("initial AI-2 plans do not add a two-position strategy veto", async () => {
+  const h = harness({ initial: true }),
+    l = h.create();
   await l.initialize();
   l.active.set("one", { tradePlan: { outcomeMode: "AI2_INITIAL" } });
   l.active.set("two", { tradePlan: { outcomeMode: "AI2_INITIAL" } });
-  assert.equal(await l.enter(h.trade), false);
-  assert.equal(h.calls.filter((c) => c === "entry").length, 0);
-  const f = fixture();
-  const d = analyzeNineAI(f);
-  const t = newTrade(d, {
-    quantity: 2,
-    sl: d.sl,
-    tp1: d.tp1,
-    tp2: d.tp2,
-    risk: 2 * Math.abs(d.entry - d.sl),
-    rules: h.trade.rules,
-  });
-  h.exchange.entryPrice = d.entry;
-  assert.equal(await l.enter(t), true);
+  assert.equal(await l.enter(h.trade), true);
+  assert.equal(h.calls.filter((c) => c === "entry").length, 1);
 });
 
 test("empty database -> AI-2 initial trade -> restart -> close -> first real label -> AI-7", async () => {
@@ -244,6 +232,9 @@ test("empty database -> AI-2 initial trade -> restart -> close -> first real lab
   l = h.create();
   await l.initialize();
   await l.tick();
+  h.exchange.entryPrice = h.trade.entry - 0.5;
+  await l.tick();
+  h.exchange.entryPrice = h.trade.entry;
   h.exchange.trigger("tp1");
   await l.tick();
   h.exchange.trigger("tp2");
@@ -346,6 +337,38 @@ test("entry -> durable full plan -> restart -> TP1 -> restart -> TP2 -> complete
   const actual = h.db.collection("nine_ai_actual_outcomes").rows[0];
   assert.equal(actual.realizedR, h.journal.actuals[0].realizedR);
   assert.equal(h.db.collection("nine_ai_outcome_labels").rows.length, 1);
+});
+test("missing MAE/MFE history stays pending and is labeled once the real interval is recovered", async () => {
+  const h = harness({ initial: true }),
+    l = h.create();
+  await l.initialize();
+  assert.equal(await l.enter(h.trade), true);
+  h.advance(120000);
+  h.exchange.trigger("tp1");
+  await l.tick();
+  h.exchange.trigger("tp2");
+  await l.tick();
+  assert.equal(l.active.size, 1);
+  assert.equal(h.db.collection("nine_ai_outcome_labels").rows.length, 0);
+  h.exchange.candles = async (_, interval, limit, { startTime, endTime }) => {
+    const rows = [];
+    for (let at = startTime; at + 59999 <= endTime; at += 60000)
+      rows.push([
+        at,
+        h.trade.entry,
+        h.trade.entry + 1,
+        h.trade.entry - 0.4,
+        h.trade.entry + 0.1,
+        100,
+        at + 59999,
+      ]);
+    return rows;
+  };
+  await l.tick();
+  assert.equal(l.active.size, 0);
+  const labels = h.db.collection("nine_ai_outcome_labels").rows;
+  assert.equal(labels.length, 1);
+  assert.ok(labels[0].maePct > 0);
 });
 test("restart immediately after accepted MARKET recovers full TP1 plan from the claim", async () => {
   const h = harness(),

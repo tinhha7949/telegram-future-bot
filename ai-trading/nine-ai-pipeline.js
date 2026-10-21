@@ -1,11 +1,17 @@
 "use strict";
-const { DEFAULT_POLICY, applyPolicy } = require("./nine-ai-policy");
+const {
+  DEFAULT_POLICY,
+  applyPolicy,
+  DECISION_SCHEMA_VERSION,
+  selectDirectionCandidate,
+  uncertaintyFor,
+  fundingIsHot,
+} = require("./nine-ai-policy");
 const {
   initialStructurePlan,
   initialProbability,
 } = require("./initial-structure-plan");
-const BAR_MS = 4 * 60 * 60 * 1000,
-  MAX_DATA_AGE_MS = 5 * 60 * 1000;
+const BAR_MS = 4 * 60 * 60 * 1000;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = (v, fallback = null) =>
   v == null || v === ""
@@ -74,7 +80,7 @@ function hasContiguousHistory(cs, interval, minimum) {
     .slice(-minimum)
     .every((c, i, all) => !i || c.time - all[i - 1].time === interval);
 }
-function swingPoints(cs, radius = 2) {
+function swingPoints(cs, radius = 1) {
   const highs = [],
     lows = [];
   for (let i = radius; i < cs.length - radius; i++) {
@@ -112,9 +118,9 @@ function classifyRegime(cs, higher = []) {
     : 0;
   let regime = "RANGE";
   if (rank !== null && rank >= 0.8) regime = "HIGH_VOL";
-  else if (momentum20 > 0.012 && momentum5 > 0 && agreement === 1)
+  else if (momentum20 > 0 && momentum5 > 0 && agreement === 1)
     regime = "UPTREND";
-  else if (momentum20 < -0.012 && momentum5 < 0 && agreement === 1)
+  else if (momentum20 < 0 && momentum5 < 0 && agreement === 1)
     regime = "DOWNTREND";
   return {
     regime,
@@ -139,9 +145,7 @@ function validLabels(outcomes, symbol, setupKey, side, now) {
     if (
       o?.source !== "REALIZED_CLOSED_TRADE" ||
       o.labeled !== true ||
-      String(o.symbol).toUpperCase() !== String(symbol).toUpperCase() ||
       o.setupKey !== setupKey ||
-      o.side !== side ||
       typeof o.win !== "boolean" ||
       ![o.maePct, o.mfePct].every(
         (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
@@ -179,7 +183,7 @@ function analyzeNineAI({
     authorizedForExecution: false,
     reason,
     agents: null,
-    decisionSchemaVersion: 2,
+    decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     ...extra,
   });
   if (!hasContiguousHistory(cs, BAR_MS, 541))
@@ -191,12 +195,6 @@ function analyzeNineAI({
     !hasContiguousHistory(d, 86400000, 21)
   )
     return wait("MISSING_MULTITIMEFRAME_CLOSED_CANDLES");
-  if (
-    now - cs.at(-1).closeTime > BAR_MS ||
-    now - h.at(-1).closeTime > 3600000 ||
-    now - d.at(-1).closeTime > 86400000
-  )
-    return wait("STALE_CANDLE_CONTEXT");
   const last = cs.at(-1),
     prev = cs.at(-2),
     before = cs.at(-3),
@@ -247,50 +245,52 @@ function analyzeNineAI({
   const spread = finite(market.spreadPct),
     depth = finite(market.depthNotional),
     latency = finite(market.latencyMs);
-  const fundingHot =
-    funding !== null &&
-    Math.abs(funding) > finite(config.maxAbsFunding, 0.0008);
+  const fundingHot = fundingIsHot(funding);
   const volume = mean(cs.slice(-21, -1).map((c) => c.volume)),
     volumeRatio = volume > 0 ? last.volume / volume : 0;
-  const impulse = Math.abs(last.close - last.open) >= atr * 0.2;
   // Pullback occurs in prior bars; the current closed bar confirms a renewed push.
   const pullbackLong = prev.close < before.close || prev.low < before.low;
   const pullbackShort = prev.close > before.close || prev.high > before.high;
-  const continuationSide =
-    oi > 0 && !fundingHot && volumeRatio >= 1.05 && impulse
-      ? regime.regime === "UPTREND" &&
-        pullbackLong &&
-        last.close > prev.high &&
-        last.close > last.open
-        ? "LONG"
-        : regime.regime === "DOWNTREND" &&
-            pullbackShort &&
-            last.close < prev.low &&
-            last.close < last.open
-          ? "SHORT"
-          : null
-      : null;
-  const rangeHigh = Math.max(...cs.slice(-21, -1).map((c) => c.high)),
-    rangeLow = Math.min(...cs.slice(-21, -1).map((c) => c.low));
+  const continuationSide = !fundingHot
+    ? regime.regime === "UPTREND" &&
+      pullbackLong &&
+      last.close > prev.high &&
+      last.close > last.open
+      ? "LONG"
+      : regime.regime === "DOWNTREND" &&
+          pullbackShort &&
+          last.close < prev.low &&
+          last.close < last.open
+        ? "SHORT"
+        : null
+    : null;
+  const rangeBars = cs.slice(-22, -2);
+  const rangeHigh = Math.max(...rangeBars.map((c) => c.high)),
+    rangeLow = Math.min(...rangeBars.map((c) => c.low));
+  const rangeVolume = mean(rangeBars.map((c) => c.volume));
+  const breakoutVolumeRatio = rangeVolume > 0 ? prev.volume / rangeVolume : 0;
   const rawBreakout =
-    last.close > rangeHigh ? "LONG" : last.close < rangeLow ? "SHORT" : null;
+    prev.close > rangeHigh ? "LONG" : prev.close < rangeLow ? "SHORT" : null;
   const held =
     rawBreakout === "LONG"
-      ? last.low >= rangeHigh - atr * 0.25
+      ? last.low >= rangeHigh
       : rawBreakout === "SHORT"
-        ? last.high <= rangeLow + atr * 0.25
+        ? last.high <= rangeLow
         : false;
-  const extension = Math.abs(last.close - closes.at(-5)) / atr;
+  // A closed bar confirms the prior volume breakout. Do not chase a price that
+  // has already traversed a complete measured range beyond the broken level.
+  const rangeWidth = rangeHigh - rangeLow;
+  const extension =
+    rangeWidth > 0
+      ? Math.abs(last.close - (rawBreakout === "LONG" ? rangeHigh : rangeLow)) /
+        rangeWidth
+      : Infinity;
   const breakoutSide =
     held &&
-    volumeRatio >= 1.25 &&
+    breakoutVolumeRatio > 1 &&
     spread !== null &&
     spread >= 0 &&
-    spread <= 0.15 &&
-    extension < 2.5 &&
-    (rawBreakout === "LONG"
-      ? regime.regime === "UPTREND"
-      : regime.regime === "DOWNTREND")
+    extension < 1
       ? rawBreakout
       : null;
   const vw = cs.slice(-24),
@@ -305,15 +305,15 @@ function analyzeNineAI({
   const deviation = vwap ? (last.close - vwap) / atr : 0,
     rangeRegime = ["RANGE", "HIGH_VOL"].includes(regime.regime);
   const revertSide =
-    rangeRegime && liq !== null && Math.abs(deviation) >= 1.25
-      ? deviation > 0 && liq < -0.05
+    rangeRegime && liq !== null
+      ? deviation > 0 && liq < 0
         ? "SHORT"
-        : deviation < 0 && liq > 0.05
+        : deviation < 0 && liq > 0
           ? "LONG"
           : null
       : null;
   const flowSide =
-    liq !== null && Math.abs(liq) >= 0.05 && !fundingHot
+    liq !== null && liq !== 0 && !fundingHot
       ? liq > 0
         ? "LONG"
         : "SHORT"
@@ -375,7 +375,11 @@ function analyzeNineAI({
     regime,
     structureBias,
     observedAt: now,
+    trackRecord: market.trackRecord || {},
     candleCutoffAt: now,
+    closed1hAt: h.at(-1).closeTime,
+    closed1dAt: d.at(-1).closeTime,
+    closedOIAt: finite(market.oiObservedAt),
   };
   const policy = { ...DEFAULT_POLICY, ...config };
   const agents = {
@@ -402,8 +406,8 @@ function analyzeNineAI({
       side: breakoutSide,
       p: null,
       held,
-      extensionAtr: extension,
-      volumeRatio,
+      extensionRangeWidths: extension,
+      volumeRatio: breakoutVolumeRatio,
     },
     meanReversion: {
       side: revertSide,
@@ -434,34 +438,37 @@ function analyzeNineAI({
     },
   };
   if (
+    funding === null ||
     fee === null ||
     fee < 0 ||
     Object.values(fundingBySide).some((v) => v === null || v < 0) ||
     slip === null ||
-    age < 0 ||
-    age > MAX_DATA_AGE_MS
+    age < 0
   )
     return wait("EXECUTION_COST_INPUTS_STALE_OR_MISSING", {
       regime,
       agents,
       featureSnapshot,
     });
-  const baseUncertainty =
-    (1 - regime.regime_conf) * policy.uncertaintyPenalty +
-    (age / MAX_DATA_AGE_MS) * 0.25;
+  const baseUncertainty = uncertaintyFor(
+    regime,
+    snapshotAt,
+    last.closeTime,
+    now,
+    policy,
+    featureSnapshot,
+  );
   const models = [
     {
       name: "continuation",
       type: "CONTINUATION",
       side: continuationSide,
-      weight: 0.4,
     },
-    { name: "breakout", type: "BREAKOUT", side: breakoutSide, weight: 0.35 },
+    { name: "breakout", type: "BREAKOUT", side: breakoutSide },
     {
       name: "meanReversion",
       type: "MEAN_REVERSION",
       side: revertSide,
-      weight: 0.25,
     },
   ];
   const edges = {};
@@ -496,19 +503,11 @@ function analyzeNineAI({
           }
         : null;
       // One valid winning label is enough to start AI-7; p50 may equal p90.
-      const ai7Ready =
-        distMAE?.p80 >= 0 && distMFE?.p50 > 0 && distMFE.p90 >= distMFE.p50;
+      const ai7Ready = wins.length > 0;
       const entry = last.close;
-      const stop =
-        side === "LONG"
-          ? Math.min(
-              entry * (1 - (distMAE?.p80 ?? 0) / 100),
-              support - atr * 0.1,
-            )
-          : Math.max(
-              entry * (1 + (distMAE?.p80 ?? 0) / 100),
-              resistance + atr * 0.1,
-            );
+      const stop = ai7Ready
+        ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)
+        : null;
       const plan = ai7Ready
         ? {
             entry,
@@ -517,8 +516,11 @@ function analyzeNineAI({
             tp2: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p90) / 100),
             closePercentAtTP1: 50,
             timeoutCandles: 24,
-            stopMethod: "WINNING_MAE_P80_WITH_STRUCTURE_BUFFER",
+            stopMethod: "WINNING_MAE_P80",
             targetMethod: "WINNING_MFE_P50_P90",
+            maePct: distMAE.p80,
+            mfe50Pct: distMFE.p50,
+            mfe90Pct: distMFE.p90,
           }
         : initialStructurePlan({
             side,
@@ -533,31 +535,59 @@ function analyzeNineAI({
             rangeLow,
           });
       if (!plan || !(plan.sl > 0 && plan.tp1 > 0 && plan.tp2 > 0)) continue;
+      if (
+        side === "LONG"
+          ? !(plan.sl < entry && entry < plan.tp1 && plan.tp1 <= plan.tp2)
+          : !(plan.tp2 <= plan.tp1 && plan.tp1 < entry && entry < plan.sl)
+      )
+        continue;
       if (!ai7Ready) {
         distMAE = null;
         distMFE = null;
       }
       const stopPct = (Math.abs(entry - plan.sl) / entry) * 100;
-      const p = samples.length
-        ? (wins.length + 2) / (samples.length + 4)
-        : initialProbability(m.type, regime.momentum20, volumeRatio);
+      const directionalSamples = samples.filter((o) => o.side === side);
+      const track = market.trackRecord?.[setupKey + "_" + side] || null;
+      const probabilitySamples =
+        directionalSamples.length ||
+        (Number.isFinite(track?.samples) && track.samples > 0
+          ? track.samples
+          : 0);
+      const probabilityWins = directionalSamples.length
+        ? directionalSamples.filter((o) => o.win).length
+        : probabilitySamples
+          ? track.winningSamples
+          : 0;
+      const modelP = initialProbability(
+        m.type,
+        regime.momentum20,
+        m.type === "BREAKOUT" ? breakoutVolumeRatio : volumeRatio,
+        {
+          fundingRate: funding,
+          openInterestChange: oi,
+          spreadPct: spread,
+          deviationAtr: deviation,
+          liquidationImbalance: liq,
+        },
+      );
+      // Update the feature model with real outcomes, without a minimum-count gate
+      // or forcing the probability to zero/one after a single observed trade.
+      const p = (probabilityWins + modelP) / (probabilitySamples + 1);
       // E[R|success] uses the 50/50 exits. AI-9 keeps the specified p*E[R]-cost formula.
       const quantileRewardR =
         ((Math.abs(plan.tp1 - entry) + Math.abs(plan.tp2 - entry)) * 0.5) /
         Math.abs(entry - plan.sl);
-      const track = market.trackRecord?.[setupKey + "_" + side];
-      const expectedR =
-        track?.winningSamples >= 20 && Number.isFinite(track.meanWinGrossR)
-          ? 0.5 * quantileRewardR + 0.5 * track.meanWinGrossR
-          : quantileRewardR;
+      const expectedR = quantileRewardR;
       estimates.push({
         ...m,
         setupKey,
         samples: samples.length,
+        probabilitySamples,
+        trackRecord: track,
         winningSamples: wins.length,
         outcomeMode: ai7Ready ? "AI7_LABELED" : "AI2_INITIAL",
-        probabilitySource: samples.length
-          ? "REALIZED_SETUP_OUTCOMES"
+        probabilitySource: probabilitySamples
+          ? "FEATURE_MODEL_UPDATED_WITH_REALIZED_SETUP_OUTCOMES"
           : "FEATURE_SCORE_UNCALIBRATED",
         outcomeSource: ai7Ready
           ? "REALIZED_CLOSED_TRADE"
@@ -570,7 +600,7 @@ function analyzeNineAI({
         cost: totalCostPct / stopPct,
       });
     }
-    const chosen = estimates.sort((a, b) => b.weight - a.weight)[0];
+    const chosen = selectDirectionCandidate(estimates, baseUncertainty);
     // A missing/invalid initial structure plan cannot be replaced with invented quantiles.
     if (active.length && !chosen)
       edges[side] = {
@@ -586,7 +616,7 @@ function analyzeNineAI({
         eligible: false,
         p: 0,
         expectedR: 0,
-        cost: totalCostPct / ((atr / last.close) * 100),
+        cost: 0,
         baseUncertainty,
         reason: "NO_ACTIVE_SETUP",
         plan: null,
@@ -594,7 +624,7 @@ function analyzeNineAI({
     else {
       edges[side] = {
         ...chosen,
-        eligible: structureBias !== (side === "LONG" ? "BEARISH" : "BULLISH"),
+        eligible: true,
         baseUncertainty,
         modelEstimates: estimates.map((e) => ({
           name: e.name,
@@ -643,7 +673,7 @@ function analyzeNineAI({
     authorizedForExecution: true,
     reason: meta.reason,
     setup: "NINE_AI_4H",
-    decisionSchemaVersion: 2,
+    decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     signalAt: last.closeTime,
     entry: plan.entry,
     price: plan.entry,
@@ -665,7 +695,6 @@ function analyzeNineAI({
 }
 module.exports = {
   BAR_MS,
-  MAX_DATA_AGE_MS,
   percentile,
   closedCandles,
   swingPoints,

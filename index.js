@@ -117,11 +117,7 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
   const oiFresh =
     Array.isArray(oiHistory) &&
     oiHistory.length >= 2 &&
-    oiHistory.every(
-      (o) =>
-        Number(o.timestamp) <= observedAt &&
-        observedAt - Number(o.timestamp) <= 8 * 3600000,
-    );
+    oiHistory.every((o) => Number(o.timestamp) <= observedAt);
   const notional = (levels) =>
     Array.isArray(levels) && levels.length
       ? levels.reduce((sum, l) => sum + Number(l[0]) * Number(l[1]), 0)
@@ -140,6 +136,7 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
       bid > 0 && ask >= bid ? ((ask - bid) / ((ask + bid) / 2)) * 100 : null,
     depthNotional: bids > 0 && asks > 0 ? bids + asks : null,
     latencyMs: observedAt - started,
+    oiObservedAt: oiFresh ? Number(oiHistory.at(-1).timestamp) : null,
     liquidationImbalance: liquidationFeed.getImbalance(symbol, observedAt),
     markPrice: Number(premium?.markPrice),
     roundTripFeePct: envNumber("ROUND_TRIP_FEE_PCT", 0.1, 0, 2),
@@ -165,30 +162,7 @@ async function universe(exchange) {
       )
       .map((s) => s.symbol),
   );
-  const tickers = await exchange.request("/fapi/v1/ticker/24hr");
-  if (!Array.isArray(tickers)) throw new Error("INVALID_UNIVERSE_RESPONSE");
-  return tickers
-    .filter(
-      (t) =>
-        eligible.has(t.symbol) &&
-        Number(t.quoteVolume) >= 5000000 &&
-        Number(t.lastPrice) > 0 &&
-        (Number(t.highPrice) - Number(t.lowPrice)) / Number(t.lastPrice) >=
-          0.03 &&
-        ![
-          "USDCUSDT",
-          "BUSDUSDT",
-          "FDUSDUSDT",
-          "TUSDUSDT",
-          "USDPUSDT",
-          "DAIUSDT",
-          "USD1USDT",
-          "RLUSDUSDT",
-        ].includes(t.symbol),
-    )
-    .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
-    .slice(0, 80)
-    .map((t) => t.symbol);
+  return [...eligible].sort();
 }
 async function main() {
   for (const name of ["MONGO_URI", "BINANCE_KEY", "BINANCE_SECRET"]) {
@@ -278,7 +252,7 @@ async function main() {
   void clean();
   const daily = every(24 * 3600000, async () => {
     const symbols = await db.collection(journal.COLLECTION).distinct("symbol", {
-      "decisionSnapshot.decisionSchemaVersion": 2,
+      "decisionSnapshot.decisionSchemaVersion": 3,
       outcomeStatus: {
         $in: ["PENDING_HORIZON_EVALUATION", "PARTIALLY_EVALUATED"],
       },
@@ -308,12 +282,16 @@ async function main() {
   let scanReasons = new Map();
   const countWait = (reason) =>
     scanReasons.set(reason, (scanReasons.get(reason) || 0) + 1);
-  async function scanSymbol(symbol, champion, trackRecord) {
+  async function scanSymbol(symbol, champion, trackRecord, outcomes) {
     const probe = pipeline
       .closedCandles(await exchange.candles(symbol, "4h", 3), Date.now())
       .at(-1);
     if (!probe) return null;
-    const prior = await journal.getDecisionForCandle(symbol, probe.closeTime);
+    const prior = await journal.getDecisionForCandle(
+      symbol,
+      probe.closeTime,
+      3,
+    );
     if (prior) {
       const cached = central.finalizeDecision(
         prior.decisionSnapshot?.executionDecision,
@@ -331,17 +309,6 @@ async function main() {
     ]);
     await journal.settleMatured(symbol, h4);
     const market = await marketSnapshot(exchange, symbol);
-    const outcomes = await db
-      .collection("nine_ai_outcome_labels")
-      .find({
-        symbol,
-        labeled: true,
-        source: "REALIZED_CLOSED_TRADE",
-        closedAt: { $lte: market.now },
-      })
-      .sort({ closedAt: -1 })
-      .limit(5000)
-      .toArray();
     let decision = pipeline.analyzeNineAI({
       symbol,
       candles4h: h4,
@@ -379,14 +346,29 @@ async function main() {
     await db.command({ ping: 1 });
     const positions = await exchange.positions();
     if (positions.length >= TRADE_CONFIG.maxActivePositions) return;
-    const symbols = await universe(exchange),
-      champion = await learner.getChampionConfig(),
-      track = await learner.getTrackRecord();
+    const cutoffAt = Date.now();
+    const [symbols, champion, track, outcomes] = await Promise.all([
+      universe(exchange),
+      learner.getChampionConfig(),
+      learner.getTrackRecord(),
+      db
+        .collection("nine_ai_outcome_labels")
+        .find({
+          labeled: true,
+          source: "REALIZED_CLOSED_TRADE",
+          closedAt: { $lte: cutoffAt },
+        })
+        .sort({ closedAt: -1 })
+        .limit(5000)
+        .toArray(),
+    ]);
     const signals = [];
     scanReasons = new Map();
     for (let i = 0; i < symbols.length && !stopped; i += 5) {
       const batch = await Promise.allSettled(
-        symbols.slice(i, i + 5).map((s) => scanSymbol(s, champion, track)),
+        symbols
+          .slice(i, i + 5)
+          .map((s) => scanSymbol(s, champion, track, outcomes)),
       );
       for (const r of batch) {
         if (r.status === "fulfilled" && r.value) signals.push(r.value);
