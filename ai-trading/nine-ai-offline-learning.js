@@ -186,7 +186,7 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
           params,
           train,
           validation,
-          objective: validation.averageNetR,
+          objective: train.averageNetR,
         });
       }
     }
@@ -201,6 +201,22 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
       },
     };
   const selected = grid[0];
+  const championValidation = evaluatePolicy(splits.validation, champion);
+  if (!(selected.validation.averageNetR > championValidation.averageNetR)) {
+    return {
+      status: "CANDIDATE_DID_NOT_BEAT_CHAMPION_VALIDATION",
+      candidate: selected.params,
+      candidateTrain: selected.train,
+      candidateValidation: selected.validation,
+      championValidation,
+      sampleCounts: {
+        train: splits.train.length,
+        validation: splits.validation.length,
+        test: splits.test.length,
+      },
+      purgeEmbargoMs: splits.purgeEmbargoMs,
+    };
+  }
   const candidateTest = evaluatePolicy(splits.test, selected.params);
   const championTest = evaluatePolicy(splits.test, champion);
   const uplift = candidateTest.averageNetR - championTest.averageNetR;
@@ -221,6 +237,9 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
   return {
     status: "SHADOW_PENDING",
     candidate: selected.params,
+    candidateTrain: selected.train,
+    candidateValidation: selected.validation,
+    championValidation,
     candidateTest,
     championTest,
     uplift,
@@ -233,12 +252,24 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
   };
 }
 
+function predictedNetR(row) {
+  const direct = finite(row?.predictedR);
+  if (direct !== null) return direct;
+  // Older complete snapshots can be reconstructed without treating the
+  // uncertainty-adjusted decision score as an expected trade result.
+  const p = finite(row?.predictedProbability),
+    expected = finite(row?.predictedExpectedR),
+    cost = finite(row?.predictedCostR ?? row?.edges?.[row?.side]?.cost);
+  return p !== null && expected !== null && cost !== null
+    ? p * expected - cost
+    : null;
+}
+
 function calibrationSummary(rows) {
   const usable = rows.filter(
     (r) =>
-      r.predictedEdgeR != null &&
+      predictedNetR(r) !== null &&
       r.realizedR != null &&
-      Number.isFinite(Number(r.predictedEdgeR)) &&
       Number.isFinite(Number(r.realizedR)),
   );
   if (!usable.length)
@@ -249,7 +280,7 @@ function calibrationSummary(rows) {
       biasR: null,
       maeR: null,
     };
-  const predicted = usable.map((r) => Number(r.predictedEdgeR));
+  const predicted = usable.map(predictedNetR);
   const realized = usable.map((r) => Number(r.realizedR));
   const biasR = mean(predicted.map((v, i) => v - realized[i]));
   const maeR = mean(predicted.map((v, i) => Math.abs(v - realized[i])));
@@ -297,6 +328,7 @@ function createOfflineLearning(db, options = {}) {
       {
         $setOnInsert: {
           params: { ...DEFAULT_CHAMPION },
+          policySchemaVersion: DECISION_SCHEMA_VERSION,
           version: 1,
           status: "CHAMPION",
           createdAt: new Date(now()),
@@ -304,19 +336,44 @@ function createOfflineLearning(db, options = {}) {
       },
       { upsert: true },
     );
+    const previous = await championState.findOne({ _id: "active" });
+    if (previous?.policySchemaVersion !== DECISION_SCHEMA_VERSION) {
+      await championState.updateOne(
+        { _id: "active" },
+        {
+          $set: {
+            previousChampion: {
+              params: previous?.params || {},
+              version: previous?.version || null,
+              policySchemaVersion: previous?.policySchemaVersion ?? null,
+            },
+            params: { ...DEFAULT_CHAMPION },
+            policySchemaVersion: DECISION_SCHEMA_VERSION,
+            version: Number(previous?.version || 1) + 1,
+            updatedAt: new Date(now()),
+          },
+        },
+      );
+    }
     return { ready: true, champion: await getChampionConfig() };
   }
 
   async function getChampionConfig() {
     const state = await championState.findOne({ _id: "active" });
-    return { ...DEFAULT_CHAMPION, ...(state?.params || {}) };
+    return state?.policySchemaVersion === DECISION_SCHEMA_VERSION
+      ? { ...DEFAULT_CHAMPION, ...(state.params || {}) }
+      : { ...DEFAULT_CHAMPION };
   }
 
-  async function getTrackRecord() {
-    if (trackRecordCache && now() - trackRecordCacheAt < 5 * 60 * 1000)
+  async function getTrackRecord(asOf = now()) {
+    if (
+      trackRecordCache &&
+      asOf >= trackRecordCacheAt &&
+      asOf - trackRecordCacheAt < 5 * 60 * 1000
+    )
       return trackRecordCache;
     const rows = await actuals
-      .find({ closedAt: { $gte: now() - 180 * DAY_MS } })
+      .find({ closedAt: { $gte: asOf - 180 * DAY_MS, $lte: asOf } })
       .sort({ closedAt: -1 })
       .limit(5000)
       .toArray();
@@ -351,7 +408,7 @@ function createOfflineLearning(db, options = {}) {
         },
       ]),
     );
-    trackRecordCacheAt = now();
+    trackRecordCacheAt = asOf;
     return trackRecordCache;
   }
 
@@ -387,6 +444,10 @@ function createOfflineLearning(db, options = {}) {
       requestedRiskBudget: finite(trade.risk),
       closedAt: Number(closed.closedAt) || now(),
       predictedEdgeR: finite(pred.predictedEdgeR),
+      predictedR: predictedNetR({ ...pred, side: trade.side }),
+      predictedCostR: finite(
+        pred.predictedCostR ?? pred.edges?.[trade.side]?.cost,
+      ),
       predictedProbability: finite(pred.predictedProbability),
       predictedExpectedR: finite(pred.predictedExpectedR),
       realizedR,
@@ -418,7 +479,7 @@ function createOfflineLearning(db, options = {}) {
     const runDate = new Date(runAt).toISOString().slice(0, 10);
     const champion = await getChampionConfig();
     const actualRows = await actuals
-      .find({ closedAt: { $gte: runAt - 180 * DAY_MS } })
+      .find({ closedAt: { $gte: runAt - 180 * DAY_MS, $lte: runAt } })
       .sort({ closedAt: -1 })
       .limit(5000)
       .toArray();
@@ -480,6 +541,7 @@ function createOfflineLearning(db, options = {}) {
           {
             $set: {
               params: activeShadow.params,
+              policySchemaVersion: DECISION_SCHEMA_VERSION,
               version: Number(currentChampion?.version || 1) + 1,
               promotedCandidateId: activeShadow._id,
               promotedAt: new Date(runAt),
@@ -551,6 +613,9 @@ function createOfflineLearning(db, options = {}) {
             },
             trainValidationTest: {
               uplift: candidateResult.uplift,
+              candidateTrain: candidateResult.candidateTrain,
+              candidateValidation: candidateResult.candidateValidation,
+              championValidation: candidateResult.championValidation,
               candidateTest: candidateResult.candidateTest,
               championTest: candidateResult.championTest,
             },
@@ -608,5 +673,6 @@ module.exports = {
   trainCandidate,
   trainCandidateAsync,
   calibrationSummary,
+  predictedNetR,
   createOfflineLearning,
 };

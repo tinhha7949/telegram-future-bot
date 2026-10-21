@@ -31,7 +31,6 @@ function validateExecution(decision, market, now = Date.now()) {
     market.spreadPct < 0 ||
     market.latencyMs < 0 ||
     market.roundTripFeePct < 0 ||
-    Object.values(market.expectedFundingCostPctBySide).some((v) => v < 0) ||
     market.markPrice <= 0
   )
     return { ok: false, reason: "EXECUTION_INPUTS_UNAVAILABLE" };

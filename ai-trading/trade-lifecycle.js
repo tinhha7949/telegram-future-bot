@@ -44,6 +44,11 @@ function newTrade(decision, sizing, now = Date.now()) {
     nineAiPredictionSnapshot: {
       edges: decision.edges,
       predictedEdgeR: decision.edges[decision.side].edge,
+      predictedR:
+        decision.edges[decision.side].p *
+          decision.edges[decision.side].expectedR -
+        decision.edges[decision.side].cost,
+      predictedCostR: decision.edges[decision.side].cost,
       predictedProbability: decision.edges[decision.side].p,
       predictedExpectedR: decision.edges[decision.side].expectedR,
     },
@@ -685,6 +690,8 @@ class TradeLifecycle {
             mfe: t.maxFavorableMove,
             maePct: (t.maxAdverseMove / t.entry) * 100,
             mfePct: (t.maxFavorableMove / t.entry) * 100,
+            grossR: closed.grossRealizedPnl / actualRisk,
+            realizedR: closed.pnl / actualRisk,
             labeled: true,
             win: closed.pnl > 0,
             source: "REALIZED_CLOSED_TRADE",

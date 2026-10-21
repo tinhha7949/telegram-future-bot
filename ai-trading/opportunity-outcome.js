@@ -8,7 +8,6 @@ function evaluatePlan(plan, side, future, costs) {
   if (
     ![entry, sl, tp1, tp2, costs?.totalCostPct].every(Number.isFinite) ||
     entry <= 0 ||
-    costs.totalCostPct < 0 ||
     !future.length ||
     (side === "LONG"
       ? !(sl < entry && entry < tp1 && tp1 <= tp2)

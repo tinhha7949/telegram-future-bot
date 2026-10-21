@@ -534,7 +534,7 @@ function snapshotDecision({
     side === "WAIT"
       ? snapshot.symbol + ":" + String(snapshot.signalTime) + ":WAIT"
       : snapshot.symbol + ":" + String(snapshot.signalTime) + ":" + digest;
-  if ([3, DECISION_SCHEMA_VERSION].includes(snapshot.decisionSchemaVersion))
+  if ([3, 4, DECISION_SCHEMA_VERSION].includes(snapshot.decisionSchemaVersion))
     snapshot.decisionKey =
       snapshot.symbol +
       ":" +
@@ -577,6 +577,16 @@ async function initialize(db) {
     {
       unique: true,
       name: "uniq_nine_ai_v4_symbol_candle",
+      partialFilterExpression: {
+        decisionSchemaVersion: 4,
+      },
+    },
+  );
+  await collection.createIndex(
+    { symbol: 1, signalTime: 1 },
+    {
+      unique: true,
+      name: "uniq_nine_ai_v5_symbol_candle",
       partialFilterExpression: {
         decisionSchemaVersion: DECISION_SCHEMA_VERSION,
       },
@@ -702,7 +712,7 @@ async function recordDecision(args) {
         const existing = await collection.findOne({
           symbol: snapshot.symbol,
           signalTime: snapshot.signalTime,
-          ...([3, DECISION_SCHEMA_VERSION].includes(
+          ...([3, 4, DECISION_SCHEMA_VERSION].includes(
             snapshot.decisionSchemaVersion,
           )
             ? { decisionSchemaVersion: snapshot.decisionSchemaVersion }
@@ -739,7 +749,7 @@ function computeEvaluations(record, candles, now = Date.now()) {
   const idx = signalCandleIndex(candles, num(record.signalTime));
   if (idx < 0) return null;
   if (
-    [2, 3, DECISION_SCHEMA_VERSION].includes(
+    [2, 3, 4, DECISION_SCHEMA_VERSION].includes(
       record.decisionSnapshot?.decisionSchemaVersion,
     )
   ) {
@@ -768,11 +778,7 @@ function computeEvaluations(record, candles, now = Date.now()) {
     };
     for (const side of ["LONG", "SHORT"]) {
       const fundingCost = snapshot.fundingCostPctBySide?.[side];
-      if (
-        typeof fundingCost !== "number" ||
-        !Number.isFinite(fundingCost) ||
-        fundingCost < 0
-      )
+      if (typeof fundingCost !== "number" || !Number.isFinite(fundingCost))
         return {
           outcomeStatus: "UNUSABLE_FOR_POLICY_EVALUATION",
           evaluationReason: "MISSING_POINT_IN_TIME_COSTS",
