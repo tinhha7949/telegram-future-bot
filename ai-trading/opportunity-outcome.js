@@ -11,8 +11,8 @@ function evaluatePlan(plan, side, future, costs) {
     costs.totalCostPct < 0 ||
     !future.length ||
     (side === "LONG"
-      ? !(sl < entry && entry < tp1 && tp1 < tp2)
-      : !(tp2 < tp1 && tp1 < entry && entry < sl))
+      ? !(sl < entry && entry < tp1 && tp1 <= tp2)
+      : !(tp2 <= tp1 && tp1 < entry && entry < sl))
   )
     return null;
   const sign = side === "LONG" ? 1 : -1,

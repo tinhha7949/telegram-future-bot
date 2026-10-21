@@ -117,8 +117,8 @@ function fillRiskValid(t) {
     Number.isFinite(t.actualInitialRiskUSDT) &&
     isRiskWithinBudget(t.actualInitialRiskUSDT, t.risk) &&
     (sign > 0
-      ? t.sl < t.entry && t.entry < t.tp1 && t.tp1 < t.tp2
-      : t.tp2 < t.tp1 && t.tp1 < t.entry && t.entry < t.sl) &&
+      ? t.sl < t.entry && t.entry < t.tp1 && t.tp1 <= t.tp2
+      : t.tp2 <= t.tp1 && t.tp1 < t.entry && t.entry < t.sl) &&
     t.actualQuantity / 2 >= t.rules.minQty &&
     same(roundStep(t.actualQuantity / 2, t.rules.step), t.actualQuantity / 2)
   );
@@ -322,6 +322,16 @@ class TradeLifecycle {
   async enter(trade) {
     if (this.entryRunning || this.uncertain || this.untracked.size)
       return false;
+    // Keep the user-authorized initial phase to one or two concurrent trades
+    // while awaiting its first usable real outcomes. This counts durable active
+    // trade plans, so restarting cannot reset the initial-position allowance.
+    if (
+      trade.tradePlan?.outcomeMode === "AI2_INITIAL" &&
+      [...this.active.values()].filter(
+        (t) => t.tradePlan?.outcomeMode === "AI2_INITIAL",
+      ).length >= 2
+    )
+      return false;
     this.entryRunning = true;
     trade.opening = true;
     try {
@@ -403,8 +413,10 @@ class TradeLifecycle {
       (await this.exchange.positions()).find((p) => p.symbol === t.symbol);
     if (!position) return;
     const currentQty = Math.abs(Number(position.positionAmt));
+    const sharedTarget = t.tp1 === t.tp2;
     for (const kind of ["sl", "tp2", "tp1"]) {
       if (kind === "tp1" && t.tp1Filled) continue;
+      if (kind === "tp2" && sharedTarget && t.tp2Filled) continue;
       const trigger = t[kind],
         closeSide = t.side === "LONG" ? "SELL" : "BUY";
       const matches = (o) =>
@@ -413,7 +425,7 @@ class TradeLifecycle {
         same(o.triggerPrice, trigger) &&
         (o.orderType || o.type) ===
           (kind === "sl" ? "STOP_MARKET" : "TAKE_PROFIT_MARKET") &&
-        (kind === "tp1"
+        (kind === "tp1" || (kind === "tp2" && sharedTarget)
           ? String(o.reduceOnly) === "true" &&
             same(o.quantity, t.actualQuantity / 2)
           : String(o.closePosition) === "true");
@@ -421,7 +433,7 @@ class TradeLifecycle {
         (o) =>
           matches(o) &&
           (o.clientAlgoId === t.protectionIds[kind] ||
-            String(o.clientAlgoId).startsWith(`n9_${t.keyPrefix}_`) ||
+            String(o.clientAlgoId).startsWith(`n9_${t.keyPrefix}_${kind}_`) ||
             String(o.algoId) === String(t[`${kind}OrderId`])),
       );
       if (existing) {
@@ -451,10 +463,10 @@ class TradeLifecycle {
             t.protectionOrderIds = t.protectionOrderIds || {};
             t.protectionOrderIds[kind] = String(child.orderId);
             if (
-              kind === "tp1" &&
+              (kind === "tp1" || (kind === "tp2" && sharedTarget)) &&
               same(child.executedQty, t.actualQuantity / 2)
             ) {
-              t.tp1Filled = true;
+              t[kind + "Filled"] = true;
               continue;
             }
             // SL/TP2 may have just flattened it; next position snapshot reconciles.
@@ -468,7 +480,15 @@ class TradeLifecycle {
         )
           return;
       }
-      if (kind === "tp1" && !same(currentQty, t.actualQuantity))
+      if (
+        (kind === "tp1" || (kind === "tp2" && sharedTarget)) &&
+        !same(currentQty, t.actualQuantity) &&
+        !(
+          sharedTarget &&
+          t[kind === "tp1" ? "tp2Filled" : "tp1Filled"] &&
+          same(currentQty, t.actualQuantity / 2)
+        )
+      )
         throw new Error("PARTIAL_POSITION_REQUIRES_FILL_RECONCILIATION");
       t.protectionIds[kind] = id(t, kind);
       t.state = "NEEDS_PROTECTION";
@@ -645,6 +665,8 @@ class TradeLifecycle {
             accountingSchemaVersion: 2,
             featureSnapshot: t.nineAiFeatureSnapshot,
             decisionAt: t.decisionAt,
+            entryOutcomeMode: t.tradePlan?.outcomeMode || null,
+            entryStopMethod: t.tradePlan?.stopMethod || null,
             excursionSource: t.excursionSource,
             excursionBoundaryPrecision: t.excursionBoundaryPrecision,
           },

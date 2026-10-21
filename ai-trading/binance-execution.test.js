@@ -44,6 +44,34 @@ test("fill pagination does not combine fromId with time parameters", async () =>
   assert.equal(queries[1].startTime, undefined);
   assert.equal(queries[1].endTime, undefined);
 });
+test("coincident quantile targets submit two distinct reduce-only half-position orders", async () => {
+  const e = new BinanceExchange();
+  const calls = [];
+  e.request = async (url, params) => {
+    calls.push({ url, params });
+    return { algoId: calls.length };
+  };
+  const t = {
+    symbol: "TESTUSDT",
+    side: "LONG",
+    actualQuantity: 2,
+    sl: 99,
+    tp1: 103,
+    tp2: 103,
+  };
+  await e.protection(t, "sl", "stop");
+  await e.protection(t, "tp1", "first");
+  await e.protection(t, "tp2", "second");
+  assert.equal(calls[0].params.closePosition, "true");
+  for (const call of calls.slice(1)) {
+    assert.equal(call.params.quantity, 1);
+    assert.equal(call.params.reduceOnly, "true");
+    assert.equal(call.params.closePosition, undefined);
+    assert.equal(call.params.triggerPrice, 103);
+  }
+  assert.notEqual(calls[1].params.clientAlgoId, calls[2].params.clientAlgoId);
+});
+
 test("sizing rounds protection before risk and always permits exact 50% TP1", () => {
   const info = {
     filters: [
@@ -69,4 +97,13 @@ test("sizing rounds protection before risk and always permits exact 50% TP1", ()
   assert.ok(
     Math.abs(s.quantity / 2 / 0.1 - Math.round(s.quantity / 2 / 0.1)) < 1e-8,
   );
+  const shared = sizeTrade(
+    { side: "LONG", entry: 100, sl: 99.05, tp1: 102.01, tp2: 102.02 },
+    1000,
+    0.0075,
+    info,
+  );
+  assert.ok(shared);
+  assert.equal(shared.tp1, shared.tp2);
+  assert.ok(shared.quantity * shared.initialRisk <= 7.5);
 });

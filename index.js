@@ -442,7 +442,7 @@ async function main() {
       if (await lifecycle.enter(trade)) {
         lastEntryAt = Date.now();
         await report(
-          `${trade.symbol} ${trade.side} | Entry ${trade.entry} | SL ${trade.sl} | TP1 ${trade.tp1} | TP2 ${trade.tp2}`,
+          `${trade.symbol} ${trade.side} | Entry ${trade.entry} | SL ${trade.sl} | TP1 ${trade.tp1} | TP2 ${trade.tp2} | ${trade.tradePlan?.outcomeMode === "AI7_LABELED" ? "AI7 MAE/MFE" : "AI7 OFF: AI2 initial SL/TP"}`,
         );
         break;
       }

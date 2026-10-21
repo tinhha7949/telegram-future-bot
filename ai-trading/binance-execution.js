@@ -15,9 +15,12 @@ const decimals = (step) => {
   return Math.max(0, (base.split(".")[1] || "").length - Number(exp));
 };
 function roundStep(value, step, mode = "floor") {
-  if (
-    !(Number.isFinite(value) && value > 0 && Number.isFinite(step) && step > 0)
-  )
+  if (!(
+    Number.isFinite(value) &&
+    value > 0 &&
+    Number.isFinite(step) &&
+    step > 0
+  ))
     return NaN;
   const units = value / step;
   return Number(
@@ -66,8 +69,8 @@ function sizeTrade(decision, equity, riskFraction, info) {
   if (
     !(entry > 0 && equity > 0 && riskFraction > 0 && riskFraction <= 1) ||
     (long
-      ? !(sl < entry && entry < tp1 && tp1 < tp2)
-      : !(tp2 < tp1 && tp1 < entry && entry < sl))
+      ? !(sl < entry && entry < tp1 && tp1 <= tp2)
+      : !(tp2 <= tp1 && tp1 < entry && entry < sl))
   )
     return null;
   const budget = equity * riskFraction,
@@ -359,7 +362,7 @@ class BinanceExchange {
         trade[kind === "sl" ? "sl" : kind === "tp1" ? "tp1" : "tp2"],
       workingType: "MARK_PRICE",
     };
-    if (kind === "tp1") {
+    if (kind === "tp1" || (kind === "tp2" && trade.tp1 === trade.tp2)) {
       params.quantity = trade.actualQuantity / 2;
       params.reduceOnly = "true";
     } else params.closePosition = "true";

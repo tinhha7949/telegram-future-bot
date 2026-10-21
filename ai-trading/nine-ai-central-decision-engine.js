@@ -99,8 +99,8 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
     tp1 <= 0 ||
     entry === sl ||
     rr < MIN_RR ||
-    (side === "LONG" && !(sl < entry && entry < tp1 && tp1 < tp)) ||
-    (side === "SHORT" && !(tp < tp1 && tp1 < entry && entry < sl))
+    (side === "LONG" && !(sl < entry && entry < tp1 && tp1 <= tp)) ||
+    (side === "SHORT" && !(tp <= tp1 && tp1 < entry && entry < sl))
   ) {
     return wait(decision, "CENTRAL_ENGINE_INVALID_TRADE_GEOMETRY");
   }

@@ -1,5 +1,9 @@
 "use strict";
 const { DEFAULT_POLICY, applyPolicy } = require("./nine-ai-policy");
+const {
+  initialStructurePlan,
+  initialProbability,
+} = require("./initial-structure-plan");
 const BAR_MS = 4 * 60 * 60 * 1000,
   MAX_DATA_AGE_MS = 5 * 60 * 1000;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -412,7 +416,8 @@ function analyzeNineAI({
     outcome: {
       dist_MAE: null,
       dist_MFE: null,
-      source: "REALIZED_CLOSED_TRADE",
+      enabled: false,
+      source: null,
     },
     fill: {
       est_slippage: slip,
@@ -468,46 +473,78 @@ function analyzeNineAI({
       const setupKey = regime.regime + "_" + m.type;
       const samples = validLabels(outcomes, symbol, setupKey, side, now),
         wins = samples.filter((o) => o.win);
-      // AI-7 needs defined winning quantiles, not an invented trade-count gate.
-      if (!wins.length) continue;
-      const distMAE = {
-        p80: percentile(
-          wins.map((o) => o.maePct),
-          0.8,
-        ),
-        samples: wins.length,
-      };
-      const distMFE = {
-        p50: percentile(
-          wins.map((o) => o.mfePct),
-          0.5,
-        ),
-        p90: percentile(
-          wins.map((o) => o.mfePct),
-          0.9,
-        ),
-        samples: wins.length,
-      };
-      if (!(distMAE.p80 > 0 && distMFE.p50 > 0 && distMFE.p90 > distMFE.p50))
-        continue;
+      let distMAE = wins.length
+        ? {
+            p80: percentile(
+              wins.map((o) => o.maePct),
+              0.8,
+            ),
+            samples: wins.length,
+          }
+        : null;
+      let distMFE = wins.length
+        ? {
+            p50: percentile(
+              wins.map((o) => o.mfePct),
+              0.5,
+            ),
+            p90: percentile(
+              wins.map((o) => o.mfePct),
+              0.9,
+            ),
+            samples: wins.length,
+          }
+        : null;
+      // One valid winning label is enough to start AI-7; p50 may equal p90.
+      const ai7Ready =
+        distMAE?.p80 >= 0 && distMFE?.p50 > 0 && distMFE.p90 >= distMFE.p50;
       const entry = last.close;
       const stop =
         side === "LONG"
-          ? Math.min(entry * (1 - distMAE.p80 / 100), support - atr * 0.1)
-          : Math.max(entry * (1 + distMAE.p80 / 100), resistance + atr * 0.1);
-      const stopPct = (Math.abs(entry - stop) / entry) * 100;
-      const plan = {
-        entry,
-        sl: stop,
-        tp1: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p50) / 100),
-        tp2: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p90) / 100),
-        closePercentAtTP1: 50,
-        timeoutCandles: 24,
-      };
-      if (!(plan.sl > 0 && plan.tp1 > 0 && plan.tp2 > 0)) continue;
-      const p = (wins.length + 2) / (samples.length + 4);
+          ? Math.min(
+              entry * (1 - (distMAE?.p80 ?? 0) / 100),
+              support - atr * 0.1,
+            )
+          : Math.max(
+              entry * (1 + (distMAE?.p80 ?? 0) / 100),
+              resistance + atr * 0.1,
+            );
+      const plan = ai7Ready
+        ? {
+            entry,
+            sl: stop,
+            tp1: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p50) / 100),
+            tp2: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p90) / 100),
+            closePercentAtTP1: 50,
+            timeoutCandles: 24,
+            stopMethod: "WINNING_MAE_P80_WITH_STRUCTURE_BUFFER",
+            targetMethod: "WINNING_MFE_P50_P90",
+          }
+        : initialStructurePlan({
+            side,
+            entry,
+            atr,
+            highs: sh,
+            lows: slows,
+            support,
+            resistance,
+            channel: agents.structure.channel,
+            rangeHigh,
+            rangeLow,
+          });
+      if (!plan || !(plan.sl > 0 && plan.tp1 > 0 && plan.tp2 > 0)) continue;
+      if (!ai7Ready) {
+        distMAE = null;
+        distMFE = null;
+      }
+      const stopPct = (Math.abs(entry - plan.sl) / entry) * 100;
+      const p = samples.length
+        ? (wins.length + 2) / (samples.length + 4)
+        : initialProbability(m.type, regime.momentum20, volumeRatio);
       // E[R|success] uses the 50/50 exits. AI-9 keeps the specified p*E[R]-cost formula.
-      const quantileRewardR = ((distMFE.p50 + distMFE.p90) * 0.5) / stopPct;
+      const quantileRewardR =
+        ((Math.abs(plan.tp1 - entry) + Math.abs(plan.tp2 - entry)) * 0.5) /
+        Math.abs(entry - plan.sl);
       const track = market.trackRecord?.[setupKey + "_" + side];
       const expectedR =
         track?.winningSamples >= 20 && Number.isFinite(track.meanWinGrossR)
@@ -517,6 +554,14 @@ function analyzeNineAI({
         ...m,
         setupKey,
         samples: samples.length,
+        winningSamples: wins.length,
+        outcomeMode: ai7Ready ? "AI7_LABELED" : "AI2_INITIAL",
+        probabilitySource: samples.length
+          ? "REALIZED_SETUP_OUTCOMES"
+          : "FEATURE_SCORE_UNCALIBRATED",
+        outcomeSource: ai7Ready
+          ? "REALIZED_CLOSED_TRADE"
+          : "AI2_STRUCTURE_INITIAL_PLAN",
         p,
         expectedR,
         distMAE,
@@ -526,7 +571,7 @@ function analyzeNineAI({
       });
     }
     const chosen = estimates.sort((a, b) => b.weight - a.weight)[0];
-    // Missing labels for an active setup stay missing; no fabricated quantiles.
+    // A missing/invalid initial structure plan cannot be replaced with invented quantiles.
     if (active.length && !chosen)
       edges[side] = {
         eligible: false,
@@ -534,7 +579,7 @@ function analyzeNineAI({
         expectedR: null,
         cost: null,
         baseUncertainty,
-        reason: "INSUFFICIENT_LABELED_OUTCOMES",
+        reason: "NO_VALID_STRUCTURE_OR_LABELED_EXIT_PLAN",
       };
     else if (!chosen)
       edges[side] = {
@@ -584,8 +629,13 @@ function analyzeNineAI({
     dist_MAE: chosen.distMAE,
     dist_MFE: chosen.distMFE,
     setupKey: chosen.setupKey,
-    source: "REALIZED_CLOSED_TRADE",
+    enabled: chosen.outcomeMode === "AI7_LABELED",
+    mode: chosen.outcomeMode,
+    samples: chosen.samples,
+    winningSamples: chosen.winningSamples,
+    source: chosen.outcomeSource,
   };
+  featureSnapshot.outcomeMode = chosen.outcomeMode;
   return {
     symbol,
     side: meta.side,
@@ -608,8 +658,7 @@ function analyzeNineAI({
     ...extra,
     tradePlan: {
       ...plan,
-      stopMethod: "WINNING_MAE_P80_WITH_STRUCTURE_BUFFER",
-      targetMethod: "WINNING_MFE_P50_P90",
+      outcomeMode: chosen.outcomeMode,
       timeoutMs: 24 * BAR_MS,
     },
   };
