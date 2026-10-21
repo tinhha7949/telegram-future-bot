@@ -17,3 +17,9 @@ Scanning considers trading USDT perpetual contracts without added turnover, dail
 Every approved symbol is considered; no fixed maximum position count, top-ten signal cutoff or one-entry-per-scan cap is imposed. Legacy MAX_ACTIVE_POSITIONS is no longer used. Exchange balance and order constraints still apply. Fee/slippage forecasts are nonnegative; funding preserves payment/receipt signs. Calibration uses predicted_R before uncertainty, not the penalized edge.
 
 Inspect NINE-AI READY, NINE-AI SCAN, ENTRY WAIT, position protection/accounting and DAILY CALIBRATION logs. Missing MAE/MFE history stays pending and retries instead of losing the first outcome label. Development tests use fake exchange/database responses and submit no live orders. Sources and measurement precision are documented in NINE_AI_CANONICAL_PIPELINE.md; the requirement audit is NINE_AI_SPEC_AUDIT.md.
+
+On a new database, daily output reads:
+
+    DAILY CALIBRATION NO_REALIZED_PREDICTION_PAIRS samples=0 | CANDIDATE COLLECTING_MATURED_24_BAR_OPPORTUNITIES | SHADOW NO_SHADOW_CANDIDATE
+
+These are idle learning states: no completed forecast/outcome pairs, no matured evaluation cohort, and no shadow candidate yet. Missing averages remain null in stored reports, rather than being invented as zero; the console omits those unavailable averages. This daily report does not pause live decisions or require a trade count to unlock initial AI-2 exits. NINE-AI SCAN START reports the universe and label counts; the completed scan reports signal counts and WAIT reasons. NINE-AI SCAN PAUSED identifies an actual runtime or position-state pause separately. A newly qualified candidate reports SHADOW_STARTED immediately; subsequent runs report its current shadow status.

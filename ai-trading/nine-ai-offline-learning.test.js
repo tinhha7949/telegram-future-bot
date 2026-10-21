@@ -101,6 +101,71 @@ test("calibration flags drift without changing champion parameters", () => {
     0,
   );
 });
+
+test("empty database has explicit idle learning statuses without blocking initial live decisions", async () => {
+  const { memoryDb, fixture } = require("./test-fixtures.cjs"),
+    { analyzeNineAI } = require("./nine-ai-pipeline");
+  const service = l.createOfflineLearning(memoryDb());
+  await service.initialize();
+  const report = await service.runDailyCycle();
+  assert.equal(report.calibration.status, "NO_REALIZED_PREDICTION_PAIRS");
+  assert.equal(report.calibration.samples, 0);
+  assert.equal(report.calibration.meanRealizedR, null);
+  assert.equal(
+    report.candidateResult.status,
+    "COLLECTING_MATURED_24_BAR_OPPORTUNITIES",
+  );
+  assert.equal(report.shadowResult.status, "NO_SHADOW_CANDIDATE");
+  const log = l.formatDailyLearningReport(report);
+  assert.match(log, /DAILY CALIBRATION NO_REALIZED_PREDICTION_PAIRS samples=0/);
+  assert.match(log, /SHADOW NO_SHADOW_CANDIDATE/);
+  assert.doesNotMatch(log, /undefined|null/);
+  for (const side of ["LONG", "SHORT"]) {
+    const decision = analyzeNineAI({
+      ...fixture(side),
+      outcomes: [],
+      config: await service.getChampionConfig(),
+    });
+    assert.equal(decision.action, side);
+    assert.equal(decision.tradePlan.outcomeMode, "AI2_INITIAL");
+  }
+});
+
+test("a newly qualified candidate reports shadow started on the same daily run", async () => {
+  const { memoryDb } = require("./test-fixtures.cjs"),
+    db = memoryDb(),
+    start = 1700000000000,
+    now = start + 100 * l.DAY_MS,
+    service = l.createOfflineLearning(db, { now: () => now });
+  await service.initialize();
+  for (let i = 0; i < 30; i++) {
+    const r = row(i);
+    r.signalTime = start + i * 3 * l.DAY_MS;
+    Object.assign(r.decisionSnapshot.edges.LONG, {
+      p: 0.6,
+      expectedR: 0.4,
+      cost: 0.1,
+      baseUncertainty: 0.1,
+    });
+    r.evaluations[24].longNetR = 0.01;
+    await db.collection("nine_ai_decision_journal").insertOne(r);
+  }
+  const report = await service.runDailyCycle();
+  assert.equal(report.candidateResult.status, "SHADOW_STARTED");
+  assert.equal(report.shadowResult.status, "SHADOW_STARTED");
+  assert.equal(
+    report.shadowResult.candidateId,
+    report.candidateResult.candidateId,
+  );
+  assert.doesNotMatch(
+    l.formatDailyLearningReport(report),
+    /undefined|NO_SHADOW_CANDIDATE/,
+  );
+  const next = await service.runDailyCycle();
+  assert.equal(next.candidateResult.status, "EXISTING_SHADOW_EVALUATED");
+  assert.equal(next.shadowResult.status, "SHADOW_CONTINUES");
+  assert.doesNotMatch(l.formatDailyLearningReport(next), /undefined/);
+});
 test("offline worker evaluates policy without blocking the runtime event loop", async () => {
   const rows = Array.from({ length: 600 }, (_, i) => row(i));
   const result = await l.trainCandidateAsync(rows, l.DEFAULT_CHAMPION);

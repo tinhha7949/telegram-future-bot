@@ -274,6 +274,7 @@ function calibrationSummary(rows) {
   );
   if (!usable.length)
     return {
+      status: "NO_REALIZED_PREDICTION_PAIRS",
       samples: 0,
       meanPredictedR: null,
       meanRealizedR: null,
@@ -292,6 +293,21 @@ function calibrationSummary(rows) {
     maeR,
     status: maeR > 0 ? "RED_FLAG_CALIBRATION_DRIFT" : "CALIBRATION_MATCH",
   };
+}
+
+function formatDailyLearningReport(report) {
+  const calibration = report.calibration || {},
+    samples = calibration.samples || 0;
+  return [
+    "DAILY CALIBRATION",
+    calibration.status || "NO_REALIZED_PREDICTION_PAIRS",
+    "samples=" + samples,
+    ...(samples > 0 ? [JSON.stringify(calibration)] : []),
+    "| CANDIDATE",
+    report.candidateResult?.status || "NO_CANDIDATE_RESULT",
+    "| SHADOW",
+    report.shadowResult?.status || "NO_SHADOW_CANDIDATE",
+  ].join(" ");
 }
 
 function createOfflineLearning(db, options = {}) {
@@ -493,7 +509,7 @@ function createOfflineLearning(db, options = {}) {
       },
       { sort: { createdAt: -1 } },
     );
-    let shadowResult = null;
+    let shadowResult = { status: "NO_SHADOW_CANDIDATE" };
     if (activeShadow) {
       const shadowStart = Number(
         activeShadow.shadowStartedAt || activeShadow.createdAt || runAt,
@@ -581,7 +597,12 @@ function createOfflineLearning(db, options = {}) {
       }
     }
 
-    let candidateResult = null;
+    let candidateResult = activeShadow
+      ? {
+          status: "EXISTING_SHADOW_EVALUATED",
+          candidateId: String(activeShadow._id),
+        }
+      : null;
     if (!activeShadow) {
       const rows = await journal
         .find(
@@ -622,6 +643,12 @@ function createOfflineLearning(db, options = {}) {
           });
           candidateResult.candidateId = String(insert.insertedId);
           candidateResult.status = "SHADOW_STARTED";
+          shadowResult = {
+            status: "SHADOW_STARTED",
+            candidateId: String(insert.insertedId),
+            ageMs: 0,
+            rows: 0,
+          };
         }
       } else {
         candidateResult = {
@@ -673,6 +700,7 @@ module.exports = {
   trainCandidate,
   trainCandidateAsync,
   calibrationSummary,
+  formatDailyLearningReport,
   predictedNetR,
   createOfflineLearning,
 };
