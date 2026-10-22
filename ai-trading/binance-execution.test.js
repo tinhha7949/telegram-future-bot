@@ -2,6 +2,58 @@
 const { test } = require("node:test"),
   assert = require("node:assert/strict");
 const { BinanceExchange, sizeTrade } = require("./binance-execution");
+test("fractional clock offsets and persisted times serialize as integer milliseconds", async () => {
+  const queries = [];
+  const e = new BinanceExchange({
+    key: "fake", secret: "fake", now: () => 1792628533640,
+    budget: { async acquire() {}, observe() {} },
+    fetchImpl: async (url) => {
+      const query = new URL(url).searchParams;
+      for (const key of ["timestamp", "startTime", "endTime", "recvWindow"])
+        if (query.has(key)) assert.match(query.get(key), /^\d+$/);
+      queries.push(query);
+      return { ok: true, json: async () => [] };
+    },
+  });
+  e.offset = 0.5;
+  await e.fills({ symbol: "TEST", submittedAt: 1792628433640.5, enteredAt: 1792628433650 });
+  await e.funding("TEST", 1792628433640.5, 1792628533640.5);
+  await e.rawCandles("TEST", "1m", 1, { startTime: 1792628433640.5 });
+  assert.equal(queries[0].get("startTime"), "1792628428640");
+  assert.equal(queries[0].get("endTime"), "1792628533640");
+  assert.equal(queries[0].get("timestamp"), "1792628533640");
+});
+test("invalid fill history times fail locally without requesting Infinity", async () => {
+  const e = new BinanceExchange();
+  e.request = async () => assert.fail("invalid time must not reach the exchange");
+  await assert.rejects(e.fills({ symbol: "TEST" }), /INVALID_FILL_TIME_RANGE/);
+});
+test("algo queries and single cancellation send only documented identifiers", async () => {
+  const e = new BinanceExchange(), calls = [];
+  e.request = async (path, params, options) => {
+    calls.push({ path, params, options });
+    return {};
+  };
+  await e.algo("TESTUSDT", "client-id");
+  await e.algoById("TESTUSDT", 123);
+  await e.cancelAlgo("TESTUSDT", 123);
+  assert.deepEqual(calls.map((c) => c.params), [
+    { clientAlgoId: "client-id" }, { algoId: 123 }, { algoId: 123 },
+  ]);
+  assert.equal(calls[2].options.method, "DELETE");
+});
+test("distinct targets submit reduce-only TP1 for half and close-position TP2 for the remainder", async () => {
+  const e = new BinanceExchange(), calls = [];
+  e.request = async (_, p) => { calls.push(p); return { algoId: calls.length }; };
+  const t = { symbol: "TESTUSDT", side: "SHORT", actualQuantity: 2, sl: 101, tp1: 98, tp2: 96 };
+  await e.protection(t, "tp1", "first");
+  await e.protection(t, "tp2", "second");
+  assert.equal(calls[0].side, "BUY");
+  assert.equal(calls[0].quantity, 1);
+  assert.equal(calls[0].reduceOnly, "true");
+  assert.equal(calls[1].closePosition, "true");
+  assert.equal(calls[1].quantity, undefined);
+});
 test("ambiguous market POST is queried by the same ID and is never blindly repeated", async () => {
   const calls = [];
   const e = new BinanceExchange({

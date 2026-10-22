@@ -149,6 +149,15 @@ class BinanceExchange {
       // a background history request waits for the shared IP budget.
       await this.budget.acquire({ host, path, params, signed, method });
       const values = { ...params };
+      // Clock synchronization uses a network midpoint and can yield half-ms
+      // offsets. Binance LONG parameters reject decimal/exponential strings.
+      for (const key of ["startTime", "endTime", "timestamp", "recvWindow"]) {
+        if (values[key] == null) continue;
+        const value = Math.floor(Number(values[key]));
+        if (!Number.isSafeInteger(value) || value < 0)
+          throw new ExchangeError("INVALID_TIME_PARAMETER_" + key);
+        values[key] = value;
+      }
       if (signed) {
         values.recvWindow = 10000;
         values.timestamp = Math.floor(this.now() + this.offset);
@@ -375,14 +384,14 @@ class BinanceExchange {
   algo(symbol, clientAlgoId) {
     return this.request(
       "/fapi/v1/algoOrder",
-      { symbol, clientAlgoId },
+      { clientAlgoId },
       { signed: true },
     );
   }
   algoById(symbol, algoId) {
     return this.request(
       "/fapi/v1/algoOrder",
-      { symbol, algoId },
+      { algoId },
       { signed: true },
     );
   }
@@ -470,15 +479,46 @@ class BinanceExchange {
       { method: "DELETE", signed: true },
     );
   }
-  async fills(trade, endTime = this.now()) {
+  async cancelAlgo(symbol, algoId) {
+    try {
+      return await this.request(
+        "/fapi/v1/algoOrder",
+        { algoId },
+        { method: "DELETE", signed: true },
+      );
+    } catch (e) {
+      if (![-2011, -2013].includes(e.code)) throw e;
+    }
+  }
+  async cancelOrder(symbol, orderId) {
+    try {
+      return await this.request(
+        "/fapi/v1/order",
+        { symbol, orderId },
+        { method: "DELETE", signed: true },
+      );
+    } catch (e) {
+      if (![-2011, -2013].includes(e.code)) throw e;
+    }
+  }
+  async fills(trade, endTime = this.now() + this.offset) {
+    endTime = Math.floor(Number(endTime));
     const start = Math.max(
       0,
-      Math.min(
-        ...[trade.submittedAt, trade.entryExecution?.orderTime, trade.enteredAt]
-          .map(Number)
-          .filter((v) => v > 0),
+      Math.floor(
+        Math.min(
+          ...[trade.submittedAt, trade.entryExecution?.orderTime, trade.enteredAt]
+            .map(Number)
+            .filter((v) => Number.isFinite(v) && v > 0),
+        ),
       ) - 5000,
     );
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(endTime) ||
+      endTime < start
+    )
+      throw new Error("INVALID_FILL_TIME_RANGE");
     const all = [];
     let fromId,
       windowStart = start;

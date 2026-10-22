@@ -91,14 +91,14 @@ function hydrateFill(trade, order) {
   trade.tp1 = roundStep(
     ai7
       ? entry * (1 + (sign * quantiles.mfe50Pct) / 100)
-      : entry + sign * Math.abs(p.tp1 - p.entry),
+      : p.tp1,
     rules.tick,
     sign > 0 ? "floor" : "ceil",
   );
   trade.tp2 = roundStep(
     ai7
       ? entry * (1 + (sign * quantiles.mfe90Pct) / 100)
-      : entry + sign * Math.abs(p.tp2 - p.entry),
+      : p.tp2,
     rules.tick,
     sign > 0 ? "floor" : "ceil",
   );
@@ -260,9 +260,14 @@ class TradeLifecycle {
       }
       t.rules = t.rules || symbolRules(await this.exchange.info(t.symbol));
       t.deadlineAt =
-        Number(t.enteredAt || t.openedAt || t.createdAt) + TIMEOUT_MS;
+        t.deadlineAt || Number(t.enteredAt || t.openedAt || t.createdAt) + TIMEOUT_MS;
       // Legacy records must verify/adopt real protection before being considered active.
-      t.state = "NEEDS_PROTECTION";
+      if (
+        !["CLOSING", "ENTRY_UNKNOWN", "CLOSED_PENDING_ACCOUNTING"].includes(t.state)
+      )
+        t.state = "NEEDS_PROTECTION";
+      // Recheck exchange cleanup after every process restart.
+      t.protectionCleanupConfirmed = false;
       t.opening = false;
       this.active.set(t.signalKey, t);
     }
@@ -303,6 +308,7 @@ class TradeLifecycle {
             "NEEDS_PROTECTION",
             "ACTIVE",
             "CLOSING",
+            "CLOSED_PENDING_ACCOUNTING",
             "OPEN_UNRECORDED",
             "TRADE_SAVED",
           ],
@@ -356,6 +362,8 @@ class TradeLifecycle {
   async enter(trade) {
     if (this.entryRunning || this.uncertain || this.untracked.size)
       return false;
+    if ([...this.active.values()].some((t) => t.symbol === trade.symbol))
+      return false;
     this.entryRunning = true;
     trade.opening = true;
     try {
@@ -368,7 +376,7 @@ class TradeLifecycle {
       await this.exchange.cancelAlgos(trade.symbol);
       trade.entryClientId = id(trade, "entry");
       trade.state = "ORDER_SUBMITTING";
-      trade.submittedAt = this.now() + (this.exchange.offset || 0);
+      trade.submittedAt = Math.floor(this.now() + (this.exchange.offset || 0));
       try {
         await this.claims.insertOne({
           signalKey: trade.signalKey,
@@ -438,6 +446,46 @@ class TradeLifecycle {
     if (!position) return;
     const currentQty = Math.abs(Number(position.positionAmt));
     const sharedTarget = t.tp1 === t.tp2;
+    // Recover both half-target fills before repairing either sibling. Otherwise
+    // a restart with coincident targets and a canceled sibling can mistake
+    // the remaining half for unexplained exposure and close it.
+    const priorOrders = new Map();
+    if (!same(currentQty, t.actualQuantity)) {
+      for (const kind of sharedTarget ? ["tp1", "tp2"] : ["tp1"]) {
+        if (t[kind + "Filled"]) continue;
+        const previous = t.protectionIds[kind],
+          legacyAlgoId = t[kind + "OrderId"];
+        if (!previous && !legacyAlgoId) continue;
+        if (
+          openAlgos.some((o) => o.symbol === t.symbol &&
+            (previous ? o.clientAlgoId === previous
+              : String(o.algoId) === String(legacyAlgoId)))
+        )
+          continue;
+        let prior;
+        try {
+          prior = previous
+            ? await this.exchange.algo(t.symbol, previous)
+            : await this.exchange.algoById(t.symbol, legacyAlgoId);
+        } catch (e) {
+          if (![-2011, -2013].includes(e.code)) throw e;
+        }
+        priorOrders.set(kind, prior);
+        if (!prior?.actualOrderId) continue;
+        const child = await this.exchange.request(
+          "/fapi/v1/order",
+          { symbol: t.symbol, orderId: prior.actualOrderId },
+          { signed: true },
+        );
+        if (
+          child.status === "FILLED" && same(child.executedQty, t.actualQuantity / 2)
+        ) {
+          t[kind + "Filled"] = true;
+          t.protectionOrderIds = t.protectionOrderIds || {};
+          t.protectionOrderIds[kind] = String(child.orderId);
+        }
+      }
+    }
     for (const kind of ["sl", "tp2", "tp1"]) {
       if (kind === "tp1" && t.tp1Filled) continue;
       if (kind === "tp2" && sharedTarget && t.tp2Filled) continue;
@@ -470,9 +518,11 @@ class TradeLifecycle {
       if (previous || legacyAlgoId) {
         let prior;
         try {
-          prior = previous
-            ? await this.exchange.algo(t.symbol, previous)
-            : await this.exchange.algoById(t.symbol, legacyAlgoId);
+          prior = priorOrders.has(kind)
+            ? priorOrders.get(kind)
+            : previous
+              ? await this.exchange.algo(t.symbol, previous)
+              : await this.exchange.algoById(t.symbol, legacyAlgoId);
           if (prior?.clientAlgoId) t.protectionIds[kind] = prior.clientAlgoId;
         } catch (e) {
           if (![-2011, -2013].includes(e.code)) throw e;
@@ -535,7 +585,7 @@ class TradeLifecycle {
     const pos = (await this.exchange.positions()).find(
       (p) => p.symbol === t.symbol,
     );
-    if (!pos) return true;
+    if (!pos) return this.cleanupFlatTrade(t);
     if (t.closeClientId) {
       try {
         const previous = await this.exchange.order(t.symbol, t.closeClientId);
@@ -548,7 +598,7 @@ class TradeLifecycle {
     const fresh = (await this.exchange.positions()).find(
       (p) => p.symbol === t.symbol,
     );
-    if (!fresh) return true;
+    if (!fresh) return this.cleanupFlatTrade(t);
     t.closeReferencePrice = Number(fresh.markPrice) || null;
     t.closeClientId = id(t, "exit");
     try {
@@ -566,9 +616,75 @@ class TradeLifecycle {
     );
     t.closeOrderId =
       closeOrder?.orderId == null ? null : String(closeOrder.orderId);
-    return !(await this.exchange.positions()).some(
-      (p) => p.symbol === t.symbol,
-    );
+    return this.cleanupFlatTrade(t);
+  }
+  async cleanupFlatTrade(t) {
+    // Exchange safety precedes fills, funding, candle history and database writes.
+    // Never remove protection while any exposure still exists in this symbol.
+    if ((await this.exchange.positions()).some((p) => p.symbol === t.symbol))
+      return false;
+    if (!t.protectionCleanupConfirmed) {
+      await this.exchange.cancelAlgos(t.symbol);
+      const orders = await this.exchange.openOrders(t.symbol);
+      if (orders.length) {
+        const ownedIds = new Set(
+          Object.values(t.protectionOrderIds || {}).map(String),
+        );
+        if (t.closeOrderId != null) ownedIds.add(String(t.closeOrderId));
+        for (const kind of ["sl", "tp1", "tp2"]) {
+          const clientId = t.protectionIds?.[kind],
+            algoId = t[kind + "OrderId"];
+          if (!clientId && !algoId) continue;
+          try {
+            const algo = clientId
+              ? await this.exchange.algo(t.symbol, clientId)
+              : await this.exchange.algoById(t.symbol, algoId);
+            if (algo?.actualOrderId) ownedIds.add(String(algo.actualOrderId));
+          } catch (e) {
+            if (![-2011, -2013].includes(e.code)) throw e;
+          }
+        }
+        const owned = (o) =>
+          ownedIds.has(String(o.orderId)) ||
+          String(o.clientOrderId).startsWith(`n9_${t.keyPrefix}_`);
+        for (const o of orders.filter(owned))
+          await this.exchange.cancelOrder(t.symbol, o.orderId);
+        if ((await this.exchange.openOrders(t.symbol)).some(owned))
+          throw new Error("CHILD_ORDER_CLEANUP_PENDING");
+      }
+      if ((await this.exchange.openAlgos()).some((o) => o.symbol === t.symbol))
+        throw new Error("PROTECTION_CLEANUP_PENDING");
+      t.protectionCleanupConfirmed = true;
+    }
+    t.state = "CLOSED_PENDING_ACCOUNTING";
+    return true;
+  }
+  async cleanupOrphanAlgos(positions, algos) {
+    if (this.entryRunning) return;
+    const known = new Set([...this.active.values()].map((t) => t.symbol));
+    const exposed = new Set(positions.map((p) => p.symbol));
+    const canceled = new Set();
+    for (const o of algos) {
+      if (
+        known.has(o.symbol) || exposed.has(o.symbol) ||
+        !/^n9_[a-f0-9]{8}_(sl|tp1|tp2)_/.test(String(o.clientAlgoId))
+      )
+        continue;
+      const fresh = await this.exchange.positions();
+      if (
+        this.entryRunning ||
+        [...this.active.values()].some((t) => t.symbol === o.symbol) ||
+        fresh.some((p) => p.symbol === o.symbol)
+      )
+        continue;
+      await this.exchange.cancelAlgo(o.symbol, o.algoId);
+      canceled.add(String(o.algoId));
+    }
+    if (
+      canceled.size &&
+      (await this.exchange.openAlgos()).some((o) => canceled.has(String(o.algoId)))
+    )
+      throw new Error("ORPHAN_PROTECTION_CLEANUP_PENDING");
   }
   observe(t, price) {
     if (!(Number(price) > 0 && Number(t.entry) > 0)) return;
@@ -615,6 +731,7 @@ class TradeLifecycle {
     t.excursionBoundaryPrecision = "SAMPLED_WITHIN_ENTRY_AND_EXIT_MINUTES";
   }
   async finish(t) {
+    if (!(await this.cleanupFlatTrade(t))) return false;
     const fills = await this.exchange.fills(t);
     const end = Math.max(...fills.map((f) => Number(f.time)));
     if (!Number.isFinite(end)) return false;
@@ -727,8 +844,6 @@ class TradeLifecycle {
         accounting: closed,
       });
     await this.learner.recordClosedTrade(t, closed);
-    // Cleanup must succeed before a new trade in this symbol can open.
-    await this.exchange.cancelAlgos(t.symbol);
     t.accountingPending = false;
     t.state = "CLOSED";
     t.result = closed.pnl > 0 ? "WIN" : "LOSS";
@@ -777,9 +892,22 @@ class TradeLifecycle {
       let algos = null;
       try {
         algos = await this.exchange.openAlgos();
+        await this.cleanupOrphanAlgos(positions, algos);
       } catch (e) {
         this.uncertain = true;
         console.error("PROTECTION QUERY", e.message);
+      }
+      // Clear every confirmed-flat symbol before any slow accounting request
+      // for another trade can delay sibling cancellation.
+      for (const t of [...this.active.values()]) {
+        if (t.opening || !t.entryExecution ||
+            positions.some((p) => p.symbol === t.symbol)) continue;
+        try {
+          await this.cleanupFlatTrade(t);
+        } catch (e) {
+          this.uncertain = true;
+          console.error("PROTECTION CLEANUP", t.symbol, e.message);
+        }
       }
       for (const t of [...this.active.values()]) {
         if (t.opening) continue;
@@ -807,7 +935,7 @@ class TradeLifecycle {
           const deadline = Number(
             t.deadlineAt || Number(t.enteredAt) + TIMEOUT_MS,
           );
-          if (this.now() >= deadline) {
+          if (this.now() + (this.exchange.offset || 0) >= deadline) {
             await this.close(t, "TIMEOUT_24_4H_BARS");
             continue;
           }
@@ -834,8 +962,14 @@ class TradeLifecycle {
             await this.persist(t);
           }
         } catch (e) {
-          this.uncertain = true;
-          console.error("POSITION MANAGEMENT", t.symbol, e.message);
+          // An accounting outage after verified cleanup must not masquerade
+          // as uncertain live exposure and pause every other symbol.
+          if (pos || !t.protectionCleanupConfirmed) this.uncertain = true;
+          console.error(
+            pos || !t.protectionCleanupConfirmed
+              ? "POSITION MANAGEMENT" : "CLOSED TRADE ACCOUNTING PENDING",
+            t.symbol, e.message,
+          );
           if (pos && !t.entryExecution) {
             try {
               await this.close(t, "UNCONFIRMED_ENTRY_FILL");
