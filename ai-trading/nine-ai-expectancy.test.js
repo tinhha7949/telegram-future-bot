@@ -286,6 +286,31 @@ test("runtime tries all approved signals beyond ten and permits multiple entries
   assert.equal(entered.length, 12);
 });
 
+test("one symbol's API failure does not discard the remaining approved signals", async () => {
+  const base = analyzeNineAI(fixture()), entered = [];
+  const signals = ["FIRSTUSDT", "SECONDUSDT"].map((symbol) => ({ ...structuredClone(base), symbol }));
+  const exchange = fakeExchange(), request = exchange.request;
+  exchange.request = async (route, params) => {
+    if (params.symbol === "FIRSTUSDT") throw new Error("temporary symbol outage");
+    return request(route, params);
+  };
+  const lifecycle = { uncertain: false, untracked: new Set(), active: new Map(),
+    claims: { findOne: async () => null }, enter: async (t) => entered.push(t.symbol) };
+  await executeDecisions(signals, { exchange, lifecycle });
+  assert.deepEqual(entered, ["SECONDUSDT"]);
+});
+
+test("a pause arriving during awaited preparation prevents the market submission", async () => {
+  const base = analyzeNineAI(fixture()), exchange = fakeExchange();
+  let paused = false, entries = 0;
+  const info = exchange.info;
+  exchange.info = async () => { paused = true; return info(); };
+  const lifecycle = { uncertain: false, untracked: new Set(), active: new Map(),
+    claims: { findOne: async () => null }, enter: async () => { entries++; } };
+  await executeDecisions([base], { exchange, lifecycle, entriesPaused: () => paused });
+  assert.equal(entries, 0);
+});
+
 test("AI-9 edge and gap comparisons are strict and WAIT remains the default", () => {
   const base = {
     regime: { regime: "UPTREND" },

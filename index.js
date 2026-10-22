@@ -25,6 +25,7 @@ const {
 } = require("./ai-trading/binance-execution");
 const { TradeLifecycle, newTrade } = require("./ai-trading/trade-lifecycle");
 const { validateExecution } = require("./ai-trading/execution-validation");
+const { TelegramNotifications } = require("./ai-trading/telegram-notifications");
 
 function envNumber(name, fallback, min, max) {
   const raw = process.env[name];
@@ -210,7 +211,6 @@ async function executeDecisions(
   {
     exchange,
     lifecycle,
-    report,
     isStopped = () => false,
     entriesPaused = () => false,
   },
@@ -224,36 +224,38 @@ async function executeDecisions(
       lifecycle.untracked.size
     )
       break;
-    if (
-      [...lifecycle.active.values()].some((t) => t.symbol === decision.symbol)
-    )
-      continue;
-    if (
-      await lifecycle.claims.findOne({
-        signalKey: `${decision.symbol}:${decision.signalAt}`,
-      })
-    )
-      continue;
-    const fresh = await marketSnapshot(exchange, decision.symbol);
-    const validation = validateExecution(decision, fresh, Date.now());
-    if (!validation.ok) {
-      console.log("ENTRY WAIT", decision.symbol, validation.reason);
-      continue;
-    }
-    const equity = await exchange.equity();
-    const sizing = sizeTrade(
-      decision,
-      equity,
-      TRADE_CONFIG.riskPerTrade,
-      await exchange.info(decision.symbol),
-    );
-    if (!sizing) continue;
-    const trade = newTrade(decision, sizing);
-    trade.executionValidation = validation;
-    if (await lifecycle.enter(trade)) {
-      await report(
-        `${trade.symbol} ${trade.side} | Entry ${trade.entry} | SL ${trade.sl} | TP1 ${trade.tp1} | TP2 ${trade.tp2} | ${trade.tradePlan?.outcomeMode === "AI7_LABELED" ? "AI7 MAE/MFE" : "AI7 OFF: AI2 initial SL/TP"}`,
+    try {
+      if (
+        [...lifecycle.active.values()].some((t) => t.symbol === decision.symbol)
+      )
+        continue;
+      if (
+        await lifecycle.claims.findOne({
+          signalKey: `${decision.symbol}:${decision.signalAt}`,
+        })
+      )
+        continue;
+      const fresh = await marketSnapshot(exchange, decision.symbol);
+      const validation = validateExecution(decision, fresh, Date.now());
+      if (!validation.ok) {
+        console.log("ENTRY WAIT", decision.symbol, validation.reason);
+        continue;
+      }
+      const equity = await exchange.equity();
+      const sizing = sizeTrade(
+        decision,
+        equity,
+        TRADE_CONFIG.riskPerTrade,
+        await exchange.info(decision.symbol),
       );
+      if (!sizing) continue;
+      const trade = newTrade(decision, sizing);
+      trade.executionValidation = validation;
+      if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size)
+        break;
+      await lifecycle.enter(trade);
+    } catch (e) {
+      console.error("ENTRY PROCESSING", decision.symbol, e.message);
     }
   }
 }
@@ -302,15 +304,12 @@ async function main() {
     secret: process.env.BINANCE_SECRET,
   });
   let stopped = false,
-    entriesPaused = false;
+    entriesPaused = false,
+    notifications = null;
   const intervals = [];
-  const report = async (msg) => {
+  const report = async (msg, metadata) => {
     console.log(msg);
-    void telegram(
-      process.env.BOT_TOKEN_2 || process.env.BOT_TOKEN,
-      process.env.AI_CHAT_ID || process.env.CHAT_ID,
-      msg,
-    );
+    if (notifications) await notifications.report(msg, metadata);
   };
   process.on("unhandledRejection", (e) => {
     entriesPaused = true;
@@ -320,6 +319,7 @@ async function main() {
     if (stopped) return;
     stopped = true;
     intervals.forEach(clearInterval);
+    notifications?.stop();
     liquidationFeed.stop();
     exchange.close();
     await client.close();
@@ -334,6 +334,8 @@ async function main() {
   await client.connect();
   const db = client.db("trading");
   await db.command({ ping: 1 });
+  notifications = new TelegramNotifications({ db });
+  await notifications.initialize();
   await exchange.initialize();
   await journal.initialize(db);
   const learner = createOfflineLearning(db);
@@ -344,6 +346,10 @@ async function main() {
     journal,
     learner,
     notify: report,
+    notifyEntry: async (trade) => {
+      await notifications.entry(trade);
+      console.log("ENTRY CONFIRMED", trade.symbol, trade.side, trade.signalKey);
+    },
   });
   await lifecycle.initialize();
   liquidationFeed.start();
@@ -364,13 +370,22 @@ async function main() {
     intervals.push(setInterval(run, ms));
     return run;
   }
-  const manage = every(10000, () => lifecycle.tick());
+  const manage = every(10000, () => lifecycle.tick({ runMaintenance: false }));
   await manage();
+  // Exchange safety has its own loop; historical API cooldowns, MAE/MFE and
+  // Telegram delivery cannot keep timeout/SL/TP reconciliation waiting.
+  const bookkeeping = every(10000, () => lifecycle.maintenance());
+  void bookkeeping();
+  const deliver = every(2000, () => notifications.flush());
+  void deliver();
   every(60000, () => exchange.syncTime());
   const retention = createRetention(db);
-  const clean = every(retention.config.intervalMs, () =>
-    retention.runCleanup(),
-  );
+  const clean = every(retention.config.intervalMs, async () => {
+    const summary = await retention.runCleanup();
+    const usage = summary.usageAfterMB ?? summary.usageMB;
+    if (Number.isFinite(usage) && usage >= summary.triggerMB)
+      await report(`DATABASE CAPACITY: ${usage} MB; threshold ${summary.triggerMB} MB. ${summary.note || "Check storage capacity."}`);
+  });
   void clean();
   const daily = every(24 * 3600000, async () => {
     const symbols = await db.collection(journal.COLLECTION).distinct("symbol", {
@@ -504,7 +519,6 @@ async function main() {
     await executeDecisions(signals, {
       exchange,
       lifecycle,
-      report,
       isStopped: () => stopped,
       entriesPaused: () => entriesPaused,
     });

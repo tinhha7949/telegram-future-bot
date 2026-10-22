@@ -1,6 +1,6 @@
 # Deploying the Nine-AI flow
 
-Use Node.js 22 or newer, the existing MongoDB trading database and Binance USDT single-asset One-way Mode. The bot validates account mode. Keep the existing .env containing MONGO_URI, BINANCE_KEY and BINANCE_SECRET. BOT_TOKEN/CHAT_ID and optional BOT_TOKEN_2/AI_CHAT_ID handle Telegram reporting; Telegram does not control position protection.
+Use Node.js 22 or newer, the existing MongoDB trading database and Binance USDT single-asset One-way Mode. The bot validates account mode. Keep the existing .env containing MONGO_URI, BINANCE_KEY and BINANCE_SECRET. BOT_TOKEN/CHAT_ID receive confirmed entries on Telegram 1; BOT_TOKEN_2/AI_CHAT_ID receive WIN/LOSS and operational alerts on Telegram 2, with the existing fallback to Telegram 1. Delivery uses a durable retry outbox and runs independently of position protection. See [Telegram and runtime behavior](NINE_AI_TELEGRAM_RUNTIME.md).
 
 Stop the old bot process. Inside the repo on main:
 

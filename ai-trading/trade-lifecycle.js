@@ -159,10 +159,11 @@ class TradeLifecycle {
     journal,
     learner,
     notify = async () => {},
+    notifyEntry = async () => {},
     now = () => Date.now(),
     wait = (ms) => new Promise((r) => setTimeout(r, ms)),
   }) {
-    Object.assign(this, { exchange, db, journal, learner, notify, now, wait });
+    Object.assign(this, { exchange, db, journal, learner, notify, notifyEntry, now, wait });
     this.trades = db.collection("trades");
     this.claims = db.collection("trade_signal_claims");
     this.active = new Map();
@@ -170,6 +171,8 @@ class TradeLifecycle {
     this.entryRunning = false;
     this.uncertain = false;
     this.untracked = new Set();
+    this.persistPending = new Map();
+    this.maintenanceRunning = false;
   }
   async initialize() {
     await this.trades.createIndex(
@@ -274,6 +277,20 @@ class TradeLifecycle {
     await this.recoverClaims();
   }
   async persist(t) {
+    // Background accounting and critical protection can progress independently.
+    // Serialize writes and snapshot at dispatch so older writes cannot restore
+    // stale protection IDs or CLOSING/ACTIVE state after newer changes.
+    const previous = this.persistPending.get(t.signalKey) || Promise.resolve();
+    const task = previous.catch(() => {}).then(() => this.persistNow(t));
+    this.persistPending.set(t.signalKey, task);
+    try {
+      await task;
+    } finally {
+      if (this.persistPending.get(t.signalKey) === task)
+        this.persistPending.delete(t.signalKey);
+    }
+  }
+  async persistNow(t) {
     const doc = { ...t, updatedAt: this.now() };
     delete doc._id;
     delete doc.opening;
@@ -327,10 +344,18 @@ class TradeLifecycle {
         await this.persist(t);
       } catch (e) {
         this.uncertain = true;
-        await this.notify(
+        await this.alert(
           `Entry reconciliation pending: ${t.symbol}: ${e.message}`,
         );
       }
+    }
+  }
+  async alert(message) {
+    try {
+      await this.notify(message);
+    } catch (_) {
+      // Operational reporting must never abort the protection/timeout pass.
+      console.error("OPERATIONAL NOTIFICATION PENDING");
     }
   }
   async resolveEntry(t, initialOrder = null) {
@@ -422,6 +447,7 @@ class TradeLifecycle {
         await this.close(trade, "INITIAL_PROTECTION_FAILED");
         throw e;
       }
+      await this.queueEntryNotification(trade);
       return true;
     } catch (e) {
       console.error("ENTRY", trade.symbol, e.message);
@@ -429,6 +455,17 @@ class TradeLifecycle {
     } finally {
       trade.opening = false;
       this.entryRunning = false;
+    }
+  }
+  async queueEntryNotification(t) {
+    if (t.entryNotificationQueued || !t.protectionEstablishedAt) return;
+    try {
+      await this.notifyEntry(t);
+      t.entryNotificationQueued = true;
+      await this.persist(t);
+    } catch (_) {
+      t.entryNotificationQueued = false;
+      console.error("ENTRY NOTIFICATION PENDING", t.symbol);
     }
   }
   async ensureProtection(t, openAlgos, position = null) {
@@ -577,7 +614,15 @@ class TradeLifecycle {
       t.protectionAlgoIds[kind] = order.algoId;
     }
     t.state = "ACTIVE";
-    await this.persist(t);
+    t.protectionEstablishedAt = t.protectionEstablishedAt || this.now();
+    try {
+      await this.persist(t);
+    } catch (e) {
+      // Every new client ID was saved before POST. Confirmed exchange-side
+      // protection remains valid even if this final status write fails.
+      this.uncertain = true;
+      console.error("PROTECTION SNAPSHOT PENDING", t.symbol, e.message);
+    }
   }
   async close(t, reason) {
     t.exitReason = reason;
@@ -844,6 +889,13 @@ class TradeLifecycle {
         accounting: closed,
       });
     await this.learner.recordClosedTrade(t, closed);
+    // Queue durably before marking CLOSED: a DB/notification-queue failure
+    // leaves the trade retryable, without keeping exchange protection alive.
+    const result = closed.pnl > 0 ? "WIN" : "LOSS";
+    await this.notify(
+      `${t.symbol} ${t.side} ${result}: net ${closed.pnl.toFixed(4)} USDT | R=${(closed.pnl / actualRisk).toFixed(3)}`,
+      { eventKey: `CLOSED:${t.signalKey}` },
+    );
     t.accountingPending = false;
     t.state = "CLOSED";
     t.result = closed.pnl > 0 ? "WIN" : "LOSS";
@@ -861,12 +913,33 @@ class TradeLifecycle {
       { $set: { closedAt: new Date(closed.closedAt) } },
     );
     this.active.delete(t.signalKey);
-    await this.notify(
-      `${t.symbol} ${t.side} ${t.result}: net ${closed.pnl.toFixed(4)} USDT | R=${t.realizedR.toFixed(3)}`,
-    );
     return true;
   }
-  async tick() {
+  async maintenance() {
+    if (this.maintenanceRunning) return;
+    this.maintenanceRunning = true;
+    try {
+      for (const t of [...this.active.values()]) {
+        if (t.opening || !t.entryExecution) continue;
+        try {
+          await this.queueEntryNotification(t);
+          if (t.protectionCleanupConfirmed) {
+            await this.finish(t);
+          } else if (this.now() - (t.lastExcursionAt || 0) >= 60000) {
+            await this.excursions(t);
+            t.lastExcursionAt = this.now();
+            await this.persist(t);
+          }
+        } catch (e) {
+          // Optional bookkeeping never decides whether live exposure is safe.
+          console.error("TRADE BOOKKEEPING PENDING", t.symbol, e.message);
+        }
+      }
+    } finally {
+      this.maintenanceRunning = false;
+    }
+  }
+  async tick({ runMaintenance = true } = {}) {
     if (this.running) return;
     this.running = true;
     try {
@@ -884,7 +957,7 @@ class TradeLifecycle {
       );
       const untrackedKey = [...this.untracked].sort().join(", ");
       if (untrackedKey && untrackedKey !== this.lastUntrackedKey)
-        await this.notify(
+        await this.alert(
           "Untracked positions require protection/reconciliation: " +
             untrackedKey,
         );
@@ -918,7 +991,7 @@ class TradeLifecycle {
             await this.persist(t);
           }
           if (!pos) {
-            await this.finish(t);
+            await this.cleanupFlatTrade(t);
             continue;
           }
           if (
@@ -926,7 +999,7 @@ class TradeLifecycle {
             Math.abs(Number(pos.positionAmt)) > t.actualQuantity * (1 + 1e-7)
           ) {
             this.uncertain = true;
-            await this.notify(
+            await this.alert(
               `Unexpected exposure change: ${t.symbol}; entries paused.`,
             );
             continue;
@@ -956,11 +1029,6 @@ class TradeLifecycle {
               continue;
             }
           }
-          if (this.now() - (t.lastExcursionAt || 0) >= 60000) {
-            await this.excursions(t);
-            t.lastExcursionAt = this.now();
-            await this.persist(t);
-          }
         } catch (e) {
           // An accounting outage after verified cleanup must not masquerade
           // as uncertain live exposure and pause every other symbol.
@@ -979,6 +1047,7 @@ class TradeLifecycle {
           }
         }
       }
+      if (runMaintenance) await this.maintenance();
     } catch (e) {
       this.uncertain = true;
       console.error("POSITION SNAPSHOT", e.message);

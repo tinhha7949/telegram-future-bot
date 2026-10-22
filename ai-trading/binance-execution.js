@@ -198,7 +198,8 @@ class BinanceExchange {
             code: Number(data?.code),
             ambiguous:
               method !== "GET" &&
-              (response.status >= 500 || response.status === 408),
+              (response.status >= 500 || response.status === 408 ||
+                [-1006, -1007].includes(Number(data?.code))),
           },
         );
         if (

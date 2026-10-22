@@ -194,7 +194,7 @@ function harness({ initial = false, shared = false, side = "LONG" } = {}) {
       },
     },
     learner = createOfflineLearning(db);
-  const create = () =>
+  const create = (options = {}) =>
     new TradeLifecycle({
       exchange,
       db,
@@ -203,6 +203,7 @@ function harness({ initial = false, shared = false, side = "LONG" } = {}) {
       notify: async () => {},
       now: () => now,
       wait: async () => {},
+      ...options,
     });
   return {
     trade,
@@ -679,4 +680,160 @@ test("timeout compares exchange timestamps against the synchronized server clock
   h.advance(TIMEOUT_MS - 1000);
   await l.tick();
   assert.equal(h.calls.filter((c) => c === "close").length, 1);
+});
+
+test("confirmed entries queue Telegram 1 once after protection, including after restart", async () => {
+  const h = harness(), events = [];
+  const notifyEntry = async (t) => {
+    assert.equal((await h.exchange.openAlgos()).length, 3);
+    events.push(t.signalKey);
+  };
+  let l = h.create({ notifyEntry });
+  await l.initialize();
+  assert.equal(await l.enter(h.trade), true);
+  assert.deepEqual(events, [h.trade.signalKey]);
+  l = h.create({ notifyEntry });
+  await l.initialize();
+  await l.tick();
+  assert.equal(events.length, 1);
+});
+test("entry notification queue failure cannot close a protected trade and retries after restart", async () => {
+  const h = harness();
+  let l = h.create({ notifyEntry: async () => { throw new Error("queue DB down"); } });
+  await l.initialize();
+  assert.equal(await l.enter(h.trade), true);
+  assert.equal(h.calls.filter((c) => c === "close").length, 0);
+  const events = [];
+  l = h.create({ notifyEntry: async (t) => events.push(t.signalKey) });
+  await l.initialize();
+  await l.tick();
+  await l.tick();
+  assert.deepEqual(events, [h.trade.signalKey]);
+});
+test("rejected/unsafe entries do not send a successful entry notification", async () => {
+  const h = harness(), events = [], l = h.create({ notifyEntry: async (t) => events.push(t) });
+  await l.initialize();
+  h.exchange.entryPrice += 10;
+  assert.equal(await l.enter(h.trade), false);
+  await l.tick();
+  assert.equal(events.length, 0);
+});
+test("a failed WIN/LOSS queue write remains retryable after protection is cleared", async () => {
+  const h = harness(), l = h.create({ notify: async () => { throw new Error("queue unavailable"); } });
+  await l.initialize();
+  await l.enter(h.trade);
+  h.exchange.trigger("sl");
+  await l.tick();
+  assert.equal(l.active.size, 1);
+  assert.equal(h.trade.result, "PENDING");
+  assert.equal((await h.exchange.openAlgos()).length, 0);
+  const events = [];
+  l.notify = async (message, metadata) => events.push({ message, metadata });
+  await l.tick();
+  assert.equal(l.active.size, 0);
+  assert.equal(events[0].metadata.eventKey, `CLOSED:${h.trade.signalKey}`);
+  assert.match(events[0].message, /LOSS/);
+});
+test("production protection loop still executes timeout while candle history is blocked", { timeout: 3000 }, async () => {
+  const h = harness(), l = h.create();
+  await l.initialize();
+  await l.enter(h.trade);
+  h.advance(120000);
+  let ready, release;
+  const started = new Promise((resolve) => { ready = resolve; });
+  h.exchange.candles = async () => {
+    ready();
+    return new Promise((resolve) => { release = () => resolve([]); });
+  };
+  const bookkeeping = l.maintenance();
+  await started;
+  h.advance(TIMEOUT_MS);
+  await l.tick({ runMaintenance: false });
+  assert.equal(h.calls.filter((c) => c === "close").length, 1);
+  assert.equal((await h.exchange.openAlgos()).length, 0);
+  release();
+  await bookkeeping;
+});
+test("alert queue failure cannot abort protection management for live positions", async () => {
+  const h = harness(), l = h.create({ notify: async () => { throw new Error("outbox DB down"); } });
+  await l.initialize();
+  await l.enter(h.trade);
+  const positions = h.exchange.positions.bind(h.exchange);
+  h.exchange.positions = async () => [...await positions(), { symbol: "MANUALUSDT", positionAmt: "1" }];
+  h.advance(TIMEOUT_MS + 1);
+  await l.tick({ runMaintenance: false });
+  assert.equal(h.calls.filter((c) => c === "close").length, 1);
+  assert.equal((await h.exchange.openAlgos()).length, 0);
+});
+
+test("a status-write outage does not close an already protected live position", async () => {
+  const h = harness(), l = h.create();
+  await l.initialize();
+  await l.enter(h.trade);
+  const claims = h.db.collection("trade_signal_claims"), write = claims.updateOne;
+  claims.updateOne = async () => { throw new Error("DB down"); };
+  await l.tick({ runMaintenance: false });
+  assert.equal(h.calls.filter((c) => c === "close").length, 0);
+  assert.equal((await h.exchange.openAlgos()).length, 3);
+  assert.equal(l.uncertain, true);
+  claims.updateOne = write;
+  await l.tick({ runMaintenance: false });
+  assert.equal(l.uncertain, false);
+});
+
+test("concurrent background and protection writes cannot overwrite a newer CLOSING snapshot", async () => {
+  const h = harness(), l = h.create();
+  await l.initialize();
+  await l.enter(h.trade);
+  const claims = h.db.collection("trade_signal_claims"), write = claims.updateOne;
+  let release, ready, requests = 0, concurrent = 0, maximum = 0;
+  const started = new Promise((resolve) => { ready = resolve; });
+  claims.updateOne = async (...args) => {
+    concurrent++;
+    maximum = Math.max(maximum, concurrent);
+    if (++requests === 1) {
+      ready();
+      await new Promise((resolve) => { release = resolve; });
+    }
+    try { return await write(...args); } finally { concurrent--; }
+  };
+  const first = l.persist(h.trade);
+  await started;
+  h.trade.state = "CLOSING";
+  const second = l.persist(h.trade);
+  release();
+  await Promise.all([first, second]);
+  assert.equal(maximum, 1);
+  assert.equal((await claims.findOne({ signalKey: h.trade.signalKey })).state, "CLOSING");
+  assert.equal((await h.db.collection("trades").findOne({ signalKey: h.trade.signalKey })).state, "CLOSING");
+  assert.equal(l.persistPending.size, 0);
+});
+
+test("real lifecycle integration delivers protected entry to Telegram 1 and SL result to Telegram 2", async () => {
+  const { TelegramNotifications } = require("./telegram-notifications");
+  const h = harness(), calls = [];
+  const notifications = new TelegramNotifications({ db: h.db,
+    env: { BOT_TOKEN: "fake-one", CHAT_ID: "one", BOT_TOKEN_2: "fake-two", AI_CHAT_ID: "two" },
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+  await notifications.initialize();
+  const l = h.create({ notifyEntry: (t) => notifications.entry(t),
+    notify: (text, meta) => notifications.report(text, meta) });
+  await l.initialize();
+  await l.enter(h.trade);
+  await notifications.flush();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body.chat_id, "one");
+  assert.match(calls[0].body.text, /MỞ LỆNH THÀNH CÔNG/);
+  h.exchange.trigger("sl");
+  await l.tick();
+  await notifications.flush();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].body.chat_id, "two");
+  assert.match(calls[1].body.text, /LOSS/);
+  assert.equal(l.active.size, 0);
+  assert.equal((await h.exchange.openAlgos()).length, 0);
 });

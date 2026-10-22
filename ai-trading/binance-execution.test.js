@@ -82,6 +82,23 @@ test("ambiguous market POST is queried by the same ID and is never blindly repea
   assert.equal(calls.filter((c) => c.method === "POST").length, 1);
   assert.ok(calls[1].url.includes("origClientOrderId=same-order"));
 });
+for (const code of [-1006, -1007])
+  test(`Binance ${code} with HTTP 400 still reconciles the accepted order ID`, async () => {
+    const calls = [];
+    const e = new BinanceExchange({ key: "fake", secret: "fake",
+      budget: { async acquire() {}, observe() {} }, wait: async () => {},
+      fetchImpl: async (url, options) => {
+        calls.push({ url, method: options.method });
+        return options.method === "POST"
+          ? { ok: false, status: 400, json: async () => ({ code, msg: "Execution status unknown" }) }
+          : { ok: true, status: 200, json: async () => ({ orderId: 123, status: "FILLED", executedQty: "2", avgPrice: "100" }) };
+      },
+    });
+    const order = await e.market({ symbol: "TESTUSDT", side: "LONG", quantity: 2 }, "same-id");
+    assert.equal(order.status, "FILLED");
+    assert.equal(calls.filter((c) => c.method === "POST").length, 1);
+    assert.match(calls[1].url, /origClientOrderId=same-id/);
+  });
 test("fill pagination does not combine fromId with time parameters", async () => {
   const queries = [],
     e = new BinanceExchange();
