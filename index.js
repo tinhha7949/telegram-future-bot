@@ -3,6 +3,7 @@ require("dotenv").config();
 
 // Manually tune per-trade equity risk here. Use a fraction: 0.0075 = 0.75%.
 const RISK_PER_TRADE = 0.075;
+const HISTORY_4H_LIMIT = 1000;
 
 const fs = require("node:fs"),
   path = require("node:path"),
@@ -275,7 +276,7 @@ async function loadDecisionInput(
     DECISION_SCHEMA_VERSION,
   );
   if (prior) return { prior };
-  const h4 = await exchange.candles(symbol, "4h", 1500);
+  const h4 = await exchange.candles(symbol, "4h", HISTORY_4H_LIMIT);
   const probe = pipeline.closedCandles(h4, Date.now()).at(-1);
   if (!probe) return null;
   if (probe.closeTime !== expectedClose)
@@ -398,7 +399,7 @@ async function main() {
       try {
         await journal.settleMatured(
           symbol,
-          await exchange.candles(symbol, "4h"),
+          await exchange.candles(symbol, "4h", HISTORY_4H_LIMIT)
         );
       } catch (e) {
         console.error("SETTLEMENT", symbol, e.message);
