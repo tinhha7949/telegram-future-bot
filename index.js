@@ -561,6 +561,7 @@ if (require.main === module)
   });
 module.exports = {
   RISK_PER_TRADE,
+  HISTORY_4H_LIMIT,
   TRADE_CONFIG,
   marketSnapshot,
   universe,

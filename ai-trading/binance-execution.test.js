@@ -176,3 +176,39 @@ test("sizing rounds protection before risk and always permits exact 50% TP1", ()
   assert.equal(shared.tp1, shared.tp2);
   assert.ok(shared.quantity * shared.initialRisk <= 7.5);
 });
+
+test("an unavailable lookup never changes an ambiguous MARKET into a definitive rejection", async () => {
+  let posts = 0;
+  const e = new BinanceExchange({ key: "fake", secret: "fake", wait: async () => {},
+    budget: { async acquire() {}, observe() {} },
+    fetchImpl: async (_, options) => {
+      if (options.method === "POST") posts++;
+      throw new Error("network down");
+    },
+  });
+  await assert.rejects(e.market({ symbol: "TEST", side: "LONG", quantity: 2 }, "accepted-id"),
+    (error) => error.ambiguous === true);
+  assert.equal(posts, 1);
+});
+
+for (const side of ["LONG", "SHORT"])
+  test(`${side} missing average fill price is rebuilt only from matching complete entry executions`, async () => {
+    const e = new BinanceExchange();
+    const fills = [
+      { id: 1, orderId: 123, symbol: "TEST", side: side === "LONG" ? "BUY" : "SELL", qty: ".5", price: "100", time: 10000 },
+      { id: 2, orderId: 123, symbol: "TEST", side: side === "LONG" ? "BUY" : "SELL", qty: "1.5", price: "102", time: 10001 },
+    ];
+    e.request = async (_, params) => {
+      assert.equal(params.orderId, 123);
+      return [...fills, fills[0], { ...fills[0], id: 3, orderId: 999 }];
+    };
+    const order = await e.entryFill({ symbol: "TEST", side, quantity: 2 },
+      { orderId: 123, status: "FILLED", executedQty: "2", avgPrice: "0" });
+    assert.equal(Number(order.avgPrice), 101.5);
+    assert.equal(Number(order.executedQty), 2);
+    assert.equal(order.time, 10000);
+    assert.equal(order.fillSource, "CONFIRMED_ORDER_TRADE_HISTORY");
+    e.request = async () => fills.slice(0, 1);
+    await assert.rejects(e.entryFill({ symbol: "TEST", side, quantity: 2 },
+      { orderId: 123, status: "FILLED", executedQty: "2" }), /ENTRY_FILL_HISTORY_INCOMPLETE/);
+  });

@@ -6,7 +6,7 @@ const { BinanceExchange } = require("./binance-execution");
 const { RequestBudget, requestWeight } = require("./binance-request-budget");
 const { FourHourHistory, BAR_MS } = require("./four-hour-history");
 const { BinanceMarketFeed, URLS } = require("./binance-market-feed");
-const { marketSnapshot, loadDecisionInput } = require("../index");
+const { marketSnapshot, loadDecisionInput, HISTORY_4H_LIMIT } = require("../index");
 const host = "https://fapi.binance.com";
 const response = (data, status = 200, headers = {}) => ({
   ok: status < 400,
@@ -509,7 +509,7 @@ test("a new 4h decision loads history once and preserves initial LONG/SHORT anal
       f.market.now,
     );
     assert.deepEqual(calls, [
-      { symbol: f.symbol, interval: "4h", limit: 1500 },
+      { symbol: f.symbol, interval: "4h", limit: HISTORY_4H_LIMIT },
     ]);
     assert.equal(input.probe.closeTime, f.candles4h.at(-1)[6]);
     const decision = analyzeNineAI({ ...f, outcomes: [], candles4h: input.h4 });

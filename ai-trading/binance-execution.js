@@ -441,12 +441,41 @@ class BinanceExchange {
           return await this.order(trade.symbol, clientOrderId);
         } catch (queryError) {
           if (queryError.code !== -2013 && queryError.code !== -2011)
-            throw queryError;
+            // A failed lookup cannot turn an ambiguous accepted POST into a
+            // definitive rejection. Keep the original uncertainty for recovery.
+            throw error;
         }
         await this.wait(500);
       }
       throw error;
     }
+  }
+  async entryFill(trade, order) {
+    if (order?.orderId == null) throw new Error("ENTRY_ORDER_ID_MISSING");
+    const rows = await this.request("/fapi/v1/userTrades", {
+      symbol: trade.symbol, orderId: order.orderId, limit: 1000,
+    }, { signed: true });
+    if (!Array.isArray(rows)) throw new Error("INVALID_ENTRY_FILL_HISTORY");
+    const expected = Number(order.executedQty) > 0 ? Number(order.executedQty)
+      : order.status === "FILLED" ? Number(trade.quantity) : NaN;
+    const side = trade.side === "LONG" ? "BUY" : "SELL";
+    const unique = new Map();
+    for (const f of rows) {
+      if (String(f.orderId) !== String(order.orderId) || f.side !== side ||
+          (f.symbol && f.symbol !== trade.symbol)) continue;
+      if (f.id == null || ![f.qty, f.price, f.time].every((v) => Number.isFinite(Number(v)) && Number(v) > 0))
+        throw new Error("INVALID_ENTRY_FILL_HISTORY");
+      unique.set(String(f.id), f);
+    }
+    const fills = [...unique.values()];
+    const qty = fills.reduce((sum, f) => sum + Number(f.qty), 0);
+    const quote = fills.reduce((sum, f) => sum + Number(f.qty) * Number(f.price), 0);
+    if (!(expected > 0 && qty > 0 && quote > 0) ||
+        Math.abs(qty - expected) > Math.max(expected * 1e-7, 1e-10))
+      throw new Error("ENTRY_FILL_HISTORY_INCOMPLETE");
+    return { ...order, executedQty: String(qty), avgPrice: String(quote / qty),
+      cumQuote: String(quote), time: Math.min(...fills.map((f) => Number(f.time))),
+      fillSource: "CONFIRMED_ORDER_TRADE_HISTORY" };
   }
   async protection(trade, kind, clientAlgoId) {
     const params = {

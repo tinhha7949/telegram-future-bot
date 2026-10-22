@@ -11,6 +11,14 @@ const id = (trade, kind) =>
   `n9_${trade.keyPrefix}_${kind}_${crypto.randomBytes(5).toString("hex")}`;
 const same = (a, b) =>
   Math.abs(Number(a) - Number(b)) <= Math.max(1e-9, Math.abs(Number(b)) * 1e-9);
+function hasConfirmedEntryFill(order) {
+  const qty = Number(order?.executedQty),
+    price = Number(order?.avgPrice) > 0 ? Number(order.avgPrice)
+      : Number(order?.cumQuote) / qty,
+    time = Number(order?.time || order?.transactTime || order?.updateTime);
+  return order?.orderId != null &&
+    [qty, price, time].every((v) => Number.isFinite(v) && v > 0);
+}
 
 function newTrade(decision, sizing, now = Date.now()) {
   const signalKey = `${decision.symbol}:${decision.signalAt}`;
@@ -116,6 +124,7 @@ function hydrateFill(trade, order) {
     orderId: String(order.orderId),
     clientOrderId: order.clientOrderId || trade.entryClientId,
     status: order.status,
+    fillSource: order.fillSource || "CONFIRMED_ORDER_RESPONSE",
     averagePrice: entry,
     executedQuantity: qty,
     orderTime: trade.enteredAt,
@@ -338,9 +347,11 @@ class TradeLifecycle {
       if (!t || !t.plannedLevels || !claim.orderClientId) continue;
       t.entryClientId = claim.orderClientId;
       t.opening = false;
+      // Keep accepted/uncertain claims under management even if fill details
+      // are still missing. They must not become unattended untracked positions.
+      this.active.set(t.signalKey, t);
       try {
         if (!t.entryExecution && !(await this.resolveEntry(t))) continue;
-        this.active.set(t.signalKey, t);
         await this.persist(t);
       } catch (e) {
         this.uncertain = true;
@@ -368,18 +379,31 @@ class TradeLifecycle {
       "EXPIRED_IN_MATCH",
       "REJECTED",
     ]);
-    for (let i = 0; !terminal.has(order.status) && i < 5; i++) {
+    const needsDetails = (o) => !terminal.has(o.status) ||
+      ((o.status === "FILLED" || Number(o.executedQty) > 0) && !hasConfirmedEntryFill(o));
+    for (let i = 0; needsDetails(order) && i < 5; i++) {
       await this.wait(500);
       order = await this.exchange.order(t.symbol, t.entryClientId);
     }
     if (!terminal.has(order.status)) order = await this.exchange.cancelEntry(t);
     if (!terminal.has(order.status)) throw new Error("ENTRY_STILL_SETTLING");
-    if (!(Number(order.executedQty) > 0) && order.status !== "FILLED") {
+    if (order.executedQty != null && String(order.executedQty).trim() !== "" &&
+        Number(order.executedQty) === 0 && order.status !== "FILLED") {
       t.state = "ENTRY_REJECTED";
       t.result = "ENTRY_REJECTED";
       await this.persist(t);
       this.active.delete(t.signalKey);
       return false;
+    }
+    if (!hasConfirmedEntryFill(order)) {
+      // Retain only diagnostic order fields, never credentials or the full
+      // signed request. FILLED alone does not establish actual price/quantity.
+      t.entryResponseSummary = Object.fromEntries(
+        ["orderId", "status", "executedQty", "avgPrice", "cumQuote", "time", "updateTime"]
+          .map((key) => [key, order[key] ?? null]),
+      );
+      if (this.exchange.entryFill) order = await this.exchange.entryFill(t, order);
+      if (!hasConfirmedEntryFill(order)) throw new Error("ENTRY_FILL_NOT_CONFIRMED");
     }
     hydrateFill(t, order);
     return true;
@@ -430,7 +454,15 @@ class TradeLifecycle {
         await this.persist(trade);
         throw e;
       }
-      if (!(await this.resolveEntry(trade, order))) return false;
+      try {
+        if (!(await this.resolveEntry(trade, order))) return false;
+      } catch (e) {
+        trade.state = "ENTRY_UNKNOWN";
+        this.uncertain = true;
+        try { await this.persist(trade); }
+        catch (saveError) { console.error("ENTRY RECOVERY SNAPSHOT PENDING", trade.symbol, saveError.message); }
+        throw e;
+      }
       try {
         await this.persist(trade);
       } catch (e) {
@@ -451,6 +483,15 @@ class TradeLifecycle {
       return true;
     } catch (e) {
       console.error("ENTRY", trade.symbol, e.message);
+      if (trade.entryResponseSummary)
+        console.error("ENTRY RESPONSE DETAILS", trade.symbol, JSON.stringify(trade.entryResponseSummary));
+      if (this.active.has(trade.signalKey) && trade.state === "ENTRY_UNKNOWN" && !trade.entryExecution) {
+        // No verified fill means protection cannot be sized correctly. Never
+        // continue submitting other entries while this exposure is unresolved.
+        this.uncertain = true;
+        try { await this.close(trade, "UNCONFIRMED_ENTRY_FILL"); }
+        catch (closeError) { console.error("EMERGENCY CLOSE PENDING", trade.symbol, closeError.message); }
+      }
       return false;
     } finally {
       trade.opening = false;

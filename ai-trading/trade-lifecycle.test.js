@@ -837,3 +837,81 @@ test("real lifecycle integration delivers protected entry to Telegram 1 and SL r
   assert.equal(l.active.size, 0);
   assert.equal((await h.exchange.openAlgos()).length, 0);
 });
+
+test("FILLED with missing average price queries the same entry before placing protection", async () => {
+  const h = harness(), l = h.create(), market = h.exchange.market.bind(h.exchange);
+  let queries = 0;
+  const query = h.exchange.order.bind(h.exchange);
+  h.exchange.market = async (...args) => {
+    const order = await market(...args);
+    return { ...order, avgPrice: "0", cumQuote: "0" };
+  };
+  h.exchange.order = async (...args) => { queries++; return query(...args); };
+  await l.initialize();
+  assert.equal(await l.enter(h.trade), true);
+  assert.equal(queries, 1);
+  assert.equal(h.calls.filter((c) => c === "entry").length, 1);
+  assert.equal((await h.exchange.openAlgos()).length, 3);
+});
+
+test("persistent incomplete order responses fall back to confirmed entry fill history", async () => {
+  const h = harness(), l = h.create(), market = h.exchange.market.bind(h.exchange),
+    query = h.exchange.order.bind(h.exchange);
+  h.exchange.market = async (...args) => ({ ...await market(...args), avgPrice: "0", cumQuote: "0" });
+  h.exchange.order = async (...args) => ({ ...await query(...args), avgPrice: "0", cumQuote: "0" });
+  let lookups = 0;
+  h.exchange.entryFill = async (t, order) => {
+    lookups++;
+    return { ...order, avgPrice: String(h.exchange.entryPrice), fillSource: "CONFIRMED_ORDER_TRADE_HISTORY" };
+  };
+  await l.initialize();
+  assert.equal(await l.enter(h.trade), true);
+  assert.equal(lookups, 1);
+  assert.equal(h.trade.entryExecution.fillSource, "CONFIRMED_ORDER_TRADE_HISTORY");
+  assert.equal(h.calls.filter((c) => c === "entry").length, 1);
+});
+
+test("unconfirmed accepted fill pauses further entries, closes actual exposure and later reconciles once", async () => {
+  const h = harness(), l = h.create(), market = h.exchange.market.bind(h.exchange),
+    query = h.exchange.order.bind(h.exchange);
+  h.exchange.market = async (...args) => {
+    const order = await market(...args);
+    return args[2] ? order : { ...order, avgPrice: "0", cumQuote: "0" };
+  };
+  h.exchange.order = async (...args) => {
+    const order = await query(...args);
+    return args[1] === h.trade.entryClientId ? { ...order, avgPrice: "0", cumQuote: "0" } : order;
+  };
+  h.exchange.entryFill = async () => { throw new Error("ENTRY_FILL_HISTORY_INCOMPLETE"); };
+  await l.initialize();
+  assert.equal(await l.enter(h.trade), false);
+  assert.equal(l.uncertain, true);
+  assert.equal(l.active.size, 1);
+  assert.equal(h.calls.filter((c) => c === "entry").length, 1);
+  assert.equal(h.calls.filter((c) => c === "close").length, 1);
+  assert.equal((await h.exchange.positions()).length, 0);
+  assert.equal(await l.enter({ ...h.trade, signalKey: "another" }), false);
+  h.exchange.order = query;
+  await l.tick();
+  assert.equal(l.active.size, 0);
+  assert.equal(h.db.collection("nine_ai_outcome_labels").rows.length, 1);
+  assert.equal(h.calls.filter((c) => c === "entry").length, 1);
+});
+
+test("a claim-only uncertain entry stays managed even when recovery lacks fill details", async () => {
+  const h = harness(), t = h.trade;
+  t.entryClientId = "claim-only";
+  t.state = "ORDER_SUBMITTING";
+  await h.db.collection("trade_signal_claims").insertOne({ signalKey: t.signalKey,
+    orderClientId: t.entryClientId, state: t.state, tradeSnapshot: t });
+  await h.exchange.market(t, t.entryClientId);
+  const query = h.exchange.order.bind(h.exchange);
+  h.exchange.order = async (...args) => ({ ...await query(...args), avgPrice: "0", cumQuote: "0" });
+  const l = h.create();
+  await l.initialize();
+  assert.equal(l.active.size, 1);
+  assert.equal(l.uncertain, true);
+  await l.tick({ runMaintenance: false });
+  assert.equal(h.calls.filter((c) => c === "close").length, 1);
+  assert.equal(h.calls.filter((c) => c === "entry").length, 1);
+});
