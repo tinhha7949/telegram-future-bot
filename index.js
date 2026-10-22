@@ -1,8 +1,7 @@
 // Load VPS .env before reading any environment-backed configuration.
 require("dotenv").config();
 
-// Manually tune per-trade equity risk here. Use a fraction: 0.0075 = 0.75%.
-const RISK_PER_TRADE = 0.075;
+const RISK_PER_TRADE = 0.02;
 const HISTORY_4H_LIMIT = 1000;
 
 const fs = require("node:fs"),
