@@ -41,7 +41,7 @@ for (const side of ["LONG", "SHORT"])
       const sign = side === "LONG" ? 1 : -1;
       assert.equal(d.action, side);
       assert.equal(d.sl, d.entry * (1 - (sign * q.dist_MAE.p80) / 100));
-      assert.equal(d.tradePlan.stopMethod, "WINNING_MAE_P80");
+      assert.equal(d.tradePlan.stopMethod, "LABELED_MAE_P80");
       assert.equal(d.tp1, d.entry * (1 + (sign * q.dist_MFE.p50) / 100));
       assert.equal(d.tp2, d.entry * (1 + (sign * q.dist_MFE.p90) / 100));
       const c = d.edges[side],
@@ -295,4 +295,18 @@ test("old cached decisions cannot reintroduce prior stops, gates or timeframe co
     DECISION_SCHEMA_VERSION,
   );
   assert.equal(db.collection(journal.COLLECTION).rows.length, 4);
+});
+
+test("AI7 activates after 100 COMPLETE losing outcomes; no winning-only gate",()=>{
+  const f=fixture("LONG"),base=f.outcomes[0];
+  const losses=Array.from({length:100},(_,i)=>({
+    ...base,tradeId:"loss-only-"+i,win:false,grossR:-1,
+    maePct:0.5+i*0.005,mfePct:0.8+i*0.005,
+  }));
+  const d=analyzeNineAI({...f,outcomes:losses});
+  assert.equal(d.action,"WAIT","loss-heavy history should still reduce edge");
+  assert.equal(d.edges.LONG.outcomeMode,"AI7_LABELED");
+  assert.equal(d.edges.LONG.distMAE.samples,100);
+  assert.equal(d.edges.LONG.distMFE.samples,100);
+  assert.equal(d.edges.LONG.plan.stopMethod,"LABELED_MAE_P80");
 });

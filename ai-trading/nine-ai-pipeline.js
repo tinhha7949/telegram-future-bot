@@ -487,7 +487,7 @@ function analyzeNineAI({
           }
         : null;
       // No quantile SL/TP until sufficient direction-matched realized outcomes.
-      const ai7Ready = samples.filter(o => o.side === side).length >= CONFIG.AI7_ACTIVATION_SAMPLES && wins.length > 0;
+      const ai7Ready = samples.length >= CONFIG.AI7_ACTIVATION_SAMPLES;
       const entry = last.close;
       const stop = ai7Ready
         ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)
@@ -500,7 +500,7 @@ function analyzeNineAI({
             tp2: entry * (1 + ((side === "LONG" ? 1 : -1) * Math.max(distMFE.p90, distMFE.p50, CONFIG.MIN_RR * distMAE.p80)) / 100),
             closePercentAtTP1: (CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
             timeoutCandles: CONFIG.TIMEOUT_BARS,
-            stopMethod: "WINNING_MAE_P80",
+            stopMethod: "LABELED_MAE_P80",
             targetMethod: "LABELED_MFE_P50_P90",
             maePct: distMAE.p80,
             mfe50Pct: distMFE.p50,
