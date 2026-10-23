@@ -583,7 +583,9 @@ async function main() {
         .map(([reason, n]) => reason + "=" + n)
         .join(" | "),
     );
-    $1
+    await executeDecisions(signals, {
+      exchange,
+      lifecycle,
       riskGuard,
       isStopped: () => stopped,
       entriesPaused: () => entriesPaused,
