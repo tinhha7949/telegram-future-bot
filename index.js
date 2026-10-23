@@ -1,8 +1,13 @@
 // Load VPS .env before reading any environment-backed configuration.
 require("dotenv").config();
 
-const RISK_PER_TRADE = 0.01;
-const HISTORY_4H_LIMIT = 1000;
+const { CONFIG } = require("./ai-trading/config");
+const { RiskGuard } = require("./ai-trading/risk/day-guard");
+const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
+const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
+const { MemoryGuard } = require("./ai-trading/risk/memory-guard");
+const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;
+const HISTORY_4H_LIMIT = CONFIG.HISTORY_FETCH_CANDLES;
 
 const fs = require("node:fs"),
   path = require("node:path"),
@@ -183,11 +188,11 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
     oiObservedAt: oiFresh ? Number(oiHistory.at(-1).timestamp) : null,
     liquidationImbalance: liquidationFeed.getImbalance(symbol, observedAt),
     markPrice: Number(premium?.markPrice),
-    roundTripFeePct: envNumber("ROUND_TRIP_FEE_PCT", 0.1, 0, 2),
+    roundTripFeePct: CONFIG.FEE_TAKER * 2 * 100,
     fundingIntervalHours,
     expectedFundingCostPctBySide: Number.isFinite(funding)
       ? {
-          LONG: funding * 100 * Math.ceil(96 / fundingIntervalHours),
+          LONG: funding * 100 * Math.ceil((CONFIG.TIMEOUT_BARS * 4) / fundingIntervalHours),
           SHORT: -funding * 100 * Math.ceil(96 / fundingIntervalHours),
         }
       : null,
@@ -211,6 +216,7 @@ async function executeDecisions(
   {
     exchange,
     lifecycle,
+    riskGuard,
     isStopped = () => false,
     entriesPaused = () => false,
   },
@@ -241,14 +247,42 @@ async function executeDecisions(
         console.log("ENTRY WAIT", decision.symbol, validation.reason);
         continue;
       }
-      const equity = await exchange.equity();
+      // All orders require durable risk and verified margin.
+
+      if (!riskGuard) { console.error("ENTRY WAIT RISK_GUARD_UNAVAILABLE"); continue; }
+
+      const account = await exchange.accountState();
+
+      const equity = account.equity;
+
+      const gate = await riskGuard.assess(equity);
+
+      if (!gate.ok) { console.log("ENTRY WAIT", decision.symbol, gate.reason); continue; }
+
       const sizing = sizeTrade(
         decision,
         equity,
         TRADE_CONFIG.riskPerTrade,
         await exchange.info(decision.symbol),
       );
-      if (!sizing) continue;
+      if (!sizing) { console.log("ENTRY WAIT", decision.symbol, "INVALID_SIZING"); continue; }
+
+      if (!Number.isFinite(account.availableBalance) ||
+
+          account.availableBalance < sizing.notional * CONFIG.RISK_RESERVATION_MIN_MARGIN_MULTIPLIER) {
+
+        console.log("ENTRY WAIT", decision.symbol, "INSUFFICIENT_AVAILABLE_MARGIN");
+
+        continue;
+
+      }
+
+      if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size) break;
+
+      const reservation = await riskGuard.reserve(`${decision.symbol}:${decision.signalAt}`, equity);
+
+      if (!reservation.ok) { console.log("ENTRY WAIT", decision.symbol, reservation.reason); continue; }
+
       const trade = newTrade(decision, sizing);
       trade.executionValidation = validation;
       if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size)
@@ -264,6 +298,7 @@ async function loadDecisionInput(
   journalStore,
   symbol,
   now = Date.now(),
+  recentStore = null,
 ) {
   const expectedClose =
     Math.floor((now + (exchange.offset || 0)) / pipeline.BAR_MS) *
@@ -275,9 +310,10 @@ async function loadDecisionInput(
     DECISION_SCHEMA_VERSION,
   );
   if (prior) return { prior };
-  const h4 = await exchange.candles(symbol, "4h", HISTORY_4H_LIMIT);
+  const h4 = await exchange.candles(symbol, CONFIG.TIMEFRAME, HISTORY_4H_LIMIT);
   const probe = pipeline.closedCandles(h4, Date.now()).at(-1);
   if (!probe) return null;
+  if (recentStore) await recentStore.store(symbol, pipeline.closedCandles(h4, Date.now()).map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume,c.closeTime]));
   if (probe.closeTime !== expectedClose)
     prior = await journalStore.getDecisionForCandle(
       symbol,
@@ -339,7 +375,22 @@ async function main() {
   await exchange.initialize();
   await journal.initialize(db);
   const learner = createOfflineLearning(db);
+
   await learner.initialize();
+
+  const riskGuard = new RiskGuard(db, { alert: msg => report(msg) });
+
+  const waitControl = new WaitRateControl(db);
+
+  const initialRisk = await riskGuard.assess(await exchange.equity());
+
+  if (!initialRisk.ok) {
+
+    entriesPaused = true;
+
+    await report("NEW ENTRIES PAUSED: " + initialRisk.reason);
+
+  }
   const lifecycle = new TradeLifecycle({
     exchange,
     db,
@@ -411,8 +462,8 @@ async function main() {
   let scanReasons = new Map();
   const countWait = (reason) =>
     scanReasons.set(reason, (scanReasons.get(reason) || 0) + 1);
-  async function scanSymbol(symbol, champion, trackRecord, outcomes) {
-    const input = await loadDecisionInput(exchange, journal, symbol);
+  async function scanSymbol(symbol, champion, trackRecord, outcomes, minEdge) {
+    const input = await loadDecisionInput(exchange, journal, symbol, Date.now(), recentStore);
     if (!input) return null;
     const { prior, h4, probe } = input;
     if (prior) {
@@ -432,7 +483,7 @@ async function main() {
       candles4h: h4,
       outcomes,
       market: { ...market, trackRecord },
-      config: champion,
+      config: { ...champion, minEdge: Math.max(minEdge, Number(champion?.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP },
     });
     decision = { ...decision, riskPerTradePct: RISK_PER_TRADE };
     decision = central.finalizeDecision(decision, {
@@ -446,7 +497,18 @@ async function main() {
       scannedAt: Date.now(),
       marketWindow: h4,
     });
+    const audited = await waitControl.record({
+
+      symbol, signalAt: decision.signalAt || probe.closeTime,
+
+      action: decision.action, reason: decision.reason,
+
+    });
+
+    if (!audited.ok) { console.error("WAIT AUDIT FAILED", symbol, audited.reason); return null; }
+
     if (!decision.authorizedForExecution) countWait(decision.reason);
+
     return decision.authorizedForExecution
       ? { ...decision, nineAiDecisionKey: saved.decisionKey }
       : null;
@@ -464,7 +526,27 @@ async function main() {
       return;
     }
     await db.command({ ping: 1 });
-    const cutoffAt = Date.now();
+
+    const capacity = await memoryGuard.assess();
+
+
+    if (!capacity.ok) { console.error("SCAN WAIT", capacity.reason); return; }
+
+
+    const riskState = await riskGuard.assess(await exchange.equity());
+
+    if (!riskState.ok) { console.error("SCAN WAIT", riskState.reason); return; }
+
+    const adaptive = await waitControl.minimumEdge();
+
+    if (!adaptive.ok) { console.error("SCAN WAIT", adaptive.reason); return; }
+
+    // Apply measured calibration drift as a penalty, not an untested model update.
+     const latestLearning=await db.collection("nine_ai_daily_learning_reports")
+       .find({}).sort({runAt:-1}).limit(1).toArray();
+     const calibrationPenalty=latestLearning[0]?.calibration?.status ===
+       "RED_FLAG_CALIBRATION_DRIFT" ? CONFIG.LOW_CONF_PENALTY : 0;
+     const cutoffAt = Date.now();
     const [symbols, champion, track, outcomes] = await Promise.all([
       universe(exchange),
       learner.getChampionConfig(),
@@ -492,7 +574,7 @@ async function main() {
       const batch = await Promise.allSettled(
         symbols
           .slice(i, i + 5)
-          .map((s) => scanSymbol(s, champion, track, outcomes)),
+          .map((s) => scanSymbol(s, {...champion,uncertaintyPenalty:calibrationPenalty}, track, outcomes, adaptive.minEdge)),
       );
       for (const r of batch) {
         if (r.status === "fulfilled" && r.value) signals.push(r.value);
@@ -519,6 +601,7 @@ async function main() {
     await executeDecisions(signals, {
       exchange,
       lifecycle,
+      riskGuard,
       isStopped: () => stopped,
       entriesPaused: () => entriesPaused,
     });

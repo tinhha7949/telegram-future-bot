@@ -29,3 +29,10 @@ test("central guard rejects corruption, stale signals and incomplete policies", 
       JSON.stringify(patch),
     );
 });
+
+const { uncertaintyFor } = require("./nine-ai-policy");
+test("calibration drift contributes uncertainty without changing champion params",()=>{
+  const now=1700000000000;
+  assert.equal(uncertaintyFor({regime_conf:0.8},now-1,now-1,now,{uncertaintyPenalty:0.15}),0.15);
+  assert.equal(uncertaintyFor({regime_conf:0.4},now-1,now-1,now,{uncertaintyPenalty:0.15}),0.3);
+});

@@ -1,4 +1,5 @@
 "use strict";
+const {CONFIG}=require("./config");
 const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const { CONTRACT } = require("./opportunity-outcome");
 const { getTradeActualRisk } = require("./trade-accounting");
@@ -7,13 +8,13 @@ const path = require("node:path");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BAR_MS = 4 * 60 * 60 * 1000;
-const HORIZON_BARS = 24;
+const HORIZON_BARS = CONFIG.TIMEOUT_BARS;
 const PURGE_EMBARGO_MS = HORIZON_BARS * BAR_MS;
-const SHADOW_MS = 14 * DAY_MS;
+const SHADOW_MS = CONFIG.SHADOW_DAYS * DAY_MS;
 const DEFAULT_CHAMPION = Object.freeze({
-  minEdge: 0.05,
-  gapEdge: 0.1,
-  uncertaintyPenalty: 0.5,
+  minEdge: CONFIG.MIN_EDGE,
+  gapEdge: CONFIG.EDGE_GAP,
+  uncertaintyPenalty: 0,
 });
 
 const finite = (v, d = null) =>
@@ -157,25 +158,16 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
     };
   }
   const grid = [];
-  const edgeValues = [
-    ...new Set([
-      Math.max(0, champion.minEdge - 0.025),
-      champion.minEdge,
-      champion.minEdge + 0.025,
-      champion.minEdge + 0.05,
-    ]),
-  ];
-  const gapValues = [
-    ...new Set([
-      Math.max(0, champion.gapEdge - 0.05),
-      champion.gapEdge,
-      champion.gapEdge + 0.05,
-      champion.gapEdge + 0.1,
-    ]),
-  ];
-  for (const minEdge of edgeValues)
-    for (const gapEdge of gapValues) {
-      const params = { ...champion, minEdge, gapEdge };
+  // The hard floor (MIN_EDGE) and directional gap are not trainable.
+  // Candidates may only increase the threshold to abstain more often.
+  const edgeValues = [...new Set([
+    Math.max(CONFIG.MIN_EDGE, champion.minEdge),
+    Math.max(CONFIG.MIN_EDGE, champion.minEdge) + CONFIG.WAIT_EDGE_INCREMENT / 2,
+    Math.max(CONFIG.MIN_EDGE, champion.minEdge) + CONFIG.WAIT_EDGE_INCREMENT,
+  ])].filter(edge => edge <= CONFIG.WAIT_EDGE_MAX);
+  for (const minEdge of edgeValues) {
+      const params = { ...champion, minEdge, gapEdge: CONFIG.EDGE_GAP,
+        uncertaintyPenalty: 0 };
       const train = evaluatePolicy(splits.train, params);
       const validation = evaluatePolicy(splits.validation, params);
       if (
@@ -377,7 +369,11 @@ function createOfflineLearning(db, options = {}) {
   async function getChampionConfig() {
     const state = await championState.findOne({ _id: "active" });
     return state?.policySchemaVersion === DECISION_SCHEMA_VERSION
-      ? { ...DEFAULT_CHAMPION, ...(state.params || {}) }
+      ? {
+          ...DEFAULT_CHAMPION, ...(state.params || {}),
+          minEdge: Math.max(CONFIG.MIN_EDGE, Number(state.params?.minEdge) || CONFIG.MIN_EDGE),
+          gapEdge: CONFIG.EDGE_GAP, uncertaintyPenalty: 0,
+        }
       : { ...DEFAULT_CHAMPION };
   }
 
@@ -495,7 +491,7 @@ function createOfflineLearning(db, options = {}) {
     const runDate = new Date(runAt).toISOString().slice(0, 10);
     const champion = await getChampionConfig();
     const actualRows = await actuals
-      .find({ closedAt: { $gte: runAt - 180 * DAY_MS, $lte: runAt } })
+      .find({ closedAt: { $gte: runAt - CONFIG.DAILY_TRAIN_LOOKBACK_DAYS * DAY_MS, $lte: runAt } })
       .sort({ closedAt: -1 })
       .limit(5000)
       .toArray();
@@ -546,6 +542,9 @@ function createOfflineLearning(db, options = {}) {
       );
       if (
         sameChampion &&
+        Number(activeShadow.params?.minEdge) >= CONFIG.MIN_EDGE &&
+        Number(activeShadow.params?.gapEdge) === CONFIG.EDGE_GAP &&
+        candidateScore.trades > 0 &&
         age >= SHADOW_MS &&
         labelsMature &&
         candidateScore.opportunities > 0 &&
@@ -616,7 +615,7 @@ function createOfflineLearning(db, options = {}) {
           { projection: OPPORTUNITY_PROJECTION },
         )
         .sort({ signalTime: -1 })
-        .limit(50000)
+        .limit(CONFIG.TRAIN_MAX_OPPORTUNITIES)
         .toArray();
       if (rows.length) {
         candidateResult = await trainCandidateAsync(rows, champion);

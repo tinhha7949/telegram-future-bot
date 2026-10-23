@@ -1,16 +1,17 @@
 "use strict";
+const { CONFIG } = require("./config");
 
 // Capacity-aware MongoDB retention. Only runs when estimated collection storage
 // crosses the configured threshold. Never drops collections/indexes. The explicit
 // allowlist covers historical trade/learning/research events; mutable model state,
 // active policies, pending work, and unknown collections remain protected.
 const DEFAULTS = Object.freeze({
-  limitMB: 500,
-  triggerRatio: 0.86,
-  targetRatio: 0.60,
-  batchSize: 100,
-  maxDeletesPerRun: 500,
-  intervalMs: 6 * 60 * 60 * 1000,
+  limitMB: CONFIG.MEMORY_LIMIT_MB,
+  triggerRatio: CONFIG.RETENTION_TRIGGER_RATIO,
+  targetRatio: CONFIG.RETENTION_TARGET_RATIO,
+  batchSize: CONFIG.RETENTION_BATCH_SIZE,
+  maxDeletesPerRun: CONFIG.RETENTION_MAX_DELETES_PER_RUN,
+  intervalMs: CONFIG.RETENTION_INTERVAL_HOURS * 60 * 60 * 1000,
   // Automatically perform bounded cleanup when the storage threshold is crossed.
   // The allowlist below contains reviewed historical event ledgers; live state stays protected.
   enabled: true,
@@ -67,6 +68,39 @@ const SPECS = Object.freeze([
   { name: "nine_ai_autonomous_adaptation_history", dateFields: ["updatedAt", "createdAt"], days: 90,
     category: "adaptation_history", filter: { version: { $exists: true } } }
 ]);
+// Strict capacity hierarchy: raw capture -> derived features -> failed model
+// checkpoints -> generated research -> evaluated decisions -> closed trade ->
+// actual labels. Compact OHLCV is bounded by N_CANDLES at write time, never
+// deleted as a collection by maintenance.
+const EXTRA_SPECS = Object.freeze([
+  {name:"nine_ai_raw_ticks",dateFields:["observedAt","createdAt"],days:CONFIG.RETENTION_RAW_DAYS,
+    category:"raw_tick",filter:{observedAt:{$exists:true}}},
+  {name:"nine_ai_raw_liquidations",dateFields:["observedAt","createdAt"],days:CONFIG.RETENTION_RAW_DAYS,
+    category:"raw_tick",filter:{observedAt:{$exists:true}}},
+  {name:"nine_ai_feature_cache",dateFields:["snapshotAt","createdAt"],days:CONFIG.RETENTION_FEATURE_DAYS,
+    category:"derived_feature",filter:{snapshotAt:{$exists:true}}},
+  {name:"nine_ai_model_checkpoints",dateFields:["createdAt"],days:CONFIG.RETENTION_HISTORY_DAYS,
+    category:"failed_checkpoint",filter:{status:{$in:["FAILED","REJECTED","SUPERSEDED"]}}},
+  {name:"nine_ai_outcome_labels",dateFields:["closedAt"],days:CONFIG.RETENTION_LABEL_DAYS,
+    category:"actual_label",filter:{source:"REALIZED_CLOSED_TRADE",labeled:true}},
+  {name:"nine_ai_actual_outcomes",dateFields:["closedAt"],days:CONFIG.RETENTION_LABEL_DAYS,
+    category:"actual_label",filter:{source:"REALIZED_CLOSED_TRADE"}},
+]);
+const RETENTION_PRIORITY = Object.freeze({
+ raw_tick:0, derived_feature:2, failed_checkpoint:3,
+ generated_report:4, research_hypothesis:4, research_version:4,
+ counterfactual_outcome:4, loss_diagnosis:4,
+ evaluated_wait_decision:5, evaluated_decision:6,
+ closed_trade:7, actual_label:9,
+});
+function tier(item) {
+  return RETENTION_PRIORITY[item.spec?.category] ?? 5;
+}
+function sortByRetentionPriority(items, limit=items.length){
+  return [...items].filter(x=>Number.isFinite(x.timestamp))
+    .sort((a,b)=>tier(a)-tier(b)||a.timestamp-b.timestamp)
+    .slice(0,limit);
+}
 const MODEL_OUTCOME_PATTERN = /^nine_ai_ml_(technical|signal|memory|bull|bear|contrarian|analyst|decision|risk)_outcomes$/;
 const MODEL_OUTCOME_SPEC = Object.freeze({ dateFields: ["closedAt"], days: 90,
   category: "applied_model_outcome", filter: { closed: true, applied: true } });
@@ -83,17 +117,15 @@ function configFromEnv() {
   const enabled = enabledEnv == null
     ? DEFAULTS.enabled
     : /^(1|true|yes)$/i.test(String(enabledEnv));
-  const triggerRatio = boundedNumber("DB_STORAGE_TRIGGER_RATIO", DEFAULTS.triggerRatio, 0.50, 0.95);
+  // Numeric capacity/retention settings are immutable and solely from CONFIG.yaml.
+  // .env may only explicitly disable or preview destructive maintenance.
   return {
-    limitMB: boundedNumber("DB_STORAGE_LIMIT_MB", DEFAULTS.limitMB, 100, 1024 * 1024),
-    triggerRatio,
-    targetRatio: Math.min(
-      boundedNumber("DB_STORAGE_TARGET_RATIO", DEFAULTS.targetRatio, 0.25, 0.80),
-      triggerRatio - 0.05
-    ),
-    batchSize: Math.round(boundedNumber("DB_RETENTION_BATCH_SIZE", DEFAULTS.batchSize, 10, 500)),
-    maxDeletesPerRun: Math.round(boundedNumber("DB_RETENTION_MAX_DELETES_PER_RUN", DEFAULTS.maxDeletesPerRun, 10, 2000)),
-    intervalMs: Math.round(boundedNumber("DB_RETENTION_INTERVAL_HOURS", 6, 1, 24) * 60 * 60 * 1000),
+    limitMB: DEFAULTS.limitMB,
+    triggerRatio: DEFAULTS.triggerRatio,
+    targetRatio: DEFAULTS.targetRatio,
+    batchSize: DEFAULTS.batchSize,
+    maxDeletesPerRun: DEFAULTS.maxDeletesPerRun,
+    intervalMs: DEFAULTS.intervalMs,
     // Default is real bounded cleanup. DB_RETENTION_DRY_RUN=true is the preview
     // switch; unknown values fail safe to preview. DB_RETENTION_ENABLE_DELETE=false
     // disables all deletion regardless of dry-run configuration.
@@ -146,7 +178,8 @@ function getSpecs(collectionNames) {
   const present = new Set(collectionNames);
   // Fail closed: explicit event ledgers plus the nine known independent-model
   // ledgers are eligible. Do not infer eligibility from a broad name prefix.
-  const specs = SPECS.filter(spec => present.has(spec.name)).map(spec => ({ ...spec }));
+  const specs = [...SPECS, ...EXTRA_SPECS]
+    .filter(spec => present.has(spec.name)).map(spec => ({ ...spec }));
   for (const name of present) {
     if (MODEL_OUTCOME_PATTERN.test(name)) specs.push({ name, ...MODEL_OUTCOME_SPEC });
   }
@@ -230,14 +263,18 @@ function createRetention(db, overrides = {}) {
     }
     // Taking the first batchSize from each collection is sufficient to find
     // the global oldest batchSize records, then sort the combined candidates.
-    return sortOldestCandidates(candidates, limit);
+    return sortByRetentionPriority(candidates, limit);
   }
 
   async function pruneOldestBatch(specs, dryRun, limit = config.batchSize) {
     // Select the oldest eligible records across ALL allowed collections, not
     // a collection-priority order.
-    const candidates = await collectOldestCandidates(specs, limit);
-    if (!candidates.length) return { deleted: 0, candidates: 0, perCollection: {} };
+    const allCandidates = await collectOldestCandidates(specs, limit);
+    if (!allCandidates.length) return { deleted: 0, candidates: 0, perCollection: {} };
+    // Never delete a lower-priority tier before measuring the effect of the
+    // highest-priority deletions. This protects actual labels under pressure.
+    const selectedTier=tier(allCandidates[0]);
+    const candidates=allCandidates.filter(item=>tier(item)===selectedTier);
     const perCollection = {};
     if (dryRun) {
       for (const item of candidates) perCollection[item.name] = (perCollection[item.name] || 0) + 1;
@@ -355,7 +392,8 @@ function createRetention(db, overrides = {}) {
 }
 
 module.exports = {
-  DEFAULTS, SPECS, configFromEnv, estimateUsageMB, shouldCleanup, makeCutoffQuery,
+  DEFAULTS, SPECS, EXTRA_SPECS, sortByRetentionPriority,
+  configFromEnv, estimateUsageMB, shouldCleanup, makeCutoffQuery,
   makeRetentionDateExpression, makeSafeDeleteQuery,
   getSpecs, toTimestamp, sortOldestCandidates, createRetention
 };

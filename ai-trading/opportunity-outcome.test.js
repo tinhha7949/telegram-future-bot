@@ -42,7 +42,7 @@ test("funding credits use the identical signed cost in offline evaluation", () =
   assert.ok(Math.abs(evaluated.evaluations[24].longNetR - 0.3) < 1e-12);
   assert.ok(evaluated.evaluations[24].longOutcome.costR < 0);
 });
-test("same exit contract handles 50% TP1, remaining stop, TP2 and timeout conservatively", () => {
+test("same exit contract handles 60% TP1, remaining stop, TP2 and timeout conservatively", () => {
   const costs = { totalCostPct: 0.1 };
   let r = evaluatePlan(
     plan,
@@ -53,8 +53,8 @@ test("same exit contract handles 50% TP1, remaining stop, TP2 and timeout conser
     ],
     costs,
   );
-  assert.equal(r.grossR, 3);
-  assert.equal(r.netR, 2.9);
+  assert.equal(r.grossR, 2.8);
+  assert.ok(Math.abs(r.netR - 2.7) < 1e-12);
   assert.equal(r.exitReason, "TP2");
   r = evaluatePlan(
     plan,
@@ -65,7 +65,7 @@ test("same exit contract handles 50% TP1, remaining stop, TP2 and timeout conser
     ],
     costs,
   );
-  assert.equal(r.grossR, 0.5);
+  assert.ok(Math.abs(r.grossR - 0.8) < 1e-12);
   assert.equal(r.exitReason, "SL");
   r = evaluatePlan(
     plan,

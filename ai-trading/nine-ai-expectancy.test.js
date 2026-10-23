@@ -13,24 +13,23 @@ const {
 } = require("./nine-ai-offline-learning");
 const { executeDecisions, marketSnapshot } = require("../index");
 
-test("SL uses winning MAE while TP quantiles include losing labeled trades", () => {
-  const f = fixture(),
-    base = f.outcomes[0];
-  const outcomes = [
-    { win: true, maePct: 0.5, mfePct: 8 },
-    { win: true, maePct: 0.7, mfePct: 9 },
-    { win: true, maePct: 0.9, mfePct: 10 },
-    { win: false, maePct: 50, mfePct: 1 },
-    { win: false, maePct: 100, mfePct: 2 },
-  ].map((o, i) => ({ ...base, ...o, tradeId: "population" + i }));
-  const d = analyzeNineAI({ ...f, outcomes });
-  assert.equal(d.action, "LONG");
-  assert.equal(d.agents.outcome.dist_MAE.samples, 3);
-  assert.equal(d.agents.outcome.dist_MFE.samples, 5);
-  assert.equal(d.agents.outcome.dist_MAE.p80, percentile([0.5, 0.7, 0.9], 0.8));
-  assert.equal(d.agents.outcome.dist_MFE.p50, 8);
-  assert.equal(d.agents.outcome.dist_MFE.p90, 9.6);
-  assert.equal(d.tradePlan.targetMethod, "LABELED_MFE_P50_P90");
+test("AI7 uses 100 realized excursions, including losses, for MAE/MFE and TP1 RR floor", () => {
+  const f = fixture(), base = f.outcomes[0];
+  const outcomes = Array.from({length:100},(_,i)=>({
+    ...base, tradeId:"population-"+i, win:i<75,
+    maePct:0.5+(i%5)*0.1,
+    mfePct:i<75?8+(i%3):1+(i%2)
+  }));
+  const d=analyzeNineAI({...f,outcomes});
+  assert.equal(d.action,"LONG");
+  assert.equal(d.agents.outcome.enabled,true);
+  assert.equal(d.agents.outcome.dist_MAE.samples,100);
+  assert.equal(d.agents.outcome.dist_MFE.samples,100);
+  assert.equal(d.agents.outcome.dist_MAE.p80,percentile(outcomes.map(o=>o.maePct),0.8));
+  assert.equal(d.agents.outcome.dist_MFE.p50,percentile(outcomes.map(o=>o.mfePct),0.5));
+  assert.equal(d.agents.outcome.dist_MFE.p90,percentile(outcomes.map(o=>o.mfePct),0.9));
+  assert.equal(d.tradePlan.targetMethod,"LABELED_MFE_P50_P90");
+  assert.ok((d.tp1-d.entry)/(d.entry-d.sl)>=0.8-1e-12);
 });
 
 test("E[R] uses realized gross R for the direction/regime/setup, including losses", () => {
@@ -168,7 +167,7 @@ test("old champions/candidates cannot carry thresholds learned on an older contr
     { $set: { params: { ...DEFAULT_CHAMPION, minEdge: 0.075 } } },
   );
   await service.initialize();
-  assert.equal((await service.getChampionConfig()).minEdge, 0.075);
+  assert.equal((await service.getChampionConfig()).minEdge, 0.15);
 });
 
 function fakeExchange(markFor = (_, entry) => entry) {
@@ -192,9 +191,8 @@ function fakeExchange(markFor = (_, entry) => entry) {
         return { bids: [[entry, 10000]], asks: [[entry, 10000]] };
       throw new Error("Unexpected route " + route);
     },
-    async equity() {
-      return 1000;
-    },
+    async equity() { return 1000; },
+    async accountState() { return { equity: 1000, availableBalance: 10000 }; },
     async info() {
       return {
         filters: [
@@ -242,6 +240,8 @@ test("funding credits retain their sign in snapshots, live edge and execution va
   assert.equal(validateExecution(d, fresh, f.market.now + 1).ok, true);
 });
 
+// Explicit mock: production must require a durable risk ledger, never a missing guard.
+const permitRisk = { assess: async()=>({ok:true}), reserve: async()=>({ok:true}) };
 test("runtime tries all approved signals beyond ten and permits multiple entries in one scan", async () => {
   const f = fixture(),
     base = analyzeNineAI(f),
@@ -271,6 +271,7 @@ test("runtime tries all approved signals beyond ten and permits multiple entries
       Number(symbol.match(/\d+/)[0]) < 10 ? base.sl - 1 : entry,
     ),
     lifecycle,
+    riskGuard: permitRisk,
     async report() {},
   });
   assert.deepEqual(
@@ -281,6 +282,7 @@ test("runtime tries all approved signals beyond ten and permits multiple entries
   await executeDecisions(signals, {
     exchange: fakeExchange(),
     lifecycle,
+    riskGuard: permitRisk,
     async report() {},
   });
   assert.equal(entered.length, 12);
@@ -296,7 +298,7 @@ test("one symbol's API failure does not discard the remaining approved signals",
   };
   const lifecycle = { uncertain: false, untracked: new Set(), active: new Map(),
     claims: { findOne: async () => null }, enter: async (t) => entered.push(t.symbol) };
-  await executeDecisions(signals, { exchange, lifecycle });
+  await executeDecisions(signals, { exchange, lifecycle, riskGuard: permitRisk });
   assert.deepEqual(entered, ["SECONDUSDT"]);
 });
 
@@ -307,7 +309,7 @@ test("a pause arriving during awaited preparation prevents the market submission
   exchange.info = async () => { paused = true; return info(); };
   const lifecycle = { uncertain: false, untracked: new Set(), active: new Map(),
     claims: { findOne: async () => null }, enter: async () => { entries++; } };
-  await executeDecisions([base], { exchange, lifecycle, entriesPaused: () => paused });
+  await executeDecisions([base], { exchange, lifecycle, riskGuard: permitRisk, entriesPaused: () => paused });
   assert.equal(entries, 0);
 });
 

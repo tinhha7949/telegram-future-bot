@@ -1,4 +1,5 @@
 "use strict";
+const { CONFIG } = require("./config");
 const crypto = require("node:crypto");
 const { roundStep, symbolRules } = require("./binance-execution");
 const { isRiskWithinBudget } = require("./execution-risk");
@@ -6,7 +7,7 @@ const {
   getTradeActualRisk,
   summarizeClosedTrade,
 } = require("./trade-accounting");
-const TIMEOUT_MS = 96 * 60 * 60 * 1000;
+const TIMEOUT_MS = CONFIG.TIMEOUT_BARS * 4 * 60 * 60 * 1000;
 const id = (trade, kind) =>
   `n9_${trade.keyPrefix}_${kind}_${crypto.randomBytes(5).toString("hex")}`;
 const same = (a, b) =>
@@ -96,22 +97,24 @@ function hydrateFill(trade, order) {
         sign > 0 ? "ceil" : "floor",
       )
     : p.sl;
-  trade.tp1 = roundStep(
-    ai7
-      ? entry * (1 + (sign * quantiles.mfe50Pct) / 100)
-      : p.tp1,
-    rules.tick,
-    sign > 0 ? "floor" : "ceil",
-  );
-  trade.tp2 = roundStep(
-    ai7
-      ? entry * (1 + (sign * quantiles.mfe90Pct) / 100)
-      : p.tp2,
-    rules.tick,
-    sign > 0 ? "floor" : "ceil",
-  );
+  // After the real fill, recompute TP from actual entry, quantiles AND actual SL.
+  // Floors are rounded outward; preserve raw MFE separately in entryExecution.
+  const minReward = CONFIG.MIN_RR * Math.abs(entry - trade.sl);
+  const tp1Distance = ai7
+    ? Math.max(entry * quantiles.mfe50Pct / 100, minReward)
+    : Math.abs(p.tp1 - p.entry);
+  const tp2Distance = ai7
+    ? Math.max(entry * quantiles.mfe90Pct / 100, tp1Distance)
+    : Math.abs(p.tp2 - p.entry);
+  trade.tp1 = roundStep(ai7 ? entry + sign * tp1Distance : p.tp1,
+    rules.tick, sign > 0 ? "ceil" : "floor");
+  trade.tp2 = roundStep(ai7 ? entry + sign * tp2Distance : p.tp2,
+    rules.tick, sign > 0 ? "ceil" : "floor");
   trade.tp = trade.tp2;
   trade.actualQuantity = qty;
+  const sliceTotal = CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1];
+  trade.tp1Quantity = roundStep(qty * CONFIG.TP_BATCHES[0] / sliceTotal, trade.rules.step);
+  trade.tp2Quantity = roundStep(qty - trade.tp1Quantity, trade.rules.step);
   trade.initialRisk = Math.abs(entry - trade.sl);
   trade.actualInitialRiskUSDT = qty * trade.initialRisk;
   trade.enteredAt = Number(
@@ -156,8 +159,13 @@ function fillRiskValid(t) {
     (sign > 0
       ? t.sl < t.entry && t.entry < t.tp1 && t.tp1 <= t.tp2
       : t.tp2 <= t.tp1 && t.tp1 < t.entry && t.entry < t.sl) &&
-    t.actualQuantity / 2 >= t.rules.minQty &&
-    same(roundStep(t.actualQuantity / 2, t.rules.step), t.actualQuantity / 2)
+    Math.abs(t.tp1 - t.entry) + Number.EPSILON * Math.max(t.entry,t.tp1) >=
+      CONFIG.MIN_RR * Math.abs(t.entry - t.sl) &&
+    t.tp1Quantity >= t.rules.minQty &&
+    t.tp2Quantity >= t.rules.minQty &&
+    same(t.tp1Quantity + t.tp2Quantity, t.actualQuantity) &&
+    same(roundStep(t.tp1Quantity, t.rules.step), t.tp1Quantity) &&
+    same(roundStep(t.tp2Quantity, t.rules.step), t.tp2Quantity)
   );
 }
 
@@ -529,7 +537,7 @@ class TradeLifecycle {
     // the remaining half for unexplained exposure and close it.
     const priorOrders = new Map();
     if (!same(currentQty, t.actualQuantity)) {
-      for (const kind of sharedTarget ? ["tp1", "tp2"] : ["tp1"]) {
+      for (const kind of ["tp1", "tp2"]) {
         if (t[kind + "Filled"]) continue;
         const previous = t.protectionIds[kind],
           legacyAlgoId = t[kind + "OrderId"];
@@ -556,7 +564,7 @@ class TradeLifecycle {
           { signed: true },
         );
         if (
-          child.status === "FILLED" && same(child.executedQty, t.actualQuantity / 2)
+          child.status === "FILLED" && same(child.executedQty, t[kind + "Quantity"])
         ) {
           t[kind + "Filled"] = true;
           t.protectionOrderIds = t.protectionOrderIds || {};
@@ -566,7 +574,7 @@ class TradeLifecycle {
     }
     for (const kind of ["sl", "tp2", "tp1"]) {
       if (kind === "tp1" && t.tp1Filled) continue;
-      if (kind === "tp2" && sharedTarget && t.tp2Filled) continue;
+      if (kind === "tp2" && t.tp2Filled) continue;
       const trigger = t[kind],
         closeSide = t.side === "LONG" ? "SELL" : "BUY";
       const matches = (o) =>
@@ -575,9 +583,9 @@ class TradeLifecycle {
         same(o.triggerPrice, trigger) &&
         (o.orderType || o.type) ===
           (kind === "sl" ? "STOP_MARKET" : "TAKE_PROFIT_MARKET") &&
-        (kind === "tp1" || (kind === "tp2" && sharedTarget)
+        (kind === "tp1" || kind === "tp2"
           ? String(o.reduceOnly) === "true" &&
-            same(o.quantity, t.actualQuantity / 2)
+            same(o.quantity, t[kind + "Quantity"])
           : String(o.closePosition) === "true");
       const existing = openAlgos.find(
         (o) =>
@@ -615,8 +623,8 @@ class TradeLifecycle {
             t.protectionOrderIds = t.protectionOrderIds || {};
             t.protectionOrderIds[kind] = String(child.orderId);
             if (
-              (kind === "tp1" || (kind === "tp2" && sharedTarget)) &&
-              same(child.executedQty, t.actualQuantity / 2)
+              (kind === "tp1" || kind === "tp2") &&
+              same(child.executedQty, t[kind + "Quantity"])
             ) {
               t[kind + "Filled"] = true;
               continue;
@@ -633,12 +641,11 @@ class TradeLifecycle {
           return;
       }
       if (
-        (kind === "tp1" || (kind === "tp2" && sharedTarget)) &&
+        (kind === "tp1" || kind === "tp2") &&
         !same(currentQty, t.actualQuantity) &&
         !(
-          sharedTarget &&
-          t[kind === "tp1" ? "tp2Filled" : "tp1Filled"] &&
-          same(currentQty, t.actualQuantity / 2)
+           t[kind === "tp1" ? "tp2Filled" : "tp1Filled"] &&
+          same(currentQty, t[kind + "Quantity"])
         )
       )
         throw new Error("PARTIAL_POSITION_REQUIRES_FILL_RECONCILIATION");

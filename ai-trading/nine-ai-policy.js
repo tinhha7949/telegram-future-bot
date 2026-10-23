@@ -1,14 +1,15 @@
 "use strict";
+const { CONFIG } = require("./config");
 const BAR_MS = 4 * 60 * 60 * 1000;
-const DECISION_SCHEMA_VERSION = 5;
-const FUNDING_HOT_RATE = 0.0008;
+const DECISION_SCHEMA_VERSION = 6; // Invalidates old decision/50:50 outcome contracts.
+const FUNDING_HOT_RATE = CONFIG.FUNDING_HOT_RATE;
 const fundingIsHot = (rate) =>
   Number.isFinite(rate) && Math.abs(rate) > FUNDING_HOT_RATE;
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
 const DEFAULT_POLICY = Object.freeze({
-  minEdge: 0.05,
-  gapEdge: 0.1,
-  uncertaintyPenalty: 0.5,
+  minEdge: CONFIG.MIN_EDGE,
+  gapEdge: CONFIG.EDGE_GAP,
+  uncertaintyPenalty: 0,
 });
 // One formula for setup selection, direction selection, execution and offline evaluation.
 function netEdge(c, penalty = c.baseUncertainty) {
@@ -23,28 +24,15 @@ function selectDirectionCandidate(estimates, baseUncertainty) {
       )[0] || null
   );
 }
-function uncertaintyFor(
-  regime,
-  snapshotAt,
-  signalAt,
-  now,
-  policy = DEFAULT_POLICY,
-  context = {},
-) {
-  if (
-    ![snapshotAt, signalAt, now].every(finite) ||
-    snapshotAt > now ||
-    signalAt >= now
-  )
+function uncertaintyFor(regime, snapshotAt, signalAt, now, policy = DEFAULT_POLICY) {
+  if (![snapshotAt, signalAt, now].every(finite) ||
+      !finite(regime?.regime_conf) || snapshotAt > now || signalAt >= now)
     return Infinity;
-  return (
-    (1 - regime.regime_conf) * policy.uncertaintyPenalty +
-    Math.max(0, now - snapshotAt) / BAR_MS +
-    Math.max(0, now - signalAt) / BAR_MS +
-    (finite(context.closedOIAt)
-      ? Math.max(0, now - context.closedOIAt - BAR_MS) / BAR_MS
-      : 0)
-  );
+  if (now - signalAt > BAR_MS || now - snapshotAt > BAR_MS)
+    return Infinity;
+  const penalty=Number(policy?.uncertaintyPenalty);
+  if (!Number.isFinite(penalty) || penalty < 0) return Infinity;
+  return (regime.regime_conf < CONFIG.CONF_LOW ? CONFIG.LOW_CONF_PENALTY : 0) + penalty;
 }
 function applyPolicy(decision, policy = DEFAULT_POLICY) {
   const params = { ...DEFAULT_POLICY, ...policy },
@@ -79,13 +67,8 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
       uncertaintyPenalty: c.baseUncertainty,
     };
   }
-  const gap = Math.abs(result.edges.LONG.edge - result.edges.SHORT.edge),
-    proximityPenalty = Math.max(0, params.gapEdge - gap);
-  for (const c of Object.values(result.edges)) {
-    c.directionalGap = gap;
-    c.uncertaintyPenalty += proximityPenalty;
-    c.edge = netEdge(c, c.uncertaintyPenalty);
-  }
+  const gap = Math.abs(result.edges.LONG.edge - result.edges.SHORT.edge);
+  for (const c of Object.values(result.edges)) c.directionalGap = gap;
   for (const side of ["LONG", "SHORT"]) {
     const c = result.edges[side],
       other = result.edges[side === "LONG" ? "SHORT" : "LONG"];

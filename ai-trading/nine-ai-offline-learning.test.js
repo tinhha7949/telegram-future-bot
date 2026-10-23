@@ -143,11 +143,11 @@ test("a newly qualified candidate reports shadow started on the same daily run",
     r.signalTime = start + i * 3 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
-      expectedR: 0.4,
+      expectedR: i % 2 === 0 ? 0.75 : 0.6,
       cost: 0.1,
       baseUncertainty: 0.1,
     });
-    r.evaluations[24].longNetR = 0.01;
+    r.evaluations[24].longNetR = i % 2 === 0 ? 1 : -1;
     await db.collection("nine_ai_decision_journal").insertOne(r);
   }
   const report = await service.runDailyCycle();
@@ -185,7 +185,7 @@ test("shadow cannot promote before 14 complete days plus 24-bar outcome maturity
     _id: "shadow",
     status: "SHADOW_PENDING",
     policySchemaVersion: DECISION_SCHEMA_VERSION,
-    params: { ...l.DEFAULT_CHAMPION, minEdge: 0.025 },
+    params: { ...l.DEFAULT_CHAMPION, minEdge: 0.175 },
     championParams: { ...l.DEFAULT_CHAMPION },
     shadowStartedAt: start,
     createdAt: new Date(start),
@@ -196,10 +196,11 @@ test("shadow cannot promote before 14 complete days plus 24-bar outcome maturity
     r.decisionSnapshot.edges.LONG = {
       ...r.decisionSnapshot.edges.LONG,
       p: 0.6,
-      expectedR: 0.4,
+      expectedR: i % 2 === 0 ? 0.75 : 0.6,
       cost: 0.1,
       baseUncertainty: 0.1,
     };
+    r.evaluations[24].longNetR = i % 2 === 0 ? 0.1 : -0.2;
     await db.collection("nine_ai_decision_journal").insertOne(r);
   }
   assert.equal(
@@ -211,7 +212,7 @@ test("shadow cannot promote before 14 complete days plus 24-bar outcome maturity
     (await service.runDailyCycle()).shadowResult.status,
     "PROMOTED_CHAMPION",
   );
-  assert.equal((await service.getChampionConfig()).minEdge, 0.025);
+  assert.equal((await service.getChampionConfig()).minEdge, 0.175);
 });
 test("accounting retries use the stable trade key even when Mongo IDs appear after restart", async () => {
   const { memoryDb } = require("./test-fixtures.cjs"),
@@ -244,16 +245,16 @@ test("candidate qualification has no 400-row, trade-count or extra .02R-uplift g
     r.signalTime = 1700000000000 + i * 7 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
-      expectedR: 0.4,
+      expectedR: i % 2 === 0 ? 0.75 : 0.6,
       cost: 0.1,
       baseUncertainty: 0.1,
     });
-    r.evaluations[24].longNetR = 0.01;
+    r.evaluations[24].longNetR = i % 2 === 0 ? 1 : -1;
     return r;
   });
   const result = l.trainCandidate(rows, l.DEFAULT_CHAMPION);
   assert.equal(result.status, "SHADOW_PENDING");
-  assert.equal(result.uplift, 0.01);
+  assert.equal(result.uplift, 0.5);
 });
 
 test("candidate selection is fit on train and a validation loss cannot be rescued by future test gains", () => {
@@ -262,18 +263,18 @@ test("candidate selection is fit on train and a validation loss cannot be rescue
     r.signalTime = 1700000000000 + i * 7 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
-      expectedR: 0.4,
+      expectedR: i % 2 === 0 ? 0.75 : 0.6,
       cost: 0.1,
       baseUncertainty: 0.1,
     });
-    r.evaluations[24].longNetR = i < 18 || i >= 24 ? 1 : -1;
+    r.evaluations[24].longNetR = i < 18 || i >= 24 ? (i % 2 === 0 ? 1 : -1) : (i % 2 === 0 ? -1 : 1);
     return r;
   });
   const result = l.trainCandidate(rows, l.DEFAULT_CHAMPION);
   assert.equal(result.status, "CANDIDATE_DID_NOT_BEAT_CHAMPION_VALIDATION");
-  assert.equal(result.candidateTrain.averageNetR, 1);
-  assert.equal(result.candidateValidation.averageNetR, -1);
-  assert.equal(result.championValidation.averageNetR, 0);
+  assert.ok(result.candidateTrain.averageNetR > 0.5);
+  assert.ok(result.candidateValidation.averageNetR < 0);
+  assert.ok(result.candidateValidation.averageNetR < result.championValidation.averageNetR);
 });
 test("one realized calibration deviation is reported without a 30-trade prerequisite", () => {
   assert.equal(
@@ -299,20 +300,20 @@ test("a winning fully matured shadow can promote at 14 days, without a fixed ext
     _id: "small-shadow",
     policySchemaVersion: DECISION_SCHEMA_VERSION,
     status: "SHADOW_PENDING",
-    params: { ...l.DEFAULT_CHAMPION, minEdge: 0.025 },
+    params: { ...l.DEFAULT_CHAMPION, minEdge: 0.175 },
     championParams: { ...l.DEFAULT_CHAMPION },
     shadowStartedAt: start,
   });
-  const r = row(0);
-  r.signalTime = start;
-  Object.assign(r.decisionSnapshot.edges.LONG, {
-    p: 0.6,
-    expectedR: 0.4,
-    cost: 0.1,
-    baseUncertainty: 0.1,
-  });
-  r.evaluations[24].longNetR = 0.01;
-  await db.collection("nine_ai_decision_journal").insertOne(r);
+  for (let i = 0; i < 2; i++) {
+    const r = row(i);
+    r.signalTime = start + i*l.BAR_MS;
+    Object.assign(r.decisionSnapshot.edges.LONG, {
+      p: 0.6, expectedR: i === 0 ? 0.75 : 0.6,
+      cost: 0.1, baseUncertainty: 0.1,
+    });
+    r.evaluations[24].longNetR = i === 0 ? 0.1 : -0.2;
+    await db.collection("nine_ai_decision_journal").insertOne(r);
+  }
   assert.equal(
     (await service.runDailyCycle()).shadowResult.status,
     "SHADOW_CONTINUES",

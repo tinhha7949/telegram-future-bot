@@ -5,7 +5,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "test": "node scripts/check-syntax.cjs && node --test ai-trading/*.test.js"
+    "test": "node scripts/check-syntax.cjs && node --test",
+    "install:service": "bash scripts/install-service.sh"
   },
   "dependencies": {
     "mongodb": "^6.3.0",

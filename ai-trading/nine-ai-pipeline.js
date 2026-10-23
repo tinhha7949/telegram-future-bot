@@ -1,4 +1,5 @@
 "use strict";
+const { CONFIG } = require("./config");
 const {
   DEFAULT_POLICY,
   applyPolicy,
@@ -138,6 +139,9 @@ function validLabels(outcomes, symbol, setupKey, side, now) {
       o?.source !== "REALIZED_CLOSED_TRADE" ||
       o.labeled !== true ||
       o.setupKey !== setupKey ||
+      // Never mix adverse/favorable excursion distributions across direction.
+      // Cross-symbol pooling is permitted only for the identical regime/setup/side.
+      o.side !== side ||
       typeof o.win !== "boolean" ||
       ![o.maePct, o.mfePct].every(
         (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
@@ -176,8 +180,9 @@ function analyzeNineAI({
     decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     ...extra,
   });
-  if (!hasContiguousHistory(cs, BAR_MS, 541))
+  if (!hasContiguousHistory(cs, BAR_MS, CONFIG.HISTORY_FETCH_CANDLES))
     return wait("INSUFFICIENT_90D_CLOSED_4H_HISTORY");
+  if (now - cs.at(-1).closeTime > BAR_MS) return wait("STALE_CLOSED_CANDLE");
   const last = cs.at(-1),
     prev = cs.at(-2),
     before = cs.at(-3),
@@ -192,7 +197,7 @@ function analyzeNineAI({
         Math.abs(c.low - cs[i].close),
       ),
     );
-  const atr = mean(ranges.slice(-14));
+  const atr = mean(ranges.slice(-CONFIG.ATR_BARS));
   if (!(atr > 0)) return wait("INVALID_VOLATILITY");
   const structure = swingPoints(cs.slice(-120)),
     sh = structure.highs,
@@ -337,7 +342,7 @@ function analyzeNineAI({
           0,
           2,
         )
-      : null;
+      : CONFIG.SLIPPAGE_BPS / 100;
   const featureSnapshot = {
     snapshotAt,
     closeTime: last.closeTime,
@@ -359,7 +364,7 @@ function analyzeNineAI({
     candleCutoffAt: now,
     closedOIAt: finite(market.oiObservedAt),
   };
-  const policy = { ...DEFAULT_POLICY, ...config };
+  const policy = { ...DEFAULT_POLICY, ...config, minEdge: Math.max(CONFIG.MIN_EDGE, Number(config.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP };
   const agents = {
     regime,
     structure: {
@@ -417,6 +422,7 @@ function analyzeNineAI({
   };
   if (
     funding === null ||
+    oi === null ||
     fee === null ||
     fee < 0 ||
     Object.values(fundingBySide).some((v) => v === null) ||
@@ -458,13 +464,13 @@ function analyzeNineAI({
       const setupKey = regime.regime + "_" + m.type;
       const samples = validLabels(outcomes, symbol, setupKey, side, now),
         wins = samples.filter((o) => o.win);
-      let distMAE = wins.length
+      let distMAE = samples.length
         ? {
             p80: percentile(
-              wins.map((o) => o.maePct),
+              samples.map((o) => o.maePct),
               0.8,
             ),
-            samples: wins.length,
+            samples: samples.length,
           }
         : null;
       let distMFE = samples.length
@@ -480,8 +486,8 @@ function analyzeNineAI({
             samples: samples.length,
           }
         : null;
-      // One valid winning label is enough to start AI-7; p50 may equal p90.
-      const ai7Ready = wins.length > 0;
+      // No quantile SL/TP until sufficient direction-matched realized outcomes.
+      const ai7Ready = samples.filter(o => o.side === side).length >= CONFIG.AI7_ACTIVATION_SAMPLES && wins.length > 0;
       const entry = last.close;
       const stop = ai7Ready
         ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)
@@ -490,10 +496,10 @@ function analyzeNineAI({
         ? {
             entry,
             sl: stop,
-            tp1: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p50) / 100),
-            tp2: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p90) / 100),
-            closePercentAtTP1: 50,
-            timeoutCandles: 24,
+            tp1: entry * (1 + ((side === "LONG" ? 1 : -1) * Math.max(distMFE.p50, CONFIG.MIN_RR * distMAE.p80)) / 100),
+            tp2: entry * (1 + ((side === "LONG" ? 1 : -1) * Math.max(distMFE.p90, distMFE.p50, CONFIG.MIN_RR * distMAE.p80)) / 100),
+            closePercentAtTP1: (CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
+            timeoutCandles: CONFIG.TIMEOUT_BARS,
             stopMethod: "WINNING_MAE_P80",
             targetMethod: "LABELED_MFE_P50_P90",
             maePct: distMAE.p80,
@@ -555,7 +561,9 @@ function analyzeNineAI({
       // payoff estimate. Observed gross R then supplies E[R|a,regime,setup];
       // AI-9 subtracts execution cost once, in the same R unit.
       const quantileRewardR =
-        ((Math.abs(plan.tp1 - entry) + Math.abs(plan.tp2 - entry)) * 0.5) /
+        ((Math.abs(plan.tp1 - entry) * CONFIG.TP_BATCHES[0] +
+           Math.abs(plan.tp2 - entry) * CONFIG.TP_BATCHES[1]) /
+         (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) /
         Math.abs(entry - plan.sl);
       const realizedReturns = directionalSamples
         .filter(
@@ -583,7 +591,7 @@ function analyzeNineAI({
           : "FEATURE_SCORE_UNCALIBRATED",
         outcomeSource: ai7Ready
           ? "REALIZED_CLOSED_TRADE"
-          : "AI2_STRUCTURE_INITIAL_PLAN",
+          : "ATR_COLD_START_EXIT_PLAN",
         p,
         expectedR,
         expectedRSource:
@@ -677,15 +685,15 @@ function analyzeNineAI({
     tp1: plan.tp1,
     tp: plan.tp2,
     tp2: plan.tp2,
-    closePercentAtTP1: 50,
-    timeoutCandles: 24,
-    timeframe: "4h",
+    closePercentAtTP1: (CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
+    timeoutCandles: CONFIG.TIMEOUT_BARS,
+    timeframe: CONFIG.TIMEFRAME,
     setupKey: chosen.setupKey,
     ...extra,
     tradePlan: {
       ...plan,
       outcomeMode: chosen.outcomeMode,
-      timeoutMs: 24 * BAR_MS,
+      timeoutMs: CONFIG.TIMEOUT_BARS * BAR_MS,
     },
   };
 }
