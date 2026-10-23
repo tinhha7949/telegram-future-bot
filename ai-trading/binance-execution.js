@@ -148,10 +148,10 @@ class BinanceExchange {
       method = "GET",
       signed = false,
       host = "https://fapi.binance.com",
-      timeoutMs = 15000,
+      timeoutMs = CONFIG.BINANCE_HTTP_TIMEOUT_MS,
     } = {},
   ) {
-    const attempts = method === "GET" ? 2 : 1;
+    const attempts = method === "GET" ? CONFIG.BINANCE_HTTP_GET_ATTEMPTS : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
       // Queue before signing: recvWindow starts at actual dispatch, not while
       // a background history request waits for the shared IP budget.
@@ -167,7 +167,7 @@ class BinanceExchange {
         values[key] = value;
       }
       if (signed) {
-        values.recvWindow = 10000;
+        values.recvWindow = CONFIG.BINANCE_RECV_WINDOW_MS;
         values.timestamp = Math.floor(this.now() + this.offset);
       }
       let query = new URLSearchParams(
@@ -191,7 +191,7 @@ class BinanceExchange {
       } catch (error) {
         if (response) this.budget.observe(host, response, data);
         if (method === "GET" && attempt + 1 < attempts) {
-          await this.wait(250);
+          await this.wait(CONFIG.BINANCE_HTTP_RETRY_MS);
           continue;
         }
         throw new ExchangeError("EXCHANGE_RESPONSE_UNAVAILABLE", {
@@ -224,7 +224,7 @@ class BinanceExchange {
           attempt + 1 < attempts &&
           response.status >= 500
         ) {
-          await this.wait(1000);
+          await this.wait(CONFIG.BINANCE_HTTP_5XX_RETRY_MS);
           continue;
         }
         throw error;
@@ -347,12 +347,12 @@ class BinanceExchange {
       this.fundingInfoAt = this.now();
     }
     const record = this.fundingInfo.find((r) => r.symbol === symbol);
-    const hours = record ? Number(record.fundingIntervalHours) : 8;
+    const hours = record ? Number(record.fundingIntervalHours) : CONFIG.BINANCE_FUNDING_INTERVAL_FALLBACK_HOURS;
     if (!(hours > 0 && hours <= 24))
       throw new Error("INVALID_FUNDING_INTERVAL");
     return hours;
   }
-  async candles(symbol, interval, limit = 1500, extra = {}) {
+  async candles(symbol, interval, limit = CONFIG.BINANCE_CANDLE_REQUEST_LIMIT, extra = {}) {
     if (interval === "4h" && Object.keys(extra).length === 0)
       return this.history4h.get(symbol, limit);
     return this.rawCandles(symbol, interval, limit, extra);
