@@ -4,6 +4,7 @@ const {
   applyPolicy,
   uncertaintyFor,
   DECISION_SCHEMA_VERSION,
+  BAR_MS,
 } = require("./nine-ai-policy");
 
 // The single authorization boundary for live Nine-AI signals.
@@ -97,7 +98,7 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   if (!Number.isFinite(signalAt) || signalAt >= Number(scannedAt)) {
     return wait(decision, "STALE_OR_INVALID_SIGNAL_TIMESTAMP");
   }
-  if (!Number.isFinite(snapshotAt) || snapshotAt > scannedAt || Number(scannedAt) - signalAt > CONFIG.TIMEOUT_BARS * 0 + CONFIG.VOL_20D_RETURNS * 0 + 4 * 60 * 60 * 1000 || Number(scannedAt) - snapshotAt > 4 * 60 * 60 * 1000) {
+  if (!Number.isFinite(snapshotAt) || snapshotAt > scannedAt || Number(scannedAt) - signalAt > BAR_MS || Number(scannedAt) - snapshotAt > BAR_MS) {
     return wait(decision, "STALE_OR_INVALID_EXECUTION_SNAPSHOT");
   }
   if (!decision.decisionPolicy) return wait(decision, "MISSING_META_POLICY");
