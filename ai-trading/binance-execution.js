@@ -498,7 +498,7 @@ class BinanceExchange {
         trade[kind === "sl" ? "sl" : kind === "tp1" ? "tp1" : "tp2"],
       workingType: "MARK_PRICE",
     };
-    if (kind === "tp1" || (kind === "tp2" && trade.tp1 === trade.tp2)) {
+    if (kind === "tp1" || kind === "tp2") {
       params.quantity = kind === "tp1" ? trade.tp1Quantity : trade.tp2Quantity;
       params.reduceOnly = "true";
     } else params.closePosition = "true";
