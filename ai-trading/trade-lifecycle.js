@@ -7,7 +7,7 @@ const {
   getTradeActualRisk,
   summarizeClosedTrade,
 } = require("./trade-accounting");
-const TIMEOUT_MS = CONFIG.TIMEOUT_BARS * 4 * 60 * 60 * 1000;
+const TIMEOUT_MS = CONFIG.TIMEOUT_BARS * CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const id = (trade, kind) =>
   `n9_${trade.keyPrefix}_${kind}_${crypto.randomBytes(5).toString("hex")}`;
 const same = (a, b) =>
@@ -218,11 +218,25 @@ class TradeLifecycle {
         if (![26, 27].includes(e.code)) throw e;
       }
     }
-    // Active/uncertain claims never expire. Only reconciled claims have closedAt.
+    // Update existing TTL policy in place when the configured days change.
+    // Claims with no closedAt (active/uncertain) must never expire.
+    const claimTTL = CONFIG.TRADE_CLOSED_CLAIMS_RETENTION_DAYS * 86400;
+    const claimTTLName = "expire_closed_signal_claims_90d";
+    if (typeof this.claims.listIndexes === "function") {
+      const indexes = await this.claims.listIndexes().toArray();
+      const prior = indexes.find(index => index.name === claimTTLName);
+      if (prior && prior.expireAfterSeconds !== claimTTL) {
+        if (typeof this.db.command !== "function") throw new Error("CLAIM_TTL_MIGRATION_UNAVAILABLE");
+        await this.db.command({
+          collMod: "trade_signal_claims",
+          index: { name: claimTTLName, expireAfterSeconds: claimTTL },
+        });
+      }
+    }
     await this.claims.createIndex(
       { closedAt: 1 },
       {
-        expireAfterSeconds: 90 * 86400,
+        expireAfterSeconds: CONFIG.TRADE_CLOSED_CLAIMS_RETENTION_DAYS * 86400,
         name: "expire_closed_signal_claims_90d",
       },
     );
@@ -389,8 +403,8 @@ class TradeLifecycle {
     ]);
     const needsDetails = (o) => !terminal.has(o.status) ||
       ((o.status === "FILLED" || Number(o.executedQty) > 0) && !hasConfirmedEntryFill(o));
-    for (let i = 0; needsDetails(order) && i < 5; i++) {
-      await this.wait(500);
+    for (let i = 0; needsDetails(order) && i < CONFIG.TRADE_ENTRY_LOOKUP_ATTEMPTS; i++) {
+      await this.wait(CONFIG.TRADE_ENTRY_LOOKUP_DELAY_MS);
       order = await this.exchange.order(t.symbol, t.entryClientId);
     }
     if (!terminal.has(order.status)) order = await this.exchange.cancelEntry(t);

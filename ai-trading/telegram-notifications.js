@@ -19,7 +19,7 @@ function entryMessage(t) {
 class TelegramNotifications {
   constructor({ db, env = process.env, fetchImpl = globalThis.fetch,
     now = Date.now, log = console } = {}) {
-    Object.assign(this, { env, fetch: fetchImpl, now, log });
+    Object.assign(this, { db, env, fetch: fetchImpl, now, log });
     this.rows = db.collection("telegram_notification_outbox");
     this.cooldown = new Map();
     this.controller = new AbortController();
@@ -30,9 +30,24 @@ class TelegramNotifications {
     await this.rows.createIndex({ eventKey: 1 }, { unique: true, name: "uniq_telegram_event" });
     await this.rows.createIndex({ route: 1, status: 1, nextAttemptAt: 1, createdAt: 1 },
       { name: "telegram_pending_delivery" });
+    // Alter the existing TTL in-place when retention days change: creating
+    // a second TTL index would retain the old (possibly shorter) expiry.
+    const name = "expire_sent_telegram_30d";
+    const seconds = CONFIG.TELEGRAM_SENT_RETENTION_DAYS * 86400;
+    if (typeof this.rows.listIndexes === "function") {
+      const indexes = await this.rows.listIndexes().toArray();
+      const prior = indexes.find(index => index.name === name);
+      if (prior && prior.expireAfterSeconds !== seconds) {
+        if (typeof this.db.command !== "function") throw new Error("TELEGRAM_TTL_MIGRATION_UNAVAILABLE");
+        await this.db.command({
+          collMod: "telegram_notification_outbox",
+          index: { name, expireAfterSeconds: seconds },
+        });
+      }
+    }
     // Only confirmed sent messages expire; pending deliveries survive outages.
     await this.rows.createIndex({ sentAt: 1 },
-      { expireAfterSeconds: 30 * 86400, name: "expire_sent_telegram_30d" });
+      { expireAfterSeconds: seconds, name });
   }
   destination(route) {
     return route === "entry"
@@ -45,7 +60,7 @@ class TelegramNotifications {
       throw new Error("INVALID_TELEGRAM_EVENT");
     try {
       await this.rows.updateOne({ eventKey }, { $setOnInsert: {
-        eventKey, route, text: String(text).slice(0, 4000), status: "PENDING",
+        eventKey, route, text: String(text).slice(0, CONFIG.TELEGRAM_MAX_MESSAGE_CHARS), status: "PENDING",
         attempts: 0, nextAttemptAt: 0, createdAt: this.now(),
       } }, { upsert: true });
     } catch (e) {
@@ -57,7 +72,7 @@ class TelegramNotifications {
   }
   report(text, { eventKey } = {}) {
     // Repeated state warnings share one hourly event rather than flooding chat.
-    const key = eventKey || "ALERT:" + Math.floor(this.now() / 3600000) + ":" +
+    const key = eventKey || "ALERT:" + Math.floor(this.now() / CONFIG.TELEGRAM_ALERT_DEDUP_WINDOW_MS) + ":" +
       crypto.createHash("sha256").update(String(text)).digest("hex");
     return this.enqueue("result", key, text);
   }
@@ -73,13 +88,13 @@ class TelegramNotifications {
         if (!row) continue;
         const { token, chatId } = this.destination(route);
         const attempts = row.attempts + 1;
-        let failure = "MISSING_DESTINATION", delay = 60000, data, response;
+        let failure = "MISSING_DESTINATION", delay = CONFIG.TELEGRAM_DELIVERY_MISSING_ROUTE_MS, data, response;
         if (token && chatId) {
           try {
             response = await this.fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
               method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ chat_id: chatId, text: row.text }),
-              signal: AbortSignal.any([AbortSignal.timeout(10000), this.controller.signal]),
+              signal: AbortSignal.any([AbortSignal.timeout(CONFIG.TELEGRAM_DELIVERY_TIMEOUT_MS), this.controller.signal]),
             });
             data = await response.json();
             if (response.ok && data?.ok === true) {
@@ -87,7 +102,7 @@ class TelegramNotifications {
                 status: "SENT", attempts, sentAt: new Date(this.now()),
                 messageId: data.result?.message_id ?? null,
               } });
-              this.cooldown.set(route, this.now() + 1100);
+              this.cooldown.set(route, this.now() + CONFIG.TELEGRAM_DELIVERY_IDLE_COOLDOWN_MS);
               continue;
             }
             failure = "API_" + (data?.error_code || response.status);
@@ -98,7 +113,10 @@ class TelegramNotifications {
           const retryAfter = Number(data?.parameters?.retry_after);
           delay = retryAfter > 0 ? Math.ceil(retryAfter * 1000)
             : [400, 401, 403, 404].includes(Number(data?.error_code || response?.status))
-              ? 3600000 : Math.min(300000, 2000 * 2 ** Math.min(attempts - 1, 8));
+              ? CONFIG.TELEGRAM_DELIVERY_BAD_AUTH_RETRY_MS
+              : Math.min(CONFIG.TELEGRAM_DELIVERY_RETRY_MAX_MS,
+                CONFIG.TELEGRAM_DELIVERY_RETRY_BASE_MS *
+                2 ** Math.min(attempts - 1, CONFIG.TELEGRAM_DELIVERY_RETRY_EXPONENT_CAP));
         }
         this.cooldown.set(route, this.now() + delay);
         await this.rows.updateOne({ eventKey: row.eventKey }, { $set: {

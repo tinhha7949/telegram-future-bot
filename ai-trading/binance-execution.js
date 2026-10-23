@@ -148,10 +148,10 @@ class BinanceExchange {
       method = "GET",
       signed = false,
       host = "https://fapi.binance.com",
-      timeoutMs = 15000,
+      timeoutMs = CONFIG.BINANCE_HTTP_TIMEOUT_MS,
     } = {},
   ) {
-    const attempts = method === "GET" ? 2 : 1;
+    const attempts = method === "GET" ? CONFIG.BINANCE_HTTP_GET_ATTEMPTS : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
       // Queue before signing: recvWindow starts at actual dispatch, not while
       // a background history request waits for the shared IP budget.
@@ -167,7 +167,7 @@ class BinanceExchange {
         values[key] = value;
       }
       if (signed) {
-        values.recvWindow = 10000;
+        values.recvWindow = CONFIG.BINANCE_RECV_WINDOW_MS;
         values.timestamp = Math.floor(this.now() + this.offset);
       }
       let query = new URLSearchParams(
@@ -191,7 +191,7 @@ class BinanceExchange {
       } catch (error) {
         if (response) this.budget.observe(host, response, data);
         if (method === "GET" && attempt + 1 < attempts) {
-          await this.wait(250);
+          await this.wait(CONFIG.BINANCE_HTTP_RETRY_MS);
           continue;
         }
         throw new ExchangeError("EXCHANGE_RESPONSE_UNAVAILABLE", {
@@ -224,7 +224,7 @@ class BinanceExchange {
           attempt + 1 < attempts &&
           response.status >= 500
         ) {
-          await this.wait(1000);
+          await this.wait(CONFIG.BINANCE_HTTP_5XX_RETRY_MS);
           continue;
         }
         throw error;
@@ -317,11 +317,11 @@ class BinanceExchange {
   }
   async equity() { return (await this.accountState()).equity; }
   async symbols() {
-    if (!this.exchangeInfo || this.now() - this.exchangeInfoAt > 3600000) {
+    if (!this.exchangeInfo || this.now() - this.exchangeInfoAt > CONFIG.BINANCE_METADATA_CACHE_MS) {
       const info = await this.cachedRequest(
         "/fapi/v1/exchangeInfo",
         {},
-        3600000,
+        CONFIG.BINANCE_METADATA_CACHE_MS,
       );
       if (!Array.isArray(info?.symbols))
         throw new Error("INVALID_EXCHANGE_INFO");
@@ -335,11 +335,11 @@ class BinanceExchange {
     return (await this.symbols()).find((s) => s.symbol === symbol);
   }
   async fundingInterval(symbol) {
-    if (!this.fundingInfo || this.now() - (this.fundingInfoAt || 0) > 3600000) {
+    if (!this.fundingInfo || this.now() - (this.fundingInfoAt || 0) > CONFIG.BINANCE_METADATA_CACHE_MS) {
       const rows = await this.cachedRequest(
         "/fapi/v1/fundingInfo",
         {},
-        3600000,
+        CONFIG.BINANCE_METADATA_CACHE_MS,
       );
       if (!Array.isArray(rows))
         throw new Error("INVALID_FUNDING_INTERVAL_INFO");
@@ -347,17 +347,17 @@ class BinanceExchange {
       this.fundingInfoAt = this.now();
     }
     const record = this.fundingInfo.find((r) => r.symbol === symbol);
-    const hours = record ? Number(record.fundingIntervalHours) : 8;
+    const hours = record ? Number(record.fundingIntervalHours) : CONFIG.BINANCE_FUNDING_INTERVAL_FALLBACK_HOURS;
     if (!(hours > 0 && hours <= 24))
       throw new Error("INVALID_FUNDING_INTERVAL");
     return hours;
   }
-  async candles(symbol, interval, limit = 1500, extra = {}) {
+  async candles(symbol, interval, limit = CONFIG.BINANCE_CANDLE_REQUEST_LIMIT, extra = {}) {
     if (interval === "4h" && Object.keys(extra).length === 0)
       return this.history4h.get(symbol, limit);
     return this.rawCandles(symbol, interval, limit, extra);
   }
-  async rawCandles(symbol, interval, limit = 1500, extra = {}) {
+  async rawCandles(symbol, interval, limit = CONFIG.BINANCE_CANDLE_REQUEST_LIMIT, extra = {}) {
     const rows = await this.request("/fapi/v1/klines", {
       symbol,
       interval,
@@ -449,7 +449,7 @@ class BinanceExchange {
     } catch (error) {
       if (!error.ambiguous) throw error;
       // The request may have been accepted: reconcile the same ID, never resubmit.
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < CONFIG.BINANCE_AMBIGUOUS_ORDER_LOOKUP_ATTEMPTS; i++) {
         try {
           return await this.order(trade.symbol, clientOrderId);
         } catch (queryError) {
@@ -458,7 +458,7 @@ class BinanceExchange {
             // definitive rejection. Keep the original uncertainty for recovery.
             throw error;
         }
-        await this.wait(500);
+        await this.wait(CONFIG.BINANCE_AMBIGUOUS_ORDER_LOOKUP_DELAY_MS);
       }
       throw error;
     }
@@ -466,7 +466,7 @@ class BinanceExchange {
   async entryFill(trade, order) {
     if (order?.orderId == null) throw new Error("ENTRY_ORDER_ID_MISSING");
     const rows = await this.request("/fapi/v1/userTrades", {
-      symbol: trade.symbol, orderId: order.orderId, limit: 1000,
+      symbol: trade.symbol, orderId: order.orderId, limit: CONFIG.BINANCE_ACCOUNTING_PAGE_SIZE,
     }, { signed: true });
     if (!Array.isArray(rows)) throw new Error("INVALID_ENTRY_FILL_HISTORY");
     const expected = Number(order.executedQty) > 0 ? Number(order.executedQty)
@@ -567,7 +567,7 @@ class BinanceExchange {
       windowStart = start;
     // First window is at most seven days. Subsequent pages use fromId alone.
     // Timeout positions are 96h, but persisted reconciliation can be retried later.
-    for (let page = 0; page < 100; page++) {
+    for (let page = 0; page < CONFIG.BINANCE_FILL_HISTORY_MAX_PAGES; page++) {
       const windowEnd = Math.min(endTime, windowStart + 7 * 86400000 - 1);
       const params =
         fromId == null
@@ -575,7 +575,7 @@ class BinanceExchange {
               symbol: trade.symbol,
               startTime: windowStart,
               endTime: windowEnd,
-              limit: 1000,
+              limit: CONFIG.BINANCE_ACCOUNTING_PAGE_SIZE,
             }
           : { symbol: trade.symbol, fromId, limit: 1000 };
       const rows = await this.request("/fapi/v1/userTrades", params, {
@@ -584,7 +584,7 @@ class BinanceExchange {
       if (!Array.isArray(rows)) throw new Error("INVALID_FILL_HISTORY");
       all.push(...rows.filter((f) => Number(f.time) <= endTime));
       if (rows.length && Number(rows.at(-1).time) > endTime) return all;
-      if (rows.length < 1000) {
+      if (rows.length < CONFIG.BINANCE_ACCOUNTING_PAGE_SIZE) {
         if (fromId != null || windowEnd >= endTime) return all;
         windowStart = windowEnd + 1;
         continue;
@@ -598,7 +598,7 @@ class BinanceExchange {
   }
   async funding(symbol, startTime, endTime) {
     const all = [];
-    for (let page = 1; page <= 100; page++) {
+    for (let page = 1; page <= CONFIG.BINANCE_FUNDING_HISTORY_MAX_PAGES; page++) {
       const rows = await this.request(
         "/fapi/v1/income",
         {
@@ -606,14 +606,14 @@ class BinanceExchange {
           incomeType: "FUNDING_FEE",
           startTime,
           endTime,
-          limit: 1000,
+          limit: CONFIG.BINANCE_ACCOUNTING_PAGE_SIZE,
           page,
         },
         { signed: true },
       );
       if (!Array.isArray(rows)) throw new Error("INVALID_FUNDING_HISTORY");
       all.push(...rows);
-      if (rows.length < 1000) return all;
+      if (rows.length < CONFIG.BINANCE_ACCOUNTING_PAGE_SIZE) return all;
     }
     throw new Error("FUNDING_HISTORY_INCOMPLETE");
   }

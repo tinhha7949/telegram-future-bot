@@ -41,12 +41,6 @@ const { TradeLifecycle, newTrade } = require("./ai-trading/trade-lifecycle");
 const { validateExecution } = require("./ai-trading/execution-validation");
 const { TelegramNotifications } = require("./ai-trading/telegram-notifications");
 
-function envNumber(name, fallback, min, max) {
-  const raw = process.env[name];
-  if (raw == null || String(raw).trim() === "") return fallback;
-  const v = Number(raw);
-  return Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
-}
 const TRADE_CONFIG = Object.freeze({
   riskPerTrade: RISK_PER_TRADE,
   maxRiskPerTrade: RISK_PER_TRADE,

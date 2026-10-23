@@ -14,8 +14,8 @@ const DEFAULTS = Object.freeze({
   intervalMs: CONFIG.RETENTION_INTERVAL_HOURS * 60 * 60 * 1000,
   // Automatically perform bounded cleanup when the storage threshold is crossed.
   // The allowlist below contains reviewed historical event ledgers; live state stays protected.
-  enabled: true,
-  dryRun: false
+  enabled: CONFIG.RETENTION_ENABLE_DELETE,
+  dryRun: CONFIG.RETENTION_DRY_RUN
 });
 
 // Event-ledger retention: only terminal/historical documents with a valid old
@@ -114,9 +114,9 @@ function configFromEnv() {
   const enabledEnv = process.env.DB_RETENTION_ENABLE_DELETE;
   // Cleanup is enabled by default. Explicit false is the kill-switch; explicit true
   // can re-enable it after an environment-level override.
-  const enabled = enabledEnv == null
-    ? DEFAULTS.enabled
-    : /^(1|true|yes)$/i.test(String(enabledEnv));
+  // Environment emergency kill switch cannot enable deletion when YAML disables it.
+  const enabled = DEFAULTS.enabled &&
+    (enabledEnv == null || /^(1|true|yes)$/i.test(String(enabledEnv)));
   // Numeric capacity/retention settings are immutable and solely from CONFIG.yaml.
   // .env may only explicitly disable or preview destructive maintenance.
   return {
@@ -130,7 +130,8 @@ function configFromEnv() {
     // switch; unknown values fail safe to preview. DB_RETENTION_ENABLE_DELETE=false
     // disables all deletion regardless of dry-run configuration.
     enabled,
-    dryRun: !enabled || (dryRunEnv != null && !/^(false|0|no)$/i.test(String(dryRunEnv)))
+    dryRun: !enabled || DEFAULTS.dryRun ||
+      (dryRunEnv != null && !/^(false|0|no)$/i.test(String(dryRunEnv)))
   };
 }
 function estimateUsageMB(collectionStats) {
