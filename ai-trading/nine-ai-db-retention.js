@@ -24,13 +24,13 @@ const DEFAULTS = Object.freeze({
 // Outcome ledgers are eligible only after they were applied; the legacy ledger
 // also must finish independent-model migration before it can be pruned.
 const SPECS = Object.freeze([
-  { name: "trades", dateFields: ["closedAt", "updatedAt", "createdAt"], days: 90,
+  { name: "trades", dateFields: ["closedAt", "updatedAt", "createdAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "closed_trade", filter: { result: { $in: ["WIN", "LOSS", "CLOSED_UNRESOLVED"] } } },
   { name: "nine_ai_decision_journal", dateFields: [
     "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
     "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
     "scannedAt", "signalTime", "createdAt"
-  ], days: 90, category: "evaluated_decision", filter: {
+  ], days: CONFIG.RETENTION_HISTORY_DAYS, category: "evaluated_decision", filter: {
     outcomeStatus: "EVALUATED", side: { $ne: "WAIT" }
   } },
   // WAIT rows remain useful after their forward outcomes mature, but they are
@@ -40,32 +40,32 @@ const SPECS = Object.freeze([
     "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
     "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
     "scannedAt", "signalTime", "createdAt"
-  ], days: 90, category: "evaluated_wait_decision", filter: {
+  ], days: CONFIG.RETENTION_HISTORY_DAYS, category: "evaluated_wait_decision", filter: {
     outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
   } },
-  { name: "nine_ai_learning_outcomes", dateFields: ["closedAt"], days: 90,
+  { name: "nine_ai_learning_outcomes", dateFields: ["closedAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "applied_learning_outcome", filter: {
       closed: true, applied: true, independentModelsMigrated: true
     } },
-  { name: "nine_ai_reward_model_outcomes", dateFields: ["closedAt"], days: 90,
+  { name: "nine_ai_reward_model_outcomes", dateFields: ["closedAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "applied_learning_outcome", filter: { closed: true, applied: true } },
-  { name: "nine_ai_contextual_outcomes", dateFields: ["closedAt"], days: 90,
+  { name: "nine_ai_contextual_outcomes", dateFields: ["closedAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "closed_learning_outcome", filter: { closed: true } },
-  { name: "nine_ai_counterfactual_outcomes", dateFields: ["closedAt"], days: 90,
+  { name: "nine_ai_counterfactual_outcomes", dateFields: ["closedAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "counterfactual_outcome", filter: { closedAt: { $exists: true } } },
-  { name: "nine_ai_loss_diagnoses", dateFields: ["diagnosedAt"], days: 90,
+  { name: "nine_ai_loss_diagnoses", dateFields: ["diagnosedAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "loss_diagnosis", filter: { diagnosedAt: { $exists: true } } },
-  { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: 90,
+  { name: "nine_ai_strategy_lab_reports", dateFields: ["createdAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "generated_report" },
-  { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: 90,
+  { name: "nine_ai_autonomous_decision_reports", dateFields: ["createdAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "generated_report" },
-  { name: "nine_ai_data_derived_consensus_reports", dateFields: ["createdAt"], days: 90,
+  { name: "nine_ai_data_derived_consensus_reports", dateFields: ["createdAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "generated_report" },
-  { name: "nine_ai_strategy_hypotheses", dateFields: ["createdAt"], days: 90,
+  { name: "nine_ai_strategy_hypotheses", dateFields: ["createdAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "research_hypothesis", filter: { createdAt: { $exists: true } } },
-  { name: "nine_ai_strategy_versions", dateFields: ["updatedAt", "createdAt"], days: 90,
+  { name: "nine_ai_strategy_versions", dateFields: ["updatedAt", "createdAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "research_version", filter: { createdAt: { $exists: true } } },
-  { name: "nine_ai_autonomous_adaptation_history", dateFields: ["updatedAt", "createdAt"], days: 90,
+  { name: "nine_ai_autonomous_adaptation_history", dateFields: ["updatedAt", "createdAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
     category: "adaptation_history", filter: { version: { $exists: true } } }
 ]);
 // Strict capacity hierarchy: raw capture -> derived features -> failed model
@@ -102,7 +102,7 @@ function sortByRetentionPriority(items, limit=items.length){
     .slice(0,limit);
 }
 const MODEL_OUTCOME_PATTERN = /^nine_ai_ml_(technical|signal|memory|bull|bear|contrarian|analyst|decision|risk)_outcomes$/;
-const MODEL_OUTCOME_SPEC = Object.freeze({ dateFields: ["closedAt"], days: 90,
+const MODEL_OUTCOME_SPEC = Object.freeze({ dateFields: ["closedAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
   category: "applied_model_outcome", filter: { closed: true, applied: true } });
 
 function boundedNumber(env, fallback, min, max) {

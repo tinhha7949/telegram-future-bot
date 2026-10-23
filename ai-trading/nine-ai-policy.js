@@ -1,6 +1,6 @@
 "use strict";
 const { CONFIG } = require("./config");
-const BAR_MS = 4 * 60 * 60 * 1000;
+const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const DECISION_SCHEMA_VERSION = 6; // Invalidates old decision/50:50 outcome contracts.
 const FUNDING_HOT_RATE = CONFIG.FUNDING_HOT_RATE;
 const fundingIsHot = (rate) =>
@@ -45,11 +45,18 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
     return { ...result, reason: "INVALID_META_POLICY" };
   if (!["UPTREND", "DOWNTREND"].includes(decision?.regime?.regime))
     return { ...result, reason: "REGIME_NOT_TREND" };
-  if (
-    decision?.agents?.flow?.confirmation === "BLOCKED_HOT_FUNDING" ||
-    fundingIsHot(decision?.agents?.flow?.fundingRate)
-  )
+  const flow = decision?.agents?.flow;
+  if (flow?.confirmation === "BLOCKED_HOT_FUNDING" ||
+      fundingIsHot(flow?.fundingRate))
     return { ...result, reason: "HOT_FUNDING" };
+  // Fail closed: a missing/neutral flow reading cannot authorize exposure.
+  // The confirmation must be backed by contemporaneous finite funding, OI
+  // and non-zero liquidation data, not a bare string on a stale decision.
+  if (flow?.confirmation !== "CONFIRMED" ||
+      !["LONG", "SHORT"].includes(flow.confirmationSide) ||
+      ![flow.fundingRate, flow.openInterestChange, flow.liquidationImbalance].every(finite) ||
+      flow.liquidationImbalance === 0)
+    return { ...result, reason: "FLOW_UNAVAILABLE_OR_UNCERTAIN" };
   for (const side of ["LONG", "SHORT"]) {
     const c = decision?.edges?.[side];
     if (
@@ -74,6 +81,7 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
       other = result.edges[side === "LONG" ? "SHORT" : "LONG"];
     if (
       c.eligible === true &&
+      side === flow.confirmationSide &&
       c.plan &&
       c.edge > params.minEdge &&
       c.edge - other.edge > params.gapEdge

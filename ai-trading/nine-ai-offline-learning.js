@@ -7,7 +7,7 @@ const { Worker } = require("node:worker_threads");
 const path = require("node:path");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const BAR_MS = 4 * 60 * 60 * 1000;
+const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const HORIZON_BARS = CONFIG.TIMEOUT_BARS;
 const PURGE_EMBARGO_MS = HORIZON_BARS * BAR_MS;
 const SHADOW_MS = CONFIG.SHADOW_DAYS * DAY_MS;
@@ -283,7 +283,14 @@ function calibrationSummary(rows) {
     meanRealizedR: mean(realized),
     biasR,
     maeR,
-    status: maeR > 0 ? "RED_FLAG_CALIBRATION_DRIFT" : "CALIBRATION_MATCH",
+    // Any nonzero prediction residual is normal. Only penalize confidence
+    // for a sustained, statistically better supported R-unit deviation.
+    status: usable.length < CONFIG.CALIBRATION_MIN_SAMPLES
+      ? "INSUFFICIENT_CALIBRATION_SAMPLES"
+      : maeR > CONFIG.CALIBRATION_MAX_MAE_R ||
+        Math.abs(biasR) > CONFIG.CALIBRATION_MAX_ABS_BIAS_R
+        ? "RED_FLAG_CALIBRATION_DRIFT"
+        : "CALIBRATION_WITHIN_TOLERANCE",
   };
 }
 
@@ -606,7 +613,7 @@ function createOfflineLearning(db, options = {}) {
       const rows = await journal
         .find(
           {
-            signalTime: { $gte: runAt - 180 * DAY_MS },
+            signalTime: { $gte: runAt - CONFIG.DAILY_TRAIN_LOOKBACK_DAYS * DAY_MS },
             outcomeStatus: "EVALUATED",
             "decisionSnapshot.setup": "NINE_AI_4H",
             "evaluations.24.contract": CONTRACT,
