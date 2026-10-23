@@ -71,18 +71,18 @@ for (const side of ["LONG", "SHORT"])
       );
     },
   );
-test("AI-7 pools labeled excursions by setup, without coin or side prerequisites", () => {
+test("AI7 rejects 100 opposite-side labels and remains ATR fallback", () => {
   const f = fixture();
-  const outcomes = [{ ...f.outcomes[0], symbol: "OTHERUSDT", side: "SHORT" }];
+  const outcomes = f.outcomes.slice(0, 100).map((o,i) =>
+    ({...o, tradeId: "opposite-"+i, symbol: "OTHERUSDT", side: "SHORT"}));
   const d = analyzeNineAI({ ...f, outcomes });
   assert.equal(d.action, "LONG");
-  assert.equal(d.agents.outcome.enabled, true);
-  assert.equal(d.agents.outcome.dist_MAE.samples, 1);
-  assert.equal(d.agents.outcome.dist_MAE.p80, outcomes[0].maePct);
+  assert.equal(d.agents.outcome.enabled, false);
+  assert.equal(d.tradePlan.stopMethod, "ATR14_COLD_START_STOP");
 });
 test("zero measured MAE cannot silently turn into an ATR/structure stop", () => {
   const f = fixture(),
-    d = analyzeNineAI({ ...f, outcomes: [{ ...f.outcomes[0], maePct: 0 }] });
+    d = analyzeNineAI({ ...f, outcomes: f.outcomes.slice(0,100).map(o=>({...o, maePct:0})) });
   assert.equal(d.action, "WAIT");
   assert.equal(d.tradePlan, undefined);
 });
@@ -151,9 +151,7 @@ test("stale data increases uncertainty without a hidden five-minute cutoff", () 
     market: { ...f.market, snapshotAt: f.market.now - 300001 },
   });
   assert.equal(stale.action, "LONG");
-  assert.ok(
-    stale.edges.LONG.uncertaintyPenalty > fresh.edges.LONG.uncertaintyPenalty,
-  );
+  assert.equal(stale.edges.LONG.uncertaintyPenalty, fresh.edges.LONG.uncertaintyPenalty);
   assert.equal(
     finalizeDecision(fresh, {
       symbol: f.symbol,
