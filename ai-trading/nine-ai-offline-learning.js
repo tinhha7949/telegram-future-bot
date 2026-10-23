@@ -158,25 +158,16 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
     };
   }
   const grid = [];
-  const edgeValues = [
-    ...new Set([
-      Math.max(0, champion.minEdge - 0.025),
-      champion.minEdge,
-      champion.minEdge + 0.025,
-      champion.minEdge + 0.05,
-    ]),
-  ];
-  const gapValues = [
-    ...new Set([
-      Math.max(0, champion.gapEdge - 0.05),
-      champion.gapEdge,
-      champion.gapEdge + 0.05,
-      champion.gapEdge + 0.1,
-    ]),
-  ];
-  for (const minEdge of edgeValues)
-    for (const gapEdge of gapValues) {
-      const params = { ...champion, minEdge, gapEdge };
+  // The hard floor (MIN_EDGE) and directional gap are not trainable.
+  // Candidates may only increase the threshold to abstain more often.
+  const edgeValues = [...new Set([
+    Math.max(CONFIG.MIN_EDGE, champion.minEdge),
+    Math.max(CONFIG.MIN_EDGE, champion.minEdge) + CONFIG.WAIT_EDGE_INCREMENT / 2,
+    Math.max(CONFIG.MIN_EDGE, champion.minEdge) + CONFIG.WAIT_EDGE_INCREMENT,
+  ])].filter(edge => edge <= CONFIG.WAIT_EDGE_MAX);
+  for (const minEdge of edgeValues) {
+      const params = { ...champion, minEdge, gapEdge: CONFIG.EDGE_GAP,
+        uncertaintyPenalty: 0 };
       const train = evaluatePolicy(splits.train, params);
       const validation = evaluatePolicy(splits.validation, params);
       if (
@@ -378,7 +369,11 @@ function createOfflineLearning(db, options = {}) {
   async function getChampionConfig() {
     const state = await championState.findOne({ _id: "active" });
     return state?.policySchemaVersion === DECISION_SCHEMA_VERSION
-      ? { ...DEFAULT_CHAMPION, ...(state.params || {}) }
+      ? {
+          ...DEFAULT_CHAMPION, ...(state.params || {}),
+          minEdge: Math.max(CONFIG.MIN_EDGE, Number(state.params?.minEdge) || CONFIG.MIN_EDGE),
+          gapEdge: CONFIG.EDGE_GAP, uncertaintyPenalty: 0,
+        }
       : { ...DEFAULT_CHAMPION };
   }
 
@@ -547,6 +542,9 @@ function createOfflineLearning(db, options = {}) {
       );
       if (
         sameChampion &&
+        Number(activeShadow.params?.minEdge) >= CONFIG.MIN_EDGE &&
+        Number(activeShadow.params?.gapEdge) === CONFIG.EDGE_GAP &&
+        candidateScore.trades > 0 &&
         age >= SHADOW_MS &&
         labelsMature &&
         candidateScore.opportunities > 0 &&
