@@ -85,6 +85,8 @@ function sizeTrade(decision, equity, riskFraction, info) {
     return null;
   const budget = equity * riskFraction,
     distance = Math.abs(entry - sl);
+  if (Math.abs(tp1 - entry) + Number.EPSILON * Math.max(entry, tp1) <
+      CONFIG.MIN_RR * distance) return null;
   const totalLots = CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1];
   const quantity = roundStep(Math.min(budget / distance, r.maxQty), totalLots * r.step);
   const tp1Quantity = roundStep(quantity * CONFIG.TP_BATCHES[0] / totalLots, r.step);

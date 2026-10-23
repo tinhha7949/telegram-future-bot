@@ -33,7 +33,7 @@ function fixture(side = "LONG", now = Date.now()) {
   const regime = side === "LONG" ? "UPTREND" : "DOWNTREND",
     outcomes = [];
   for (const setup of ["CONTINUATION", "BREAKOUT"])
-    for (let i = 0; i < 60; i++)
+    for (let i = 0; i < 120; i++)
       outcomes.push({
         tradeId: side + setup + i,
         symbol: "TESTUSDT",
@@ -41,7 +41,7 @@ function fixture(side = "LONG", now = Date.now()) {
         side,
         maePct: 0.5 + i * 0.005,
         mfePct: 3 + i * 0.03,
-        win: i < 45,
+        win: i < 90,
         labeled: true,
         source: "REALIZED_CLOSED_TRADE",
         closedAt: now - 60000,

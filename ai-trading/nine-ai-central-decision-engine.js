@@ -87,7 +87,7 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
     tp <= 0 ||
     tp1 <= 0 ||
     entry === sl ||
-    Math.abs(tp1 - entry) / Math.abs(entry - sl) < CONFIG.MIN_RR ||
+    Math.abs(tp1 - entry) + Number.EPSILON * Math.max(entry, tp1) < CONFIG.MIN_RR * Math.abs(entry - sl) ||
     (side === "LONG" && !(sl < entry && entry < tp1 && tp1 <= tp)) ||
     (side === "SHORT" && !(tp <= tp1 && tp1 < entry && entry < sl))
   ) {

@@ -160,6 +160,8 @@ function fillRiskValid(t) {
     (sign > 0
       ? t.sl < t.entry && t.entry < t.tp1 && t.tp1 <= t.tp2
       : t.tp2 <= t.tp1 && t.tp1 < t.entry && t.entry < t.sl) &&
+    Math.abs(t.tp1 - t.entry) + Number.EPSILON * Math.max(t.entry,t.tp1) >=
+      CONFIG.MIN_RR * Math.abs(t.entry - t.sl) &&
     t.tp1Quantity >= t.rules.minQty &&
     t.tp2Quantity >= t.rules.minQty &&
     same(t.tp1Quantity + t.tp2Quantity, t.actualQuantity) &&
