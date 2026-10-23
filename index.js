@@ -245,14 +245,42 @@ async function executeDecisions(
         console.log("ENTRY WAIT", decision.symbol, validation.reason);
         continue;
       }
-      const equity = await exchange.equity();
+      // All orders require durable risk and verified margin.
+
+      if (!riskGuard) { console.error("ENTRY WAIT RISK_GUARD_UNAVAILABLE"); continue; }
+
+      const account = await exchange.accountState();
+
+      const equity = account.equity;
+
+      const gate = await riskGuard.assess(equity);
+
+      if (!gate.ok) { console.log("ENTRY WAIT", decision.symbol, gate.reason); continue; }
+
       const sizing = sizeTrade(
         decision,
         equity,
         TRADE_CONFIG.riskPerTrade,
         await exchange.info(decision.symbol),
       );
-      if (!sizing) continue;
+      if (!sizing) { console.log("ENTRY WAIT", decision.symbol, "INVALID_SIZING"); continue; }
+
+      if (!Number.isFinite(account.availableBalance) ||
+
+          account.availableBalance < sizing.notional * CONFIG.RISK_RESERVATION_MIN_MARGIN_MULTIPLIER) {
+
+        console.log("ENTRY WAIT", decision.symbol, "INSUFFICIENT_AVAILABLE_MARGIN");
+
+        continue;
+
+      }
+
+      if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size) break;
+
+      const reservation = await riskGuard.reserve(`${decision.symbol}:${decision.signalAt}`, equity);
+
+      if (!reservation.ok) { console.log("ENTRY WAIT", decision.symbol, reservation.reason); continue; }
+
       const trade = newTrade(decision, sizing);
       trade.executionValidation = validation;
       if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size)
@@ -343,7 +371,22 @@ async function main() {
   await exchange.initialize();
   await journal.initialize(db);
   const learner = createOfflineLearning(db);
+
   await learner.initialize();
+
+  const riskGuard = new RiskGuard(db, { alert: msg => report(msg) });
+
+  const waitControl = new WaitRateControl(db);
+
+  const initialRisk = await riskGuard.assess(await exchange.equity());
+
+  if (!initialRisk.ok) {
+
+    entriesPaused = true;
+
+    await report("NEW ENTRIES PAUSED: " + initialRisk.reason);
+
+  }
   const lifecycle = new TradeLifecycle({
     exchange,
     db,
@@ -450,7 +493,18 @@ async function main() {
       scannedAt: Date.now(),
       marketWindow: h4,
     });
+    const audited = await waitControl.record({
+
+      symbol, signalAt: decision.signalAt || probe.closeTime,
+
+      action: decision.action, reason: decision.reason,
+
+    });
+
+    if (!audited.ok) { console.error("WAIT AUDIT FAILED", symbol, audited.reason); return null; }
+
     if (!decision.authorizedForExecution) countWait(decision.reason);
+
     return decision.authorizedForExecution
       ? { ...decision, nineAiDecisionKey: saved.decisionKey }
       : null;
@@ -468,6 +522,15 @@ async function main() {
       return;
     }
     await db.command({ ping: 1 });
+
+    const riskState = await riskGuard.assess(await exchange.equity());
+
+    if (!riskState.ok) { console.error("SCAN WAIT", riskState.reason); return; }
+
+    const adaptive = await waitControl.minimumEdge();
+
+    if (!adaptive.ok) { console.error("SCAN WAIT", adaptive.reason); return; }
+
     const cutoffAt = Date.now();
     const [symbols, champion, track, outcomes] = await Promise.all([
       universe(exchange),
@@ -496,7 +559,7 @@ async function main() {
       const batch = await Promise.allSettled(
         symbols
           .slice(i, i + 5)
-          .map((s) => scanSymbol(s, champion, track, outcomes)),
+          .map((s) => scanSymbol(s, champion, track, outcomes, adaptive.minEdge)),
       );
       for (const r of batch) {
         if (r.status === "fulfilled" && r.value) signals.push(r.value);
@@ -520,9 +583,8 @@ async function main() {
         .map(([reason, n]) => reason + "=" + n)
         .join(" | "),
     );
-    await executeDecisions(signals, {
-      exchange,
-      lifecycle,
+    $1
+      riskGuard,
       isStopped: () => stopped,
       entriesPaused: () => entriesPaused,
     });
