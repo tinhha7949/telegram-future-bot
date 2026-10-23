@@ -167,7 +167,7 @@ test("old champions/candidates cannot carry thresholds learned on an older contr
     { $set: { params: { ...DEFAULT_CHAMPION, minEdge: 0.075 } } },
   );
   await service.initialize();
-  assert.equal((await service.getChampionConfig()).minEdge, 0.075);
+  assert.equal((await service.getChampionConfig()).minEdge, 0.15);
 });
 
 function fakeExchange(markFor = (_, entry) => entry) {
