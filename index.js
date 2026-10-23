@@ -92,7 +92,7 @@ async function telegram(token, chatId, text) {
           chat_id: chatId,
           text: String(text).slice(0, 4000),
         }),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(CONFIG.TELEGRAM_HTTP_TIMEOUT_MS),
       },
     );
     return res.ok && (await res.json()).ok === true;
@@ -128,12 +128,12 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
       observe("/fapi/v1/premiumIndex", { symbol }),
     observe(
       "/futures/data/openInterestHist",
-      { symbol, period: "4h", limit: 2 },
-      60000,
+      { symbol, period: CONFIG.TIMEFRAME, limit: CONFIG.MARKET_OI_HISTORY_POINTS },
+      CONFIG.MARKET_OI_CACHE_MS,
     ),
     exchange.marketFeed?.get("book", symbol) ||
       observe("/fapi/v1/ticker/bookTicker", { symbol }),
-    observe("/fapi/v1/depth", { symbol, limit: 20 }, 500),
+    observe("/fapi/v1/depth", { symbol, limit: CONFIG.MARKET_DEPTH_LEVELS }, CONFIG.MARKET_DEPTH_CACHE_MS),
     exchange.fundingInterval(symbol),
   ]);
   const premium = premiumRecord.data,
@@ -192,8 +192,8 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
     fundingIntervalHours,
     expectedFundingCostPctBySide: Number.isFinite(funding)
       ? {
-          LONG: funding * 100 * Math.ceil((CONFIG.TIMEOUT_BARS * 4) / fundingIntervalHours),
-          SHORT: -funding * 100 * Math.ceil(96 / fundingIntervalHours),
+          LONG: funding * 100 * Math.ceil((CONFIG.TIMEOUT_BARS * CONFIG.BAR_HOURS) / fundingIntervalHours),
+          SHORT: -funding * 100 * Math.ceil((CONFIG.TIMEOUT_BARS * CONFIG.BAR_HOURS) / fundingIntervalHours),
         }
       : null,
   };
@@ -421,15 +421,15 @@ async function main() {
     intervals.push(setInterval(run, ms));
     return run;
   }
-  const manage = every(10000, () => lifecycle.tick({ runMaintenance: false }));
+  const manage = every(CONFIG.PROTECTION_INTERVAL_MS, () => lifecycle.tick({ runMaintenance: false }));
   await manage();
   // Exchange safety has its own loop; historical API cooldowns, MAE/MFE and
   // Telegram delivery cannot keep timeout/SL/TP reconciliation waiting.
-  const bookkeeping = every(10000, () => lifecycle.maintenance());
+  const bookkeeping = every(CONFIG.BOOKKEEPING_INTERVAL_MS, () => lifecycle.maintenance());
   void bookkeeping();
-  const deliver = every(2000, () => notifications.flush());
+  const deliver = every(CONFIG.NOTIFICATION_INTERVAL_MS, () => notifications.flush());
   void deliver();
-  every(60000, () => exchange.syncTime());
+  every(CONFIG.CLOCK_SYNC_INTERVAL_MS, () => exchange.syncTime());
   const retention = createRetention(db);
   const clean = every(retention.config.intervalMs, async () => {
     const summary = await retention.runCleanup();
@@ -438,7 +438,7 @@ async function main() {
       await report(`DATABASE CAPACITY: ${usage} MB; threshold ${summary.triggerMB} MB. ${summary.note || "Check storage capacity."}`);
   });
   void clean();
-  const daily = every(24 * 3600000, async () => {
+  const daily = every(CONFIG.LEARNING_INTERVAL_HOURS * 60 * 60 * 1000, async () => {
     const symbols = await db.collection(journal.COLLECTION).distinct("symbol", {
       "decisionSnapshot.decisionSchemaVersion": DECISION_SCHEMA_VERSION,
       outcomeStatus: {
@@ -449,7 +449,7 @@ async function main() {
       try {
         await journal.settleMatured(
           symbol,
-          await exchange.candles(symbol, "4h", HISTORY_4H_LIMIT)
+          await exchange.candles(symbol, CONFIG.TIMEFRAME, HISTORY_4H_LIMIT)
         );
       } catch (e) {
         console.error("SETTLEMENT", symbol, e.message);
@@ -513,7 +513,7 @@ async function main() {
       ? { ...decision, nineAiDecisionKey: saved.decisionKey }
       : null;
   }
-  const scan = every(120000, async () => {
+  const scan = every(CONFIG.SCAN_INTERVAL_MS, async () => {
     if (entriesPaused || lifecycle.uncertain || lifecycle.untracked.size) {
       console.log(
         "NINE-AI SCAN PAUSED",
@@ -570,10 +570,10 @@ async function main() {
     );
     const signals = [];
     scanReasons = new Map();
-    for (let i = 0; i < symbols.length && !stopped; i += 5) {
+    for (let i = 0; i < symbols.length && !stopped; i += CONFIG.SCAN_BATCH_SIZE) {
       const batch = await Promise.allSettled(
         symbols
-          .slice(i, i + 5)
+          .slice(i, i + CONFIG.SCAN_BATCH_SIZE)
           .map((s) => scanSymbol(s, {...champion,uncertaintyPenalty:calibrationPenalty}, track, outcomes, adaptive.minEdge)),
       );
       for (const r of batch) {
@@ -581,10 +581,10 @@ async function main() {
         else if (r.status === "rejected")
           console.error("SCAN", r.reason.message);
       }
-      if ((i + 5) % 50 === 0)
+      if ((i + CONFIG.SCAN_BATCH_SIZE) % CONFIG.SCAN_PROGRESS_EVERY_SYMBOLS === 0)
         console.log(
           "NINE-AI SCAN PROGRESS",
-          "scanned=" + Math.min(i + 5, symbols.length) + "/" + symbols.length,
+          "scanned=" + Math.min(i + CONFIG.SCAN_BATCH_SIZE, symbols.length) + "/" + symbols.length,
           "signals=" + signals.length,
         );
     }
@@ -608,11 +608,11 @@ async function main() {
   });
   // Commands have their own loop. A Telegram outage cannot stall SL/TP/timeout management.
   let updateId = 0;
-  const commands = every(2000, async () => {
+  const commands = every(CONFIG.COMMAND_POLL_INTERVAL_MS, async () => {
     if (!process.env.BOT_TOKEN || !process.env.CHAT_ID) return;
     const res = await fetch(
-      `https://api.telegram.org/bot${process.env.BOT_TOKEN}/getUpdates?offset=${updateId + 1}&timeout=20`,
-      { signal: AbortSignal.timeout(25000) },
+      `https://api.telegram.org/bot${process.env.BOT_TOKEN}/getUpdates?offset=${updateId + 1}&timeout=${CONFIG.COMMAND_LONG_POLL_SECONDS}`,
+      { signal: AbortSignal.timeout(CONFIG.COMMAND_HTTP_TIMEOUT_MS) },
     );
     if (!res.ok) return;
     const payload = await res.json();
@@ -634,7 +634,7 @@ async function main() {
   console.log(
     "NINE-AI READY: closed 4h decisions; independent protection/timeout; daily offline learning",
   );
-  while (!stopped) await sleep(1000);
+  while (!stopped) await sleep(CONFIG.MAIN_IDLE_SLEEP_MS);
 }
 if (require.main === module)
   main().catch((e) => {
