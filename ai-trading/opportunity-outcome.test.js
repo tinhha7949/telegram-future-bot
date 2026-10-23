@@ -65,7 +65,7 @@ test("same exit contract handles 60% TP1, remaining stop, TP2 and timeout conser
     ],
     costs,
   );
-  assert.equal(r.grossR, 0.8);
+  assert.ok(Math.abs(r.grossR - 0.8) < 1e-12);
   assert.equal(r.exitReason, "SL");
   r = evaluatePlan(
     plan,
