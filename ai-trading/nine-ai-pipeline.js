@@ -419,6 +419,7 @@ function analyzeNineAI({
   };
   if (
     funding === null ||
+    oi === null ||
     fee === null ||
     fee < 0 ||
     Object.values(fundingBySide).some((v) => v === null) ||
@@ -460,13 +461,13 @@ function analyzeNineAI({
       const setupKey = regime.regime + "_" + m.type;
       const samples = validLabels(outcomes, symbol, setupKey, side, now),
         wins = samples.filter((o) => o.win);
-      let distMAE = wins.length
+      let distMAE = samples.length
         ? {
             p80: percentile(
-              wins.map((o) => o.maePct),
+              samples.map((o) => o.maePct),
               0.8,
             ),
-            samples: wins.length,
+            samples: samples.length,
           }
         : null;
       let distMFE = samples.length
@@ -482,7 +483,7 @@ function analyzeNineAI({
             samples: samples.length,
           }
         : null;
-      // One valid winning label is enough to start AI-7; p50 may equal p90.
+      // No quantile SL/TP until sufficient direction-matched realized outcomes.
       const ai7Ready = samples.filter(o => o.side === side).length >= CONFIG.AI7_ACTIVATION_SAMPLES && wins.length > 0;
       const entry = last.close;
       const stop = ai7Ready
@@ -557,7 +558,9 @@ function analyzeNineAI({
       // payoff estimate. Observed gross R then supplies E[R|a,regime,setup];
       // AI-9 subtracts execution cost once, in the same R unit.
       const quantileRewardR =
-        ((Math.abs(plan.tp1 - entry) + Math.abs(plan.tp2 - entry)) * 0.5) /
+        ((Math.abs(plan.tp1 - entry) * CONFIG.TP_BATCHES[0] +
+           Math.abs(plan.tp2 - entry) * CONFIG.TP_BATCHES[1]) /
+         (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) /
         Math.abs(entry - plan.sl);
       const realizedReturns = directionalSamples
         .filter(
@@ -585,7 +588,7 @@ function analyzeNineAI({
           : "FEATURE_SCORE_UNCALIBRATED",
         outcomeSource: ai7Ready
           ? "REALIZED_CLOSED_TRADE"
-          : "AI2_STRUCTURE_INITIAL_PLAN",
+          : "ATR_COLD_START_EXIT_PLAN",
         p,
         expectedR,
         expectedRSource:
@@ -679,15 +682,15 @@ function analyzeNineAI({
     tp1: plan.tp1,
     tp: plan.tp2,
     tp2: plan.tp2,
-    closePercentAtTP1: 50,
-    timeoutCandles: 24,
-    timeframe: "4h",
+    closePercentAtTP1: (CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
+    timeoutCandles: CONFIG.TIMEOUT_BARS,
+    timeframe: CONFIG.TIMEFRAME,
     setupKey: chosen.setupKey,
     ...extra,
     tradePlan: {
       ...plan,
       outcomeMode: chosen.outcomeMode,
-      timeoutMs: 24 * BAR_MS,
+      timeoutMs: CONFIG.TIMEOUT_BARS * BAR_MS,
     },
   };
 }
