@@ -30,3 +30,18 @@ for(const side of ["LONG","SHORT"]) test(side+" AI7 floors low MFE to MIN_RR eve
   assert.ok(sign*(t.tp2-t.tp1)>=-1e-10);
   assert.ok(Math.abs(t.entryExecution.rawQuantileTP1-fill*(1+sign*0.002))<1e-10);
 });
+
+test("AI7 ignores opposite-side excursion labels even after cold start",()=>{
+  const f=fixture("LONG"),setup=f.outcomes[0];
+  const longs=Array.from({length:CONFIG.AI7_ACTIVATION_SAMPLES},(_,i)=>({
+    ...setup,tradeId:"own-long-"+i,side:"LONG",maePct:1,mfePct:3,win:true,
+  }));
+  const shorts=Array.from({length:CONFIG.AI7_ACTIVATION_SAMPLES},(_,i)=>({
+    ...setup,tradeId:"opposite-short-"+i,side:"SHORT",maePct:99,mfePct:99,win:true,
+  }));
+  const result=analyzeNineAI({...f,outcomes:[...longs,...shorts]});
+  assert.equal(result.action,"LONG");
+  assert.equal(result.agents.outcome.dist_MAE.samples,CONFIG.AI7_ACTIVATION_SAMPLES);
+  assert.equal(result.agents.outcome.dist_MAE.p80,1);
+  assert.equal(result.agents.outcome.dist_MFE.p50,3);
+});
