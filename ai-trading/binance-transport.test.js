@@ -490,7 +490,9 @@ test("a new 4h decision loads history once and preserves initial LONG/SHORT anal
   const { fixture } = require("./test-fixtures.cjs"),
     { analyzeNineAI } = require("./nine-ai-pipeline");
   for (const side of ["LONG", "SHORT"]) {
-    const f = fixture(side),
+    // Align exchange's last close exactly to a real 4h boundary.
+    const boundary = Math.floor(Date.now() / BAR_MS) * BAR_MS;
+    const f = fixture(side, boundary + 999),
       calls = [];
     const input = await loadDecisionInput(
       {
