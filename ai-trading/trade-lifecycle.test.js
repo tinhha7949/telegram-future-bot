@@ -527,7 +527,7 @@ for (const side of ["LONG", "SHORT"]) {
     h.exchange.trigger("tp1");
     await l.tick();
     assert.equal(Math.abs(Number((await h.exchange.positions())[0].positionAmt)),
-      first === "tp1" ? h.trade.tp2Quantity : h.trade.tp1Quantity);
+      h.trade.tp2Quantity);
     assert.equal(h.fills[1].qty, String(h.trade.tp1Quantity));
     assert.ok(Number(h.fills[1].realizedPnl) > 0);
     assert.equal((await h.exchange.openAlgos()).length, 2);
@@ -563,7 +563,8 @@ for (const first of ["tp1", "tp2"])
     assert.equal(h.calls.filter((c) => c === "close").length, 0);
     assert.equal(h.calls.filter((c) => c === first).length, 1);
     assert.equal(h.calls.filter((c) => c === other).length, 2);
-    assert.equal(Math.abs(Number((await h.exchange.positions())[0].positionAmt)), h.trade.tp2Quantity);
+    assert.equal(Math.abs(Number((await h.exchange.positions())[0].positionAmt)),
+      first === "tp1" ? h.trade.tp2Quantity : h.trade.tp1Quantity);
   });
 
 test("timeout clears protection immediately even if fills cannot be fetched", async () => {

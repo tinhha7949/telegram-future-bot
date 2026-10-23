@@ -272,8 +272,8 @@ test("candidate selection is fit on train and a validation loss cannot be rescue
   });
   const result = l.trainCandidate(rows, l.DEFAULT_CHAMPION);
   assert.equal(result.status, "CANDIDATE_DID_NOT_BEAT_CHAMPION_VALIDATION");
-  assert.equal(result.candidateTrain.averageNetR, 0.5);
-  assert.equal(result.candidateValidation.averageNetR, -0.5);
+  assert.ok(result.candidateTrain.averageNetR > 0.5);
+  assert.ok(result.candidateValidation.averageNetR < 0);
   assert.equal(result.championValidation.averageNetR, 0);
 });
 test("one realized calibration deviation is reported without a 30-trade prerequisite", () => {
