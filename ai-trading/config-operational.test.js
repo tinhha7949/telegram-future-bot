@@ -59,7 +59,8 @@ test("cross-field contradictions abort before any API connections", () => {
     /CONFIG_CROSS_FIELD_INVARIANT/,
   );
   assert.throws(
-    () => parseConfig(edit("MARKET_WS_RECONNECT_BASE_MS", "30000")),
+    () => parseConfig(edit("MARKET_WS_RECONNECT_BASE_MS", "20000")
+      .replace("MARKET_WS_RECONNECT_MAX_MS: 30000", "MARKET_WS_RECONNECT_MAX_MS: 1000")),
     /CONFIG_CROSS_FIELD_INVARIANT/,
   );
   assert.throws(
