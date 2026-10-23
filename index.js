@@ -48,9 +48,9 @@ function acquirePidLock() {
     .createHash("sha256")
     .update(path.resolve(__filename))
     .digest("hex")
-    .slice(0, 16);
+    .slice(0, CONFIG.PID_HASH_HEX_CHARS);
   const file = path.join(os.tmpdir(), `tradebot-${key}.pid`);
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < CONFIG.PID_LOCK_ATTEMPTS; attempt++) {
     try {
       fs.writeFileSync(file, String(process.pid), { flag: "wx" });
       return () => {
@@ -90,7 +90,7 @@ async function telegram(token, chatId, text) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: chatId,
-          text: String(text).slice(0, 4000),
+          text: String(text).slice(0, CONFIG.TELEGRAM_MAX_MESSAGE_CHARS),
         }),
         signal: AbortSignal.timeout(CONFIG.TELEGRAM_HTTP_TIMEOUT_MS),
       },
@@ -331,10 +331,10 @@ async function main() {
   const releaseLock = acquirePidLock();
   process.on("exit", releaseLock);
   const client = new MongoClient(process.env.MONGO_URI, {
-    connectTimeoutMS: 10000,
-    serverSelectionTimeoutMS: 10000,
-    socketTimeoutMS: 15000,
-    maxPoolSize: 20,
+    connectTimeoutMS: CONFIG.MONGO_CONNECT_TIMEOUT_MS,
+    serverSelectionTimeoutMS: CONFIG.MONGO_SERVER_SELECTION_TIMEOUT_MS,
+    socketTimeoutMS: CONFIG.MONGO_SOCKET_TIMEOUT_MS,
+    maxPoolSize: CONFIG.MONGO_MAX_POOL_SIZE,
     retryWrites: true,
   });
   const exchange = new BinanceExchange({
@@ -561,7 +561,7 @@ async function main() {
           closedAt: { $lte: cutoffAt },
         })
         .sort({ closedAt: -1 })
-        .limit(5000)
+        .limit(CONFIG.RECENT_LABELS_LIMIT)
         .toArray(),
     ]);
     console.log(

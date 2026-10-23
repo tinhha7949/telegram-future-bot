@@ -345,7 +345,7 @@ function createRetention(db, overrides = {}) {
       // One strict retention policy only. No emergency mode may shorten age limits.
       // Cap total deletes per run so a bad estimate cannot trigger an unbounded purge.
       let guard = 0;
-      while (usageMB > targetMB && totalDeleted < config.maxDeletesPerRun && guard++ < 100) {
+      while (usageMB > targetMB && totalDeleted < config.maxDeletesPerRun && guard++ < CONFIG.RETENTION_CLEANUP_GUARD_ITERATIONS) {
           const remaining = config.dryRun ? config.batchSize : Math.min(config.batchSize, config.maxDeletesPerRun - totalDeleted);
           const result = await pruneOldestBatch(specs, config.dryRun, remaining);
           totalCandidates += result.candidates;
