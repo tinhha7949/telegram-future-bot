@@ -316,12 +316,12 @@ async function loadDecisionInput(
   const probe = pipeline.closedCandles(h4, Date.now()).at(-1);
   if (!probe) return null;
   if (recentStore) await recentStore.store(symbol, pipeline.closedCandles(h4, Date.now()).map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume,c.closeTime]));
-  if (probe.closeTime !== expectedClose)
-    prior = await journalStore.getDecisionForCandle(
-      symbol,
-      probe.closeTime,
-      DECISION_SCHEMA_VERSION,
-    );
+  // Missing or malformed latest closed bar means WAIT; never silently
+  // trade on an older bar just because it is still within the age window.
+  if (probe.closeTime !== expectedClose) {
+    console.error("WAIT CLOSED_4H_CANDLE_NOT_CURRENT", symbol, probe.closeTime, expectedClose);
+    return null;
+  }
   return { prior, h4, probe };
 }
 async function main() {

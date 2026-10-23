@@ -613,7 +613,11 @@ function createOfflineLearning(db, options = {}) {
       const rows = await journal
         .find(
           {
-            signalTime: { $gte: runAt - CONFIG.DAILY_TRAIN_LOOKBACK_DAYS * DAY_MS },
+            // Use only the recent rolling candle horizon, never the whole DB.
+            signalTime: { $gte: Math.max(
+              runAt - CONFIG.DAILY_TRAIN_LOOKBACK_DAYS * DAY_MS,
+              runAt - CONFIG.TRAIN_WINDOW_CANDLES * BAR_MS,
+            ) },
             outcomeStatus: "EVALUATED",
             "decisionSnapshot.setup": "NINE_AI_4H",
             "evaluations.24.contract": CONTRACT,
