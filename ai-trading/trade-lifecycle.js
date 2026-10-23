@@ -7,7 +7,7 @@ const {
   getTradeActualRisk,
   summarizeClosedTrade,
 } = require("./trade-accounting");
-const TIMEOUT_MS = CONFIG.TIMEOUT_BARS * 4 * 60 * 60 * 1000;
+const TIMEOUT_MS = CONFIG.TIMEOUT_BARS * CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const id = (trade, kind) =>
   `n9_${trade.keyPrefix}_${kind}_${crypto.randomBytes(5).toString("hex")}`;
 const same = (a, b) =>
@@ -222,7 +222,7 @@ class TradeLifecycle {
     await this.claims.createIndex(
       { closedAt: 1 },
       {
-        expireAfterSeconds: 90 * 86400,
+        expireAfterSeconds: CONFIG.TRADE_CLOSED_CLAIMS_RETENTION_DAYS * 86400,
         name: "expire_closed_signal_claims_90d",
       },
     );
