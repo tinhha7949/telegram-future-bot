@@ -23,7 +23,7 @@ open position continues independent SL/TP/timeout management.
 | AI-3 Continuation | Trend, recent pullback/re-push, OI/funding | Side-specific continuation probability and estimated gross R |
 | AI-4 Breakout | Closed range, breakout volume and hold confirmation | Side-specific breakout estimate; no chasing complete-range extensions |
 | AI-5 Mean Reversion | VWAP, ATR deviation, liquidation | Diagnostic in RANGE/HIGH_VOL; the live trend-only rule still WAITs |
-| AI-6 Flow | Funding, OI and liquidation imbalance | Direction/flow confirmation and hot-funding block; never orders |
+| AI-6 Flow | Funding, OI and liquidation imbalance | Direction/flow confirmation; blocks hot funding, unavailable, neutral, nonfinite or opposite flow; never orders |
 | AI-7 Outcome | Unique real closed-trade MAE/MFE labels | After 100 setup+direction-matched labels: MAE p80, MFE p50/p90; otherwise ATR14 fallback |
 | AI-8 Fill | Spread, depth, OI, latency | Expected price/slippage; configured SLIPPAGE_BPS fallback when estimation is unavailable |
 | AI-9 Meta | Specialist outputs and regime track record | Exactly one LONG/SHORT/WAIT using net expected edge and strict direction gap |
@@ -52,7 +52,16 @@ from exchange-native realized PnL. The probabilities are not certified
 calibrated probabilities at cold start. `MIN_EDGE` is at least 0.15;
 `EDGE_GAP` is 0.05; the two comparisons are strict. Low confidence and
 prediction-vs-realized calibration drift add uncertainty rather than
-allowing blind parameter changes. Uncertain or more-than-one-bar-old data
+allowing blind parameter changes. AI-6 must be CONFIRMED and in the proposed
+trade direction with finite funding/OI and nonzero liquidation imbalance;
+UNAVAILABLE, NEUTRAL and opposite flow yield WAIT. A fresh liquidation
+reading is checked again before MARKET. This fail-closed rule can sharply
+reduce trading opportunities during quiet or unavailable flow periods.
+The last 20/90-day vol lookbacks, confidence weights, target quantiles,
+cost-model coefficients and service intervals are all read from CONFIG.yaml.
+Calibration flags material drift only after CALIBRATION_MIN_SAMPLES actual
+labels, using CALIBRATION_MAX_MAE_R and CALIBRATION_MAX_ABS_BIAS_R in R units.
+An isolated small prediction error is not considered drift. Uncertain or more-than-one-bar-old data
 abstains. A 30-day WAIT-rate ledger raises the effective minimum edge if
 the measured WAIT fraction falls below `WAIT_MIN_RATIO`.
 

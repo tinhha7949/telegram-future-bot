@@ -7,7 +7,7 @@ const { Worker } = require("node:worker_threads");
 const path = require("node:path");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const BAR_MS = 4 * 60 * 60 * 1000;
+const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const HORIZON_BARS = CONFIG.TIMEOUT_BARS;
 const PURGE_EMBARGO_MS = HORIZON_BARS * BAR_MS;
 const SHADOW_MS = CONFIG.SHADOW_DAYS * DAY_MS;
@@ -40,14 +40,14 @@ function trainCandidateAsync(rows, champion) {
       path.join(__dirname, "nine-ai-learning-worker.js"),
       {
         workerData: { rows, champion },
-        resourceLimits: { maxOldGenerationSizeMb: 256 },
+        resourceLimits: { maxOldGenerationSizeMb: CONFIG.OFFLINE_WORKER_MAX_OLD_GEN_MB },
       },
     );
     let received = false;
     const timeout = setTimeout(() => {
       void worker.terminate();
       reject(new Error("OFFLINE_TRAINING_TIMEOUT"));
-    }, 60000);
+    }, CONFIG.OFFLINE_TRAIN_TIMEOUT_MS);
     worker.once("message", (message) => {
       received = true;
       clearTimeout(timeout);
@@ -118,8 +118,8 @@ function walkForwardSplits(rows, purgeEmbargoMs = PURGE_EMBARGO_MS) {
   if (sorted.length < 3)
     return { train: [], validation: [], test: [], purgeEmbargoMs };
   const n = sorted.length;
-  const trainEnd = Math.floor(n * 0.6);
-  const validationEnd = Math.floor(n * 0.8);
+  const trainEnd = Math.floor(n * CONFIG.TRAIN_SPLIT_RATIO);
+  const validationEnd = Math.floor(n * CONFIG.VALIDATION_SPLIT_RATIO);
   const trainCut = Number(sorted[Math.max(0, trainEnd - 1)].signalTime) || 0;
   const validationCut =
     Number(sorted[Math.max(trainEnd, validationEnd - 1)]?.signalTime) || 0;
@@ -283,7 +283,14 @@ function calibrationSummary(rows) {
     meanRealizedR: mean(realized),
     biasR,
     maeR,
-    status: maeR > 0 ? "RED_FLAG_CALIBRATION_DRIFT" : "CALIBRATION_MATCH",
+    // Any nonzero prediction residual is normal. Only penalize confidence
+    // for a sustained, statistically better supported R-unit deviation.
+    status: usable.length < CONFIG.CALIBRATION_MIN_SAMPLES
+      ? "INSUFFICIENT_CALIBRATION_SAMPLES"
+      : maeR > CONFIG.CALIBRATION_MAX_MAE_R ||
+        Math.abs(biasR) > CONFIG.CALIBRATION_MAX_ABS_BIAS_R
+        ? "RED_FLAG_CALIBRATION_DRIFT"
+        : "CALIBRATION_WITHIN_TOLERANCE",
   };
 }
 
@@ -381,13 +388,13 @@ function createOfflineLearning(db, options = {}) {
     if (
       trackRecordCache &&
       asOf >= trackRecordCacheAt &&
-      asOf - trackRecordCacheAt < 5 * 60 * 1000
+      asOf - trackRecordCacheAt < CONFIG.TRACK_RECORD_CACHE_MS
     )
       return trackRecordCache;
     const rows = await actuals
-      .find({ closedAt: { $gte: asOf - 180 * DAY_MS, $lte: asOf } })
+      .find({ closedAt: { $gte: asOf - CONFIG.DAILY_TRAIN_LOOKBACK_DAYS * DAY_MS, $lte: asOf } })
       .sort({ closedAt: -1 })
-      .limit(5000)
+      .limit(CONFIG.RECENT_LABELS_LIMIT)
       .toArray();
     const buckets = {};
     for (const row of rows) {
@@ -493,7 +500,7 @@ function createOfflineLearning(db, options = {}) {
     const actualRows = await actuals
       .find({ closedAt: { $gte: runAt - CONFIG.DAILY_TRAIN_LOOKBACK_DAYS * DAY_MS, $lte: runAt } })
       .sort({ closedAt: -1 })
-      .limit(5000)
+      .limit(CONFIG.RECENT_LABELS_LIMIT)
       .toArray();
     const calibration = calibrationSummary(
       actualRows.filter((r) => r.accountingSchemaVersion === 2),
@@ -606,7 +613,7 @@ function createOfflineLearning(db, options = {}) {
       const rows = await journal
         .find(
           {
-            signalTime: { $gte: runAt - 180 * DAY_MS },
+            signalTime: { $gte: runAt - CONFIG.DAILY_TRAIN_LOOKBACK_DAYS * DAY_MS },
             outcomeStatus: "EVALUATED",
             "decisionSnapshot.setup": "NINE_AI_4H",
             "evaluations.24.contract": CONTRACT,

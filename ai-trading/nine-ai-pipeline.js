@@ -12,7 +12,7 @@ const {
   initialStructurePlan,
   initialProbability,
 } = require("./initial-structure-plan");
-const BAR_MS = 4 * 60 * 60 * 1000;
+const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = (v, fallback = null) =>
   v == null || v === ""
@@ -81,7 +81,7 @@ function hasContiguousHistory(cs, interval, minimum) {
     .slice(-minimum)
     .every((c, i, all) => !i || c.time - all[i - 1].time === interval);
 }
-function swingPoints(cs, radius = 1) {
+function swingPoints(cs, radius = CONFIG.STRUCTURE_SWING_RADIUS) {
   const highs = [],
     lows = [];
   for (let i = radius; i < cs.length - radius; i++) {
@@ -98,30 +98,30 @@ function swingPoints(cs, radius = 1) {
 function classifyRegime(cs) {
   const closes = cs.map((c) => c.close),
     returns = closes.slice(1).map((v, i) => Math.log(v / closes[i]));
-  const scale = Math.sqrt(6 * 365) * 100,
+  const scale = Math.sqrt((24 / CONFIG.BAR_HOURS) * CONFIG.VOL_ANNUALIZATION_DAYS) * 100,
     vols = [];
-  for (let i = 120; i <= returns.length; i++)
-    vols.push(stdev(returns.slice(i - 120, i)) * scale);
+  for (let i = CONFIG.VOL_20D_RETURNS; i <= returns.length; i++)
+    vols.push(stdev(returns.slice(i - CONFIG.VOL_20D_RETURNS, i)) * scale);
   const realized20 =
-    returns.length >= 120 ? stdev(returns.slice(-120)) * scale : null;
+    returns.length >= CONFIG.VOL_20D_RETURNS ? stdev(returns.slice(-CONFIG.VOL_20D_RETURNS)) * scale : null;
   const realized90 =
-    returns.length >= 540 ? stdev(returns.slice(-540)) * scale : null;
+    returns.length >= CONFIG.VOL_90D_RETURNS ? stdev(returns.slice(-CONFIG.VOL_90D_RETURNS)) * scale : null;
   const rank = vols.length
     ? vols.filter((v) => v <= realized20).length / vols.length
     : null;
   const momentum20 =
-    closes.length > 120 ? closes.at(-1) / closes.at(-121) - 1 : 0;
-  const momentum5 = closes.length > 30 ? closes.at(-1) / closes.at(-31) - 1 : 0;
+    closes.length > CONFIG.VOL_20D_RETURNS ? closes.at(-1) / closes.at(-(CONFIG.VOL_20D_RETURNS + 1)) - 1 : 0;
+  const momentum5 = closes.length > CONFIG.MOMENTUM_SHORT_RETURNS ? closes.at(-1) / closes.at(-(CONFIG.MOMENTUM_SHORT_RETURNS + 1)) - 1 : 0;
   let regime = "RANGE";
-  if (rank !== null && rank >= 0.8) regime = "HIGH_VOL";
+  if (rank !== null && rank >= CONFIG.HIGH_VOL_PERCENTILE) regime = "HIGH_VOL";
   else if (momentum20 > 0 && momentum5 > 0) regime = "UPTREND";
   else if (momentum20 < 0 && momentum5 < 0) regime = "DOWNTREND";
   return {
     regime,
     regime_conf: clamp(
-      0.45 +
-        0.35 * clamp(Math.abs(momentum20) / 0.04, 0, 1) +
-        0.2 * Math.abs((rank ?? 0.5) - 0.5) * 2,
+      CONFIG.REGIME_CONF_BASE +
+        CONFIG.REGIME_CONF_MOMENTUM_WEIGHT * clamp(Math.abs(momentum20) / CONFIG.REGIME_CONF_MOMENTUM_SCALE, 0, 1) +
+        CONFIG.REGIME_CONF_VOL_WEIGHT * Math.abs((rank ?? CONFIG.REGIME_CONF_VOL_MIDPOINT) - CONFIG.REGIME_CONF_VOL_MIDPOINT) / CONFIG.REGIME_CONF_VOL_MIDPOINT,
       0,
       1,
     ),
@@ -199,13 +199,13 @@ function analyzeNineAI({
     );
   const atr = mean(ranges.slice(-CONFIG.ATR_BARS));
   if (!(atr > 0)) return wait("INVALID_VOLATILITY");
-  const structure = swingPoints(cs.slice(-120)),
+  const structure = swingPoints(cs.slice(-CONFIG.STRUCTURE_LOOKBACK_BARS)),
     sh = structure.highs,
     slows = structure.lows;
   const support =
-    slows.at(-1)?.price ?? Math.min(...cs.slice(-30, -1).map((c) => c.low));
+    slows.at(-1)?.price ?? Math.min(...cs.slice(-CONFIG.STRUCTURE_FALLBACK_BARS, -1).map((c) => c.low));
   const resistance =
-    sh.at(-1)?.price ?? Math.max(...cs.slice(-30, -1).map((c) => c.high));
+    sh.at(-1)?.price ?? Math.max(...cs.slice(-CONFIG.STRUCTURE_FALLBACK_BARS, -1).map((c) => c.high));
   const structureBias =
     sh.length > 1 &&
     slows.length > 1 &&
@@ -222,7 +222,7 @@ function analyzeNineAI({
     const a = points.at(-2),
       b = points.at(-1),
       slope = a && b ? (b.price - a.price) / (b.index - a.index) : 0;
-    return { slope, price: b ? b.price + slope * (119 - b.index) : null };
+    return { slope, price: b ? b.price + slope * (CONFIG.STRUCTURE_LOOKBACK_BARS - 1 - b.index) : null };
   };
   const funding = finite(market.fundingRate),
     oi = finite(market.openInterestChange),
@@ -231,7 +231,7 @@ function analyzeNineAI({
     depth = finite(market.depthNotional),
     latency = finite(market.latencyMs);
   const fundingHot = fundingIsHot(funding);
-  const volume = mean(cs.slice(-21, -1).map((c) => c.volume)),
+  const volume = mean(cs.slice(-(CONFIG.VOLUME_LOOKBACK_BARS + 1), -1).map((c) => c.volume)),
     volumeRatio = volume > 0 ? last.volume / volume : 0;
   // Pullback occurs in prior bars; the current closed bar confirms a renewed push.
   const pullbackLong = prev.close < before.close || prev.low < before.low;
@@ -249,7 +249,7 @@ function analyzeNineAI({
         ? "SHORT"
         : null
     : null;
-  const rangeBars = cs.slice(-22, -2);
+  const rangeBars = cs.slice(-(CONFIG.BREAKOUT_RANGE_BARS + 2), -2);
   const rangeHigh = Math.max(...rangeBars.map((c) => c.high)),
     rangeLow = Math.min(...rangeBars.map((c) => c.low));
   const rangeVolume = mean(rangeBars.map((c) => c.volume));
@@ -272,13 +272,13 @@ function analyzeNineAI({
       : Infinity;
   const breakoutSide =
     held &&
-    breakoutVolumeRatio > 1 &&
+    breakoutVolumeRatio > CONFIG.BREAKOUT_MIN_VOLUME_RATIO &&
     spread !== null &&
     spread >= 0 &&
-    extension < 1
+    extension < CONFIG.BREAKOUT_MAX_EXTENSION_RANGES
       ? rawBreakout
       : null;
-  const vw = cs.slice(-24),
+  const vw = cs.slice(-CONFIG.VWAP_LOOKBACK_BARS),
     totalVolume = vw.reduce((s, c) => s + c.volume, 0);
   const vwap =
     totalVolume > 0
@@ -336,11 +336,11 @@ function analyzeNineAI({
     latency >= 0
       ? clamp(
           spread +
-            0.04 / Math.max(depth / 100000, 0.1) +
-            Math.max(0, latency - 100) * 0.00002 +
-            Math.abs(oi) * 0.02,
+            CONFIG.FILL_BASE_IMPACT_PCT / Math.max(depth / CONFIG.FILL_DEPTH_REFERENCE_USDT, CONFIG.FILL_DEPTH_FLOOR) +
+            Math.max(0, latency - CONFIG.FILL_LATENCY_BASE_MS) * CONFIG.FILL_LATENCY_IMPACT_PCT_PER_MS +
+            Math.abs(oi) * CONFIG.FILL_OI_IMPACT_COEFF,
           0,
-          2,
+          CONFIG.FILL_MAX_SLIPPAGE_PCT,
         )
       : CONFIG.SLIPPAGE_BPS / 100;
   const featureSnapshot = {
@@ -468,7 +468,7 @@ function analyzeNineAI({
         ? {
             p80: percentile(
               samples.map((o) => o.maePct),
-              0.8,
+              CONFIG.MAE_PERCENTILE,
             ),
             samples: samples.length,
           }
@@ -477,11 +477,11 @@ function analyzeNineAI({
         ? {
             p50: percentile(
               samples.map((o) => o.mfePct),
-              0.5,
+              CONFIG.MFE_TP1_PERCENTILE,
             ),
             p90: percentile(
               samples.map((o) => o.mfePct),
-              0.9,
+              CONFIG.MFE_TP2_PERCENTILE,
             ),
             samples: samples.length,
           }

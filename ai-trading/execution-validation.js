@@ -16,6 +16,7 @@ function validateExecution(decision, market, now = Date.now()) {
     market?.snapshotAt,
     market?.fundingRate,
     market?.openInterestChange,
+    market?.liquidationImbalance,
     market?.spreadPct,
     market?.depthNotional,
     market?.latencyMs,
@@ -36,12 +37,23 @@ function validateExecution(decision, market, now = Date.now()) {
     return { ok: false, reason: "EXECUTION_INPUTS_UNAVAILABLE" };
   if (fundingIsHot(market.fundingRate))
     return { ok: false, reason: "CURRENT_FLOW_BLOCKED" };
+  // The fresh market reading must still corroborate the same side.
+  // Missing/neutral/opposing liquidation makes execution uncertain => WAIT.
+  if (market.liquidationImbalance === 0 ||
+      (decision.side === "LONG" && market.liquidationImbalance < 0) ||
+      (decision.side === "SHORT" && market.liquidationImbalance > 0))
+    return { ok: false, reason: "CURRENT_FLOW_UNCONFIRMED" };
+  const { CONFIG } = require("./config");
   const slippage = Math.min(
-    2,
+    CONFIG.FILL_MAX_SLIPPAGE_PCT,
     market.spreadPct +
-      0.04 / Math.max(market.depthNotional / 100000, 0.1) +
-      Math.max(0, market.latencyMs - 100) * 0.00002 +
-      Math.abs(market.openInterestChange) * 0.02,
+      CONFIG.FILL_BASE_IMPACT_PCT / Math.max(
+        market.depthNotional / CONFIG.FILL_DEPTH_REFERENCE_USDT,
+        CONFIG.FILL_DEPTH_FLOOR,
+      ) +
+      Math.max(0, market.latencyMs - CONFIG.FILL_LATENCY_BASE_MS) *
+        CONFIG.FILL_LATENCY_IMPACT_PCT_PER_MS +
+      Math.abs(market.openInterestChange) * CONFIG.FILL_OI_IMPACT_COEFF,
   );
   const refreshed = structuredClone(decision);
   for (const side of ["LONG", "SHORT"]) {

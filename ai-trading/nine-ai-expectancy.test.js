@@ -106,7 +106,7 @@ test("predicted R excludes uncertainty; actual closure preserves it for calibrat
   });
   const actual = db.collection("nine_ai_actual_outcomes").rows[0];
   assert.equal(actual.predictedR, predicted);
-  assert.equal(calibrationSummary([actual]).status, "CALIBRATION_MATCH");
+  assert.equal(calibrationSummary([actual]).status, "INSUFFICIENT_CALIBRATION_SAMPLES");
   assert.equal(
     calibrationSummary([{ predictedEdgeR: predicted, realizedR: predicted }])
       .samples,
@@ -121,7 +121,7 @@ test("predicted R excludes uncertainty; actual closure preserves it for calibrat
     realizedR: 1.5,
   };
   assert.equal(calibrationSummary([legacy]).meanPredictedR, 1.5);
-  assert.equal(calibrationSummary([legacy]).status, "CALIBRATION_MATCH");
+  assert.equal(calibrationSummary([legacy]).status, "INSUFFICIENT_CALIBRATION_SAMPLES");
 });
 
 test("track record snapshots exclude future closures, including cache reads", async () => {
@@ -174,6 +174,8 @@ function fakeExchange(markFor = (_, entry) => entry) {
   const f = fixture(),
     entry = analyzeNineAI(f).entry;
   return {
+    // Test-only explicit liquidation feed. Production uses its live feed.
+    getLiquidationImbalance() { return 0.3; },
     async fundingInterval() {
       return 8;
     },
@@ -316,7 +318,8 @@ test("a pause arriving during awaited preparation prevents the market submission
 test("AI-9 edge and gap comparisons are strict and WAIT remains the default", () => {
   const base = {
     regime: { regime: "UPTREND" },
-    agents: { flow: { fundingRate: 0 } },
+    agents: { flow: { fundingRate: 0, openInterestChange: 0,
+      liquidationImbalance: 1, confirmation: "CONFIRMED", confirmationSide: "LONG" } },
     edges: {
       LONG: {
         p: 1,
@@ -347,6 +350,7 @@ test("AI-9 edge and gap comparisons are strict and WAIT remains the default", ()
   );
   const reversed = {
     ...base,
+    agents: { flow: { ...base.agents.flow, liquidationImbalance: -1, confirmationSide: "SHORT" } },
     edges: { LONG: base.edges.SHORT, SHORT: base.edges.LONG },
   };
   assert.equal(

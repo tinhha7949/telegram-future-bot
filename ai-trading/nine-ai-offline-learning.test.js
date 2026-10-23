@@ -12,7 +12,8 @@ const row = (i = 0) => ({
     decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     setup: "NINE_AI_4H",
     regime: { regime: "UPTREND" },
-    agents: { flow: { confirmation: "CONFIRMED", confirmationSide: "LONG" } },
+    agents: { flow: { confirmation: "CONFIRMED", confirmationSide: "LONG",
+      fundingRate: 0, openInterestChange: 0, liquidationImbalance: 1 } },
     edges: {
       LONG: {
         eligible: true,
@@ -276,18 +277,28 @@ test("candidate selection is fit on train and a validation loss cannot be rescue
   assert.ok(result.candidateValidation.averageNetR < 0);
   assert.ok(result.candidateValidation.averageNetR < result.championValidation.averageNetR);
 });
-test("one realized calibration deviation is reported without a 30-trade prerequisite", () => {
+test("calibration ignores ordinary noise and waits for sufficient R samples", () => {
+  const { CONFIG } = require("./config");
   assert.equal(
     l.calibrationSummary([{ predictedR: 0.5, realizedR: 0.49 }]).status,
-    "RED_FLAG_CALIBRATION_DRIFT",
+    "INSUFFICIENT_CALIBRATION_SAMPLES",
   );
+  const benign = Array.from({length: CONFIG.CALIBRATION_MIN_SAMPLES}, (_,i) => ({
+    predictedR: 0.5, realizedR: 0.5 + (i % 2 === 0 ? 0.1 : -0.1),
+  }));
+  const stable = l.calibrationSummary(benign);
+  assert.equal(stable.status, "CALIBRATION_WITHIN_TOLERANCE");
+  assert.ok(stable.maeR > 0 && stable.maeR < CONFIG.CALIBRATION_MAX_MAE_R);
   assert.equal(
-    l.calibrationSummary([
-      { predictedR: 1, realizedR: 0 },
-      { predictedR: 0, realizedR: 1 },
-    ]).status,
-    "RED_FLAG_CALIBRATION_DRIFT",
+    l.calibrationSummary(benign.slice(0,CONFIG.CALIBRATION_MIN_SAMPLES - 1)).status,
+    "INSUFFICIENT_CALIBRATION_SAMPLES",
   );
+  const severe = Array.from({length:CONFIG.CALIBRATION_MIN_SAMPLES}, () =>
+    ({ predictedR: 1, realizedR: -1 }));
+  assert.equal(l.calibrationSummary(severe).status,"RED_FLAG_CALIBRATION_DRIFT");
+  const biased = Array.from({length:CONFIG.CALIBRATION_MIN_SAMPLES}, () =>
+    ({predictedR: 0.5, realizedR: 0.5 - CONFIG.CALIBRATION_MAX_ABS_BIAS_R - 0.01}));
+  assert.equal(l.calibrationSummary(biased).status, "RED_FLAG_CALIBRATION_DRIFT");
 });
 test("a winning fully matured shadow can promote at 14 days, without a fixed extra timer", async () => {
   const { memoryDb } = require("./test-fixtures.cjs"),
