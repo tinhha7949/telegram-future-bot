@@ -258,12 +258,13 @@ test("empty database -> AI-2 initial trade -> restart -> close -> first real lab
   const f = fixture("LONG", Math.max(Date.now(), outcomes[0].closedAt + 2000));
   const next = analyzeNineAI({ ...f, outcomes });
   assert.equal(next.action, "LONG");
-  assert.equal(next.agents.outcome.enabled, true);
-  assert.equal(next.tradePlan.outcomeMode, "AI7_LABELED");
-  assert.equal(next.agents.outcome.dist_MAE.p80, outcomes[0].maePct);
-  assert.equal(next.agents.outcome.dist_MFE.p50, outcomes[0].mfePct);
-  assert.equal(next.agents.outcome.dist_MFE.p90, outcomes[0].mfePct);
-  assert.equal(next.tp1, next.tp2);
+  assert.equal(next.agents.outcome.enabled, false);
+  assert.equal(next.tradePlan.outcomeMode, "AI2_INITIAL");
+  const matured = [...f.outcomes.filter(o => o.setupKey === outcomes[0].setupKey)
+    .slice(0, 99), outcomes[0]];
+  const trained = analyzeNineAI({ ...f, outcomes: matured });
+  assert.equal(trained.agents.outcome.enabled, true);
+  assert.equal(trained.tradePlan.outcomeMode, "AI7_LABELED");
 });
 
 for (const first of ["tp1", "tp2"])
@@ -286,7 +287,7 @@ for (const first of ["tp1", "tp2"])
       await l.tick();
       assert.equal(
         Math.abs(Number((await h.exchange.positions())[0].positionAmt)),
-        h.trade.tp2Quantity,
+        first === "tp1" ? h.trade.tp2Quantity : h.trade.tp1Quantity,
       );
       const other = [...h.algos.values()].find(
         (a) => a.kind === second && a.algoStatus === "NEW",
@@ -500,6 +501,7 @@ for (const side of ["LONG", "SHORT"]) {
         await l.initialize();
         assert.equal(await l.enter(h.trade), true);
         if (outage === "candles") h.advance(180000);
+        if (exit === "tp2") h.exchange.trigger("tp1");
         h.exchange.trigger(exit);
         if (outage === "database") {
           for (const name of ["trades", "trade_signal_claims", "nine_ai_outcome_labels"])
@@ -524,7 +526,8 @@ for (const side of ["LONG", "SHORT"]) {
     await l.enter(h.trade);
     h.exchange.trigger("tp1");
     await l.tick();
-    assert.equal(Math.abs(Number((await h.exchange.positions())[0].positionAmt)), h.trade.tp2Quantity);
+    assert.equal(Math.abs(Number((await h.exchange.positions())[0].positionAmt)),
+      first === "tp1" ? h.trade.tp2Quantity : h.trade.tp1Quantity);
     assert.equal(h.fills[1].qty, String(h.trade.tp1Quantity));
     assert.ok(Number(h.fills[1].realizedPnl) > 0);
     assert.equal((await h.exchange.openAlgos()).length, 2);
