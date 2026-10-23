@@ -55,7 +55,8 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
   if (flow?.confirmation !== "CONFIRMED" ||
       !["LONG", "SHORT"].includes(flow.confirmationSide) ||
       ![flow.fundingRate, flow.openInterestChange, flow.liquidationImbalance].every(finite) ||
-      flow.liquidationImbalance === 0)
+      flow.liquidationImbalance === 0 ||
+      flow.confirmationSide !== (flow.liquidationImbalance > 0 ? "LONG" : "SHORT"))
     return { ...result, reason: "FLOW_UNAVAILABLE_OR_UNCERTAIN" };
   for (const side of ["LONG", "SHORT"]) {
     const c = decision?.edges?.[side];

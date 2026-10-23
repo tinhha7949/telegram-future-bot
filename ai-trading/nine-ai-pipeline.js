@@ -205,7 +205,7 @@ function analyzeNineAI({
   const support =
     slows.at(-1)?.price ?? Math.min(...cs.slice(-CONFIG.STRUCTURE_FALLBACK_BARS, -1).map((c) => c.low));
   const resistance =
-    sh.at(-1)?.price ?? Math.max(...cs.slice(-30, -1).map((c) => c.high));
+    sh.at(-1)?.price ?? Math.max(...cs.slice(-CONFIG.STRUCTURE_FALLBACK_BARS, -1).map((c) => c.high));
   const structureBias =
     sh.length > 1 &&
     slows.length > 1 &&

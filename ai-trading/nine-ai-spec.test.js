@@ -94,27 +94,28 @@ test("fractal high is the middle of its two adjacent highs", () => {
   ];
   assert.deepEqual(swingPoints(cs).highs, [{ index: 1, price: 3 }]);
 });
-test("neutral, missing or opposite liquidation is confirmation data, not a separate entry veto", () => {
+test("AI6 fails closed on neutral, unavailable or opposing liquidation; confirmed LONG remains allowed", () => {
   const f = fixture();
+  const confirmed = analyzeNineAI(f);
+  assert.equal(confirmed.action, "LONG");
+  assert.equal(
+    validateExecution(confirmed, { ...f.market, markPrice: confirmed.entry }, f.market.now + 1).ok,
+    true,
+  );
   for (const imbalance of [0, null, -0.8]) {
     const d = analyzeNineAI({
       ...f,
       market: { ...f.market, liquidationImbalance: imbalance },
     });
-    assert.equal(d.action, "LONG");
-    assert.equal(
-      finalizeDecision(d, { symbol: f.symbol, scannedAt: f.market.now + 1 })
-        .action,
-      "LONG",
+    assert.equal(d.action, "WAIT");
+    assert.equal(d.reason, "FLOW_UNAVAILABLE_OR_UNCERTAIN");
+    assert.equal(finalizeDecision(d, { symbol: f.symbol, scannedAt: f.market.now + 1 }).action, "WAIT");
+    const validation = validateExecution(
+      confirmed,
+      { ...f.market, liquidationImbalance: imbalance, markPrice: confirmed.entry },
+      f.market.now + 1,
     );
-    assert.equal(
-      validateExecution(
-        d,
-        { ...f.market, liquidationImbalance: imbalance, markPrice: d.entry },
-        f.market.now + 1,
-      ).ok,
-      true,
-    );
+    assert.equal(validation.ok, false);
   }
   const noSetup = fixture();
   noSetup.candles4h.at(-1)[4] = noSetup.candles4h.at(-2)[4];
@@ -141,6 +142,8 @@ test("AI-9 selects setup by its net edge, never a fixed role priority", () => {
     d = analyzeNineAI(f);
   d.agents.structure.structure_bias = "BEARISH";
   d.agents.flow = { confirmation: "NEUTRAL", confirmationSide: null };
+  assert.equal(applyPolicy(d, d.decisionPolicy).side, "WAIT");
+  d.agents.flow = analyzeNineAI(f).agents.flow;
   assert.equal(applyPolicy(d, d.decisionPolicy).side, "LONG");
 });
 test("stale data increases uncertainty without a hidden five-minute cutoff", () => {
