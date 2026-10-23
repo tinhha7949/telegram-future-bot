@@ -1,4 +1,5 @@
 "use strict";
+const { CONFIG } = require("./config");
 const WebSocket = require("ws");
 const URLS = {
   mark: "wss://fstream.binance.com/market/ws/!markPrice@arr@1s",
@@ -44,12 +45,12 @@ class BinanceMarketFeed {
       this.onStatus(kind + " connected");
       state.heartbeat = this.timers.setInterval(() => {
         try {
-          if (this.now() - state.lastMessage > 90000) socket.terminate();
+          if (this.now() - state.lastMessage > CONFIG.MARKET_WS_STALE_MS) socket.terminate();
           else if (socket.readyState === 1) socket.ping();
         } catch (_) {
           // A close racing with the heartbeat is handled by the close event.
         }
-      }, 30000);
+      }, CONFIG.MARKET_WS_HEARTBEAT_MS);
       state.heartbeat.unref?.();
     });
     socket.on("message", (raw) => {
@@ -83,7 +84,8 @@ class BinanceMarketFeed {
         state.reconnect = null;
         this.connect(kind);
       },
-      Math.min(30000, 1000 * 2 ** Math.min(state.retry - 1, 5)),
+      Math.min(CONFIG.MARKET_WS_RECONNECT_MAX_MS,
+        CONFIG.MARKET_WS_RECONNECT_BASE_MS * 2 ** Math.min(state.retry - 1, CONFIG.MARKET_WS_RECONNECT_EXPONENT_CAP)),
     );
     state.reconnect.unref?.();
   }
@@ -135,8 +137,8 @@ class BinanceMarketFeed {
       !r ||
       r.observedAt > this.now() ||
       r.eventAt > this.serverNow() ||
-      this.now() - r.observedAt > 15000 ||
-      this.serverNow() - r.eventAt > 15000
+      this.now() - r.observedAt > CONFIG.MARKET_WS_MAX_EVENT_AGE_MS ||
+      this.serverNow() - r.eventAt > CONFIG.MARKET_WS_MAX_EVENT_AGE_MS
     )
       return null;
     return structuredClone(r);
