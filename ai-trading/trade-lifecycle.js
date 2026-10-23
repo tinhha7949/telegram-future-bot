@@ -538,7 +538,7 @@ class TradeLifecycle {
     // the remaining half for unexplained exposure and close it.
     const priorOrders = new Map();
     if (!same(currentQty, t.actualQuantity)) {
-      for (const kind of sharedTarget ? ["tp1", "tp2"] : ["tp1"]) {
+      for (const kind of ["tp1", "tp2"]) {
         if (t[kind + "Filled"]) continue;
         const previous = t.protectionIds[kind],
           legacyAlgoId = t[kind + "OrderId"];
@@ -575,7 +575,7 @@ class TradeLifecycle {
     }
     for (const kind of ["sl", "tp2", "tp1"]) {
       if (kind === "tp1" && t.tp1Filled) continue;
-      if (kind === "tp2" && sharedTarget && t.tp2Filled) continue;
+      if (kind === "tp2" && t.tp2Filled) continue;
       const trigger = t[kind],
         closeSide = t.side === "LONG" ? "SELL" : "BUY";
       const matches = (o) =>
@@ -584,7 +584,7 @@ class TradeLifecycle {
         same(o.triggerPrice, trigger) &&
         (o.orderType || o.type) ===
           (kind === "sl" ? "STOP_MARKET" : "TAKE_PROFIT_MARKET") &&
-        (kind === "tp1" || (kind === "tp2" && sharedTarget)
+        (kind === "tp1" || kind === "tp2"
           ? String(o.reduceOnly) === "true" &&
             same(o.quantity, t[kind + "Quantity"])
           : String(o.closePosition) === "true");
@@ -624,7 +624,7 @@ class TradeLifecycle {
             t.protectionOrderIds = t.protectionOrderIds || {};
             t.protectionOrderIds[kind] = String(child.orderId);
             if (
-              (kind === "tp1" || (kind === "tp2" && sharedTarget)) &&
+              (kind === "tp1" || kind === "tp2") &&
               same(child.executedQty, t[kind + "Quantity"])
             ) {
               t[kind + "Filled"] = true;
@@ -642,12 +642,11 @@ class TradeLifecycle {
           return;
       }
       if (
-        (kind === "tp1" || (kind === "tp2" && sharedTarget)) &&
+        (kind === "tp1" || kind === "tp2") &&
         !same(currentQty, t.actualQuantity) &&
         !(
-          sharedTarget &&
-          t[kind === "tp1" ? "tp2Filled" : "tp1Filled"] &&
-          same(currentQty, t.actualQuantity - t[kind === "tp1" ? "tp2Quantity" : "tp1Quantity"])
+           t[kind === "tp1" ? "tp2Filled" : "tp1Filled"] &&
+          same(currentQty, t[kind + "Quantity"])
         )
       )
         throw new Error("PARTIAL_POSITION_REQUIRES_FILL_RECONCILIATION");
