@@ -4,6 +4,7 @@ require("dotenv").config();
 const { CONFIG } = require("./ai-trading/config");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
+const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
 const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;
 const HISTORY_4H_LIMIT = CONFIG.HISTORY_FETCH_CANDLES;
 
@@ -296,6 +297,7 @@ async function loadDecisionInput(
   journalStore,
   symbol,
   now = Date.now(),
+  recentStore = null,
 ) {
   const expectedClose =
     Math.floor((now + (exchange.offset || 0)) / pipeline.BAR_MS) *
@@ -310,6 +312,7 @@ async function loadDecisionInput(
   const h4 = await exchange.candles(symbol, CONFIG.TIMEFRAME, HISTORY_4H_LIMIT);
   const probe = pipeline.closedCandles(h4, Date.now()).at(-1);
   if (!probe) return null;
+  if (recentStore) await recentStore.store(symbol, pipeline.closedCandles(h4, Date.now()).map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume,c.closeTime]));
   if (probe.closeTime !== expectedClose)
     prior = await journalStore.getDecisionForCandle(
       symbol,
@@ -459,7 +462,7 @@ async function main() {
   const countWait = (reason) =>
     scanReasons.set(reason, (scanReasons.get(reason) || 0) + 1);
   async function scanSymbol(symbol, champion, trackRecord, outcomes, minEdge) {
-    const input = await loadDecisionInput(exchange, journal, symbol);
+    const input = await loadDecisionInput(exchange, journal, symbol, Date.now(), recentStore);
     if (!input) return null;
     const { prior, h4, probe } = input;
     if (prior) {
