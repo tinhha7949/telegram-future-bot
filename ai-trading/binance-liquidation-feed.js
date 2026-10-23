@@ -1,11 +1,12 @@
 "use strict";
 
 const WebSocket = require("ws");
+const { CONFIG } = require("./config");
 
 const STREAM_URL = "wss://fstream.binance.com/market/ws/!forceOrder@arr";
-const WINDOW_MS = 15 * 60 * 1000;
-const MAX_EVENTS_PER_SYMBOL = 2000;
-const STALE_MS = 10 * 60 * 1000;
+const WINDOW_MS = CONFIG.LIQUIDATION_WINDOW_MINUTES * 60 * 1000;
+const MAX_EVENTS_PER_SYMBOL = CONFIG.LIQUIDATION_MAX_EVENTS_PER_SYMBOL;
+const STALE_MS = CONFIG.LIQUIDATION_STALE_MINUTES * 60 * 1000;
 
 let socket = null;
 let started = false;
@@ -20,7 +21,7 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();
-  }, 3000);
+  }, CONFIG.LIQUIDATION_RECONNECT_MS);
   reconnectTimer.unref?.();
 }
 
@@ -79,7 +80,7 @@ function start() {
       const kept=list.filter(e=>e.time>=cutoff);
       if(kept.length)eventsBySymbol.set(symbol,kept);else eventsBySymbol.delete(symbol);
     }
-  },30000);
+  },CONFIG.LIQUIDATION_HEARTBEAT_INTERVAL_MS);
   heartbeatTimer.unref?.();
 }
 

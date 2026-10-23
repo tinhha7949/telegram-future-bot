@@ -1,7 +1,7 @@
 "use strict";
 const zlib = require("node:zlib");
 const { CONFIG } = require("../../config");
-const BAR_MS = 4 * 60 * 60 * 1000;
+const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const FIELD_COUNT = 5;
 // One compressed row per symbol. For statistics/decisions, still use original
 // exchange 541-bar history; float32 archive is never used for live signal math.

@@ -1,5 +1,6 @@
 "use strict";
-const BAR_MS = 14400000;
+const { CONFIG } = require("./config");
+const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
 class FourHourHistory {
   constructor(fetchRows, now = Date.now) {
     this.fetchRows = fetchRows;
@@ -7,14 +8,14 @@ class FourHourHistory {
     this.cache = new Map();
     this.pending = new Map();
   }
-  async get(symbol, limit = 1500) {
+  async get(symbol, limit = CONFIG.HISTORY_MAX_INCREMENTAL_CANDLES) {
     const bucket = Math.floor(this.now() / BAR_MS),
       old = this.cache.get(symbol);
     if (
       old &&
       old.bucket === bucket &&
       old.limit >= limit &&
-      (old.complete || this.now() - old.fetchedAt < 30000)
+      (old.complete || this.now() - old.fetchedAt < CONFIG.HISTORY_INCOMPLETE_CACHE_MS)
     )
       return structuredClone(old.rows.slice(-limit));
     if (this.pending.has(symbol)) {
@@ -44,14 +45,14 @@ class FourHourHistory {
     if (incremental) {
       const updates = await this.fetchRows(
         symbol,
-        Math.min(1500, Math.ceil((end - Number(rows.at(-1)[0]) + 1) / BAR_MS)),
+        Math.min(CONFIG.HISTORY_MAX_INCREMENTAL_CANDLES, Math.ceil((end - Number(rows.at(-1)[0]) + 1) / BAR_MS)),
         { startTime: Number(rows.at(-1)[0]), endTime: end },
       );
       rows = rows.concat(updates);
     } else {
       let cursor = end;
       while (rows.length < limit) {
-        const size = Math.min(499, limit - rows.length),
+        const size = Math.min(CONFIG.HISTORY_PAGE_CANDLES, limit - rows.length),
           page = await this.fetchRows(symbol, size, { endTime: cursor });
         if (!page.length) break;
         const next = Number(page[0][0]) - 1;
