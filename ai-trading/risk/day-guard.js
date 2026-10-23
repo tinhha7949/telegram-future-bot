@@ -28,6 +28,7 @@ class RiskGuard {
         return fail("RISK_STATE_UNCERTAIN");
       if (state.halted) return fail("DRAWDOWN_CIRCUIT_LATCHED");
       const dd = (state.peakEquity - equity) / state.peakEquity;
+      await this.global.updateOne({ _id: "GLOBAL" }, { $max: { maxDrawdown: dd } });
       if (dd >= this.config.MAX_DRAWDOWN_CIRCUIT) {
         await this.global.updateOne(
           { _id: "GLOBAL" },

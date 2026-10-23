@@ -1,14 +1,15 @@
 "use strict";
 const crypto = require("node:crypto");
+const { CONFIG } = require("./config");
 
 function entryMessage(t) {
   return [
     `MỞ LỆNH THÀNH CÔNG | ${t.symbol} ${t.side}`,
     `Khối lượng: ${t.actualQuantity} | Entry: ${t.entry}`,
     `SL: ${t.sl}`,
-    `TP1: ${t.tp1} | chốt 50% (${t.actualQuantity / 2})`,
-    `TP2: ${t.tp2} | phần còn lại`,
-    `Kế hoạch: ${t.tradePlan?.outcomeMode === "AI7_LABELED" ? "AI7 MAE/MFE" : "AI2 cấu trúc"} | Timeout: 96h`,
+    `TP1: ${t.tp1} | chốt ${100 * CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])}% (${t.tp1Quantity})`,
+    `TP2: ${t.tp2} | phần còn lại (${t.tp2Quantity})`,
+    `Kế hoạch: ${t.tradePlan?.outcomeMode === "AI7_LABELED" ? "AI7 MAE/MFE" : "ATR14 cold-start"} | Timeout: ${CONFIG.TIMEOUT_BARS * CONFIG.BAR_HOURS}h`,
     `Mã lệnh: ${t.signalKey}`,
   ].join("\n");
 }

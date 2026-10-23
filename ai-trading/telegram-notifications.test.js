@@ -3,7 +3,7 @@ const { test } = require("node:test"), assert = require("node:assert/strict");
 const { memoryDb } = require("./test-fixtures.cjs");
 const { TelegramNotifications } = require("./telegram-notifications");
 const trade = { signalKey: "TESTUSDT:1", symbol: "TESTUSDT", side: "LONG",
-  actualQuantity: 2, entry: 100, sl: 99, tp1: 102, tp2: 104,
+  actualQuantity: 2, tp1Quantity: 1.2, tp2Quantity: 0.8, entry: 100, sl: 99, tp1: 102, tp2: 104,
   tradePlan: { outcomeMode: "AI7_LABELED" } };
 function harness(env = { BOT_TOKEN: "fake-primary", CHAT_ID: "chat1",
   BOT_TOKEN_2: "fake-secondary", AI_CHAT_ID: "chat2" }) {
@@ -26,7 +26,8 @@ test("confirmed entry goes to Telegram 1; WIN/LOSS goes to Telegram 2", async ()
   await n.flush();
   assert.match(h.calls[0].url, /fake-primary\/sendMessage$/);
   assert.equal(h.calls[0].body.chat_id, "chat1");
-  assert.match(h.calls[0].body.text, /chốt 50% \(1\)/);
+  assert.match(h.calls[0].body.text, /chốt 60% \(1\.2\)/);
+  assert.match(h.calls[0].body.text, /phần còn lại \(0\.8\)/);
   assert.match(h.calls[0].body.text, /Entry: 100/);
   assert.match(h.calls[0].body.text, /AI7 MAE\/MFE/);
   assert.match(h.calls[1].url, /fake-secondary\/sendMessage$/);

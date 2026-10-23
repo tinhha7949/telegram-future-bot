@@ -255,7 +255,10 @@ test("candidate qualification has no 400-row, trade-count or extra .02R-uplift g
   });
   const result = l.trainCandidate(rows, l.DEFAULT_CHAMPION);
   assert.equal(result.status, "SHADOW_PENDING");
-  assert.equal(result.uplift, 0.5);
+  assert.equal(result.uplift,
+    result.candidateTest.stabilityScore - result.championTest.stabilityScore);
+  assert.ok(result.uplift > 0);
+  assert.ok(result.candidateTest.maxDrawdownR <= result.championTest.maxDrawdownR);
 });
 
 test("candidate selection is fit on train and a validation loss cannot be rescued by future test gains", () => {
@@ -334,4 +337,25 @@ test("a winning fully matured shadow can promote at 14 days, without a fixed ext
     (await service.runDailyCycle()).shadowResult.status,
     "PROMOTED_CHAMPION",
   );
+});
+
+test("policy scoring optimizes net R per executed trade and penalizes drawdown",()=>{
+  const rows=Array.from({length:3},(_,i)=>{
+    const r=row(i);
+    r.evaluations[24].longNetR=[1,-2,2][i];
+    return r;
+  });
+  const score=l.evaluatePolicy(rows,l.DEFAULT_CHAMPION);
+  assert.equal(score.opportunities,3);
+  assert.equal(score.trades,3);
+  assert.equal(score.meanNetRPerTrade,1/3);
+  assert.equal(score.maxDrawdownR,2);
+  const {CONFIG}=require("./config");
+  assert.ok(Math.abs(score.stabilityScore-
+    (1/3-CONFIG.TRAIN_DRAWDOWN_WEIGHT_PER_R*2))<1e-12);
+  const wait=l.evaluatePolicy(rows,{...l.DEFAULT_CHAMPION,minEdge:100});
+  assert.equal(wait.trades,0);
+  assert.equal(wait.meanNetRPerTrade,null);
+  assert.equal(wait.stabilityScore,null);
+  assert.equal(wait.totalNetR,0);
 });

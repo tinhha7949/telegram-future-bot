@@ -6,6 +6,7 @@ const { RiskGuard } = require("./ai-trading/risk/day-guard");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
 const { MemoryGuard } = require("./ai-trading/risk/memory-guard");
+const { sessionReport, formatSessionReport } = require("./ai-trading/monitoring/session");
 const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;
 const HISTORY_4H_LIMIT = CONFIG.HISTORY_FETCH_CANDLES;
 
@@ -160,8 +161,13 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
     latest = Number(oiHistory?.at(-1)?.sumOpenInterest);
   const oiFresh =
     Array.isArray(oiHistory) &&
-    oiHistory.length >= 2 &&
-    oiHistory.every((o) => Number(o.timestamp) <= observedAt);
+    oiHistory.length >= CONFIG.MARKET_OI_HISTORY_POINTS &&
+    oiHistory.every((o) => Number.isFinite(Number(o.timestamp)) &&
+      Number(o.timestamp) <= observedAt) &&
+    // A historical-but-valid API payload is still STALE, not current flow.
+    observedAt - Number(oiHistory.at(-1).timestamp) <= pipeline.BAR_MS &&
+    Number(oiHistory.at(-1).timestamp) > Number(oiHistory[0].timestamp) &&
+    Number(oiHistory.at(-1).timestamp) - Number(oiHistory[0].timestamp) <= pipeline.BAR_MS;
   const notional = (levels) =>
     Array.isArray(levels) && levels.length
       ? levels.reduce((sum, l) => sum + Number(l[0]) * Number(l[1]), 0)
@@ -315,13 +321,16 @@ async function loadDecisionInput(
   const h4 = await exchange.candles(symbol, CONFIG.TIMEFRAME, HISTORY_4H_LIMIT);
   const probe = pipeline.closedCandles(h4, Date.now()).at(-1);
   if (!probe) return null;
-  if (recentStore) await recentStore.store(symbol, pipeline.closedCandles(h4, Date.now()).map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume,c.closeTime]));
-  if (probe.closeTime !== expectedClose)
-    prior = await journalStore.getDecisionForCandle(
-      symbol,
-      probe.closeTime,
-      DECISION_SCHEMA_VERSION,
-    );
+  // Missing or malformed latest closed bar means WAIT; never silently
+  // trade on an older bar just because it is still within the age window.
+  if (probe.closeTime !== expectedClose) {
+    console.error("WAIT CLOSED_4H_CANDLE_NOT_CURRENT", symbol, probe.closeTime, expectedClose);
+    return null;
+  }
+  if (recentStore)
+    await recentStore.store(symbol, pipeline.closedCandles(h4, Date.now()).map(
+      c => [c.time,c.open,c.high,c.low,c.close,c.volume,c.closeTime],
+    ));
   return { prior, h4, probe };
 }
 async function main() {
@@ -457,8 +466,10 @@ async function main() {
         console.error("SETTLEMENT", symbol, e.message);
       }
     }
-    const report = await learner.runDailyCycle();
-    console.log(formatDailyLearningReport(report));
+    const learning = await learner.runDailyCycle();
+    console.log(formatDailyLearningReport(learning));
+    const session = await sessionReport(db, waitControl);
+    await report(formatSessionReport(session));
   });
   void daily();
   let scanReasons = new Map();

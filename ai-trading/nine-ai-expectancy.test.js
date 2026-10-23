@@ -358,3 +358,24 @@ test("AI-9 edge and gap comparisons are strict and WAIT remains the default", ()
     "SHORT",
   );
 });
+
+test("stale historical open interest cannot confirm a new AI3/AI6 signal",async()=>{
+  const exchange=fakeExchange();
+  const request=exchange.request;
+  exchange.request=async(route,params)=>{
+    if(route.endsWith("openInterestHist")){
+      const at=Date.now()-3*14400000;
+      return [{timestamp:at-14400000,sumOpenInterest:"100"},
+        {timestamp:at,sumOpenInterest:"101"}];
+    }
+    return request(route,params);
+  };
+  const market=await marketSnapshot(exchange,"TESTUSDT");
+  assert.equal(market.openInterestChange,null);
+  assert.equal(market.oiObservedAt,null);
+  const f=fixture(), d=analyzeNineAI({
+    ...f,market:{...f.market,openInterestChange:market.openInterestChange},
+  });
+  assert.equal(d.action,"WAIT");
+  assert.equal(d.reason,"EXECUTION_COST_INPUTS_STALE_OR_MISSING");
+});
