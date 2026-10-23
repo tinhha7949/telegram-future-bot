@@ -200,6 +200,7 @@ test("shadow cannot promote before 14 complete days plus 24-bar outcome maturity
       cost: 0.1,
       baseUncertainty: 0.1,
     };
+    r.evaluations[24].longNetR = i % 2 === 0 ? 0.1 : -0.2;
     await db.collection("nine_ai_decision_journal").insertOne(r);
   }
   assert.equal(
@@ -303,16 +304,16 @@ test("a winning fully matured shadow can promote at 14 days, without a fixed ext
     championParams: { ...l.DEFAULT_CHAMPION },
     shadowStartedAt: start,
   });
-  const r = row(0);
-  r.signalTime = start;
-  Object.assign(r.decisionSnapshot.edges.LONG, {
-    p: 0.6,
-    expectedR: 0.4,
-    cost: 0.1,
-    baseUncertainty: 0.1,
-  });
-  r.evaluations[24].longNetR = 0.01;
-  await db.collection("nine_ai_decision_journal").insertOne(r);
+  for (let i = 0; i < 2; i++) {
+    const r = row(i);
+    r.signalTime = start + i*l.BAR_MS;
+    Object.assign(r.decisionSnapshot.edges.LONG, {
+      p: 0.6, expectedR: i === 0 ? 0.75 : 0.6,
+      cost: 0.1, baseUncertainty: 0.1,
+    });
+    r.evaluations[24].longNetR = i === 0 ? 0.1 : -0.2;
+    await db.collection("nine_ai_decision_journal").insertOne(r);
+  }
   assert.equal(
     (await service.runDailyCycle()).shadowResult.status,
     "SHADOW_CONTINUES",
