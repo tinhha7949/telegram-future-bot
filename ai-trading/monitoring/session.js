@@ -29,6 +29,15 @@ async function sessionReport(db, waitControl, {
   const reliable = !truncated && validActions && completeTrades;
   const sum = key => closed.reduce((s,t)=>s+Number(t[key]),0);
   const trades = closed.length;
+  const waitRatio = reliable && decisions.length ?
+    decisions.filter(d=>d.action==="WAIT").length/decisions.length : null;
+  const maxDrawdown = finite(risk?.maxDrawdown) ? Number(risk.maxDrawdown) : null;
+  const alerts = [
+    ...(waitRatio !== null && waitRatio < config.WAIT_MIN_RATIO ? ["WAIT_RATIO_TOO_LOW"] : []),
+    ...(maxDrawdown !== null && maxDrawdown >= config.MAX_DRAWDOWN_CIRCUIT
+      ? ["DRAWDOWN_CIRCUIT"] : []),
+    ...(!reliable ? ["REPORT_ACCOUNTING_UNCERTAIN"] : []),
+  ];
   return {
     startAt:start,endAt:end,
     trades, wins:closed.filter(t=>t.result==="WIN").length,
@@ -36,9 +45,8 @@ async function sessionReport(db, waitControl, {
     meanNetR:reliable && trades ? sum("realizedR")/trades : null,
     feesUSDT:reliable ? sum("feesUSDT") : null,
     fundingUSDT:reliable ? sum("fundingUSDT") : null,
-    waitRatio:reliable && decisions.length ?
-      decisions.filter(d=>d.action==="WAIT").length/decisions.length : null,
-    maxDrawdown:finite(risk?.maxDrawdown) ? Number(risk.maxDrawdown) : null,
+    waitRatio,
+    maxDrawdown, alerts,
     complete:reliable,
     reason:!reliable ?
       truncated ? "LEDGER_TRUNCATED" :
@@ -56,6 +64,7 @@ function formatSessionReport(s) {
     "fees_USDT="+format(s.feesUSDT),
     "funding_USDT="+format(s.fundingUSDT),
     s.complete ? "ACCOUNTING_COMPLETE" : "INCOMPLETE:"+s.reason,
+    s.alerts.length ? "ALERTS="+s.alerts.join(",") : "ALERTS=NONE",
   ].join(" | ");
 }
 module.exports = { sessionReport, formatSessionReport };

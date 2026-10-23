@@ -15,7 +15,8 @@ test("UTC session metrics use realized net R/fees/funding and durable high-water
  assert.equal(s.winrate,0.5);assert.equal(s.meanNetR,-0.25);
  assert.equal(s.feesUSDT,1.2);assert.ok(Math.abs(s.fundingUSDT-0.1)<1e-10);
  assert.equal(s.waitRatio,0.5);assert.equal(s.maxDrawdown,0.08);
- assert.match(formatSessionReport(s),/orders=2/);
+ assert.deepEqual(s.alerts,["WAIT_RATIO_TOO_LOW"]);
+ assert.match(formatSessionReport(s),/ALERTS=WAIT_RATIO_TOO_LOW/);
 });
 test("incomplete fee ledger never reports a made-up net E[R]",async()=>{
  const db=memoryDb(),now=Date.UTC(2026,9,23,12),wait={store:db.collection("nine_ai_wait_rate_decisions")};
