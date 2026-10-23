@@ -1,6 +1,7 @@
 "use strict";
+const { CONFIG } = require("./config");
 
-const CONTRACT = "NINE_AI_EXIT_PLAN_V2";
+const CONTRACT = "NINE_AI_EXIT_PLAN_V3_60_40";
 // Common evaluation for champion/candidate: identical opportunity, exits and costs.
 // OHLC cannot establish intrabar ordering, so a bar touching SL and TP uses SL first.
 function evaluatePlan(plan, side, future, costs) {
@@ -14,6 +15,7 @@ function evaluatePlan(plan, side, future, costs) {
       : !(tp2 <= tp1 && tp1 < entry && entry < sl))
   )
     return null;
+  const tp1Weight = CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1]);
   const sign = side === "LONG" ? 1 : -1,
     risk = Math.abs(entry - sl);
   let remaining = 1,
@@ -31,8 +33,8 @@ function evaluatePlan(plan, side, future, costs) {
       break;
     }
     if (!tp1Hit && (side === "LONG" ? c.high >= tp1 : c.low <= tp1)) {
-      gross += 0.5 * sign * (tp1 - entry);
-      remaining = 0.5;
+      gross += tp1Weight * sign * (tp1 - entry);
+      remaining = 1 - tp1Weight;
       tp1Hit = true;
     }
     if (side === "LONG" ? c.high >= tp2 : c.low <= tp2) {

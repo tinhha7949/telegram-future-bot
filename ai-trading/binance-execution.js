@@ -1,4 +1,5 @@
 "use strict";
+const { CONFIG } = require("./config");
 const crypto = require("node:crypto");
 const { isRiskWithinBudget } = require("./execution-risk");
 const { RequestBudget } = require("./binance-request-budget");
@@ -84,15 +85,19 @@ function sizeTrade(decision, equity, riskFraction, info) {
     return null;
   const budget = equity * riskFraction,
     distance = Math.abs(entry - sl);
-  // An even number of lots permits an exact 50% TP1, each half above minQty.
-  const quantity = roundStep(Math.min(budget / distance, r.maxQty), 2 * r.step);
+  const totalLots = CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1];
+  const quantity = roundStep(Math.min(budget / distance, r.maxQty), totalLots * r.step);
+  const tp1Quantity = roundStep(quantity * CONFIG.TP_BATCHES[0] / totalLots, r.step);
+  const tp2Quantity = roundStep(quantity - tp1Quantity, r.step);
   if (
-    !(quantity / 2 >= r.minQty && quantity * entry >= r.minNotional) ||
+    !(tp1Quantity >= r.minQty && tp2Quantity >= r.minQty && quantity * entry >= r.minNotional) ||
     !isRiskWithinBudget(quantity * distance, budget)
   )
     return null;
   return {
     quantity,
+    tp1Quantity,
+    tp2Quantity,
     sl,
     tp1,
     tp2,
@@ -285,7 +290,7 @@ class BinanceExchange {
     if (!Array.isArray(rows)) throw new Error("INVALID_POSITION_RESPONSE");
     return rows.filter((p) => Number(p.positionAmt) !== 0);
   }
-  async equity() {
+  async accountState() {
     const account = await this.request(
       "/fapi/v3/account",
       {},
@@ -301,8 +306,13 @@ class BinanceExchange {
       )
     )
       throw new Error("INVALID_EQUITY_RESPONSE");
-    return Number(asset.walletBalance) + Number(asset.unrealizedProfit);
+    const equity = Number(asset.walletBalance) + Number(asset.unrealizedProfit);
+    const availableBalance = Number(account.availableBalance ?? asset.availableBalance);
+    if (!(equity > 0 && Number.isFinite(availableBalance) && availableBalance >= 0))
+      throw new Error("INVALID_AVAILABLE_BALANCE");
+    return { equity, availableBalance };
   }
+  async equity() { return (await this.accountState()).equity; }
   async symbols() {
     if (!this.exchangeInfo || this.now() - this.exchangeInfoAt > 3600000) {
       const info = await this.cachedRequest(
@@ -489,7 +499,7 @@ class BinanceExchange {
       workingType: "MARK_PRICE",
     };
     if (kind === "tp1" || (kind === "tp2" && trade.tp1 === trade.tp2)) {
-      params.quantity = trade.actualQuantity / 2;
+      params.quantity = kind === "tp1" ? trade.tp1Quantity : trade.tp2Quantity;
       params.reduceOnly = "true";
     } else params.closePosition = "true";
     try {

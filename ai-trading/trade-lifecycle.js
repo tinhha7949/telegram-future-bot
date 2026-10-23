@@ -1,4 +1,5 @@
 "use strict";
+const { CONFIG } = require("./config");
 const crypto = require("node:crypto");
 const { roundStep, symbolRules } = require("./binance-execution");
 const { isRiskWithinBudget } = require("./execution-risk");
@@ -6,7 +7,7 @@ const {
   getTradeActualRisk,
   summarizeClosedTrade,
 } = require("./trade-accounting");
-const TIMEOUT_MS = 96 * 60 * 60 * 1000;
+const TIMEOUT_MS = CONFIG.TIMEOUT_BARS * 4 * 60 * 60 * 1000;
 const id = (trade, kind) =>
   `n9_${trade.keyPrefix}_${kind}_${crypto.randomBytes(5).toString("hex")}`;
 const same = (a, b) =>
@@ -112,6 +113,9 @@ function hydrateFill(trade, order) {
   );
   trade.tp = trade.tp2;
   trade.actualQuantity = qty;
+  const sliceTotal = CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1];
+  trade.tp1Quantity = roundStep(qty * CONFIG.TP_BATCHES[0] / sliceTotal, trade.rules.step);
+  trade.tp2Quantity = roundStep(qty - trade.tp1Quantity, trade.rules.step);
   trade.initialRisk = Math.abs(entry - trade.sl);
   trade.actualInitialRiskUSDT = qty * trade.initialRisk;
   trade.enteredAt = Number(
@@ -156,8 +160,11 @@ function fillRiskValid(t) {
     (sign > 0
       ? t.sl < t.entry && t.entry < t.tp1 && t.tp1 <= t.tp2
       : t.tp2 <= t.tp1 && t.tp1 < t.entry && t.entry < t.sl) &&
-    t.actualQuantity / 2 >= t.rules.minQty &&
-    same(roundStep(t.actualQuantity / 2, t.rules.step), t.actualQuantity / 2)
+    t.tp1Quantity >= t.rules.minQty &&
+    t.tp2Quantity >= t.rules.minQty &&
+    same(t.tp1Quantity + t.tp2Quantity, t.actualQuantity) &&
+    same(roundStep(t.tp1Quantity, t.rules.step), t.tp1Quantity) &&
+    same(roundStep(t.tp2Quantity, t.rules.step), t.tp2Quantity)
   );
 }
 
@@ -556,7 +563,7 @@ class TradeLifecycle {
           { signed: true },
         );
         if (
-          child.status === "FILLED" && same(child.executedQty, t.actualQuantity / 2)
+          child.status === "FILLED" && same(child.executedQty, t[kind + "Quantity"])
         ) {
           t[kind + "Filled"] = true;
           t.protectionOrderIds = t.protectionOrderIds || {};
@@ -577,7 +584,7 @@ class TradeLifecycle {
           (kind === "sl" ? "STOP_MARKET" : "TAKE_PROFIT_MARKET") &&
         (kind === "tp1" || (kind === "tp2" && sharedTarget)
           ? String(o.reduceOnly) === "true" &&
-            same(o.quantity, t.actualQuantity / 2)
+            same(o.quantity, t[kind + "Quantity"])
           : String(o.closePosition) === "true");
       const existing = openAlgos.find(
         (o) =>
@@ -616,7 +623,7 @@ class TradeLifecycle {
             t.protectionOrderIds[kind] = String(child.orderId);
             if (
               (kind === "tp1" || (kind === "tp2" && sharedTarget)) &&
-              same(child.executedQty, t.actualQuantity / 2)
+              same(child.executedQty, t[kind + "Quantity"])
             ) {
               t[kind + "Filled"] = true;
               continue;
@@ -638,7 +645,7 @@ class TradeLifecycle {
         !(
           sharedTarget &&
           t[kind === "tp1" ? "tp2Filled" : "tp1Filled"] &&
-          same(currentQty, t.actualQuantity / 2)
+          same(currentQty, t.actualQuantity - t[kind === "tp1" ? "tp2Quantity" : "tp1Quantity"])
         )
       )
         throw new Error("PARTIAL_POSITION_REQUIRES_FILL_RECONCILIATION");
