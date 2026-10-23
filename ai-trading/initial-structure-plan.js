@@ -60,8 +60,8 @@ function initialProbability(type, momentum, volumeRatio, market = {}) {
   const sigmoid = (value) => 1 / (1 + Math.exp(-value));
   if (type === "CONTINUATION")
     return sigmoid(
-      Math.abs(momentum) * 3 +
-        Math.log1p(Math.max(-0.999, Number(market.openInterestChange) / 100)) +
+      Math.abs(momentum) * CONFIG.INITIAL_CONTINUATION_MOMENTUM_WEIGHT +
+        Math.log1p(Math.max(-CONFIG.INITIAL_OI_LOG_LOWER_MAGNITUDE, Number(market.openInterestChange) / 100)) +
         1 -
         Math.abs(Number(market.fundingRate)) / FUNDING_HOT_RATE,
     );
