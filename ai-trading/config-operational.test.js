@@ -7,7 +7,7 @@ const { CONFIG, parseConfig } = require("./config");
 
 const original = fs.readFileSync(path.join(__dirname, "..", "CONFIG.yaml"), "utf8");
 function edit(name, value) {
-  const line = new RegExp("^" + name + ": [^\\n]*$", "m");
+  const line = new RegExp("^" + name + ": [^\n]*$", "m");
   assert.match(original, line, "test fixture key missing: " + name);
   return original.replace(line, name + ": " + value);
 }
@@ -67,6 +67,6 @@ test("cross-field contradictions abort before any API connections", () => {
     () => parseConfig(edit("TELEGRAM_DELIVERY_RETRY_BASE_MS", "350000")),
     /CONFIG_UNSAFE_OPERATIONAL_VALUE_TELEGRAM_DELIVERY_RETRY_BASE_MS/,
   );
-  assert.throws(() => parseConfig(original + "\\nUNKNOWN_SETTING: 1\\n"), /CONFIG_UNEXPECTED_OR_DUPLICATE_UNKNOWN_SETTING/);
-  assert.throws(() => parseConfig(original.replace("BINANCE_HTTP_TIMEOUT_MS: 15000\\n", "")), /CONFIG_MISSING_BINANCE_HTTP_TIMEOUT_MS/);
+  assert.throws(() => parseConfig(original + "\nUNKNOWN_SETTING: 1\n"), /CONFIG_UNEXPECTED_OR_DUPLICATE_UNKNOWN_SETTING/);
+  assert.throws(() => parseConfig(original.replace("BINANCE_HTTP_TIMEOUT_MS: 15000\n", "")), /CONFIG_MISSING_BINANCE_HTTP_TIMEOUT_MS/);
 });
