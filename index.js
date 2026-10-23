@@ -541,7 +541,12 @@ async function main() {
 
     if (!adaptive.ok) { console.error("SCAN WAIT", adaptive.reason); return; }
 
-    const cutoffAt = Date.now();
+    // Apply measured calibration drift as a penalty, not an untested model update.
+     const latestLearning=await db.collection("nine_ai_daily_learning_reports")
+       .find({}).sort({runAt:-1}).limit(1).toArray();
+     const calibrationPenalty=latestLearning[0]?.calibration?.status ===
+       "RED_FLAG_CALIBRATION_DRIFT" ? CONFIG.LOW_CONF_PENALTY : 0;
+     const cutoffAt = Date.now();
     const [symbols, champion, track, outcomes] = await Promise.all([
       universe(exchange),
       learner.getChampionConfig(),
@@ -569,7 +574,7 @@ async function main() {
       const batch = await Promise.allSettled(
         symbols
           .slice(i, i + 5)
-          .map((s) => scanSymbol(s, champion, track, outcomes, adaptive.minEdge)),
+          .map((s) => scanSymbol(s, {...champion,uncertaintyPenalty:calibrationPenalty}, track, outcomes, adaptive.minEdge)),
       );
       for (const r of batch) {
         if (r.status === "fulfilled" && r.value) signals.push(r.value);

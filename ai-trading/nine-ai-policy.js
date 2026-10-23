@@ -30,8 +30,9 @@ function uncertaintyFor(regime, snapshotAt, signalAt, now, policy = DEFAULT_POLI
     return Infinity;
   if (now - signalAt > BAR_MS || now - snapshotAt > BAR_MS)
     return Infinity;
-  if (regime.regime_conf < CONFIG.CONF_LOW) return CONFIG.LOW_CONF_PENALTY;
-  return 0;
+  const penalty=Number(policy?.uncertaintyPenalty);
+  if (!Number.isFinite(penalty) || penalty < 0) return Infinity;
+  return (regime.regime_conf < CONFIG.CONF_LOW ? CONFIG.LOW_CONF_PENALTY : 0) + penalty;
 }
 function applyPolicy(decision, policy = DEFAULT_POLICY) {
   const params = { ...DEFAULT_POLICY, ...policy },
