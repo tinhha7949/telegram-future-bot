@@ -5,6 +5,7 @@ const { CONFIG } = require("./ai-trading/config");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
+const { MemoryGuard } = require("./ai-trading/risk/memory-guard");
 const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;
 const HISTORY_4H_LIMIT = CONFIG.HISTORY_FETCH_CANDLES;
 
@@ -525,6 +526,12 @@ async function main() {
       return;
     }
     await db.command({ ping: 1 });
+
+    const capacity = await memoryGuard.assess();
+
+
+    if (!capacity.ok) { console.error("SCAN WAIT", capacity.reason); return; }
+
 
     const riskState = await riskGuard.assess(await exchange.equity());
 
