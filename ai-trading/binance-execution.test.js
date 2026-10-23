@@ -42,17 +42,17 @@ test("algo queries and single cancellation send only documented identifiers", as
   ]);
   assert.equal(calls[2].options.method, "DELETE");
 });
-test("distinct targets submit reduce-only TP1 for half and close-position TP2 for the remainder", async () => {
+test("distinct targets submit independent reduce-only TP1 60% and TP2 40%", async () => {
   const e = new BinanceExchange(), calls = [];
   e.request = async (_, p) => { calls.push(p); return { algoId: calls.length }; };
-  const t = { symbol: "TESTUSDT", side: "SHORT", actualQuantity: 2, sl: 101, tp1: 98, tp2: 96 };
+  const t = { symbol: "TESTUSDT", side: "SHORT", actualQuantity: 2, tp1Quantity: 1.2, tp2Quantity: 0.8, sl: 101, tp1: 98, tp2: 96 };
   await e.protection(t, "tp1", "first");
   await e.protection(t, "tp2", "second");
   assert.equal(calls[0].side, "BUY");
-  assert.equal(calls[0].quantity, 1);
+  assert.equal(calls[0].quantity, 1.2);
   assert.equal(calls[0].reduceOnly, "true");
-  assert.equal(calls[1].closePosition, "true");
-  assert.equal(calls[1].quantity, undefined);
+  assert.equal(calls[1].reduceOnly, "true");
+  assert.equal(calls[1].quantity, 0.8);
 });
 test("ambiguous market POST is queried by the same ID and is never blindly repeated", async () => {
   const calls = [];
@@ -113,7 +113,7 @@ test("fill pagination does not combine fromId with time parameters", async () =>
   assert.equal(queries[1].startTime, undefined);
   assert.equal(queries[1].endTime, undefined);
 });
-test("coincident quantile targets submit two distinct reduce-only half-position orders", async () => {
+test("coincident quantile targets submit two distinct reduce-only 60/40 orders", async () => {
   const e = new BinanceExchange();
   const calls = [];
   e.request = async (url, params) => {
@@ -124,6 +124,8 @@ test("coincident quantile targets submit two distinct reduce-only half-position 
     symbol: "TESTUSDT",
     side: "LONG",
     actualQuantity: 2,
+    tp1Quantity: 1.2,
+    tp2Quantity: 0.8,
     sl: 99,
     tp1: 103,
     tp2: 103,
@@ -132,8 +134,8 @@ test("coincident quantile targets submit two distinct reduce-only half-position 
   await e.protection(t, "tp1", "first");
   await e.protection(t, "tp2", "second");
   assert.equal(calls[0].params.closePosition, "true");
-  for (const call of calls.slice(1)) {
-    assert.equal(call.params.quantity, 1);
+  for (const [i, call] of calls.slice(1).entries()) {
+    assert.equal(call.params.quantity, i === 0 ? 1.2 : 0.8);
     assert.equal(call.params.reduceOnly, "true");
     assert.equal(call.params.closePosition, undefined);
     assert.equal(call.params.triggerPrice, 103);
@@ -141,7 +143,7 @@ test("coincident quantile targets submit two distinct reduce-only half-position 
   assert.notEqual(calls[1].params.clientAlgoId, calls[2].params.clientAlgoId);
 });
 
-test("sizing rounds protection before risk and always permits exact 50% TP1", () => {
+test("sizing rounds protection before risk and enforces exact 60/40 TP", () => {
   const info = {
     filters: [
       { filterType: "LOT_SIZE", stepSize: ".1", minQty: ".1", maxQty: "10000" },
@@ -164,7 +166,9 @@ test("sizing rounds protection before risk and always permits exact 50% TP1", ()
   assert.equal(s.sl, 99);
   assert.ok(s.quantity * s.initialRisk <= 7.5);
   assert.ok(
-    Math.abs(s.quantity / 2 / 0.1 - Math.round(s.quantity / 2 / 0.1)) < 1e-8,
+    Math.abs(s.tp1Quantity / 0.1 - Math.round(s.tp1Quantity / 0.1)) < 1e-8 &&
+    Math.abs(s.tp2Quantity / 0.1 - Math.round(s.tp2Quantity / 0.1)) < 1e-8 &&
+    Math.abs(s.tp1Quantity / s.quantity - 0.6) < 1e-8,
   );
   const shared = sizeTrade(
     { side: "LONG", entry: 100, sl: 99.05, tp1: 102.01, tp2: 102.02 },

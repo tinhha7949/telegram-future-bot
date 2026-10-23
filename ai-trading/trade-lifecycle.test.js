@@ -13,7 +13,11 @@ function harness({ initial = false, shared = false, side = "LONG" } = {}) {
   const f = fixture(side, now),
     d = analyzeNineAI({
       ...f,
-      outcomes: initial ? [] : shared ? [f.outcomes[0]] : f.outcomes,
+      outcomes: initial ? [] : shared
+        ? Array.from({ length: 100 }, (_, i) => ({
+            ...f.outcomes[0], tradeId: "shared-" + i, maePct: 0.5, mfePct: 3,
+          }))
+        : f.outcomes,
     });
   d.nineAiDecisionKey = "decision";
   const rules = {
@@ -25,6 +29,8 @@ function harness({ initial = false, shared = false, side = "LONG" } = {}) {
   };
   const sizing = {
     quantity: 2,
+    tp1Quantity: 1.2,
+    tp2Quantity: 0.8,
     sl: d.sl,
     tp1: d.tp1,
     tp2: d.tp2,
@@ -113,12 +119,9 @@ function harness({ initial = false, shared = false, side = "LONG" } = {}) {
         side: side === "LONG" ? "SELL" : "BUY",
         orderType: kind === "sl" ? "STOP_MARKET" : "TAKE_PROFIT_MARKET",
         triggerPrice: t[kind],
-        quantity:
-          kind === "tp1" || (kind === "tp2" && t.tp1 === t.tp2)
-            ? t.actualQuantity / 2
-            : 0,
-        reduceOnly: kind === "tp1" || (kind === "tp2" && t.tp1 === t.tp2),
-        closePosition: kind === "sl" || (kind === "tp2" && t.tp1 !== t.tp2),
+        quantity: kind === "tp1" ? t.tp1Quantity : kind === "tp2" ? t.tp2Quantity : 0,
+        reduceOnly: kind !== "sl",
+        closePosition: kind === "sl",
         algoStatus: "NEW",
         kind,
       };
@@ -160,11 +163,10 @@ function harness({ initial = false, shared = false, side = "LONG" } = {}) {
         (a) => a.kind === kind && a.algoStatus === "NEW",
       );
       assert.ok(a);
-      const amount =
-        kind === "tp1" || (kind === "tp2" && trade.tp1 === trade.tp2)
-          ? trade.actualQuantity / 2
-          : Math.abs(qty);
+      const amount = kind === "tp1" ? trade.tp1Quantity :
+        kind === "tp2" ? trade.tp2Quantity : Math.abs(qty);
       qty -= amount * (side === "LONG" ? 1 : -1);
+      if (Math.abs(qty) < 1e-9) qty = 0;
       const orderId = sequence++;
       a.algoStatus = "FINISHED";
       a.actualOrderId = String(orderId);
@@ -284,7 +286,7 @@ for (const first of ["tp1", "tp2"])
       await l.tick();
       assert.equal(
         Math.abs(Number((await h.exchange.positions())[0].positionAmt)),
-        h.trade.actualQuantity / 2,
+        h.trade.tp2Quantity,
       );
       const other = [...h.algos.values()].find(
         (a) => a.kind === second && a.algoStatus === "NEW",
@@ -522,8 +524,8 @@ for (const side of ["LONG", "SHORT"]) {
     await l.enter(h.trade);
     h.exchange.trigger("tp1");
     await l.tick();
-    assert.equal(Math.abs(Number((await h.exchange.positions())[0].positionAmt)), h.trade.actualQuantity / 2);
-    assert.equal(h.fills[1].qty, String(h.trade.actualQuantity / 2));
+    assert.equal(Math.abs(Number((await h.exchange.positions())[0].positionAmt)), h.trade.tp2Quantity);
+    assert.equal(h.fills[1].qty, String(h.trade.tp1Quantity));
     assert.ok(Number(h.fills[1].realizedPnl) > 0);
     assert.equal((await h.exchange.openAlgos()).length, 2);
     h.exchange.trigger("sl");
@@ -558,7 +560,7 @@ for (const first of ["tp1", "tp2"])
     assert.equal(h.calls.filter((c) => c === "close").length, 0);
     assert.equal(h.calls.filter((c) => c === first).length, 1);
     assert.equal(h.calls.filter((c) => c === other).length, 2);
-    assert.equal(Math.abs(Number((await h.exchange.positions())[0].positionAmt)), h.trade.actualQuantity / 2);
+    assert.equal(Math.abs(Number((await h.exchange.positions())[0].positionAmt)), h.trade.tp2Quantity);
   });
 
 test("timeout clears protection immediately even if fills cannot be fetched", async () => {
