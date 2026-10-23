@@ -493,8 +493,8 @@ function analyzeNineAI({
         ? {
             entry,
             sl: stop,
-            tp1: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p50) / 100),
-            tp2: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p90) / 100),
+            tp1: entry * (1 + ((side === "LONG" ? 1 : -1) * Math.max(distMFE.p50, CONFIG.MIN_RR * distMAE.p80)) / 100),
+            tp2: entry * (1 + ((side === "LONG" ? 1 : -1) * Math.max(distMFE.p90, distMFE.p50, CONFIG.MIN_RR * distMAE.p80)) / 100),
             closePercentAtTP1: (CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
             timeoutCandles: CONFIG.TIMEOUT_BARS,
             stopMethod: "WINNING_MAE_P80",

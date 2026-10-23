@@ -97,20 +97,19 @@ function hydrateFill(trade, order) {
         sign > 0 ? "ceil" : "floor",
       )
     : p.sl;
-  trade.tp1 = roundStep(
-    ai7
-      ? entry * (1 + (sign * quantiles.mfe50Pct) / 100)
-      : p.tp1,
-    rules.tick,
-    ai7 ? (sign > 0 ? "floor" : "ceil") : (sign > 0 ? "ceil" : "floor"),
-  );
-  trade.tp2 = roundStep(
-    ai7
-      ? entry * (1 + (sign * quantiles.mfe90Pct) / 100)
-      : p.tp2,
-    rules.tick,
-    sign > 0 ? "floor" : "ceil",
-  );
+  // After the real fill, recompute TP from actual entry, quantiles AND actual SL.
+  // Floors are rounded outward; preserve raw MFE separately in entryExecution.
+  const minReward = CONFIG.MIN_RR * Math.abs(entry - trade.sl);
+  const tp1Distance = ai7
+    ? Math.max(entry * quantiles.mfe50Pct / 100, minReward)
+    : Math.abs(p.tp1 - p.entry);
+  const tp2Distance = ai7
+    ? Math.max(entry * quantiles.mfe90Pct / 100, tp1Distance)
+    : Math.abs(p.tp2 - p.entry);
+  trade.tp1 = roundStep(ai7 ? entry + sign * tp1Distance : p.tp1,
+    rules.tick, sign > 0 ? "ceil" : "floor");
+  trade.tp2 = roundStep(ai7 ? entry + sign * tp2Distance : p.tp2,
+    rules.tick, sign > 0 ? "ceil" : "floor");
   trade.tp = trade.tp2;
   trade.actualQuantity = qty;
   const sliceTotal = CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1];
