@@ -1,4 +1,5 @@
 "use strict";
+const {CONFIG}=require("./config");
 const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const { CONTRACT } = require("./opportunity-outcome");
 const { getTradeActualRisk } = require("./trade-accounting");
@@ -7,13 +8,13 @@ const path = require("node:path");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BAR_MS = 4 * 60 * 60 * 1000;
-const HORIZON_BARS = 24;
+const HORIZON_BARS = CONFIG.TIMEOUT_BARS;
 const PURGE_EMBARGO_MS = HORIZON_BARS * BAR_MS;
-const SHADOW_MS = 14 * DAY_MS;
+const SHADOW_MS = CONFIG.SHADOW_DAYS * DAY_MS;
 const DEFAULT_CHAMPION = Object.freeze({
-  minEdge: 0.05,
-  gapEdge: 0.1,
-  uncertaintyPenalty: 0.5,
+  minEdge: CONFIG.MIN_EDGE,
+  gapEdge: CONFIG.EDGE_GAP,
+  uncertaintyPenalty: 0,
 });
 
 const finite = (v, d = null) =>
@@ -495,7 +496,7 @@ function createOfflineLearning(db, options = {}) {
     const runDate = new Date(runAt).toISOString().slice(0, 10);
     const champion = await getChampionConfig();
     const actualRows = await actuals
-      .find({ closedAt: { $gte: runAt - 180 * DAY_MS, $lte: runAt } })
+      .find({ closedAt: { $gte: runAt - CONFIG.DAILY_TRAIN_LOOKBACK_DAYS * DAY_MS, $lte: runAt } })
       .sort({ closedAt: -1 })
       .limit(5000)
       .toArray();
@@ -616,7 +617,7 @@ function createOfflineLearning(db, options = {}) {
           { projection: OPPORTUNITY_PROJECTION },
         )
         .sort({ signalTime: -1 })
-        .limit(50000)
+        .limit(CONFIG.TRAIN_MAX_OPPORTUNITIES)
         .toArray();
       if (rows.length) {
         candidateResult = await trainCandidateAsync(rows, champion);

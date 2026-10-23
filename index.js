@@ -3,6 +3,7 @@ require("dotenv").config();
 
 const { CONFIG } = require("./ai-trading/config");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
+const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;
 const HISTORY_4H_LIMIT = CONFIG.HISTORY_FETCH_CANDLES;
 
@@ -414,7 +415,7 @@ async function main() {
   let scanReasons = new Map();
   const countWait = (reason) =>
     scanReasons.set(reason, (scanReasons.get(reason) || 0) + 1);
-  async function scanSymbol(symbol, champion, trackRecord, outcomes) {
+  async function scanSymbol(symbol, champion, trackRecord, outcomes, minEdge) {
     const input = await loadDecisionInput(exchange, journal, symbol);
     if (!input) return null;
     const { prior, h4, probe } = input;
@@ -435,7 +436,7 @@ async function main() {
       candles4h: h4,
       outcomes,
       market: { ...market, trackRecord },
-      config: { ...champion, minEdge: Math.max(CONFIG.MIN_EDGE, Number(champion?.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP },
+      config: { ...champion, minEdge: Math.max(minEdge, Number(champion?.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP },
     });
     decision = { ...decision, riskPerTradePct: RISK_PER_TRADE };
     decision = central.finalizeDecision(decision, {
