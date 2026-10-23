@@ -174,6 +174,8 @@ function fakeExchange(markFor = (_, entry) => entry) {
   const f = fixture(),
     entry = analyzeNineAI(f).entry;
   return {
+    // Test-only explicit liquidation feed. Production uses its live feed.
+    getLiquidationImbalance() { return 0.3; },
     async fundingInterval() {
       return 8;
     },
@@ -348,6 +350,7 @@ test("AI-9 edge and gap comparisons are strict and WAIT remains the default", ()
   );
   const reversed = {
     ...base,
+    agents: { flow: { ...base.agents.flow, liquidationImbalance: -1, confirmationSide: "SHORT" } },
     edges: { LONG: base.edges.SHORT, SHORT: base.edges.LONG },
   };
   assert.equal(

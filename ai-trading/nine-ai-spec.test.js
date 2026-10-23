@@ -108,7 +108,7 @@ test("AI6 fails closed on neutral, unavailable or opposing liquidation; confirme
       market: { ...f.market, liquidationImbalance: imbalance },
     });
     assert.equal(d.action, "WAIT");
-    assert.equal(d.reason, "FLOW_UNAVAILABLE_OR_UNCERTAIN");
+    assert.equal(d.reason, imbalance < 0 ? "FLOW_DIRECTION_CONFLICT" : "FLOW_UNAVAILABLE_OR_UNCERTAIN");
     assert.equal(finalizeDecision(d, { symbol: f.symbol, scannedAt: f.market.now + 1 }).action, "WAIT");
     const validation = validateExecution(
       confirmed,

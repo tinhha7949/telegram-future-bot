@@ -89,6 +89,14 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
     )
       return { ...result, side, reason: side + "_NET_EDGE_WINS" };
   }
+  // Audit the more attractive setup when flow points against that side.
+  // Never authorize a competing direction by bypassing the flow gate.
+  for (const side of ["LONG", "SHORT"]) {
+    const c = result.edges[side], other = result.edges[side === "LONG" ? "SHORT" : "LONG"];
+    if (side !== flow.confirmationSide && c?.eligible && c.plan &&
+        c.edge > params.minEdge && c.edge - other.edge > params.gapEdge)
+      return { ...result, reason: "FLOW_DIRECTION_CONFLICT" };
+  }
   return result;
 }
 module.exports = {

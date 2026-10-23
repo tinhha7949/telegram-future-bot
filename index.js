@@ -186,7 +186,9 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
       depth: depthRecord.source,
     },
     oiObservedAt: oiFresh ? Number(oiHistory.at(-1).timestamp) : null,
-    liquidationImbalance: liquidationFeed.getImbalance(symbol, observedAt),
+    liquidationImbalance: typeof exchange.getLiquidationImbalance === "function"
+      ? exchange.getLiquidationImbalance(symbol, observedAt)
+      : liquidationFeed.getImbalance(symbol, observedAt),
     markPrice: Number(premium?.markPrice),
     roundTripFeePct: CONFIG.FEE_TAKER * 2 * 100,
     fundingIntervalHours,

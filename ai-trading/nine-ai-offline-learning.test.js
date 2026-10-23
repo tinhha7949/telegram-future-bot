@@ -12,7 +12,8 @@ const row = (i = 0) => ({
     decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     setup: "NINE_AI_4H",
     regime: { regime: "UPTREND" },
-    agents: { flow: { confirmation: "CONFIRMED", confirmationSide: "LONG" } },
+    agents: { flow: { confirmation: "CONFIRMED", confirmationSide: "LONG",
+      fundingRate: 0, openInterestChange: 0, liquidationImbalance: 1 } },
     edges: {
       LONG: {
         eligible: true,
