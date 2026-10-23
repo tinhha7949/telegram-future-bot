@@ -177,7 +177,6 @@ function parseConfig(text) {
       out.MARKET_WS_RECONNECT_BASE_MS > out.MARKET_WS_RECONNECT_MAX_MS ||
       out.TELEGRAM_DELIVERY_RETRY_BASE_MS > out.TELEGRAM_DELIVERY_RETRY_MAX_MS ||
       out.JOURNAL_MIN_SAMPLES > out.JOURNAL_MAX_RECORDS ||
-      out.BINANCE_BACKGROUND_BUDGET_RATIO > out.BINANCE_SERVER_WEIGHT_SAFETY_RATIO + 0.1 ||
       out.TIMEFRAME !== "4h" ||
       !Array.isArray(out.TP_BATCHES) ||
       out.TP_BATCHES.length !== 2 ||
