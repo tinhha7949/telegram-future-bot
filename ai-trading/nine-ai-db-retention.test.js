@@ -212,14 +212,14 @@ async function testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors() {
     assert.strictEqual(controller.config.enabled, true, "default runtime must enable bounded cleanup");
     assert.strictEqual(controller.config.dryRun, false, "default runtime must perform cleanup");
     const result = await controller.runCleanup();
-    assert.strictEqual(deleteCalls, 2, "controller must prune the globally oldest eligible records from multiple collectors");
+    assert.strictEqual(deleteCalls, 1, "delete lower-priority trades only after reports and remeasuring");
     assert.strictEqual(result.status, "COMPLETED");
-    assert.strictEqual(result.deleted, 2);
+    assert.strictEqual(result.deleted, 1);
     assert.strictEqual(result.usageAfterMB, 300);
     assert.deepStrictEqual(new Set(Object.keys(result.perCollection)),
-      new Set(["trades", "nine_ai_strategy_lab_reports"]));
+      new Set(["nine_ai_strategy_lab_reports"]));
     assert.deepStrictEqual(new Set(deletedCollections),
-      new Set(["trades", "nine_ai_strategy_lab_reports"]));
+      new Set(["nine_ai_strategy_lab_reports"]));
   } finally {
     if (originalEnable === undefined) delete process.env.DB_RETENTION_ENABLE_DELETE;
     else process.env.DB_RETENTION_ENABLE_DELETE = originalEnable;
@@ -318,3 +318,18 @@ testAutomaticCleanupDeletesOldEventsAcrossEligibleCollectors()
     console.error(error);
     process.exitCode = 1;
   });
+
+const tiers=retention.sortByRetentionPriority([
+ {name:"label",timestamp:1,spec:{category:"actual_label"}},
+ {name:"raw",timestamp:999,spec:{category:"raw_tick"}},
+ {name:"feature",timestamp:2,spec:{category:"derived_feature"}},
+ {name:"report",timestamp:3,spec:{category:"generated_report"}}
+]).map(x=>x.name);
+assert.deepStrictEqual(tiers,["raw","feature","report","label"],
+ "label is last regardless of document age");
+const prevLimit=process.env.DB_STORAGE_LIMIT_MB;
+process.env.DB_STORAGE_LIMIT_MB="1";
+assert.strictEqual(retention.configFromEnv().limitMB,500,
+ "environment must not override YAML capacity");
+if(prevLimit===undefined)delete process.env.DB_STORAGE_LIMIT_MB;
+else process.env.DB_STORAGE_LIMIT_MB=prevLimit;
