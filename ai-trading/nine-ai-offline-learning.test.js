@@ -255,7 +255,10 @@ test("candidate qualification has no 400-row, trade-count or extra .02R-uplift g
   });
   const result = l.trainCandidate(rows, l.DEFAULT_CHAMPION);
   assert.equal(result.status, "SHADOW_PENDING");
-  assert.equal(result.uplift, 0.5);
+  assert.equal(result.uplift,
+    result.candidateTest.stabilityScore - result.championTest.stabilityScore);
+  assert.ok(result.uplift > 0);
+  assert.ok(result.candidateTest.maxDrawdownR <= result.championTest.maxDrawdownR);
 });
 
 test("candidate selection is fit on train and a validation loss cannot be rescued by future test gains", () => {
