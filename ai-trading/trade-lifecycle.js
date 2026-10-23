@@ -218,7 +218,21 @@ class TradeLifecycle {
         if (![26, 27].includes(e.code)) throw e;
       }
     }
-    // Active/uncertain claims never expire. Only reconciled claims have closedAt.
+    // Update existing TTL policy in place when the configured days change.
+    // Claims with no closedAt (active/uncertain) must never expire.
+    const claimTTL = CONFIG.TRADE_CLOSED_CLAIMS_RETENTION_DAYS * 86400;
+    const claimTTLName = "expire_closed_signal_claims_90d";
+    if (typeof this.claims.listIndexes === "function") {
+      const indexes = await this.claims.listIndexes().toArray();
+      const prior = indexes.find(index => index.name === claimTTLName);
+      if (prior && prior.expireAfterSeconds !== claimTTL) {
+        if (typeof this.db.command !== "function") throw new Error("CLAIM_TTL_MIGRATION_UNAVAILABLE");
+        await this.db.command({
+          collMod: "trade_signal_claims",
+          index: { name: claimTTLName, expireAfterSeconds: claimTTL },
+        });
+      }
+    }
     await this.claims.createIndex(
       { closedAt: 1 },
       {
