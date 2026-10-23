@@ -20,7 +20,7 @@ class RiskGuard {
     try {
       await this.global.updateOne(
         { _id: "GLOBAL" },
-        { $max: { peakEquity: equity }, $setOnInsert: { halted: false } },
+        { $max: { peakEquity: Math.max(this.config.EQUITY_START, equity) }, $setOnInsert: { halted: false } },
         { upsert: true },
       );
       const state = await this.global.findOne({ _id: "GLOBAL" });

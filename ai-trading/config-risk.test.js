@@ -52,5 +52,6 @@ test("risk guard refuses unknown equity, durable drawdown, and duplicate signals
   assert.equal((await g.reserve("b", 1000)).ok, true);
   assert.equal((await g.reserve("c", 1000)).reason, "MAX_DAILY_RISK_REACHED");
   assert.equal((await g.assess(849)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
+  assert.equal(g.config.EQUITY_START,1000);
   assert.equal((await new RiskGuard(db).assess(1000)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
 });
