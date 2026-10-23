@@ -1,43 +1,41 @@
-# Deploying the Nine-AI flow
+# Nine-AI futures engine — installation & operating contract
 
-Use Node.js 22 or newer, the existing MongoDB trading database and Binance USDT single-asset One-way Mode. The bot validates account mode. Keep the existing .env containing MONGO_URI, BINANCE_KEY and BINANCE_SECRET. BOT_TOKEN/CHAT_ID receive confirmed entries on Telegram 1; BOT_TOKEN_2/AI_CHAT_ID receive WIN/LOSS and operational alerts on Telegram 2, with the existing fallback to Telegram 1. Delivery uses a durable retry outbox and runs independently of position protection. See [Telegram and runtime behavior](NINE_AI_TELEGRAM_RUNTIME.md).
+This repository implements one closed-4h Nine-AI decision authority. It **does not guarantee profits, loss limits on gaps, or risk-free trading**. The repository tests simulate orders; a green unit suite is not Binance production certification.
 
-Stop the old bot process. Inside the repo on main:
+## Configuration
+Only `CONFIG.yaml` owns strategy/risk/retention thresholds. `.env` supplies secrets and endpoints (`MONGO_URI`, `BINANCE_KEY`, `BINANCE_SECRET` and optional Telegram IDs). Startup rejects missing credentials. The exchange account must be USDT single-asset, one-way and have sufficient available balance. The bot never increases position size to recover losses.
 
-    git pull --ff-only origin main && npm ci --ignore-scripts && npm start
+`N_CANDLES=500` caps each symbol's float32/delta/gzip OHLCV archive in `nine_ai_ohlcv_4h`. Live realized volatility over 90 days needs 540 four-hour returns, so feed fetches at least **541 closed bars** for analysis without retaining all of them in the archive.
 
-If an existing supervisor runs the bot, restart through that supervisor instead of launching a second process with npm start. Run only one managed bot against this account/database. The PID lock is local to the checkout, not a cross-host distributed lock.
+`COLD_START_SAMPLES=50` and the detailed 100-label requirement conflict; the implementation keeps both keys and uses **AI7_ACTIVATION_SAMPLES=100** as the explicit quantile activation threshold. Under 100 realized, unique, setup/direction-matched labels, SL uses 1.5×ATR14, TP1 is at least 0.8R and risk remains 1% of equity. From 100, AI7 derives MAE p80 and MFE p50/p90, respecting the minimum TP1 RR. TP1 exits 60%, TP2 exits 40%; SL protects the entire remaining position. Exchange quantity/tick rounding is revalidated after an actual fill.
 
-No manual migration or initial model upload is needed. Version-5 journal keys/indexes prevent older cached decisions from restoring outdated expectation/exit/cost definitions. Earlier champion parameters are preserved for audit while current defaults initialize the new contract. Real labeled excursion data remains useful. Open positions restore their original saved protection and deadline.
+The trend-only live filter makes range/high-vol AI5 diagnostic, not an alternative way around AI9. Funding hot checks and uncertainty result in WAIT. All real order submissions pass the sole central AI9 authorization boundary plus current market/position, available margin, daily risk, drawdown and memory gates.
 
-With no winning excursion labels, AI-2 supplies temporary structure exits. AI-9 still applies its normal edge/cost/uncertainty rule. Once a usable winning label exists for the setup, AI-7 uses winning MAE p80 and all-labeled MFE p50/p90 without an additional symbol/side or winning-count requirement. Realized gross R supplies directional setup E[R] when available. Entry messages identify AI2_INITIAL versus AI7_LABELED. Zero measured MAE cannot be silently widened into a substitute ATR/structure stop.
+## Install and automatic operation on a systemd VPS
+With Node.js 22+, MongoDB, correct Binance futures permissions and a `.env` file present:
 
-Scanning considers trading USDT perpetual contracts without added turnover, daily-range, stablecoin or top-80 strategy filters. The scanner checks every two minutes and saves one decision per symbol/closed 4h candle. All strategy candles use 4h; the 20/90-day volatility windows are calculated from those 4h bars. Staleness increases uncertainty rather than triggering an independent five-minute execution cutoff. Signed API failures, missing required prices/costs, unsupported quantity or unresolved position state remain technical execution failures, not alternate trading signals.
+```bash
+git pull --ff-only
+npm ci --ignore-scripts
+npm run install:service
+```
 
-Every approved symbol is considered; no fixed maximum position count, top-ten signal cutoff or one-entry-per-scan cap is imposed. Legacy MAX_ACTIVE_POSITIONS is no longer used. Exchange balance and order constraints still apply. Fee/slippage forecasts are nonnegative; funding preserves payment/receipt signs. Calibration uses predicted_R before uncertainty, not the penalized edge.
+The last command installs and **enables/starts** `nine-ai-quant.service`. systemd restarts it on failure and after reboots, without any daily approval. Installing dependencies by itself does not silently execute leveraged trades; service install is the deliberate single setup step. Do not run `npm start` in parallel with the service. A local PID lock prevents duplicate instances on one host; the durable DB claims and client order IDs provide extra idempotency but do **not** replace single-host deployment discipline.
 
-Inspect NINE-AI READY, NINE-AI SCAN, ENTRY WAIT, position protection/accounting and DAILY CALIBRATION logs. Missing MAE/MFE history stays pending and retries instead of losing the first outcome label. Development tests use fake exchange/database responses and submit no live orders. Sources and measurement precision are documented in NINE_AI_CANONICAL_PIPELINE.md; the requirement audit is NINE_AI_SPEC_AUDIT.md.
+```bash
+systemctl status nine-ai-quant
+journalctl -u nine-ai-quant -f
+npm test
+```
 
-On a new database, daily output reads:
+## Circuit breakers and model promotion
+Risk reservations are persisted before any market POST, use 1% equity per signal and a 2.5%-of-start-of-day-equity UTC budget; ambiguous submissions never refund capacity automatically. Drawdown of 15% versus the higher of configured starting equity/observed peak **latches** new-entry shutdown across restart. Existing positions still receive SL/TP/timeout management. Reset of the risk latch requires review of account and market conditions; the system intentionally has no silent self-reset.
 
-    DAILY CALIBRATION NO_REALIZED_PREDICTION_PAIRS samples=0 | CANDIDATE COLLECTING_MATURED_24_BAR_OPPORTUNITIES | SHADOW NO_SHADOW_CANDIDATE
+The 500 MB storage circuit first executes allowlisted, priority-ordered cleanup and rechecks storage. If still over limit or measurement unavailable, new entries WAIT without stopping exit management. Raw/ticks and old derived features have priority over models/research, which have priority over closed trades and actual labels. Labels remain last resort; no unreviewed collections or active policies are deleted.
 
-These are idle learning states: no completed forecast/outcome pairs, no matured evaluation cohort, and no shadow candidate yet. Missing averages remain null in stored reports, rather than being invented as zero; the console omits those unavailable averages. This daily report does not pause live decisions or require a trade count to unlock initial AI-2 exits. NINE-AI SCAN START reports the universe and label counts; the completed scan reports signal counts and WAIT reasons. NINE-AI SCAN PAUSED identifies an actual runtime or position-state pause separately. A newly qualified candidate reports SHADOW_STARTED immediately; subsequent runs report its current shadow status.
+Daily candidate fitting evaluates the identical opportunity cohort and cost snapshot, using walk-forward purge/embargo. Candidates can only **raise** MIN_EDGE above 0.15. An actual 14-day shadow period with matured observations and trade-positive improvement is required for **automatic champion promotion**, with no human approval. Calibration drift degrades confidence/causes abstention rather than blind fitting.
 
-## Binance request limits and live data
+## Boundaries and validation
+Run the recursive syntax+unit suite `npm test` (including nested data/risk tests) before upgrades. Current tests rely on mocked Binance and Mongo responses. The exact live OCO capabilities, exchange-specific algo order parameters, VPS secrets and upstream network behavior cannot be validated from GitHub CI alone. To protect capital, malformed/stale data, ambiguous fills, unavailable Mongo/account/capacity state, or uncertain untracked positions cause WAIT. No software can prevent gap slippage, forced liquidation, outages or market losses.
 
-Position exits now clean up SL/TP siblings as soon as a fresh exchange snapshot confirms the symbol is flat, before requesting fills, funding, fee conversion, MAE/MFE candles or database writes. All already-flat trades are cleaned before accounting begins for any one trade. A failed cancellation remains pending and pauses new entries until reconciliation succeeds. With the normal ten-second management loop this happens on the next successful management pass; exchange/network cooldowns can delay confirmation. A completed TP1 realizes half of the original filled quantity; SL/TP2 remain exchange-side for the remainder. This does not add a break-even/trailing-stop rule.
-
-Startup also removes identifiable orphan Nine-AI conditional orders on flat symbols; unrelated orders and symbols with exposure are excluded from that orphan sweep. Triggered regular child orders belonging to a tracked closed trade are canceled too. Closed accounting remains retryable and cannot keep TP2 alive or create a fabricated learning label. A closed, cleaned trade awaiting accounting does not by itself mark live exposure uncertain.
-
-All Binance time parameters are integer milliseconds, including legacy fractional submittedAt values. Restart preserves pending closes and existing deadlines. AI-2 structure target prices remain at their planned zones after entry slippage; AI-7 levels still derive from the real fill and the specified quantiles. Risk remains the user-editable RISK_PER_TRADE in index.js; this fix does not modify it. See [the lifecycle audit](NINE_AI_LIFECYCLE_FIXES.md) for regression coverage and API references.
-
-Mark price/funding and bid/ask updates use the public all-market WebSocket streams. A disconnected or stale stream falls back to a budgeted REST refresh; it is not relabeled as a fresh observation. Current depth remains REST, OI history uses its existing 4h period, and private account/order reconciliation still uses REST. No new strategy timeframe or entry filter is added.
-
-All requests share the exchange client's weighted IP budget: at most 1800 local weight/minute by default, reduced if exchangeInfo advertises a lower limit. Background requests stop at 80% of that budget to reserve capacity for account/protection/close requests. Used-weight response headers account for other traffic visible to Binance. Statistics routes additionally stay below 800 requests/5min. HTTP 429/418 and code -1003 establish a shared cooldown using Retry-After/ban-until when available; the bot does not retry every second against the exchange. Existing exchange-side SL/TP orders remain in place during a cooldown.
-
-History loads share one in-flight request per symbol. Initial 1500-bar history is paginated efficiently; subsequent 4h windows update the existing history. Scans check the durable decision for the expected closed 4h bar before any candle REST request, so repeat scans of an already-journaled bar use no REST candle probe. Daily settlement shares the same history cache. Exchange metadata loads are also coalesced; cached data keeps its original observation time. Signed timestamps and network latency are measured at dispatch, after queue admission.
-
-First startup may take longer while the entire universe warms its history under the request budget. NINE-AI SCAN PROGRESS reports progress every 50 symbols. BINANCE MARKET WS reports successful stream connections; BINANCE REST COOLDOWN reports the enforced wait. Rate-limited GET requests remain paused/retry after the shared cooldown, including during initialization, instead of exhausting two quick retries and triggering a PM2 restart loop. Mutating order requests are never blindly repeated. Shutdown cancels queued admission. The budget controls this bot's traffic and reacts to IP usage headers; unrelated processes sharing the IP can still consume the exchange allowance. Restarting does not bypass a Binance-imposed IP cooldown.
-
-References: [Binance rate limits](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/general-info), [REST endpoint weights](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data), [mark-price streams](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/market), [book-ticker streams](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/public).
+See `CONFIG.yaml`, `ai-trading/risk/`, `ai-trading/data/store/ohlcv.js`, `ai-trading/binance-execution.js`, `ai-trading/trade-lifecycle.js`, `ai-trading/nine-ai-pipeline.js`, and `ai-trading/nine-ai-offline-learning.js`.
