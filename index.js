@@ -6,6 +6,7 @@ const { RiskGuard } = require("./ai-trading/risk/day-guard");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
 const { MemoryGuard } = require("./ai-trading/risk/memory-guard");
+const { sessionReport, formatSessionReport } = require("./ai-trading/monitoring/session");
 const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;
 const HISTORY_4H_LIMIT = CONFIG.HISTORY_FETCH_CANDLES;
 
@@ -457,8 +458,10 @@ async function main() {
         console.error("SETTLEMENT", symbol, e.message);
       }
     }
-    const report = await learner.runDailyCycle();
-    console.log(formatDailyLearningReport(report));
+    const learning = await learner.runDailyCycle();
+    console.log(formatDailyLearningReport(learning));
+    const session = await sessionReport(db, waitControl);
+    await report(formatSessionReport(session));
   });
   void daily();
   let scanReasons = new Map();
