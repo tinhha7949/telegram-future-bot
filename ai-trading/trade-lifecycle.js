@@ -102,7 +102,7 @@ function hydrateFill(trade, order) {
       ? entry * (1 + (sign * quantiles.mfe50Pct) / 100)
       : p.tp1,
     rules.tick,
-    sign > 0 ? "floor" : "ceil",
+    ai7 ? (sign > 0 ? "floor" : "ceil") : (sign > 0 ? "ceil" : "floor"),
   );
   trade.tp2 = roundStep(
     ai7

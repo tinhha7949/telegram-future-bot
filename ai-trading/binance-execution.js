@@ -70,7 +70,8 @@ function sizeTrade(decision, equity, riskFraction, info) {
     r.tick,
     ai7 ? (long ? "ceil" : "floor") : long ? "floor" : "ceil",
   );
-  const tp1 = roundStep(Number(decision.tp1), r.tick, long ? "floor" : "ceil");
+  const tp1 = roundStep(Number(decision.tp1), r.tick,
+    decision.tradePlan?.outcomeMode === "AI2_INITIAL" ? (long ? "ceil" : "floor") : (long ? "floor" : "ceil"));
   const tp2 = roundStep(
     Number(decision.tp2 ?? decision.tp),
     r.tick,
