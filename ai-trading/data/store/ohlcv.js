@@ -19,8 +19,8 @@ function encodeRecent(rows, config = CONFIG) {
     const values=[1,2,3,4,5].map(k=>Number(r[k]));
     if(![time,closeTime,...values].every(Number.isFinite) ||
        values.some((v,j)=>j!==4 && v<=0) || values[4]<0 ||
-       values[2]<Math.max(values[0],values[3]) ||
-       values[1]>Math.min(values[0],values[3]) ||
+       values[1]<Math.max(values[0],values[3]) ||
+       values[2]>Math.min(values[0],values[3]) ||
        (i && time!==Number(selected[i-1][0])+BAR_MS) ||
        closeTime!==time+BAR_MS-1) throw new Error("OHLCV_GAP_OR_INVALID");
     if(i===0)startTime=time;
