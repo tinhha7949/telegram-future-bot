@@ -139,6 +139,9 @@ function validLabels(outcomes, symbol, setupKey, side, now) {
       o?.source !== "REALIZED_CLOSED_TRADE" ||
       o.labeled !== true ||
       o.setupKey !== setupKey ||
+      // Never mix adverse/favorable excursion distributions across direction.
+      // Cross-symbol pooling is permitted only for the identical regime/setup/side.
+      o.side !== side ||
       typeof o.win !== "boolean" ||
       ![o.maePct, o.mfePct].every(
         (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
