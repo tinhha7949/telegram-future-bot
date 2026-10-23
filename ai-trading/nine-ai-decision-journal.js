@@ -1,5 +1,6 @@
 "use strict";
 const crypto = require("crypto");
+const { CONFIG } = require("./config");
 const { CONTRACT, evaluatePlan } = require("./opportunity-outcome");
 const { DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 
@@ -9,12 +10,12 @@ const { DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 // windows. Its evidence adjusts candidate ranking only; it never bypasses the
 // existing execution and capital-protection checks.
 const COLLECTION = "nine_ai_decision_journal";
-const MAX_RECORDS = 5000;
-const MARKET_WINDOW_BARS = 48;
+const MAX_RECORDS = CONFIG.JOURNAL_MAX_RECORDS;
+const MARKET_WINDOW_BARS = CONFIG.JOURNAL_MARKET_WINDOW_BARS;
 const HORIZONS = [4, 16, 24];
-const MIN_SAMPLES = 20;
-const MAX_LIVE_BONUS = 3;
-const DEFAULT_ROUND_TRIP_COST_RATE = 0.0008;
+const MIN_SAMPLES = CONFIG.JOURNAL_MIN_SAMPLES;
+const MAX_LIVE_BONUS = CONFIG.JOURNAL_MAX_LIVE_BONUS;
+const DEFAULT_ROUND_TRIP_COST_RATE = CONFIG.JOURNAL_FALLBACK_ROUND_TRIP_COST_RATE;
 let collection = null;
 let records = [];
 const seen = new Set();
@@ -701,7 +702,7 @@ async function recordDecision(args) {
   // The unique decisionKey index makes retrying an ambiguous network failure
   // idempotent: if MongoDB committed the first insert but its reply was lost,
   // the retry becomes a duplicate rather than a second journal row.
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < CONFIG.JOURNAL_WRITE_MAX_ATTEMPTS; attempt++) {
     try {
       await collection.insertOne(snapshot);
       lastError = null;
@@ -725,8 +726,8 @@ async function recordDecision(args) {
         };
       }
       lastError = error;
-      if (!isTransientJournalWriteError(error) || attempt === 2) throw error;
-      await wait(200 * (attempt + 1));
+      if (!isTransientJournalWriteError(error) || attempt + 1 === CONFIG.JOURNAL_WRITE_MAX_ATTEMPTS) throw error;
+      await wait(CONFIG.JOURNAL_WRITE_RETRY_BACKOFF_MS * (attempt + 1));
     }
   }
   if (lastError) throw lastError;
@@ -801,10 +802,7 @@ function computeEvaluations(record, candles, now = Date.now()) {
   const baseEntry = num(record.features?.close, candles[idx].close);
   const atr = num(record.features?.atr14, atrAt(candles, idx));
   if (!(baseEntry > 0 && atr > 0)) return null;
-  const configuredCost = num(
-    process.env.NINE_AI_ROUND_TRIP_COST_RATE,
-    DEFAULT_ROUND_TRIP_COST_RATE,
-  );
+  const configuredCost = DEFAULT_ROUND_TRIP_COST_RATE;
   const snapCosts = record.decisionSnapshot?.featureSnapshot || {};
   const explicitCostPct = [
     snapCosts.feePct,
