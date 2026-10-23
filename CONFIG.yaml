@@ -1,0 +1,35 @@
+# Canonical trading strategy settings. Do not override risk/strategy via .env.
+N_CANDLES: 500
+TIMEFRAME: "4h"
+EQUITY_START: 1000.0
+RISK_PER_TRADE: 0.01
+MAX_DAILY_RISK: 0.025
+MAX_DRAWDOWN_CIRCUIT: 0.15
+MIN_RR: 0.8
+MIN_EDGE: 0.15
+TP_BATCHES: [3, 2]
+TIMEOUT_BARS: 24
+COLD_START_SAMPLES: 50
+WAIT_MIN_RATIO: 0.6
+MEMORY_LIMIT_MB: 500
+FEE_TAKER: 0.0006
+SLIPPAGE_BPS: 3
+
+# Explicit resolutions of underspecified/conflicting strategy requirements.
+# AI-7 stays in fallback until 100 completed, direction-matched labels.
+AI7_ACTIVATION_SAMPLES: 100
+AI7_ATR_MULTIPLIER: 1.5
+FALLBACK_TP2_R: 1.6
+EDGE_GAP: 0.05
+CONF_HIGH: 0.7
+CONF_LOW: 0.5
+LOW_CONF_PENALTY: 0.15
+STALE_PENALTY: 0.25
+VOL_20D_RETURNS: 120
+VOL_90D_RETURNS: 540
+# 90 days at 4h requires 540 returns and 541 closing prices.
+# This is the ingest-only window; persistent recent OHLCV stays N_CANDLES.
+HISTORY_FETCH_CANDLES: 541
+ATR_BARS: 14
+FUNDING_HOT_RATE: 0.0008
+HIGH_VOL_PERCENTILE: 0.8
