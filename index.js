@@ -161,8 +161,13 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
     latest = Number(oiHistory?.at(-1)?.sumOpenInterest);
   const oiFresh =
     Array.isArray(oiHistory) &&
-    oiHistory.length >= 2 &&
-    oiHistory.every((o) => Number(o.timestamp) <= observedAt);
+    oiHistory.length >= CONFIG.MARKET_OI_HISTORY_POINTS &&
+    oiHistory.every((o) => Number.isFinite(Number(o.timestamp)) &&
+      Number(o.timestamp) <= observedAt) &&
+    // A historical-but-valid API payload is still STALE, not current flow.
+    observedAt - Number(oiHistory.at(-1).timestamp) <= pipeline.BAR_MS &&
+    Number(oiHistory.at(-1).timestamp) > Number(oiHistory[0].timestamp) &&
+    Number(oiHistory.at(-1).timestamp) - Number(oiHistory[0].timestamp) <= pipeline.BAR_MS;
   const notional = (levels) =>
     Array.isArray(levels) && levels.length
       ? levels.reduce((sum, l) => sum + Number(l[0]) * Number(l[1]), 0)
