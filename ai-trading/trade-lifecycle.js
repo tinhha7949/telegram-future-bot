@@ -403,8 +403,8 @@ class TradeLifecycle {
     ]);
     const needsDetails = (o) => !terminal.has(o.status) ||
       ((o.status === "FILLED" || Number(o.executedQty) > 0) && !hasConfirmedEntryFill(o));
-    for (let i = 0; needsDetails(order) && i < 5; i++) {
-      await this.wait(500);
+    for (let i = 0; needsDetails(order) && i < CONFIG.TRADE_ENTRY_LOOKUP_ATTEMPTS; i++) {
+      await this.wait(CONFIG.TRADE_ENTRY_LOOKUP_DELAY_MS);
       order = await this.exchange.order(t.symbol, t.entryClientId);
     }
     if (!terminal.has(order.status)) order = await this.exchange.cancelEntry(t);
