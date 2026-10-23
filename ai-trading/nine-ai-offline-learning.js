@@ -104,11 +104,25 @@ function evaluatePolicy(rows, params) {
       signalTime: Number(row.signalTime) || 0,
     });
   }
+  // Same ordered opportunity cohort for both policies. WAIT earns zero and
+  // stays in total PnL/DD; only executed trades enter net E[R]/trade.
+  scored.sort((a,b)=>a.signalTime-b.signalTime);
+  const realizedTrades = scored.filter(x=>x.action!=="WAIT");
+  let cumNetR=0,peak=0,maxDrawdownR=0;
+  for(const x of scored){
+    cumNetR+=x.netR;
+    peak=Math.max(peak,cumNetR);
+    maxDrawdownR=Math.max(maxDrawdownR,peak-cumNetR);
+  }
+  const meanNetRPerTrade = mean(realizedTrades.map(x=>x.netR));
+  const stabilityScore = meanNetRPerTrade == null ? null :
+    meanNetRPerTrade - CONFIG.TRAIN_DRAWDOWN_WEIGHT_PER_R*maxDrawdownR;
   return {
     opportunities: scored.length,
-    trades: scored.filter((x) => x.action !== "WAIT").length,
+    trades: realizedTrades.length,
     averageNetR: mean(scored.map((x) => x.netR)),
-    totalNetR: scored.reduce((sum, x) => sum + x.netR, 0),
+    meanNetRPerTrade, maxDrawdownR, stabilityScore,
+    totalNetR: cumNetR,
     actions: scored,
   };
 }
@@ -171,14 +185,14 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
       const train = evaluatePolicy(splits.train, params);
       const validation = evaluatePolicy(splits.validation, params);
       if (
-        Number.isFinite(train.averageNetR) &&
-        Number.isFinite(validation.averageNetR)
+        Number.isFinite(train.stabilityScore) &&
+        Number.isFinite(validation.stabilityScore)
       ) {
         grid.push({
           params,
           train,
           validation,
-          objective: train.averageNetR,
+          objective: train.stabilityScore,
         });
       }
     }
@@ -194,7 +208,9 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
     };
   const selected = grid[0];
   const championValidation = evaluatePolicy(splits.validation, champion);
-  if (!(selected.validation.averageNetR > championValidation.averageNetR)) {
+  if (!(selected.validation.stabilityScore > championValidation.stabilityScore &&
+    selected.validation.maxDrawdownR <= championValidation.maxDrawdownR +
+      CONFIG.TRAIN_MAX_DRAWDOWN_INCREASE_R)) {
     return {
       status: "CANDIDATE_DID_NOT_BEAT_CHAMPION_VALIDATION",
       candidate: selected.params,
@@ -211,8 +227,10 @@ function trainCandidate(rows, champion = DEFAULT_CHAMPION) {
   }
   const candidateTest = evaluatePolicy(splits.test, selected.params);
   const championTest = evaluatePolicy(splits.test, champion);
-  const uplift = candidateTest.averageNetR - championTest.averageNetR;
-  if (!Number.isFinite(uplift) || uplift <= 0) {
+  const uplift = candidateTest.stabilityScore - championTest.stabilityScore;
+  if (!Number.isFinite(uplift) || uplift <= 0 ||
+      candidateTest.maxDrawdownR > championTest.maxDrawdownR +
+        CONFIG.TRAIN_MAX_DRAWDOWN_INCREASE_R) {
     return {
       status: "CANDIDATE_DID_NOT_BEAT_CHAMPION",
       sampleCounts: {
@@ -555,7 +573,9 @@ function createOfflineLearning(db, options = {}) {
         age >= SHADOW_MS &&
         labelsMature &&
         candidateScore.opportunities > 0 &&
-        Number(candidateScore.averageNetR) > Number(championScore.averageNetR)
+        Number(candidateScore.stabilityScore) > Number(championScore.stabilityScore) &&
+        candidateScore.maxDrawdownR <= championScore.maxDrawdownR +
+          CONFIG.TRAIN_MAX_DRAWDOWN_INCREASE_R
       ) {
         const currentChampion = await championState.findOne({ _id: "active" });
         await championState.updateOne(

@@ -335,3 +335,24 @@ test("a winning fully matured shadow can promote at 14 days, without a fixed ext
     "PROMOTED_CHAMPION",
   );
 });
+
+test("policy scoring optimizes net R per executed trade and penalizes drawdown",()=>{
+  const rows=Array.from({length:3},(_,i)=>{
+    const r=row(i);
+    r.evaluations[24].longNetR=[1,-2,2][i];
+    return r;
+  });
+  const score=l.evaluatePolicy(rows,l.DEFAULT_CHAMPION);
+  assert.equal(score.opportunities,3);
+  assert.equal(score.trades,3);
+  assert.equal(score.meanNetRPerTrade,1/3);
+  assert.equal(score.maxDrawdownR,2);
+  const {CONFIG}=require("./config");
+  assert.ok(Math.abs(score.stabilityScore-
+    (1/3-CONFIG.TRAIN_DRAWDOWN_WEIGHT_PER_R*2))<1e-12);
+  const wait=l.evaluatePolicy(rows,{...l.DEFAULT_CHAMPION,minEdge:100});
+  assert.equal(wait.trades,0);
+  assert.equal(wait.meanNetRPerTrade,null);
+  assert.equal(wait.stabilityScore,null);
+  assert.equal(wait.totalNetR,0);
+});
