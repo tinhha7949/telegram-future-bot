@@ -1,8 +1,10 @@
 // Load VPS .env before reading any environment-backed configuration.
 require("dotenv").config();
 
-const RISK_PER_TRADE = 0.01;
-const HISTORY_4H_LIMIT = 1000;
+const { CONFIG } = require("./ai-trading/config");
+const { RiskGuard } = require("./ai-trading/risk/day-guard");
+const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;
+const HISTORY_4H_LIMIT = CONFIG.HISTORY_FETCH_CANDLES;
 
 const fs = require("node:fs"),
   path = require("node:path"),
@@ -183,11 +185,11 @@ async function marketSnapshot(exchange, symbol, now = Date.now()) {
     oiObservedAt: oiFresh ? Number(oiHistory.at(-1).timestamp) : null,
     liquidationImbalance: liquidationFeed.getImbalance(symbol, observedAt),
     markPrice: Number(premium?.markPrice),
-    roundTripFeePct: envNumber("ROUND_TRIP_FEE_PCT", 0.1, 0, 2),
+    roundTripFeePct: CONFIG.FEE_TAKER * 2 * 100,
     fundingIntervalHours,
     expectedFundingCostPctBySide: Number.isFinite(funding)
       ? {
-          LONG: funding * 100 * Math.ceil(96 / fundingIntervalHours),
+          LONG: funding * 100 * Math.ceil((CONFIG.TIMEOUT_BARS * 4) / fundingIntervalHours),
           SHORT: -funding * 100 * Math.ceil(96 / fundingIntervalHours),
         }
       : null,
@@ -211,6 +213,7 @@ async function executeDecisions(
   {
     exchange,
     lifecycle,
+    riskGuard,
     isStopped = () => false,
     entriesPaused = () => false,
   },
@@ -275,7 +278,7 @@ async function loadDecisionInput(
     DECISION_SCHEMA_VERSION,
   );
   if (prior) return { prior };
-  const h4 = await exchange.candles(symbol, "4h", HISTORY_4H_LIMIT);
+  const h4 = await exchange.candles(symbol, CONFIG.TIMEFRAME, HISTORY_4H_LIMIT);
   const probe = pipeline.closedCandles(h4, Date.now()).at(-1);
   if (!probe) return null;
   if (probe.closeTime !== expectedClose)
@@ -432,7 +435,7 @@ async function main() {
       candles4h: h4,
       outcomes,
       market: { ...market, trackRecord },
-      config: champion,
+      config: { ...champion, minEdge: Math.max(CONFIG.MIN_EDGE, Number(champion?.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP },
     });
     decision = { ...decision, riskPerTradePct: RISK_PER_TRADE };
     decision = central.finalizeDecision(decision, {

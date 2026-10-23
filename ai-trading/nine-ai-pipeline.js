@@ -1,4 +1,5 @@
 "use strict";
+const { CONFIG } = require("./config");
 const {
   DEFAULT_POLICY,
   applyPolicy,
@@ -176,8 +177,9 @@ function analyzeNineAI({
     decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     ...extra,
   });
-  if (!hasContiguousHistory(cs, BAR_MS, 541))
+  if (!hasContiguousHistory(cs, BAR_MS, CONFIG.HISTORY_FETCH_CANDLES))
     return wait("INSUFFICIENT_90D_CLOSED_4H_HISTORY");
+  if (now - cs.at(-1).closeTime > BAR_MS) return wait("STALE_CLOSED_CANDLE");
   const last = cs.at(-1),
     prev = cs.at(-2),
     before = cs.at(-3),
@@ -192,7 +194,7 @@ function analyzeNineAI({
         Math.abs(c.low - cs[i].close),
       ),
     );
-  const atr = mean(ranges.slice(-14));
+  const atr = mean(ranges.slice(-CONFIG.ATR_BARS));
   if (!(atr > 0)) return wait("INVALID_VOLATILITY");
   const structure = swingPoints(cs.slice(-120)),
     sh = structure.highs,
@@ -337,7 +339,7 @@ function analyzeNineAI({
           0,
           2,
         )
-      : null;
+      : CONFIG.SLIPPAGE_BPS / 100;
   const featureSnapshot = {
     snapshotAt,
     closeTime: last.closeTime,
@@ -359,7 +361,7 @@ function analyzeNineAI({
     candleCutoffAt: now,
     closedOIAt: finite(market.oiObservedAt),
   };
-  const policy = { ...DEFAULT_POLICY, ...config };
+  const policy = { ...DEFAULT_POLICY, ...config, minEdge: Math.max(CONFIG.MIN_EDGE, Number(config.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP };
   const agents = {
     regime,
     structure: {
@@ -481,7 +483,7 @@ function analyzeNineAI({
           }
         : null;
       // One valid winning label is enough to start AI-7; p50 may equal p90.
-      const ai7Ready = wins.length > 0;
+      const ai7Ready = samples.filter(o => o.side === side).length >= CONFIG.AI7_ACTIVATION_SAMPLES && wins.length > 0;
       const entry = last.close;
       const stop = ai7Ready
         ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)
@@ -492,8 +494,8 @@ function analyzeNineAI({
             sl: stop,
             tp1: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p50) / 100),
             tp2: entry * (1 + ((side === "LONG" ? 1 : -1) * distMFE.p90) / 100),
-            closePercentAtTP1: 50,
-            timeoutCandles: 24,
+            closePercentAtTP1: (CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
+            timeoutCandles: CONFIG.TIMEOUT_BARS,
             stopMethod: "WINNING_MAE_P80",
             targetMethod: "LABELED_MFE_P50_P90",
             maePct: distMAE.p80,
