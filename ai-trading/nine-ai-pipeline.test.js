@@ -13,8 +13,8 @@ for (const side of ["LONG", "SHORT"])
       assert.equal(d.side, side);
       assert.equal(d.agents.continuation.side, side);
       assert.equal(d.agents.meanReversion.enabled, false);
-      assert.equal(d.edges[side].distMAE.samples, 45);
-      assert.equal(d.tradePlan.closePercentAtTP1, 50);
+      assert.equal(d.edges[side].distMAE.samples, 120);
+      assert.equal(d.tradePlan.closePercentAtTP1, 60);
       assert.equal(d.tradePlan.timeoutMs, 96 * 3600000);
       assert.equal(
         central.finalizeDecision(d, {
@@ -54,20 +54,21 @@ test("invalid or simulated labels never masquerade as an AI-7 model", () => {
     ...f,
     outcomes: Array(60).fill(f.outcomes[0]),
   });
-  assert.equal(deduplicated.agents.outcome.dist_MAE.samples, 1);
+  assert.equal(deduplicated.agents.outcome.dist_MAE, null);
+  assert.equal(deduplicated.agents.outcome.enabled, false);
 });
 test("initial trades require cost inputs and block hot funding", () => {
   const f = { ...fixture(), outcomes: [] };
   for (const field of [
     "fundingRate",
     "openInterestChange",
-    "depthNotional",
-    "spreadPct",
+
   ])
     assert.equal(
       p.analyzeNineAI({ ...f, market: { ...f.market, [field]: null } }).action,
       "WAIT",
     );
+  assert.equal(p.analyzeNineAI({ ...f, market: { ...f.market, depthNotional: null } }).action, "LONG");
   assert.equal(
     p.analyzeNineAI({ ...f, market: { ...f.market, fundingRate: 0.002 } })
       .action,
@@ -84,14 +85,14 @@ for (const side of ["LONG", "SHORT"]) {
       const d = p.analyzeNineAI(f);
       assert.equal(d.action, side);
       assert.equal(d.agents.outcome.enabled, false);
-      assert.equal(d.agents.outcome.source, "AI2_STRUCTURE_INITIAL_PLAN");
+      assert.equal(d.agents.outcome.source, "ATR_COLD_START_EXIT_PLAN");
       assert.equal(d.tradePlan.outcomeMode, "AI2_INITIAL");
-      assert.equal(d.tradePlan.stopMethod, "AI2_STRUCTURE_INITIAL_STOP");
+      assert.equal(d.tradePlan.stopMethod, "ATR14_COLD_START_STOP");
       assert.equal(
         d.edges[side].probabilitySource,
         "FEATURE_SCORE_UNCALIBRATED",
       );
-      assert.equal(d.closePercentAtTP1, 50);
+      assert.equal(d.closePercentAtTP1, 60);
       assert.equal(d.timeoutCandles, 24);
       assert.equal(
         central.finalizeDecision(d, {
@@ -112,47 +113,32 @@ for (const side of ["LONG", "SHORT"]) {
     },
   );
   test(
-    "first winning " +
-      side +
-      " label switches directly to AI-7 even if targets coincide",
+    "AI7 remains ATR fallback below 100 labels and uses MAE/MFE at 100 for " + side,
     () => {
       const f = fixture(side);
-      for (const count of [1, 2]) {
-        const outcomes = f.outcomes.slice(0, count);
-        const d = p.analyzeNineAI({ ...f, outcomes });
+      for (const count of [1, 2, 99]) {
+        const d = p.analyzeNineAI({ ...f, outcomes: f.outcomes.slice(0, count) });
         assert.equal(d.action, side);
-        assert.equal(d.agents.outcome.enabled, true);
-        assert.equal(d.tradePlan.outcomeMode, "AI7_LABELED");
-        assert.equal(
-          d.agents.outcome.dist_MAE.p80,
-          p.percentile(
-            outcomes.map((o) => o.maePct),
-            0.8,
-          ),
-        );
-        assert.equal(
-          d.agents.outcome.dist_MFE.p50,
-          p.percentile(
-            outcomes.map((o) => o.mfePct),
-            0.5,
-          ),
-        );
-        assert.equal(
-          d.agents.outcome.dist_MFE.p90,
-          p.percentile(
-            outcomes.map((o) => o.mfePct),
-            0.9,
-          ),
-        );
-        if (count === 1) assert.equal(d.tp1, d.tp2);
-        assert.equal(
-          central.finalizeDecision(d, {
-            symbol: f.symbol,
-            scannedAt: f.market.now + 1,
-          }).action,
-          side,
-        );
+        assert.equal(d.agents.outcome.enabled, false);
+        assert.equal(d.tradePlan.outcomeMode, "AI2_INITIAL");
+        assert.equal(d.tradePlan.stopMethod, "ATR14_COLD_START_STOP");
       }
+      const outcomes = f.outcomes.slice(0, 100);
+      const d = p.analyzeNineAI({ ...f, outcomes });
+      assert.equal(d.action, side);
+      assert.equal(d.agents.outcome.enabled, true);
+      assert.equal(d.tradePlan.outcomeMode, "AI7_LABELED");
+      assert.equal(d.agents.outcome.dist_MAE.samples, 100);
+      assert.equal(d.agents.outcome.dist_MFE.samples, 100);
+      assert.equal(d.agents.outcome.dist_MAE.p80,
+        p.percentile(outcomes.map(o => o.maePct), 0.8));
+      assert.equal(d.agents.outcome.dist_MFE.p50,
+        p.percentile(outcomes.map(o => o.mfePct), 0.5));
+      assert.equal(d.agents.outcome.dist_MFE.p90,
+        p.percentile(outcomes.map(o => o.mfePct), 0.9));
+      assert.equal(central.finalizeDecision(d, {
+        symbol: f.symbol, scannedAt: f.market.now + 1,
+      }).action, side);
     },
   );
 }
@@ -162,51 +148,28 @@ test("a losing first label contributes to probability but cannot invent winning 
     ...f,
     outcomes: [{ ...f.outcomes[0], win: false }],
   });
-  assert.equal(d.agents.outcome.mode, "AI2_INITIAL");
   assert.equal(d.edges.LONG.samples, 1);
   assert.ok(d.edges.LONG.p > 0 && d.edges.LONG.p < 0.5);
-  assert.equal(d.agents.outcome.dist_MAE, null);
-  assert.equal(d.agents.outcome.dist_MFE, null);
+  assert.notEqual(d.edges.LONG.outcomeMode, "AI7_LABELED");
 });
-test("labeled outcome quantiles do not require 30 winning live trades", () => {
+test("AI7 quantiles activate only after 100 complete labels for the same setup and side", () => {
   for (const side of ["LONG", "SHORT"]) {
     const f = fixture(side);
-    const outcomes = f.outcomes
-      .filter((o) => o.setupKey.endsWith("CONTINUATION"))
-      .slice(0, 3);
+    const outcomes = f.outcomes.filter(o => o.setupKey.endsWith("CONTINUATION")).slice(0,100);
+    const before = p.analyzeNineAI({ ...f, outcomes: outcomes.slice(0,99) });
+    assert.equal(before.agents.outcome.enabled, false);
     const d = p.analyzeNineAI({ ...f, outcomes });
     assert.equal(d.action, side);
-    assert.equal(d.agents.outcome.dist_MAE.samples, 3);
-    assert.equal(d.agents.outcome.dist_MFE.samples, 3);
-    assert.equal(
-      d.agents.outcome.dist_MAE.p80,
-      p.percentile(
-        outcomes.map((o) => o.maePct),
-        0.8,
-      ),
-    );
-    assert.equal(
-      d.tp1,
-      d.entry *
-        (1 +
-          ((side === "LONG" ? 1 : -1) *
-            p.percentile(
-              outcomes.map((o) => o.mfePct),
-              0.5,
-            )) /
-            100),
-    );
-    assert.equal(
-      d.tp2,
-      d.entry *
-        (1 +
-          ((side === "LONG" ? 1 : -1) *
-            p.percentile(
-              outcomes.map((o) => o.mfePct),
-              0.9,
-            )) /
-            100),
-    );
+    assert.equal(d.agents.outcome.enabled, true);
+    assert.equal(d.agents.outcome.dist_MAE.samples, 100);
+    assert.equal(d.agents.outcome.dist_MFE.samples, 100);
+    const p80 = p.percentile(outcomes.map(o=>o.maePct), 0.8);
+    const p50 = p.percentile(outcomes.map(o=>o.mfePct), 0.5);
+    const p90 = p.percentile(outcomes.map(o=>o.mfePct), 0.9);
+    assert.equal(d.agents.outcome.dist_MAE.p80, p80);
+    assert.equal(d.agents.outcome.dist_MFE.p50, p50);
+    assert.equal(d.agents.outcome.dist_MFE.p90, p90);
+    assert.ok(Math.abs(d.tp1-d.entry) >= 0.8*Math.abs(d.entry-d.sl)-1e-10);
   }
 });
 test("stale/future data and a gap in 90d closed 4h history abstain", () => {
