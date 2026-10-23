@@ -19,7 +19,7 @@ function entryMessage(t) {
 class TelegramNotifications {
   constructor({ db, env = process.env, fetchImpl = globalThis.fetch,
     now = Date.now, log = console } = {}) {
-    Object.assign(this, { env, fetch: fetchImpl, now, log });
+    Object.assign(this, { db, env, fetch: fetchImpl, now, log });
     this.rows = db.collection("telegram_notification_outbox");
     this.cooldown = new Map();
     this.controller = new AbortController();
@@ -30,9 +30,24 @@ class TelegramNotifications {
     await this.rows.createIndex({ eventKey: 1 }, { unique: true, name: "uniq_telegram_event" });
     await this.rows.createIndex({ route: 1, status: 1, nextAttemptAt: 1, createdAt: 1 },
       { name: "telegram_pending_delivery" });
+    // Alter the existing TTL in-place when retention days change: creating
+    // a second TTL index would retain the old (possibly shorter) expiry.
+    const name = "expire_sent_telegram_30d";
+    const seconds = CONFIG.TELEGRAM_SENT_RETENTION_DAYS * 86400;
+    if (typeof this.rows.listIndexes === "function") {
+      const indexes = await this.rows.listIndexes().toArray();
+      const prior = indexes.find(index => index.name === name);
+      if (prior && prior.expireAfterSeconds !== seconds) {
+        if (typeof this.db.command !== "function") throw new Error("TELEGRAM_TTL_MIGRATION_UNAVAILABLE");
+        await this.db.command({
+          collMod: "telegram_notification_outbox",
+          index: { name, expireAfterSeconds: seconds },
+        });
+      }
+    }
     // Only confirmed sent messages expire; pending deliveries survive outages.
     await this.rows.createIndex({ sentAt: 1 },
-      { expireAfterSeconds: CONFIG.TELEGRAM_SENT_RETENTION_DAYS * 86400, name: "expire_sent_telegram_30d" });
+      { expireAfterSeconds: seconds, name });
   }
   destination(route) {
     return route === "entry"
