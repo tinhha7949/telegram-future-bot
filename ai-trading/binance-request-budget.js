@@ -1,4 +1,5 @@
 "use strict";
+const { CONFIG } = require("./config");
 const MINUTE = 60000;
 function requestWeight(path, p = {}) {
   if (/\/klines$/.test(path)) {
@@ -35,7 +36,7 @@ class RequestBudget {
   constructor({
     now = Date.now,
     wait = (ms) => new Promise((r) => setTimeout(r, ms)),
-    limit = 1800,
+    limit = CONFIG.BINANCE_REQUEST_WEIGHT_LIMIT,
     onCooldown = (r) =>
       console.warn("BINANCE REST COOLDOWN", "retryAfterMs=" + r.retryAfterMs),
   } = {}) {
@@ -66,7 +67,7 @@ class RequestBudget {
         Number(r.intervalNum) === 1,
     );
     if (Number(row?.limit) > 0)
-      this.limit = Math.min(this.limit, Math.floor(Number(row.limit) * 0.75));
+      this.limit = Math.min(this.limit, Math.floor(Number(row.limit) * CONFIG.BINANCE_SERVER_WEIGHT_SAFETY_RATIO));
   }
   stop() {
     this.stopped = true;
@@ -89,7 +90,7 @@ class RequestBudget {
       }
       const localUsed = s.events.reduce((sum, e) => sum + e.weight, 0),
         used = Math.max(localUsed, s.remoteUsed + s.remoteExtra),
-        ceiling = priority ? this.limit : Math.floor(this.limit * 0.8);
+        ceiling = priority ? this.limit : Math.floor(this.limit * CONFIG.BINANCE_BACKGROUND_BUDGET_RATIO);
       if (weight > ceiling)
         throw new Error("REQUEST_WEIGHT_EXCEEDS_LOCAL_BUDGET");
       let delay = Math.max(
@@ -104,10 +105,10 @@ class RequestBudget {
             ? s.events[0].at + MINUTE - now + 1
             : MINUTE - (now % MINUTE) + 1,
         );
-      if (statistics && s.oi.length >= 800)
+      if (statistics && s.oi.length >= CONFIG.BINANCE_OI_REQUESTS_PER_5MIN)
         delay = Math.max(delay, s.oi[0] + 5 * MINUTE - now + 1);
       if (delay > 0) {
-        await this.wait(Math.min(delay, 1000));
+        await this.wait(Math.min(delay, CONFIG.BINANCE_REQUEST_BACKOFF_CAP_MS));
         continue;
       }
       s.events.push({ at: now, weight });
@@ -115,7 +116,7 @@ class RequestBudget {
       if (statistics) s.oi.push(now);
       if (!priority)
         s.nextBackgroundAt =
-          now + (weight * MINUTE) / Math.max(1, this.limit * 0.8);
+          now + (weight * MINUTE) / Math.max(1, this.limit * CONFIG.BINANCE_BACKGROUND_BUDGET_RATIO);
       return;
     }
   }
@@ -139,7 +140,7 @@ class RequestBudget {
       retry != null && retry !== "" && Number.isFinite(Number(retry))
         ? Number(retry) * 1000
         : Date.parse(retry) - now;
-    if (!(delay > 0)) delay = response.status === 418 ? 120000 : 60000;
+    if (!(delay > 0)) delay = response.status === 418 ? CONFIG.BINANCE_HTTP_418_FALLBACK_MS : CONFIG.BINANCE_HTTP_429_FALLBACK_MS;
     const until = String(data?.msg || "").match(/until\s+(\d{10,13})/i);
     if (until)
       delay = Math.max(
