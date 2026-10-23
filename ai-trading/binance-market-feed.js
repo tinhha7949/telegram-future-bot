@@ -43,15 +43,20 @@ class BinanceMarketFeed {
       state.lastMessage = this.now();
       this.onStatus(kind + " connected");
       state.heartbeat = this.timers.setInterval(() => {
-        if (this.now() - state.lastMessage > 90000) socket.terminate();
-        else if (socket.readyState === 1) socket.ping();
+        try {
+          if (this.now() - state.lastMessage > 90000) socket.terminate();
+          else if (socket.readyState === 1) socket.ping();
+        } catch (_) {
+          // A close racing with the heartbeat is handled by the close event.
+        }
       }, 30000);
       state.heartbeat.unref?.();
     });
     socket.on("message", (raw) => {
       if (this.connections.get(kind) !== state || !this.started) return;
       state.lastMessage = this.now();
-      this.ingest(kind, raw);
+      try { this.ingest(kind, raw); }
+      catch (error) { this.onStatus(kind + " invalid message: " + error.message); }
     });
     socket.on("pong", () => {
       state.lastMessage = this.now();
@@ -60,7 +65,7 @@ class BinanceMarketFeed {
       state.lastMessage = this.now();
     });
     socket.on("error", () => {
-      socket.terminate();
+      try { socket.terminate(); } catch (_) {}
     });
     socket.on("close", () => {
       this.timers.clearInterval(state.heartbeat);

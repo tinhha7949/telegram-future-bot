@@ -29,12 +29,15 @@ function connect() {
   if (!started) return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   try {
-    socket = new WebSocket(STREAM_URL);
-    socket.on("open", () => {
+    const connection = new WebSocket(STREAM_URL);
+    socket = connection;
+    connection.on("open", () => {
+      if (!started || socket !== connection) return;
       lastPongAt = Date.now();
-      socket?.on("pong", () => { lastPongAt = Date.now(); });
+      connection.on("pong", () => { if (socket === connection) lastPongAt = Date.now(); });
     });
-    socket.on("message", raw => {
+    connection.on("message", raw => {
+      if (!started || socket !== connection) return;
       let payload;
       try { payload = JSON.parse(String(raw)); } catch (_) { return; }
       const rows = Array.isArray(payload) ? payload : [payload];
@@ -53,14 +56,17 @@ function connect() {
         eventsBySymbol.set(symbol, kept);
       }
     });
-    socket.on("error", () => {
-      try { socket?.terminate(); } catch (_) {}
+    connection.on("error", () => {
+      try { connection.terminate(); } catch (_) {}
     });
-    socket.on("close", () => {
+    connection.on("close", () => {
+      if (socket !== connection) return;
       socket = null;
       scheduleReconnect();
     });
-    socket.on("ping", () => { lastPongAt = Date.now(); });
+    connection.on("ping", () => {
+      if (socket === connection) lastPongAt = Date.now();
+    });
   } catch (_) {
     socket = null;
     scheduleReconnect();
@@ -73,8 +79,12 @@ function start() {
   connect();
   heartbeatTimer=setInterval(()=>{
     if(!socket||socket.readyState!==WebSocket.OPEN)return;
-    if(Date.now()-lastPongAt>STALE_MS){socket.terminate();return;}
-    try{socket.ping();}catch(_){socket.terminate();}
+    if(Date.now()-lastPongAt>STALE_MS){
+      try { socket.terminate(); } catch (_) {}
+      return;
+    }
+    try { socket.ping(); }
+    catch (_) { try { socket.terminate(); } catch (_) {} }
     const cutoff=Date.now()-WINDOW_MS;
     for(const [symbol,list] of eventsBySymbol){
       const kept=list.filter(e=>e.time>=cutoff);

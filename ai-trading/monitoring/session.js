@@ -1,5 +1,6 @@
 "use strict";
 const { CONFIG } = require("../config");
+const { RUN_RISK_ID } = require("../risk/day-guard");
 const finite = (v) => v != null && v !== "" && Number.isFinite(Number(v));
 const format = (v, places=4) => Number.isFinite(v) ? v.toFixed(places) : "N/A";
 
@@ -19,7 +20,7 @@ async function sessionReport(db, waitControl, {
       .sort({closedAt:-1}).limit(config.SESSION_REPORT_MAX_TRADES+1).toArray(),
     waitControl.store.find({at:{$gte:start,$lte:end}})
       .sort({at:-1}).limit(config.SESSION_REPORT_MAX_WAIT_RECORDS+1).toArray(),
-    db.collection("nine_ai_global_risk").findOne({_id:"GLOBAL"}),
+    db.collection("nine_ai_global_risk").findOne({_id:RUN_RISK_ID}),
   ]);
   const truncated = closed.length > config.SESSION_REPORT_MAX_TRADES ||
     decisions.length > config.SESSION_REPORT_MAX_WAIT_RECORDS;

@@ -3,13 +3,15 @@ const {test}=require("node:test"), assert=require("node:assert/strict");
 const {memoryDb}=require("../test-fixtures.cjs");
 const {sessionReport,formatSessionReport}=require("./session");
 const {CONFIG}=require("../config");
+const { RUN_RISK_ID } = require("../risk/day-guard");
 test("UTC session metrics use realized net R/fees/funding and durable high-water DD",async()=>{
  const db=memoryDb(),now=Date.UTC(2026,9,23,12),wait={store:db.collection("nine_ai_wait_rate_decisions")};
  await db.collection("trades").insertOne({result:"WIN",closedAt:now-1000,realizedR:0.5,feesUSDT:0.6,fundingUSDT:-0.1});
  await db.collection("trades").insertOne({result:"LOSS",closedAt:now-2000,realizedR:-1,feesUSDT:0.6,fundingUSDT:0.2});
  await wait.store.insertOne({at:now-1,action:"WAIT"});
  await wait.store.insertOne({at:now-2,action:"LONG"});
- await db.collection("nine_ai_global_risk").insertOne({_id:"GLOBAL",maxDrawdown:0.08});
+ await db.collection("nine_ai_global_risk").insertOne({_id:"GLOBAL",maxDrawdown:0.992});
+ await db.collection("nine_ai_global_risk").insertOne({_id:RUN_RISK_ID,maxDrawdown:0.08,halted:false});
  const s=await sessionReport(db,wait,{now:()=>now});
  assert.equal(s.complete,true);assert.equal(s.trades,2);
  assert.equal(s.winrate,0.5);assert.equal(s.meanNetR,-0.25);

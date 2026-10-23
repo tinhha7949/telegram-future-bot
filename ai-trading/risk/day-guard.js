@@ -1,6 +1,8 @@
 "use strict";
 const { CONFIG } = require("../config");
 
+// Versioned, bot-activation-scoped ledger. Never import prior account/history peaks.
+const RUN_RISK_ID = "BOT_RUN_V2";
 const fail = reason => ({ ok: false, reason });
 class RiskGuard {
   constructor(db, { config = CONFIG, now = () => Date.now(), alert = async () => {} } = {}) {
@@ -13,34 +15,56 @@ class RiskGuard {
     this.alert = alert;
   }
 
-  // A drawdown trip is durable and LATCHED. It cannot be silently cleared by
-  // restarting a process or resetting the daily budget.
+  // The first *live* equity measurement anchors this bot session. The
+  // document is durable across process crashes and systemd restarts; old
+  // GLOBAL/account-history peaks are deliberately excluded.
+  // Starting a different trading session requires a reviewed, explicit reset.
   async assess(equity) {
     if (!Number.isFinite(equity) || equity <= 0) return fail("EQUITY_UNCERTAIN");
     try {
       await this.global.updateOne(
-        { _id: "GLOBAL" },
-        { $max: { peakEquity: Math.max(this.config.EQUITY_START, equity) }, $setOnInsert: { halted: false } },
+        { _id: RUN_RISK_ID },
+        { $setOnInsert: {
+          schemaVersion: 2,
+          startedAt: this.now(),
+          startEquity: equity,
+          peakEquity: equity,
+          maxDrawdown: 0,
+          halted: false,
+        } },
         { upsert: true },
       );
-      const state = await this.global.findOne({ _id: "GLOBAL" });
-      if (!state || !Number.isFinite(state.peakEquity) || state.peakEquity <= 0)
+      await this.global.updateOne(
+        { _id: RUN_RISK_ID, halted: false },
+        { $max: { peakEquity: equity } },
+      );
+      const state = await this.global.findOne({ _id: RUN_RISK_ID });
+      if (!state || state.schemaVersion !== 2 ||
+          !Number.isFinite(state.startEquity) || state.startEquity <= 0 ||
+          !Number.isFinite(state.peakEquity) || state.peakEquity <= 0 ||
+          !Number.isFinite(state.maxDrawdown) || state.maxDrawdown < 0)
         return fail("RISK_STATE_UNCERTAIN");
       if (state.halted) return fail("DRAWDOWN_CIRCUIT_LATCHED");
-      const dd = (state.peakEquity - equity) / state.peakEquity;
-      await this.global.updateOne({ _id: "GLOBAL" }, { $max: { maxDrawdown: dd } });
+
+      const dd = Math.max(0, (state.peakEquity - equity) / state.peakEquity);
+      await this.global.updateOne(
+        { _id: RUN_RISK_ID }, { $max: { maxDrawdown: dd } },
+      );
       if (dd >= this.config.MAX_DRAWDOWN_CIRCUIT) {
         await this.global.updateOne(
-          { _id: "GLOBAL" },
+          { _id: RUN_RISK_ID },
           { $set: { halted: true, haltedAt: this.now(), reason: "DRAWDOWN_CIRCUIT" } },
         );
-        try { await this.alert("CRITICAL: drawdown circuit latched; new trades disabled"); }
-        catch (error) { console.error("RISK ALERT FAILED", error.message); }
+        try { await this.alert("CRITICAL: bot-session drawdown circuit latched; new trades disabled"); }
+        catch (error) { console.error("RISK ALERT FAILED", error.stack || error.message); }
         return fail("DRAWDOWN_CIRCUIT_LATCHED");
       }
-      return { ok: true, drawdown: dd, peakEquity: state.peakEquity };
+      return {
+        ok: true, drawdown: dd, peakEquity: state.peakEquity,
+        startEquity: state.startEquity, startedAt: state.startedAt,
+      };
     } catch (error) {
-      console.error("RISK CHECK FAILED", error.message);
+      console.error("RISK CHECK FAILED", error.stack || error.message);
       return fail("RISK_LEDGER_UNAVAILABLE");
     }
   }
@@ -100,4 +124,4 @@ class RiskGuard {
     }
   }
 }
-module.exports = { RiskGuard };
+module.exports = { RiskGuard, RUN_RISK_ID };

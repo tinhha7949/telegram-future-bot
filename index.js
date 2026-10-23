@@ -8,6 +8,14 @@ const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
 const { MemoryGuard } = require("./ai-trading/risk/memory-guard");
 const { sessionReport, formatSessionReport } = require("./ai-trading/monitoring/session");
 const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;
+
+// Differentiate an actual async runtime fault from an ordinary risk WAIT.
+function scanPauseReason({ runtimeFault = false, uncertain = false, untracked = 0 } = {}) {
+  if (runtimeFault) return "RUNTIME_ERROR";
+  if (uncertain) return "POSITION_STATE_UNCERTAIN";
+  if (untracked > 0) return "UNTRACKED_EXCHANGE_POSITION";
+  return null;
+}
 const HISTORY_4H_LIMIT = CONFIG.HISTORY_FETCH_CANDLES;
 
 const fs = require("node:fs"),
@@ -62,7 +70,14 @@ function acquirePidLock() {
       };
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
-      const pid = Number(fs.readFileSync(file, "utf8").trim());
+      let pid;
+      try {
+        pid = Number(fs.readFileSync(file, "utf8").trim());
+      } catch (readError) {
+        // Competing process released a stale lock between EEXIST and read.
+        if (readError.code === "ENOENT") continue;
+        throw readError;
+      }
       if (Number.isSafeInteger(pid) && pid > 0) {
         let alive = true;
         try {
@@ -360,7 +375,7 @@ async function main() {
   };
   process.on("unhandledRejection", (e) => {
     entriesPaused = true;
-    console.error("NEW ENTRIES PAUSED", e?.message || e);
+    console.error("UNHANDLED REJECTION: NEW ENTRIES PAUSED", e?.stack || e?.message || e);
   });
   const stop = async () => {
     if (stopped) return;
@@ -389,6 +404,9 @@ async function main() {
 
   await learner.initialize();
 
+  const retention = createRetention(db);
+  const memoryGuard = new MemoryGuard(retention, { alert: msg => report(msg) });
+  const recentStore = new RecentOHLCVStore(db);
   const riskGuard = new RiskGuard(db, { alert: msg => report(msg) });
 
   const waitControl = new WaitRateControl(db);
@@ -397,9 +415,9 @@ async function main() {
 
   if (!initialRisk.ok) {
 
-    entriesPaused = true;
-
-    await report("NEW ENTRIES PAUSED: " + initialRisk.reason);
+    // Risk WAIT is evaluated independently each scan: never mislabel it as
+    // RUNTIME_ERROR, and never disable existing position protection.
+    await report("NEW ENTRIES RISK WAIT: " + initialRisk.reason);
 
   }
   const lifecycle = new TradeLifecycle({
@@ -416,7 +434,7 @@ async function main() {
   await lifecycle.initialize();
   liquidationFeed.start();
   exchange.startMarketData();
-  function every(ms, job) {
+  function every(ms, job, label = "PERIODIC_JOB") {
     let running = false;
     const run = async () => {
       if (stopped || running) return;
@@ -424,7 +442,7 @@ async function main() {
       try {
         await job();
       } catch (e) {
-        console.error(e.message);
+        console.error("NINE-AI JOB ERROR", label, e?.stack || e?.message || e);
       } finally {
         running = false;
       }
@@ -432,16 +450,15 @@ async function main() {
     intervals.push(setInterval(run, ms));
     return run;
   }
-  const manage = every(CONFIG.PROTECTION_INTERVAL_MS, () => lifecycle.tick({ runMaintenance: false }));
+  const manage = every(CONFIG.PROTECTION_INTERVAL_MS, () => lifecycle.tick({ runMaintenance: false }), "PROTECTION");
   await manage();
   // Exchange safety has its own loop; historical API cooldowns, MAE/MFE and
   // Telegram delivery cannot keep timeout/SL/TP reconciliation waiting.
-  const bookkeeping = every(CONFIG.BOOKKEEPING_INTERVAL_MS, () => lifecycle.maintenance());
+  const bookkeeping = every(CONFIG.BOOKKEEPING_INTERVAL_MS, () => lifecycle.maintenance(), "BOOKKEEPING");
   void bookkeeping();
-  const deliver = every(CONFIG.NOTIFICATION_INTERVAL_MS, () => notifications.flush());
+  const deliver = every(CONFIG.NOTIFICATION_INTERVAL_MS, () => notifications.flush(), "TELEGRAM_DELIVERY");
   void deliver();
-  every(CONFIG.CLOCK_SYNC_INTERVAL_MS, () => exchange.syncTime());
-  const retention = createRetention(db);
+  every(CONFIG.CLOCK_SYNC_INTERVAL_MS, () => exchange.syncTime(), "CLOCK_SYNC");
   const clean = every(retention.config.intervalMs, async () => {
     const summary = await retention.runCleanup();
     const usage = summary.usageAfterMB ?? summary.usageMB;
@@ -526,18 +543,19 @@ async function main() {
       ? { ...decision, nineAiDecisionKey: saved.decisionKey }
       : null;
   }
+  let previousPause = null;
   const scan = every(CONFIG.SCAN_INTERVAL_MS, async () => {
-    if (entriesPaused || lifecycle.uncertain || lifecycle.untracked.size) {
-      console.log(
-        "NINE-AI SCAN PAUSED",
-        entriesPaused
-          ? "RUNTIME_ERROR"
-          : lifecycle.uncertain
-            ? "POSITION_STATE_UNCERTAIN"
-            : "UNTRACKED_EXCHANGE_POSITION",
-      );
+    const pause = scanPauseReason({
+      runtimeFault: entriesPaused,
+      uncertain: lifecycle.uncertain,
+      untracked: lifecycle.untracked.size,
+    });
+    if (pause) {
+      if (pause !== previousPause) console.error("NINE-AI SCAN PAUSED", pause);
+      previousPause = pause;
       return;
     }
+    previousPause = null;
     await db.command({ ping: 1 });
 
     const capacity = await memoryGuard.assess();
@@ -592,7 +610,7 @@ async function main() {
       for (const r of batch) {
         if (r.status === "fulfilled" && r.value) signals.push(r.value);
         else if (r.status === "rejected")
-          console.error("SCAN", r.reason.message);
+          console.error("SCAN SYMBOL FAILED", r.reason?.stack || r.reason?.message || r.reason);
       }
       if ((i + CONFIG.SCAN_BATCH_SIZE) % CONFIG.SCAN_PROGRESS_EVERY_SYMBOLS === 0)
         console.log(
@@ -618,7 +636,7 @@ async function main() {
       isStopped: () => stopped,
       entriesPaused: () => entriesPaused,
     });
-  });
+  }, "MARKET_SCAN");
   // Commands have their own loop. A Telegram outage cannot stall SL/TP/timeout management.
   let updateId = 0;
   const commands = every(CONFIG.COMMAND_POLL_INTERVAL_MS, async () => {
@@ -641,7 +659,7 @@ async function main() {
           `BOT OK | active=${lifecycle.active.size} | entriesPaused=${entriesPaused || lifecycle.uncertain || !!lifecycle.untracked.size}`,
         );
     }
-  });
+  }, "TELEGRAM_COMMANDS");
   void commands();
   void scan();
   console.log(
@@ -651,7 +669,7 @@ async function main() {
 }
 if (require.main === module)
   main().catch((e) => {
-    console.error("START FAILED", e.message);
+    console.error("START FAILED", e?.stack || e?.message || e);
     process.exit(1);
   });
 module.exports = {
@@ -662,4 +680,5 @@ module.exports = {
   universe,
   executeDecisions,
   loadDecisionInput,
+  scanPauseReason,
 };
