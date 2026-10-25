@@ -325,6 +325,7 @@ class TradeLifecycle {
     const doc = { ...t, updatedAt: this.now() };
     delete doc._id;
     delete doc.opening;
+    delete doc.entryOrderAttempted;
     await this.claims.updateOne(
       { signalKey: t.signalKey },
       {
@@ -445,6 +446,8 @@ class TradeLifecycle {
       if ((await this.exchange.openOrders(trade.symbol)).length) return false;
       // Stale siblings are cleared only while the exchange confirms flat.
       await this.exchange.cancelAlgos(trade.symbol);
+      if ((await this.exchange.openAlgos()).some((o) => o.symbol === trade.symbol))
+        return false;
       trade.entryClientId = id(trade, "entry");
       trade.state = "ORDER_SUBMITTING";
       trade.submittedAt = Math.floor(this.now() + (this.exchange.offset || 0));
@@ -465,6 +468,7 @@ class TradeLifecycle {
       this.active.set(trade.signalKey, trade);
       let order;
       try {
+        trade.entryOrderAttempted = true;
         order = await this.exchange.market(trade, trade.entryClientId);
       } catch (e) {
         trade.state = e.ambiguous ? "ENTRY_UNKNOWN" : "ENTRY_REJECTED";
@@ -759,7 +763,9 @@ class TradeLifecycle {
         if ((await this.exchange.openOrders(t.symbol)).some(owned))
           throw new Error("CHILD_ORDER_CLEANUP_PENDING");
       }
-      if ((await this.exchange.openAlgos()).some((o) => o.symbol === t.symbol))
+      if ((await this.exchange.openAlgos()).some((o) =>
+        o.symbol === t.symbol &&
+        /^n9_[a-f0-9]{8}_(sl|tp1|tp2)_/.test(String(o.clientAlgoId))))
         throw new Error("PROTECTION_CLEANUP_PENDING");
       t.protectionCleanupConfirmed = true;
     }

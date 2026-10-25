@@ -216,3 +216,15 @@ for (const side of ["LONG", "SHORT"])
     await assert.rejects(e.entryFill({ symbol: "TEST", side, quantity: 2 },
       { orderId: 123, status: "FILLED", executedQty: "2" }), /ENTRY_FILL_HISTORY_INCOMPLETE/);
   });
+
+test("cancelAlgos cancels only this bot's conditional orders", async () => {
+  const e = new BinanceExchange(), canceled = [];
+  e.openAlgos = async () => [
+    { symbol: "TESTUSDT", algoId: 1, clientAlgoId: "n9_1234abcd_sl_abc" },
+    { symbol: "TESTUSDT", algoId: 2, clientAlgoId: "manual-stop" },
+    { symbol: "OTHERUSDT", algoId: 3, clientAlgoId: "n9_8765abcd_tp1_def" },
+  ];
+  e.cancelAlgo = async (symbol, algoId) => canceled.push({ symbol, algoId });
+  assert.equal(await e.cancelAlgos("TESTUSDT"), 1);
+  assert.deepEqual(canceled, [{ symbol: "TESTUSDT", algoId: 1 }]);
+});

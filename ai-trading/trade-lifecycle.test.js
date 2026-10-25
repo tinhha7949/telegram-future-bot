@@ -921,3 +921,13 @@ test("a claim-only uncertain entry stays managed even when recovery lacks fill d
   assert.equal(h.calls.filter((c) => c === "close").length, 1);
   assert.equal(h.calls.filter((c) => c === "entry").length, 1);
 });
+
+test("entry waits while an unrelated conditional order remains on the symbol", async () => {
+  const h = harness();
+  h.exchange.openAlgos = async () => [
+    { symbol: h.trade.symbol, algoId: 77, clientAlgoId: "manual-stop" },
+  ];
+  const lifecycle = h.create();
+  assert.equal(await lifecycle.enter(h.trade), false);
+  assert.equal(h.calls.includes("entry"), false);
+});
