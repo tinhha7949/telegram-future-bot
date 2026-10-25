@@ -240,6 +240,8 @@ async function executeDecisions(
 ) {
   signals.sort((a, b) => b.edges[b.side].edge - a.edges[a.side].edge);
   for (const decision of signals) {
+    let reservationKey = null;
+    let entryAttempted = false;
     if (
       isStopped() ||
       entriesPaused() ||
@@ -299,21 +301,33 @@ async function executeDecisions(
       const reservation = await riskGuard.reserve(`${decision.symbol}:${decision.signalAt}`, equity);
 
       if (!reservation.ok) { console.log("ENTRY WAIT", decision.symbol, reservation.reason); continue; }
+      reservationKey = `${decision.symbol}:${decision.signalAt}`;
 
       const trade = newTrade(decision, sizing);
       trade.executionValidation = validation;
-      if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size)
+      if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size) {
+        await riskGuard.release(reservationKey);
+        reservationKey = null;
         break;
+      }
       try {
         const entered = await lifecycle.enter(trade);
-        if (!entered && !trade.entryOrderAttempted)
+        entryAttempted = trade.entryOrderAttempted === true;
+        if (!entered && !entryAttempted) {
           await riskGuard.release(trade.signalKey);
+          reservationKey = null;
+        }
       } catch (error) {
-        if (!trade.entryOrderAttempted)
+        entryAttempted = trade.entryOrderAttempted === true;
+        if (!entryAttempted) {
           await riskGuard.release(trade.signalKey);
+          reservationKey = null;
+        }
         throw error;
       }
     } catch (e) {
+      if (reservationKey && !entryAttempted)
+        await riskGuard.release(reservationKey);
       console.error("ENTRY PROCESSING", decision.symbol, e.message);
     }
   }
