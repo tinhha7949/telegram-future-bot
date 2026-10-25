@@ -123,5 +123,35 @@ class RiskGuard {
       return fail("RISK_LEDGER_UNAVAILABLE");
     }
   }
+  // Return a reservation only when the caller proves no order request was sent.
+  // RELEASING makes the decrement recoverable: an interrupted release stays
+  // fail-closed and cannot be mistaken for available capacity.
+  async release(signalKey) {
+    if (!signalKey || typeof signalKey !== "string") return false;
+    try {
+      const reservation = await this.reservations.findOneAndUpdate(
+        { _id: signalKey, status: "RESERVED" },
+        { $set: { status: "RELEASING", releasingAt: this.now() } },
+        { returnDocument: "before" },
+      );
+      const row = reservation?.value ?? reservation;
+      if (!row || row.status !== "RESERVED" ||
+          !row.day || !(Number.isFinite(row.risk) && row.risk > 0)) return false;
+      const result = await this.days.updateOne(
+        { _id: row.day, usedRisk: { $gte: row.risk } },
+        { $inc: { usedRisk: -row.risk } },
+      );
+      if (result.matchedCount !== 1 || result.modifiedCount !== 1) return false;
+      await this.reservations.updateOne(
+        { _id: signalKey, status: "RELEASING" },
+        { $set: { status: "RELEASED", releasedAt: this.now() } },
+      );
+      await this.reservations.deleteOne({ _id: signalKey, status: "RELEASED" });
+      return true;
+    } catch (error) {
+      console.error("DAILY RISK RELEASE FAILED", error.message);
+      return false;
+    }
+  }
 }
 module.exports = { RiskGuard, RUN_RISK_ID };
