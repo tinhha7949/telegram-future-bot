@@ -304,7 +304,15 @@ async function executeDecisions(
       trade.executionValidation = validation;
       if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size)
         break;
-      await lifecycle.enter(trade);
+      try {
+        const entered = await lifecycle.enter(trade);
+        if (!entered && !trade.entryOrderAttempted)
+          await riskGuard.release(trade.signalKey);
+      } catch (error) {
+        if (!trade.entryOrderAttempted)
+          await riskGuard.release(trade.signalKey);
+        throw error;
+      }
     } catch (e) {
       console.error("ENTRY PROCESSING", decision.symbol, e.message);
     }
