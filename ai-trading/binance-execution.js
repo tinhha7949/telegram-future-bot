@@ -516,11 +516,18 @@ class BinanceExchange {
     }
   }
   async cancelAlgos(symbol) {
-    return this.request(
-      "/fapi/v1/algoOpenOrders",
-      { symbol },
-      { method: "DELETE", signed: true },
+    // Binance's cancel-all endpoint also removes manual and third-party
+    // conditional orders. Cancel only algo orders with this bot's ID format.
+    const rows = await this.openAlgos();
+    const owned = rows.filter((row) =>
+      row.symbol === symbol &&
+      /^n9_[a-f0-9]{8}_(sl|tp1|tp2)_/.test(String(row.clientAlgoId)),
     );
+    for (const row of owned) {
+      if (row.algoId == null) throw new Error("BOT_ALGO_ID_MISSING");
+      await this.cancelAlgo(symbol, row.algoId);
+    }
+    return owned.length;
   }
   async cancelAlgo(symbol, algoId) {
     try {
