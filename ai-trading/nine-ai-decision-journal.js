@@ -613,8 +613,30 @@ async function initialize(db) {
   );
 
   const loadStartedAt = Date.now();
+  // Load only fields used by the in-memory decision/evaluation cache. Full
+  // decision documents also contain bulky audit payloads that are unnecessary
+  // during startup and can turn a small row count into a large socket response.
+  const cacheProjection = {
+    decisionKey: 1,
+    symbol: 1,
+    signalTime: 1,
+    decisionSchemaVersion: 1,
+    "decisionSnapshot.decisionSchemaVersion": 1,
+    "decisionSnapshot.featureSnapshot": 1,
+    "decisionSnapshot.edges": 1,
+    "decisionSnapshot.executionDecision": 1,
+    outcomeStatus: 1,
+    marketWindow: 1,
+    windowFeatures: 1,
+    windowFeatureSchemaVersion: 1,
+    evaluations: 1,
+    researchVariants: 1,
+    features: 1,
+    marketRegime: 1,
+    scannedAt: 1,
+  };
   records = await collection
-    .find({})
+    .find({}, { projection: cacheProjection })
     .sort({ signalTime: -1, scannedAt: -1 })
     .hint({ signalTime: -1, scannedAt: -1 })
     .limit(MAX_RECORDS)
