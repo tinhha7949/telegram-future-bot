@@ -635,12 +635,31 @@ async function initialize(db) {
     marketRegime: 1,
     scannedAt: 1,
   };
-  records = await collection
+  const cursor = collection
     .find({}, { projection: cacheProjection })
     .sort({ signalTime: -1, scannedAt: -1 })
     .hint({ signalTime: -1, scannedAt: -1 })
-    .limit(MAX_RECORDS)
-    .toArray();
+    .limit(MAX_RECORDS);
+  if (typeof cursor.batchSize === "function")
+    cursor.batchSize(CONFIG.JOURNAL_LOAD_BATCH_SIZE);
+  records = [];
+  console.log(
+    "NINE-AI JOURNAL LOAD START",
+    "limit=" + MAX_RECORDS,
+    "batchSize=" + CONFIG.JOURNAL_LOAD_BATCH_SIZE,
+  );
+  let fetched = 0;
+  for await (const record of cursor) {
+    records.push(record);
+    fetched += 1;
+    if (fetched % CONFIG.JOURNAL_LOAD_BATCH_SIZE === 0) {
+      console.log(
+        "NINE-AI JOURNAL LOAD PROGRESS",
+        "records=" + fetched,
+        "elapsedMs=" + (Date.now() - loadStartedAt),
+      );
+    }
+  }
   console.log(
     "NINE-AI JOURNAL LOAD COMPLETE",
     "records=" + records.length,
