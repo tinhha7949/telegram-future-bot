@@ -107,6 +107,12 @@ function memoryDb() {
                 found = found.slice(0, n);
                 return this;
               },
+              batchSize() {
+                return this;
+              },
+              async *[Symbol.asyncIterator]() {
+                for (const row of found) yield structuredClone(row);
+              },
               async toArray() {
                 return structuredClone(found);
               },
