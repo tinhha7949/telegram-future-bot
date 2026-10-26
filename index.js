@@ -2,7 +2,7 @@
 require("dotenv").config();
 
 const { CONFIG } = require("./ai-trading/config");
-const { connectMongoWithRetry } = require("./ai-trading/mongo-connect");
+const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
@@ -392,6 +392,21 @@ async function main() {
     entriesPaused = false,
     notifications = null;
   const intervals = [];
+  const retryMongoStartup = (operation, label) => retryMongoOperation(operation, {
+    label,
+    isStopped: () => stopped,
+    onRetry: (error, { attempt, delayMs }) => {
+      console.error(
+        "MONGO STARTUP RETRY",
+        "stage=" + label,
+        "attempt=" + attempt,
+        "retryInMs=" + delayMs,
+        error?.name || "MongoError",
+        error?.code || "",
+        error?.message || error,
+      );
+    },
+  });
   const report = async (msg, metadata) => {
     console.log(msg);
     if (notifications) await notifications.report(msg, metadata);
@@ -419,6 +434,7 @@ async function main() {
   client = await connectMongoWithRetry({
     createClient: () => new MongoClient(process.env.MONGO_URI, mongoOptions),
     onClient: (current) => { client = current; },
+    verifyClient: (current) => current.db("trading").command({ ping: 1 }),
     isStopped: () => stopped,
     onRetry: (error, { attempt, delayMs }) => {
       console.error(
@@ -433,14 +449,13 @@ async function main() {
   });
   if (!client || stopped) return;
   const db = client.db("trading");
-  await db.command({ ping: 1 });
   notifications = new TelegramNotifications({ db });
-  await notifications.initialize();
+  await retryMongoStartup(() => notifications.initialize(), "TELEGRAM_INDEXES");
   await exchange.initialize();
-  await journal.initialize(db);
+  await retryMongoStartup(() => journal.initialize(db), "DECISION_JOURNAL_INDEXES");
   const learner = createOfflineLearning(db);
 
-  await learner.initialize();
+  await retryMongoStartup(() => learner.initialize(), "OFFLINE_LEARNER_INITIALIZE");
 
   const retention = createRetention(db);
   const memoryGuard = new MemoryGuard(retention, { alert: msg => report(msg) });
@@ -449,7 +464,10 @@ async function main() {
 
   const waitControl = new WaitRateControl(db);
 
-  const initialRisk = await riskGuard.assess(await exchange.equity());
+  const initialRisk = await retryMongoStartup(
+    async () => riskGuard.assess(await exchange.equity()),
+    "INITIAL_RISK_STATE",
+  );
 
   if (!initialRisk.ok) {
 
@@ -469,7 +487,7 @@ async function main() {
       console.log("ENTRY CONFIRMED", trade.symbol, trade.side, trade.signalKey);
     },
   });
-  await lifecycle.initialize();
+  await retryMongoStartup(() => lifecycle.initialize(), "TRADE_LIFECYCLE_RECOVERY");
   liquidationFeed.start();
   exchange.startMarketData();
   function every(ms, job, label = "PERIODIC_JOB") {
