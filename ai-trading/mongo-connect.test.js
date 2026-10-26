@@ -6,6 +6,7 @@ const {
   connectMongoWithRetry,
   isTransientMongoConnectError,
   retryDelay,
+  retryMongoOperation,
 } = require("./mongo-connect");
 
 const config = {
@@ -84,4 +85,51 @@ test("stops retrying when shutdown happens during the wait", async () => {
   });
   assert.equal(result, null);
   assert.equal(creates, 1);
+});
+
+test("retries transient startup database operations after connect", async () => {
+  let calls = 0;
+  const delays = [];
+  const result = await retryMongoOperation(async () => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("connection timed out"), {
+      name: "MongoNetworkTimeoutError",
+    });
+    return "ready";
+  }, {
+    label: "PING",
+    config,
+    wait: async (ms) => delays.push(ms),
+  });
+  assert.equal(result, "ready");
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [100]);
+});
+
+test("retries failed ping before returning a connected MongoClient", async () => {
+  let pings = 0;
+  let creates = 0;
+  const result = await connectMongoWithRetry({
+    createClient: () => {
+      const id = ++creates;
+      return {
+        async connect() {},
+        async close() {},
+        async db() {
+          return { command: async () => {
+            pings += 1;
+            if (pings === 1) throw Object.assign(new Error("connection timed out"), {
+              name: "MongoNetworkTimeoutError",
+            });
+          }};
+        },
+        id,
+      };
+    },
+    verifyClient: async (client) => client.db().then((db) => db.command({ ping: 1 })),
+    config,
+    wait: async () => {},
+  });
+  assert.equal(result.id, 2);
+  assert.equal(pings, 2);
 });
