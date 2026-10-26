@@ -17,6 +17,7 @@ const config = {
 test("retries transient Mongo network timeouts and reconnects with a fresh client", async () => {
   let creates = 0;
   const closed = [];
+  const delays = [];
   const retries = [];
   const client = () => {
     const id = ++creates;
@@ -34,13 +35,13 @@ test("retries transient Mongo network timeouts and reconnects with a fresh clien
   const connected = await connectMongoWithRetry({
     createClient: client,
     config,
-    wait: async (ms) => retries.push(ms),
+    wait: async (ms) => delays.push(ms),
     onRetry: (_error, info) => retries.push(info),
   });
   assert.equal(connected.id, 2);
   assert.deepEqual(closed, [1]);
-  assert.equal(retries[0], 100);
-  assert.deepEqual(retries[1], { attempt: 1, delayMs: 100 });
+  assert.deepEqual(delays, [100]);
+  assert.deepEqual(retries, [{ attempt: 1, delayMs: 100 }]);
 });
 
 test("does not retry permanent Mongo errors", async () => {
