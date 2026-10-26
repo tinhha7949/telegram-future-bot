@@ -281,7 +281,7 @@ async function executeDecisions(
 
       if (!riskGuard) { console.error("ENTRY WAIT RISK_GUARD_UNAVAILABLE"); continue; }
 
-      const account = await exchange.accountState();
+      const account = await exchange.accountState(decision.symbol);
 
       const equity = account.equity;
 
