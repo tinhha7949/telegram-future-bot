@@ -236,9 +236,13 @@ test("negative finite available balance is a valid account state with no free ma
     multiAssetsMargin: false,
     availableBalance: "-2.5",
     assets: [{ asset: "USDT", walletBalance: "10", unrealizedProfit: "-1" }],
+    positions: [{ symbol: "TESTUSDT", leverage: "20", maxNotional: "50000" }],
   });
   assert.deepEqual(await e.accountState(), {
     equity: 9,
     availableBalance: -2.5,
+    leverageBySymbol: {
+      TESTUSDT: { leverage: 20, maxNotional: 50000 },
+    },
   });
 });
