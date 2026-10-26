@@ -931,3 +931,36 @@ test("entry waits while an unrelated conditional order remains on the symbol", a
   assert.equal(await lifecycle.enter(h.trade), false);
   assert.equal(h.calls.includes("entry"), false);
 });
+
+test("definitively rejected signal claim can safely submit a fresh attempt", async () => {
+  const h = harness();
+  await h.db.collection("trade_signal_claims").insertOne({
+    signalKey: h.trade.signalKey,
+    symbol: h.trade.symbol,
+    state: "ENTRY_REJECTED",
+    orderClientId: "rejected-client-id",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  const lifecycle = h.create();
+  assert.equal(await lifecycle.enter(h.trade), true);
+  assert.equal(h.calls.filter((call) => call === "entry").length, 1);
+  assert.notEqual(h.trade.entryClientId, "rejected-client-id");
+  assert.equal((await h.db.collection("trade_signal_claims").findOne({
+    signalKey: h.trade.signalKey,
+  })).state, "ACTIVE");
+});
+
+test("uncertain signal claim never submits a second entry", async () => {
+  const h = harness();
+  await h.db.collection("trade_signal_claims").insertOne({
+    signalKey: h.trade.signalKey,
+    symbol: h.trade.symbol,
+    state: "ENTRY_UNKNOWN",
+    orderClientId: "uncertain-client-id",
+    createdAt: new Date(),
+  });
+  const lifecycle = h.create();
+  assert.equal(await lifecycle.enter(h.trade), false);
+  assert.equal(h.calls.filter((call) => call === "entry").length, 0);
+});

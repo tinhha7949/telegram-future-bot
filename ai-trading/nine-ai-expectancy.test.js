@@ -194,7 +194,7 @@ function fakeExchange(markFor = (_, entry) => entry) {
       throw new Error("Unexpected route " + route);
     },
     async equity() { return 1000; },
-    async accountState() { return { equity: 1000, availableBalance: 10000 }; },
+    async accountState(symbol) { return { equity: 1000, availableBalance: 10000, leverageBySymbol: { [symbol]: { leverage: 20, maxNotional: 250000 } } }; },
     async info() {
       return {
         filters: [

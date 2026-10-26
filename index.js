@@ -2,6 +2,7 @@
 require("dotenv").config();
 
 const { CONFIG } = require("./ai-trading/config");
+const { assessAvailableMargin } = require("./ai-trading/execution-risk");
 const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
@@ -255,12 +256,21 @@ async function executeDecisions(
         [...lifecycle.active.values()].some((t) => t.symbol === decision.symbol)
       )
         continue;
-      if (
-        await lifecycle.claims.findOne({
-          signalKey: `${decision.symbol}:${decision.signalAt}`,
-        })
-      )
+      const priorClaim = await lifecycle.claims.findOne({
+        signalKey: `${decision.symbol}:${decision.signalAt}`,
+      });
+      if (priorClaim && priorClaim.state !== "ENTRY_REJECTED") {
+        console.log("ENTRY WAIT", decision.symbol, "SIGNAL_CLAIM_" + priorClaim.state);
         continue;
+      }
+      if (priorClaim) {
+        const rejectedAt = new Date(priorClaim.updatedAt || priorClaim.createdAt).getTime();
+        if (!Number.isFinite(rejectedAt) ||
+            Date.now() - rejectedAt < CONFIG.ENTRY_REJECTED_RETRY_INTERVAL_MS) {
+          console.log("ENTRY WAIT", decision.symbol, "ENTRY_REJECT_RETRY_COOLDOWN");
+          continue;
+        }
+      }
       const fresh = await marketSnapshot(exchange, decision.symbol);
       const validation = validateExecution(decision, fresh, Date.now());
       if (!validation.ok) {
@@ -271,7 +281,7 @@ async function executeDecisions(
 
       if (!riskGuard) { console.error("ENTRY WAIT RISK_GUARD_UNAVAILABLE"); continue; }
 
-      const account = await exchange.accountState();
+      const account = await exchange.accountState(decision.symbol);
 
       const equity = account.equity;
 
@@ -287,14 +297,17 @@ async function executeDecisions(
       );
       if (!sizing) { console.log("ENTRY WAIT", decision.symbol, "INVALID_SIZING"); continue; }
 
-      if (!Number.isFinite(account.availableBalance) ||
-
-          account.availableBalance < sizing.notional * CONFIG.RISK_RESERVATION_MIN_MARGIN_MULTIPLIER) {
-
-        console.log("ENTRY WAIT", decision.symbol, "INSUFFICIENT_AVAILABLE_MARGIN");
-
+      const leverage = account.leverageBySymbol?.[decision.symbol];
+      const margin = assessAvailableMargin({
+        availableBalance: account.availableBalance,
+        notional: sizing.notional,
+        leverage: leverage?.leverage,
+        maxNotional: leverage?.maxNotional,
+        multiplier: CONFIG.RISK_RESERVATION_MIN_MARGIN_MULTIPLIER,
+      });
+      if (!margin.ok) {
+        console.log("ENTRY WAIT", decision.symbol, margin.reason);
         continue;
-
       }
 
       if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size) break;

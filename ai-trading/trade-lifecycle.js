@@ -451,19 +451,32 @@ class TradeLifecycle {
       trade.entryClientId = id(trade, "entry");
       trade.state = "ORDER_SUBMITTING";
       trade.submittedAt = Math.floor(this.now() + (this.exchange.offset || 0));
-      try {
-        await this.claims.insertOne({
-          signalKey: trade.signalKey,
-          symbol: trade.symbol,
-          side: trade.side,
-          state: trade.state,
-          orderClientId: trade.entryClientId,
-          tradeSnapshot: { ...trade, opening: false },
-          createdAt: new Date(this.now()),
-        });
-      } catch (e) {
-        if (e.code === 11000) return false;
-        throw e;
+      const priorClaim = await this.claims.findOne({ signalKey: trade.signalKey });
+      const claim = {
+        signalKey: trade.signalKey,
+        symbol: trade.symbol,
+        side: trade.side,
+        state: trade.state,
+        orderClientId: trade.entryClientId,
+        tradeSnapshot: { ...trade, opening: false },
+        updatedAt: new Date(this.now()),
+      };
+      if (priorClaim) {
+        // Only a definitive exchange rejection is retryable. Unknown submissions
+        // retain their original client ID and remain blocked to prevent duplicates.
+        if (priorClaim.state !== "ENTRY_REJECTED") return false;
+        const retried = await this.claims.updateOne(
+          { signalKey: trade.signalKey, state: "ENTRY_REJECTED" },
+          { $set: claim, $unset: { closedAt: "" } },
+        );
+        if (retried.matchedCount !== 1) return false;
+      } else {
+        try {
+          await this.claims.insertOne({ ...claim, createdAt: new Date(this.now()) });
+        } catch (e) {
+          if (e.code === 11000) return false;
+          throw e;
+        }
       }
       this.active.set(trade.signalKey, trade);
       let order;

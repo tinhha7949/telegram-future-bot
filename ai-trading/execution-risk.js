@@ -36,4 +36,22 @@ function isRiskWithinBudget(finalRisk, maxRisk) {
   return risk <= cap + Math.max(1e-12, cap * 1e-9);
 }
 
-module.exports = { requiredQtyForNotional, assessMinNotionalRisk, isRiskWithinBudget };
+function assessAvailableMargin({ availableBalance, notional, leverage, maxNotional, multiplier }) {
+  const values = [availableBalance, notional, leverage, multiplier].map(Number);
+  if (values.some(v => !Number.isFinite(v)) || values[1] <= 0 || values[2] <= 0 || values[3] <= 0) {
+    return { ok: false, reason: "INVALID_MARGIN_INPUT", requiredMargin: NaN };
+  }
+  const [available, orderNotional, currentLeverage, safetyMultiplier] = values;
+  const tierNotional = Number(maxNotional);
+  if (Number.isFinite(tierNotional) && tierNotional > 0 && orderNotional > tierNotional) {
+    return { ok: false, reason: "MAX_NOTIONAL_EXCEEDED", requiredMargin: orderNotional / currentLeverage * safetyMultiplier };
+  }
+  const requiredMargin = orderNotional / currentLeverage * safetyMultiplier;
+  return {
+    ok: available >= requiredMargin,
+    reason: available >= requiredMargin ? "AVAILABLE_MARGIN_OK" : "INSUFFICIENT_AVAILABLE_MARGIN",
+    requiredMargin,
+  };
+}
+
+module.exports = { assessAvailableMargin, requiredQtyForNotional, assessMinNotionalRisk, isRiskWithinBudget };
