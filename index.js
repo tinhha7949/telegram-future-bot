@@ -313,13 +313,13 @@ async function executeDecisions(
       try {
         const entered = await lifecycle.enter(trade);
         entryAttempted = trade.entryOrderAttempted === true;
-        if (!entered && !entryAttempted) {
+        if (!entered && mayReleaseEntryRiskReservation(trade)) {
           await riskGuard.release(trade.signalKey);
           reservationKey = null;
         }
       } catch (error) {
         entryAttempted = trade.entryOrderAttempted === true;
-        if (!entryAttempted) {
+        if (mayReleaseEntryRiskReservation(trade)) {
           await riskGuard.release(trade.signalKey);
           reservationKey = null;
         }
@@ -331,6 +331,11 @@ async function executeDecisions(
       console.error("ENTRY PROCESSING", decision.symbol, e.message);
     }
   }
+}
+// A reservation is refundable only before submission or after Binance has
+// definitively rejected the entry. Ambiguous submissions remain charged.
+function mayReleaseEntryRiskReservation(trade) {
+  return trade.entryOrderAttempted !== true || trade.state === "ENTRY_REJECTED";
 }
 async function loadDecisionInput(
   exchange,
@@ -697,4 +702,5 @@ module.exports = {
   executeDecisions,
   loadDecisionInput,
   scanPauseReason,
+  mayReleaseEntryRiskReservation,
 };
