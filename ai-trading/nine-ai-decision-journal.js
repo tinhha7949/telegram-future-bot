@@ -585,7 +585,8 @@ async function initialize(db) {
   let existing = [];
   if (typeof collection.listIndexes === "function") {
     try {
-      existing = await collection.listIndexes().toArray();
+      const cursor = await collection.listIndexes();
+      existing = await cursor.toArray();
     } catch (error) {
       // listIndexes on a collection not yet created returns NamespaceNotFound.
       if (Number(error?.code) !== 26) throw error;
