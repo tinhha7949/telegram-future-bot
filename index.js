@@ -256,12 +256,21 @@ async function executeDecisions(
         [...lifecycle.active.values()].some((t) => t.symbol === decision.symbol)
       )
         continue;
-      if (
-        await lifecycle.claims.findOne({
-          signalKey: `${decision.symbol}:${decision.signalAt}`,
-        })
-      )
+      const priorClaim = await lifecycle.claims.findOne({
+        signalKey: `${decision.symbol}:${decision.signalAt}`,
+      });
+      if (priorClaim && priorClaim.state !== "ENTRY_REJECTED") {
+        console.log("ENTRY WAIT", decision.symbol, "SIGNAL_CLAIM_" + priorClaim.state);
         continue;
+      }
+      if (priorClaim) {
+        const rejectedAt = new Date(priorClaim.updatedAt || priorClaim.createdAt).getTime();
+        if (!Number.isFinite(rejectedAt) ||
+            Date.now() - rejectedAt < CONFIG.ENTRY_REJECTED_RETRY_INTERVAL_MS) {
+          console.log("ENTRY WAIT", decision.symbol, "ENTRY_REJECT_RETRY_COOLDOWN");
+          continue;
+        }
+      }
       const fresh = await marketSnapshot(exchange, decision.symbol);
       const validation = validateExecution(decision, fresh, Date.now());
       if (!validation.ok) {
