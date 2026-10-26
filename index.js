@@ -2,6 +2,7 @@
 require("dotenv").config();
 
 const { CONFIG } = require("./ai-trading/config");
+const { connectMongoWithRetry } = require("./ai-trading/mongo-connect");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
@@ -375,13 +376,14 @@ async function main() {
   }
   const releaseLock = acquirePidLock();
   process.on("exit", releaseLock);
-  const client = new MongoClient(process.env.MONGO_URI, {
+  let client = null;
+  const mongoOptions = {
     connectTimeoutMS: CONFIG.MONGO_CONNECT_TIMEOUT_MS,
     serverSelectionTimeoutMS: CONFIG.MONGO_SERVER_SELECTION_TIMEOUT_MS,
     socketTimeoutMS: CONFIG.MONGO_SOCKET_TIMEOUT_MS,
     maxPoolSize: CONFIG.MONGO_MAX_POOL_SIZE,
     retryWrites: true,
-  });
+  };
   const exchange = new BinanceExchange({
     key: process.env.BINANCE_KEY,
     secret: process.env.BINANCE_SECRET,
@@ -405,7 +407,7 @@ async function main() {
     notifications?.stop();
     liquidationFeed.stop();
     exchange.close();
-    await client.close();
+    await client?.close();
     releaseLock();
   };
   process.once("SIGINT", () => {
@@ -414,7 +416,22 @@ async function main() {
   process.once("SIGTERM", () => {
     void stop();
   });
-  await client.connect();
+  client = await connectMongoWithRetry({
+    createClient: () => new MongoClient(process.env.MONGO_URI, mongoOptions),
+    onClient: (current) => { client = current; },
+    isStopped: () => stopped,
+    onRetry: (error, { attempt, delayMs }) => {
+      console.error(
+        "MONGO CONNECT RETRY",
+        "attempt=" + attempt,
+        "retryInMs=" + delayMs,
+        error?.name || "MongoError",
+        error?.code || "",
+        error?.message || error,
+      );
+    },
+  });
+  if (!client || stopped) return;
   const db = client.db("trading");
   await db.command({ ping: 1 });
   notifications = new TelegramNotifications({ db });
