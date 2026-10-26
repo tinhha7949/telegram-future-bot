@@ -42,6 +42,7 @@ async function connectMongoWithRetry({
   wait = sleep,
   isStopped = () => false,
   onRetry = () => {},
+  verifyClient = async () => {},
   config = CONFIG,
 }) {
   if (typeof createClient !== "function") throw new Error("MONGO_CLIENT_FACTORY_REQUIRED");
@@ -51,6 +52,7 @@ async function connectMongoWithRetry({
     onClient(client);
     try {
       await client.connect();
+      await verifyClient(client);
       if (isStopped()) {
         await client.close().catch(() => {});
         return null;
@@ -69,4 +71,33 @@ async function connectMongoWithRetry({
   return null;
 }
 
-module.exports = { connectMongoWithRetry, isTransientMongoConnectError, retryDelay };
+async function retryMongoOperation(operation, {
+  label = "MONGO_STARTUP",
+  wait = sleep,
+  isStopped = () => false,
+  onRetry = () => {},
+  config = CONFIG,
+} = {}) {
+  if (typeof operation !== "function") throw new Error("MONGO_OPERATION_REQUIRED");
+  let attempt = 0;
+  while (!isStopped()) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (isStopped()) return undefined;
+      if (!isTransientMongoConnectError(error)) throw error;
+      attempt += 1;
+      const delayMs = retryDelay(attempt, config);
+      onRetry(error, { label, attempt, delayMs });
+      await wait(delayMs);
+    }
+  }
+  return undefined;
+}
+
+module.exports = {
+  connectMongoWithRetry,
+  isTransientMongoConnectError,
+  retryDelay,
+  retryMongoOperation,
+};
