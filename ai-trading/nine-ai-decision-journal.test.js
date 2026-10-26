@@ -163,7 +163,9 @@ assert.ok(learnedLossWindow.adjustment < 0);
     journal.JOURNAL_INDEXES.at(-1)[1].name,
   ], "startup should create only a missing index and skip verified existing indexes");
   assert.equal(cacheProjection["decisionSnapshot.executionDecision"], 1);
-  assert.equal(cacheProjection.marketWindow, 1);
+  assert.equal(cacheProjection.marketWindow, undefined,
+    "current-schema windows should load compact features instead of raw candles");
+  assert.equal(cacheProjection.windowFeatures, 1);
   assert.equal(cacheProjection.roles, undefined,
     "startup cache must not fetch bulky audit-only fields");
   assert.ok(Number.isSafeInteger(requestedBatchSize) && requestedBatchSize > 0,
