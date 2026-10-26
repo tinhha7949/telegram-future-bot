@@ -228,3 +228,17 @@ test("cancelAlgos cancels only this bot's conditional orders", async () => {
   assert.equal(await e.cancelAlgos("TESTUSDT"), 1);
   assert.deepEqual(canceled, [{ symbol: "TESTUSDT", algoId: 1 }]);
 });
+
+
+test("negative finite available balance is a valid account state with no free margin", async () => {
+  const e = new BinanceExchange();
+  e.request = async () => ({
+    multiAssetsMargin: false,
+    availableBalance: "-2.5",
+    assets: [{ asset: "USDT", walletBalance: "10", unrealizedProfit: "-1" }],
+  });
+  assert.deepEqual(await e.accountState(), {
+    equity: 9,
+    availableBalance: -2.5,
+  });
+});
