@@ -451,11 +451,15 @@ async function main() {
   const db = client.db("trading");
   notifications = new TelegramNotifications({ db });
   await retryMongoStartup(() => notifications.initialize(), "TELEGRAM_INDEXES");
+  if (stopped) return;
   await exchange.initialize();
+  if (stopped) return;
   await retryMongoStartup(() => journal.initialize(db), "DECISION_JOURNAL_INDEXES");
+  if (stopped) return;
   const learner = createOfflineLearning(db);
 
   await retryMongoStartup(() => learner.initialize(), "OFFLINE_LEARNER_INITIALIZE");
+  if (stopped) return;
 
   const retention = createRetention(db);
   const memoryGuard = new MemoryGuard(retention, { alert: msg => report(msg) });
@@ -468,6 +472,9 @@ async function main() {
     async () => riskGuard.assess(await exchange.equity()),
     "INITIAL_RISK_STATE",
   );
+  if (stopped) return;
+  if (!initialRisk || typeof initialRisk.ok !== "boolean")
+    throw new Error("INITIAL_RISK_STATE_UNAVAILABLE");
 
   if (!initialRisk.ok) {
 
@@ -488,6 +495,7 @@ async function main() {
     },
   });
   await retryMongoStartup(() => lifecycle.initialize(), "TRADE_LIFECYCLE_RECOVERY");
+  if (stopped) return;
   liquidationFeed.start();
   exchange.startMarketData();
   function every(ms, job, label = "PERIODIC_JOB") {
