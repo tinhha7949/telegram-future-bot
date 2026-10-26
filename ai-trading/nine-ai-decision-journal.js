@@ -577,6 +577,13 @@ function sameIndexSpec(existing, keys, options) {
       JSON.stringify(options.partialFilterExpression ?? null);
 }
 
+function hasCompleteWindowSnapshot(record) {
+  if (record?.windowFeatureSchemaVersion === 2)
+    return Boolean(record.windowFeatures && typeof record.windowFeatures === "object");
+  return Array.isArray(record?.marketWindow) &&
+    record.marketWindow.length === MARKET_WINDOW_BARS;
+}
+
 async function initialize(db) {
   if (!db || typeof db.collection !== "function")
     throw new Error("NINE_AI_MONGODB_REQUIRED");
@@ -626,7 +633,6 @@ async function initialize(db) {
     "decisionSnapshot.edges": 1,
     "decisionSnapshot.executionDecision": 1,
     outcomeStatus: 1,
-    marketWindow: 1,
     windowFeatures: 1,
     windowFeatureSchemaVersion: 1,
     evaluations: 1,
@@ -666,6 +672,30 @@ async function initialize(db) {
     "elapsedMs=" + (Date.now() - loadStartedAt),
   );
   records = records.filter((r) => r && r.decisionKey && r.symbol);
+  const legacyRecords = records.filter((r) => r.windowFeatureSchemaVersion !== 2);
+  if (legacyRecords.length) {
+    const legacyStartedAt = Date.now();
+    console.log(
+      "NINE-AI JOURNAL LEGACY WINDOWS START",
+      "records=" + legacyRecords.length,
+    );
+    const legacyCursor = collection
+      .find(
+        { decisionKey: { $in: legacyRecords.map((r) => r.decisionKey) } },
+        { projection: { decisionKey: 1, marketWindow: 1 } },
+      )
+      .batchSize(CONFIG.JOURNAL_LOAD_BATCH_SIZE);
+    const windowsByKey = new Map();
+    for await (const row of legacyCursor)
+      windowsByKey.set(String(row.decisionKey), row.marketWindow);
+    for (const row of legacyRecords)
+      row.marketWindow = windowsByKey.get(String(row.decisionKey)) || null;
+    console.log(
+      "NINE-AI JOURNAL LEGACY WINDOWS COMPLETE",
+      "records=" + windowsByKey.size,
+      "elapsedMs=" + (Date.now() - legacyStartedAt),
+    );
+  }
   records.reverse();
   seen.clear();
   for (const r of records) seen.add(String(r.decisionKey));
@@ -676,14 +706,12 @@ async function initialize(db) {
     ).length,
     windowSnapshots: records.filter(
       (r) =>
-        Array.isArray(r.marketWindow) &&
-        r.marketWindow.length === MARKET_WINDOW_BARS,
+        hasCompleteWindowSnapshot(r),
     ).length,
     maturedWindowSamples: records.filter(
       (r) =>
         r.outcomeStatus === "EVALUATED" &&
-        Array.isArray(r.marketWindow) &&
-        r.marketWindow.length === MARKET_WINDOW_BARS &&
+        hasCompleteWindowSnapshot(r) &&
         Number.isFinite(Number(r.evaluations?.["4"]?.longNetR)) &&
         Number.isFinite(Number(r.evaluations?.["16"]?.longNetR)) &&
         Number.isFinite(Number(r.evaluations?.["24"]?.longNetR)),
@@ -1135,14 +1163,12 @@ function status() {
   ).length;
   const windowSnapshots = records.filter(
     (r) =>
-      Array.isArray(r.marketWindow) &&
-      r.marketWindow.length === MARKET_WINDOW_BARS,
+      hasCompleteWindowSnapshot(r),
   ).length;
   const maturedWindowSamples = records.filter(
     (r) =>
       r.outcomeStatus === "EVALUATED" &&
-      Array.isArray(r.marketWindow) &&
-      r.marketWindow.length === MARKET_WINDOW_BARS &&
+      hasCompleteWindowSnapshot(r) &&
       Number.isFinite(Number(r.evaluations?.["4"]?.longNetR)) &&
       Number.isFinite(Number(r.evaluations?.["16"]?.longNetR)) &&
       Number.isFinite(Number(r.evaluations?.["24"]?.longNetR)),
