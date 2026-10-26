@@ -132,6 +132,7 @@ assert.ok(learnedLossWindow.adjustment < 0);
   let attempts = 0;
   const inserted = [];
   const createdIndexes = [];
+  let cacheProjection;
   const cursor = {
     sort() { return this; }, hint() { return this; }, limit() { return this; },
     async toArray() { return []; }
@@ -142,7 +143,7 @@ assert.ok(learnedLossWindow.adjustment < 0);
         .map(([key, options]) => ({ ...options, key })) };
     },
     async createIndex(keys, options) { createdIndexes.push({ keys, options }); },
-    find() { return cursor; },
+    find(_filter, options) { cacheProjection = options?.projection; return cursor; },
     async insertOne(document) {
       attempts++;
       if (attempts < 3) {
@@ -158,6 +159,10 @@ assert.ok(learnedLossWindow.adjustment < 0);
   assert.deepEqual(createdIndexes.map((index) => index.options.name), [
     journal.JOURNAL_INDEXES.at(-1)[1].name,
   ], "startup should create only a missing index and skip verified existing indexes");
+  assert.equal(cacheProjection["decisionSnapshot.executionDecision"], 1);
+  assert.equal(cacheProjection.marketWindow, 1);
+  assert.equal(cacheProjection.roles, undefined,
+    "startup cache must not fetch bulky audit-only fields");
   const args = {
     symbol: "RETRYTESTUSDT", signalTime: base, scannedAt: base,
     decision: { side: "WAIT", action: "WAIT", reason: "TEST", authorizedForExecution: false,
