@@ -311,7 +311,9 @@ class BinanceExchange {
       throw new Error("INVALID_EQUITY_RESPONSE");
     const equity = Number(asset.walletBalance) + Number(asset.unrealizedProfit);
     const availableBalance = Number(account.availableBalance ?? asset.availableBalance);
-    if (!(equity > 0 && Number.isFinite(availableBalance) && availableBalance >= 0))
+    // Negative available margin can be a valid exchange account state; it means
+    // new entries have no free margin and is rejected by the entry margin gate.
+    if (!(Number.isFinite(equity) && equity > 0 && Number.isFinite(availableBalance)))
       throw new Error("INVALID_AVAILABLE_BALANCE");
     return { equity, availableBalance };
   }
