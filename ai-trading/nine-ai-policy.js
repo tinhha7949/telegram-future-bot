@@ -49,14 +49,25 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
   if (flow?.confirmation === "BLOCKED_HOT_FUNDING" ||
       fundingIsHot(flow?.fundingRate))
     return { ...result, reason: "HOT_FUNDING" };
-  // Fail closed: a missing/neutral flow reading cannot authorize exposure.
-  // The confirmation must be backed by contemporaneous finite funding, OI
-  // and non-zero liquidation data, not a bare string on a stale decision.
-  if (flow?.confirmation !== "CONFIRMED" ||
-      !["LONG", "SHORT"].includes(flow.confirmationSide) ||
-      ![flow.fundingRate, flow.openInterestChange, flow.liquidationImbalance].every(finite) ||
-      flow.liquidationImbalance === 0 ||
-      flow.confirmationSide !== (flow.liquidationImbalance > 0 ? "LONG" : "SHORT"))
+  // A live, zero liquidation imbalance is neutral flow, not missing data.
+  // AI-6 may confirm a direction when a cascade exists and may veto an opposing
+  // side; in neutral conditions AI-9 remains the sole direction selector.
+  const validFlowInputs = [
+    flow?.fundingRate,
+    flow?.openInterestChange,
+    flow?.liquidationImbalance,
+  ].every(finite);
+  const neutralFlow =
+    flow?.confirmation === "NEUTRAL" &&
+    flow.confirmationSide == null &&
+    flow.liquidationImbalance === 0;
+  const directionalFlow =
+    flow?.confirmation === "CONFIRMED" &&
+    ["LONG", "SHORT"].includes(flow.confirmationSide) &&
+    flow.liquidationImbalance !== 0 &&
+    flow.confirmationSide ===
+      (flow.liquidationImbalance > 0 ? "LONG" : "SHORT");
+  if (!validFlowInputs || (!neutralFlow && !directionalFlow))
     return { ...result, reason: "FLOW_UNAVAILABLE_OR_UNCERTAIN" };
   for (const side of ["LONG", "SHORT"]) {
     const c = decision?.edges?.[side];
@@ -82,7 +93,7 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
       other = result.edges[side === "LONG" ? "SHORT" : "LONG"];
     if (
       c.eligible === true &&
-      side === flow.confirmationSide &&
+      (neutralFlow || side === flow.confirmationSide) &&
       c.plan &&
       c.edge > params.minEdge &&
       c.edge - other.edge > params.gapEdge
@@ -93,8 +104,9 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
   // Never authorize a competing direction by bypassing the flow gate.
   for (const side of ["LONG", "SHORT"]) {
     const c = result.edges[side], other = result.edges[side === "LONG" ? "SHORT" : "LONG"];
-    if (side !== flow.confirmationSide && c?.eligible && c.plan &&
-        c.edge > params.minEdge && c.edge - other.edge > params.gapEdge)
+    if (directionalFlow && side !== flow.confirmationSide &&
+        c?.eligible && c.plan && c.edge > params.minEdge &&
+        c.edge - other.edge > params.gapEdge)
       return { ...result, reason: "FLOW_DIRECTION_CONFLICT" };
   }
   return result;

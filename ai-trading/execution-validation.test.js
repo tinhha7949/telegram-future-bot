@@ -30,3 +30,22 @@ test("cached decisions revalidate current flow, costs, price and snapshot age", 
     false,
   );
 });
+
+test("neutral liquidation flow is allowed while missing or opposing flow still waits", () => {
+  const f = fixture(),
+    d = analyzeNineAI(f),
+    now = f.market.now + 1,
+    market = { ...f.market, markPrice: d.entry };
+  assert.equal(
+    validateExecution(d, { ...market, liquidationImbalance: 0 }, now).ok,
+    true,
+  );
+  assert.equal(
+    validateExecution(d, { ...market, liquidationImbalance: null }, now).ok,
+    false,
+  );
+  assert.equal(
+    validateExecution(d, { ...market, liquidationImbalance: -0.5 }, now).reason,
+    "CURRENT_FLOW_CONFLICT",
+  );
+});

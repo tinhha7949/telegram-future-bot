@@ -39,10 +39,13 @@ function validateExecution(decision, market, now = Date.now()) {
     return { ok: false, reason: "CURRENT_FLOW_BLOCKED" };
   // The fresh market reading must still corroborate the same side.
   // Missing/neutral/opposing liquidation makes execution uncertain => WAIT.
-  if (market.liquidationImbalance === 0 ||
-      (decision.side === "LONG" && market.liquidationImbalance < 0) ||
-      (decision.side === "SHORT" && market.liquidationImbalance > 0))
-    return { ok: false, reason: "CURRENT_FLOW_UNCONFIRMED" };
+  // No recent liquidation cascade is neutral; an observed opposing cascade
+  // still vetoes the signal. Missing/stale liquidation data was rejected above.
+  if (
+    (market.liquidationImbalance < 0 && decision.side === "LONG") ||
+    (market.liquidationImbalance > 0 && decision.side === "SHORT")
+  )
+    return { ok: false, reason: "CURRENT_FLOW_CONFLICT" };
   const { CONFIG } = require("./config");
   const slippage = Math.min(
     CONFIG.FILL_MAX_SLIPPAGE_PCT,

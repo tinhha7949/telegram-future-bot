@@ -230,3 +230,23 @@ test("opposing momentum within 4h history cannot classify an uptrend", () => {
   assert.ok(regime.momentum5 < 0);
   assert.notEqual(regime.regime, "UPTREND");
 });
+
+test("AI-6 neutral live liquidation flow does not veto an otherwise valid trend signal", () => {
+  for (const side of ["LONG", "SHORT"]) {
+    const f = fixture(side);
+    const d = p.analyzeNineAI({
+      ...f,
+      market: { ...f.market, liquidationImbalance: 0 },
+    });
+    assert.equal(d.action, side);
+    assert.equal(d.agents.flow.confirmation, "NEUTRAL");
+  }
+  const f = fixture();
+  assert.equal(
+    p.analyzeNineAI({
+      ...f,
+      market: { ...f.market, liquidationImbalance: null },
+    }).action,
+    "WAIT",
+  );
+});
