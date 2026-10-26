@@ -133,8 +133,11 @@ assert.ok(learnedLossWindow.adjustment < 0);
   const inserted = [];
   const createdIndexes = [];
   let cacheProjection;
+  let requestedBatchSize = 0;
   const cursor = {
     sort() { return this; }, hint() { return this; }, limit() { return this; },
+    batchSize(size) { requestedBatchSize = size; return this; },
+    async *[Symbol.asyncIterator]() {},
     async toArray() { return []; }
   };
   const collection = {
@@ -163,6 +166,8 @@ assert.ok(learnedLossWindow.adjustment < 0);
   assert.equal(cacheProjection.marketWindow, 1);
   assert.equal(cacheProjection.roles, undefined,
     "startup cache must not fetch bulky audit-only fields");
+  assert.ok(Number.isSafeInteger(requestedBatchSize) && requestedBatchSize > 0,
+    "startup cache should use bounded cursor batches");
   const args = {
     symbol: "RETRYTESTUSDT", signalTime: base, scannedAt: base,
     decision: { side: "WAIT", action: "WAIT", reason: "TEST", authorizedForExecution: false,
