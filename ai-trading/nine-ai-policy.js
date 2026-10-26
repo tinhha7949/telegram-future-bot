@@ -32,7 +32,12 @@ function uncertaintyFor(regime, snapshotAt, signalAt, now, policy = DEFAULT_POLI
     return Infinity;
   const penalty=Number(policy?.uncertaintyPenalty);
   if (!Number.isFinite(penalty) || penalty < 0) return Infinity;
-  return (regime.regime_conf < CONFIG.CONF_LOW ? CONFIG.LOW_CONF_PENALTY : 0) + penalty;
+  const stalePenalty =
+    now - snapshotAt > CONFIG.MARKET_WS_STALE_MS
+      ? CONFIG.STALE_PENALTY
+      : 0;
+  return (regime.regime_conf < CONFIG.CONF_LOW ? CONFIG.LOW_CONF_PENALTY : 0) +
+    stalePenalty + penalty;
 }
 function applyPolicy(decision, policy = DEFAULT_POLICY) {
   const params = { ...DEFAULT_POLICY, ...policy },
