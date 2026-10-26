@@ -315,7 +315,18 @@ class BinanceExchange {
     // new entries have no free margin and is rejected by the entry margin gate.
     if (!(Number.isFinite(equity) && equity > 0 && Number.isFinite(availableBalance)))
       throw new Error("INVALID_AVAILABLE_BALANCE");
-    return { equity, availableBalance };
+    const leverageBySymbol = Object.fromEntries(
+      (Array.isArray(account.positions) ? account.positions : [])
+        .filter((position) => typeof position.symbol === "string" && position.symbol)
+        .map((position) => [
+          position.symbol,
+          {
+            leverage: Number(position.leverage),
+            maxNotional: Number(position.maxNotional ?? position.maxNotionalValue),
+          },
+        ]),
+    );
+    return { equity, availableBalance, leverageBySymbol };
   }
   async equity() { return (await this.accountState()).equity; }
   async symbols() {
