@@ -131,12 +131,17 @@ assert.ok(learnedLossWindow.adjustment < 0);
 (async () => {
   let attempts = 0;
   const inserted = [];
+  const createdIndexes = [];
   const cursor = {
     sort() { return this; }, hint() { return this; }, limit() { return this; },
     async toArray() { return []; }
   };
   const collection = {
-    async createIndex() {},
+    async listIndexes() {
+      return { toArray: async () => journal.JOURNAL_INDEXES.slice(0, -1)
+        .map(([key, options]) => ({ ...options, key })) };
+    },
+    async createIndex(keys, options) { createdIndexes.push({ keys, options }); },
     find() { return cursor; },
     async insertOne(document) {
       attempts++;
@@ -150,6 +155,9 @@ assert.ok(learnedLossWindow.adjustment < 0);
     }
   };
   await journal.initialize({ collection: () => collection });
+  assert.deepEqual(createdIndexes.map((index) => index.options.name), [
+    journal.JOURNAL_INDEXES.at(-1)[1].name,
+  ], "startup should create only a missing index and skip verified existing indexes");
   const args = {
     symbol: "RETRYTESTUSDT", signalTime: base, scannedAt: base,
     decision: { side: "WAIT", action: "WAIT", reason: "TEST", authorizedForExecution: false,

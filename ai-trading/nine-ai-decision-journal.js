@@ -545,71 +545,85 @@ function snapshotDecision({
   return snapshot;
 }
 
+const JOURNAL_INDEXES = Object.freeze([
+  [{ decisionKey: 1 }, { unique: true, name: "uniq_nine_ai_decision_key" }],
+  [{ symbol: 1, signalTime: -1 }, { name: "nine_ai_decision_symbol_time" }],
+  [{ symbol: 1, signalTime: 1 }, {
+    unique: true, name: "uniq_nine_ai_v2_symbol_candle",
+    partialFilterExpression: { decisionSchemaVersion: 2 },
+  }],
+  [{ symbol: 1, signalTime: 1 }, {
+    unique: true, name: "uniq_nine_ai_v3_symbol_candle",
+    partialFilterExpression: { decisionSchemaVersion: 3 },
+  }],
+  [{ symbol: 1, signalTime: 1 }, {
+    unique: true, name: "uniq_nine_ai_v4_symbol_candle",
+    partialFilterExpression: { decisionSchemaVersion: 4 },
+  }],
+  [{ symbol: 1, signalTime: 1 }, {
+    unique: true, name: "uniq_nine_ai_v5_symbol_candle",
+    partialFilterExpression: { decisionSchemaVersion: DECISION_SCHEMA_VERSION },
+  }],
+  // Supports the global newest-record scan; the symbol-prefixed index cannot
+  // serve a sort over the entire collection.
+  [{ signalTime: -1, scannedAt: -1 }, { name: "nine_ai_decision_global_time" }],
+  [{ outcomeStatus: 1, symbol: 1 }, { name: "nine_ai_decision_pending" }],
+]);
+
+function sameIndexSpec(existing, keys, options) {
+  return JSON.stringify(existing.key) === JSON.stringify(keys) &&
+    Boolean(existing.unique) === Boolean(options.unique) &&
+    JSON.stringify(existing.partialFilterExpression ?? null) ===
+      JSON.stringify(options.partialFilterExpression ?? null);
+}
+
 async function initialize(db) {
   if (!db || typeof db.collection !== "function")
     throw new Error("NINE_AI_MONGODB_REQUIRED");
   collection = db.collection(COLLECTION);
-  await collection.createIndex(
-    { decisionKey: 1 },
-    { unique: true, name: "uniq_nine_ai_decision_key" },
+
+  let existing = [];
+  if (typeof collection.listIndexes === "function") {
+    try {
+      const cursor = await collection.listIndexes();
+      existing = await cursor.toArray();
+    } catch (error) {
+      // listIndexes on a collection not yet created returns NamespaceNotFound.
+      if (Number(error?.code) !== 26) throw error;
+    }
+  }
+  const existingByName = new Map(existing.map((index) => [index.name, index]));
+  let verified = 0;
+  let created = 0;
+  for (const [keys, options] of JOURNAL_INDEXES) {
+    const prior = existingByName.get(options.name);
+    if (prior) {
+      if (!sameIndexSpec(prior, keys, options))
+        throw new Error("NINE_AI_INDEX_SPEC_MISMATCH_" + options.name);
+      verified += 1;
+      continue;
+    }
+    await collection.createIndex(keys, options);
+    created += 1;
+  }
+  console.log(
+    "NINE-AI JOURNAL INDEXES READY",
+    "verified=" + verified,
+    "created=" + created,
   );
-  await collection.createIndex(
-    { symbol: 1, signalTime: -1 },
-    { name: "nine_ai_decision_symbol_time" },
-  );
-  await collection.createIndex(
-    { symbol: 1, signalTime: 1 },
-    {
-      unique: true,
-      name: "uniq_nine_ai_v2_symbol_candle",
-      partialFilterExpression: { decisionSchemaVersion: 2 },
-    },
-  );
-  await collection.createIndex(
-    { symbol: 1, signalTime: 1 },
-    {
-      unique: true,
-      name: "uniq_nine_ai_v3_symbol_candle",
-      partialFilterExpression: { decisionSchemaVersion: 3 },
-    },
-  );
-  await collection.createIndex(
-    { symbol: 1, signalTime: 1 },
-    {
-      unique: true,
-      name: "uniq_nine_ai_v4_symbol_candle",
-      partialFilterExpression: {
-        decisionSchemaVersion: 4,
-      },
-    },
-  );
-  await collection.createIndex(
-    { symbol: 1, signalTime: 1 },
-    {
-      unique: true,
-      name: "uniq_nine_ai_v5_symbol_candle",
-      partialFilterExpression: {
-        decisionSchemaVersion: DECISION_SCHEMA_VERSION,
-      },
-    },
-  );
-  // Supports the global newest-record scan below. The symbol-prefixed index
-  // cannot serve a sort over the entire collection and caused Mongo's 32 MB
-  // in-memory sort limit to abort startup on a large journal.
-  await collection.createIndex(
-    { signalTime: -1, scannedAt: -1 },
-    { name: "nine_ai_decision_global_time" },
-  );
-  await collection.createIndex(
-    { outcomeStatus: 1, symbol: 1 },
-    { name: "nine_ai_decision_pending" },
-  );
+
+  const loadStartedAt = Date.now();
   records = await collection
     .find({})
     .sort({ signalTime: -1, scannedAt: -1 })
     .hint({ signalTime: -1, scannedAt: -1 })
     .limit(MAX_RECORDS)
     .toArray();
+  console.log(
+    "NINE-AI JOURNAL LOAD COMPLETE",
+    "records=" + records.length,
+    "elapsedMs=" + (Date.now() - loadStartedAt),
+  );
   records = records.filter((r) => r && r.decisionKey && r.symbol);
   records.reverse();
   seen.clear();
@@ -1126,4 +1140,5 @@ module.exports = {
   recordActualOutcome,
   assess,
   status,
+  JOURNAL_INDEXES,
 };
