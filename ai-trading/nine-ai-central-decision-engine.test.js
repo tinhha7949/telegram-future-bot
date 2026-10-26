@@ -36,3 +36,29 @@ test("calibration drift contributes uncertainty without changing champion params
   assert.equal(uncertaintyFor({regime_conf:0.8},now-1,now-1,now,{uncertaintyPenalty:0.15}),0.15);
   assert.equal(uncertaintyFor({regime_conf:0.4},now-1,now-1,now,{uncertaintyPenalty:0.15}),0.3);
 });
+
+test("stale market snapshots add the configured penalty until one candle, then WAIT", () => {
+  const { CONFIG } = require("./config");
+  const now = 1700000000000;
+  const staleAt = now - CONFIG.MARKET_WS_STALE_MS - 1;
+  assert.equal(
+    uncertaintyFor(
+      { regime_conf: 0.8 },
+      staleAt,
+      now - 1,
+      now,
+      { uncertaintyPenalty: 0 },
+    ),
+    CONFIG.STALE_PENALTY,
+  );
+  assert.equal(
+    uncertaintyFor(
+      { regime_conf: 0.8 },
+      now - require("./nine-ai-policy").BAR_MS - 1,
+      now - 1,
+      now,
+      { uncertaintyPenalty: 0 },
+    ),
+    Infinity,
+  );
+});
