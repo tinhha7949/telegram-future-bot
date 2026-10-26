@@ -94,22 +94,46 @@ test("fractal high is the middle of its two adjacent highs", () => {
   ];
   assert.deepEqual(swingPoints(cs).highs, [{ index: 1, price: 3 }]);
 });
-test("AI6 fails closed on neutral, unavailable or opposing liquidation; confirmed LONG remains allowed", () => {
-  const f = fixture();
-  const confirmed = analyzeNineAI(f);
+test("AI6 lets neutral flow through, but missing or opposing liquidation still waits", () => {
+  const f = fixture(),
+    confirmed = analyzeNineAI(f);
   assert.equal(confirmed.action, "LONG");
   assert.equal(
     validateExecution(confirmed, { ...f.market, markPrice: confirmed.entry }, f.market.now + 1).ok,
     true,
   );
-  for (const imbalance of [0, null, -0.8]) {
+
+  const neutral = analyzeNineAI({
+    ...f,
+    market: { ...f.market, liquidationImbalance: 0 },
+  });
+  assert.equal(neutral.action, "LONG");
+  assert.equal(neutral.agents.flow.confirmation, "NEUTRAL");
+  assert.equal(finalizeDecision(neutral, {
+    symbol: f.symbol,
+    scannedAt: f.market.now + 1,
+  }).action, "LONG");
+  assert.equal(
+    validateExecution(
+      confirmed,
+      { ...f.market, liquidationImbalance: 0, markPrice: confirmed.entry },
+      f.market.now + 1,
+    ).ok,
+    true,
+  );
+
+  for (const imbalance of [null, -0.8]) {
     const d = analyzeNineAI({
       ...f,
       market: { ...f.market, liquidationImbalance: imbalance },
     });
     assert.equal(d.action, "WAIT");
-    assert.equal(d.reason, imbalance < 0 ? "FLOW_DIRECTION_CONFLICT" : "FLOW_UNAVAILABLE_OR_UNCERTAIN");
-    assert.equal(finalizeDecision(d, { symbol: f.symbol, scannedAt: f.market.now + 1 }).action, "WAIT");
+    assert.equal(d.reason,
+      imbalance === null ? "FLOW_UNAVAILABLE_OR_UNCERTAIN" : "FLOW_DIRECTION_CONFLICT");
+    assert.equal(finalizeDecision(d, {
+      symbol: f.symbol,
+      scannedAt: f.market.now + 1,
+    }).action, "WAIT");
     const validation = validateExecution(
       confirmed,
       { ...f.market, liquidationImbalance: imbalance, markPrice: confirmed.entry },
@@ -117,6 +141,7 @@ test("AI6 fails closed on neutral, unavailable or opposing liquidation; confirme
     );
     assert.equal(validation.ok, false);
   }
+
   const noSetup = fixture();
   noSetup.candles4h.at(-1)[4] = noSetup.candles4h.at(-2)[4];
   assert.equal(analyzeNineAI(noSetup).action, "WAIT");
