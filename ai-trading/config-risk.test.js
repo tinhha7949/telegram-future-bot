@@ -13,6 +13,9 @@ test("single validated config with no strategy env overrides", () => {
   assert.equal(CONFIG.VOL_LONG_RETURNS, 240);
   assert.ok(CONFIG.VOL_LONG_RETURNS < CONFIG.N_CANDLES);
   assert.equal(Object.hasOwn(CONFIG, "HISTORY_FETCH_CANDLES"), false);
+  const yaml = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "CONFIG.yaml"), "utf8");
+  assert.equal(parseConfig(yaml.replace("N_CANDLES: 250", "N_CANDLES: 300")).N_CANDLES, 300);
+  assert.throws(() => parseConfig(yaml.replace("N_CANDLES: 250", "N_CANDLES: 200")), /CONFIG_CROSS_FIELD_INVARIANT/);
   assert.throws(() => parseConfig("RISK_PER_TRADE: 0.02"), /CONFIG_MISSING/);
   assert.throws(() => parseConfig(require("node:fs").readFileSync(
     require("node:path").join(__dirname, "..", "CONFIG.yaml"), "utf8"
