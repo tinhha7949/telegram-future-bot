@@ -18,7 +18,7 @@ open position continues independent SL/TP/timeout management.
 
 | Agent | Inputs | Outputs and authority |
 |---|---|---|
-| AI-1 Regime | Closed 4h OHLCV, 20/90-day realized volatility and momentum | UPTREND/DOWNTREND/RANGE/HIGH_VOL and confidence; live only trades trends |
+| AI-1 Regime | Configured closed 4h OHLCV window, 20-day and long-window realized volatility/momentum | UPTREND/DOWNTREND/RANGE/HIGH_VOL and confidence; live only trades trends |
 | AI-2 Structure | Confirmed three-bar swing highs/lows and channel | Structure bias and zones; does not authorize orders |
 | AI-3 Continuation | Trend, recent pullback/re-push, OI/funding | Side-specific continuation probability and estimated gross R |
 | AI-4 Breakout | Closed range, breakout volume and hold confirmation | Side-specific breakout estimate; no chasing complete-range extensions |
@@ -57,7 +57,7 @@ trade direction with finite funding/OI and nonzero liquidation imbalance;
 UNAVAILABLE, NEUTRAL and opposite flow yield WAIT. A fresh liquidation
 reading is checked again before MARKET. This fail-closed rule can sharply
 reduce trading opportunities during quiet or unavailable flow periods.
-The last 20/90-day vol lookbacks, confidence weights, target quantiles,
+The 20-day and configured long-window volatility lookbacks, confidence weights, target quantiles,
 cost-model coefficients and service intervals are all read from CONFIG.yaml.
 Calibration flags material drift only after CALIBRATION_MIN_SAMPLES actual
 labels, using CALIBRATION_MAX_MAE_R and CALIBRATION_MAX_ABS_BIAS_R in R units.
