@@ -291,13 +291,18 @@ async function executeDecisions(
 
       if (!gate.ok) { console.log("ENTRY WAIT", decision.symbol, gate.reason); continue; }
 
-      const sizing = sizeTrade(
+      const sizingResult = sizeTrade(
         decision,
         equity,
         TRADE_CONFIG.riskPerTrade,
         await exchange.info(decision.symbol),
+        { detailed: true },
       );
-      if (!sizing) { console.log("ENTRY WAIT", decision.symbol, "INVALID_SIZING"); continue; }
+      if (!sizingResult.ok) {
+        console.log("ENTRY WAIT", decision.symbol, "INVALID_SIZING", sizingResult.reason);
+        continue;
+      }
+      const sizing = sizingResult.sizing;
 
       const leverage = account.leverageBySymbol?.[decision.symbol];
       const margin = assessAvailableMargin({
