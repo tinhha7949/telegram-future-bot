@@ -104,8 +104,8 @@ function classifyRegime(cs) {
     vols.push(stdev(returns.slice(i - CONFIG.VOL_20D_RETURNS, i)) * scale);
   const realized20 =
     returns.length >= CONFIG.VOL_20D_RETURNS ? stdev(returns.slice(-CONFIG.VOL_20D_RETURNS)) * scale : null;
-  const realized90 =
-    returns.length >= CONFIG.VOL_90D_RETURNS ? stdev(returns.slice(-CONFIG.VOL_90D_RETURNS)) * scale : null;
+  const realizedLong =
+    returns.length >= CONFIG.VOL_LONG_RETURNS ? stdev(returns.slice(-CONFIG.VOL_LONG_RETURNS)) * scale : null;
   const rank = vols.length
     ? vols.filter((v) => v <= realized20).length / vols.length
     : null;
@@ -126,7 +126,8 @@ function classifyRegime(cs) {
       1,
     ),
     realized_vol_20d: realized20,
-    realized_vol_90d: realized90,
+    realized_vol_long_window: realizedLong,
+    realized_vol_90d: null,
     vol_percentile: rank,
     momentum20,
     momentum5,
@@ -167,7 +168,7 @@ function analyzeNineAI({
   config = {},
 } = {}) {
   const now = finite(market.now, Date.now()),
-    cs = closedCandles(candles4h, now);
+    cs = closedCandles(candles4h, now).slice(-CONFIG.N_CANDLES);
   const wait = (reason, extra = {}) => ({
     symbol,
     setup: "NINE_AI_4H",
@@ -180,8 +181,8 @@ function analyzeNineAI({
     decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     ...extra,
   });
-  if (!hasContiguousHistory(cs, BAR_MS, CONFIG.HISTORY_FETCH_CANDLES))
-    return wait("INSUFFICIENT_90D_CLOSED_4H_HISTORY");
+  if (!hasContiguousHistory(cs, BAR_MS, CONFIG.N_CANDLES))
+    return wait("INSUFFICIENT_CONFIGURED_CLOSED_4H_HISTORY");
   if (now - cs.at(-1).closeTime > BAR_MS) return wait("STALE_CLOSED_CANDLE");
   const last = cs.at(-1),
     prev = cs.at(-2),

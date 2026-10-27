@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const p = require("./nine-ai-pipeline");
 const central = require("./nine-ai-central-decision-engine");
 const { fixture } = require("./test-fixtures.cjs");
+const { CONFIG } = require("./config");
 for (const side of ["LONG", "SHORT"])
   test(
     "closed-candle " + side + " reaches the sole authorization boundary",
@@ -172,7 +173,7 @@ test("AI7 quantiles activate only after 100 complete labels for the same setup a
     assert.ok(Math.abs(d.tp1-d.entry) >= 0.8*Math.abs(d.entry-d.sl)-1e-10);
   }
 });
-test("stale/future data and a gap in 90d closed 4h history abstain", () => {
+test("stale/future data and a gap in configured closed 4h history abstain", () => {
   const f = fixture();
   for (const snapshotAt of [f.market.now - 30 * 86400000, f.market.now + 1])
     assert.equal(
@@ -182,7 +183,7 @@ test("stale/future data and a gap in 90d closed 4h history abstain", () => {
   assert.equal(
     p.analyzeNineAI({
       ...f,
-      candles4h: f.candles4h.filter((_, i) => i !== 300),
+      candles4h: f.candles4h.filter((_, i) => i !== f.candles4h.length - 10),
     }).action,
     "WAIT",
   );
@@ -200,7 +201,7 @@ test("20/90-day realized volatility and momentum use only closed 4h returns", ()
   for (const side of ["LONG", "SHORT"]) {
     const f = fixture(side),
       d = p.analyzeNineAI(f),
-      cs = p.closedCandles(f.candles4h, f.market.now),
+      cs = p.closedCandles(f.candles4h, f.market.now).slice(-CONFIG.N_CANDLES),
       closes = cs.map((c) => c.close),
       returns = closes.slice(1).map((close, i) => Math.log(close / closes[i]));
     const realized = (bars) => {
@@ -215,10 +216,20 @@ test("20/90-day realized volatility and momentum use only closed 4h returns", ()
     assert.equal(d.action, side);
     assert.equal(d.timeframe, "4h");
     assert.ok(Math.abs(d.regime.realized_vol_20d - realized(120)) < 1e-12);
-    assert.ok(Math.abs(d.regime.realized_vol_90d - realized(540)) < 1e-12);
+    assert.ok(Math.abs(d.regime.realized_vol_long_window - realized(CONFIG.VOL_LONG_RETURNS)) < 1e-12);
+    assert.equal(d.regime.realized_vol_90d, null);
+    assert.equal(cs.length, CONFIG.N_CANDLES);
     assert.equal(d.regime.momentum5, closes.at(-1) / closes.at(-31) - 1);
     assert.equal(d.regime.momentum20, closes.at(-1) / closes.at(-121) - 1);
   }
+});
+
+test("analysis uses exactly the configured number of latest closed 4h candles", () => {
+  const f = fixture();
+  const full = p.analyzeNineAI(f);
+  const bounded = p.analyzeNineAI({ ...f, candles4h: f.candles4h.slice(-CONFIG.N_CANDLES) });
+  assert.deepEqual(bounded, full);
+  assert.equal(p.closedCandles(f.candles4h, f.market.now).slice(-CONFIG.N_CANDLES).length, CONFIG.N_CANDLES);
 });
 
 test("opposing momentum within 4h history cannot classify an uptrend", () => {

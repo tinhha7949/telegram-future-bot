@@ -26,10 +26,8 @@ CONF_LOW: 0.5
 LOW_CONF_PENALTY: 0.15
 STALE_PENALTY: 0.25
 VOL_20D_RETURNS: 120
-VOL_90D_RETURNS: 540
-# 90 days at 4h requires 540 returns and 541 closing prices.
-# This is the ingest-only window; persistent recent OHLCV stays N_CANDLES.
-HISTORY_FETCH_CANDLES: 541
+VOL_LONG_RETURNS: 240
+# Live 4h analysis and the DB OHLCV archive share N_CANDLES as the single source of truth.
 ATR_BARS: 14
 FUNDING_HOT_RATE: 0.0008
 HIGH_VOL_PERCENTILE: 0.8

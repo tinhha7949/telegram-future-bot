@@ -3,8 +3,8 @@ const zlib = require("node:zlib");
 const { CONFIG } = require("../../config");
 const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const FIELD_COUNT = 5;
-// One compressed row per symbol. For statistics/decisions, still use original
-// exchange 541-bar history; float32 archive is never used for live signal math.
+// One compressed snapshot per symbol, bounded by CONFIG.N_CANDLES.
+// Float32 archive is for storage only; live signal math uses exchange candles.
 function encodeRecent(rows, config = CONFIG) {
   if (!Array.isArray(rows)) throw new Error("OHLCV_NOT_ARRAY");
   const selected = rows.slice(-config.N_CANDLES);
