@@ -2,7 +2,7 @@ name: Nine-AI canonical checks
 
 on:
   push:
-    branches: ["main", "feature/nine-ai-primary-strategy", "rebuild/nine-ai-spec"]
+    branches: ["main", "feature/nine-ai-primary-strategy", "rebuild/nine-ai-spec", "fix/npm-test-suite"]
   pull_request:
     branches: ["main"]
 
