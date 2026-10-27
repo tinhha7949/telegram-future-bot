@@ -2,6 +2,7 @@
 const { test } = require("node:test"),
   assert = require("node:assert/strict");
 const { fixture, memoryDb } = require("./test-fixtures.cjs");
+const { CONFIG } = require("./config");
 const { analyzeNineAI, percentile } = require("./nine-ai-pipeline");
 const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const { validateExecution } = require("./execution-validation");
@@ -167,7 +168,7 @@ test("old champions/candidates cannot carry thresholds learned on an older contr
     { $set: { params: { ...DEFAULT_CHAMPION, minEdge: 0.075 } } },
   );
   await service.initialize();
-  assert.equal((await service.getChampionConfig()).minEdge, 0.15);
+  assert.equal((await service.getChampionConfig()).minEdge, CONFIG.MIN_EDGE);
 });
 
 function fakeExchange(markFor = (_, entry) => entry) {
