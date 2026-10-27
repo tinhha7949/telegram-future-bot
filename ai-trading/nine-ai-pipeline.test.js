@@ -261,3 +261,27 @@ test("AI-6 neutral live liquidation flow does not veto an otherwise valid trend 
     "WAIT",
   );
 });
+
+test("missing execution-cost inputs identify the exact failed input and remain WAIT", () => {
+  const f = fixture();
+  const missingSnapshot = p.analyzeNineAI({
+    ...f,
+    market: { ...f.market, snapshotAt: null },
+  });
+  assert.equal(missingSnapshot.action, "WAIT");
+  assert.equal(missingSnapshot.reason, "EXECUTION_COST_INPUTS_MISSING_MARKET_SNAPSHOT_AT");
+
+  const missingFunding = p.analyzeNineAI({
+    ...f,
+    market: { ...f.market, fundingRate: null },
+  });
+  assert.equal(missingFunding.action, "WAIT");
+  assert.equal(missingFunding.reason, "EXECUTION_COST_INPUTS_MISSING_FUNDING_RATE");
+
+  const missingOi = p.analyzeNineAI({
+    ...f,
+    market: { ...f.market, openInterestChange: null },
+  });
+  assert.equal(missingOi.action, "WAIT");
+  assert.equal(missingOi.reason, "EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE");
+});
