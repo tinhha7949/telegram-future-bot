@@ -378,5 +378,5 @@ test("stale historical open interest cannot confirm a new AI3/AI6 signal",async(
     ...f,market:{...f.market,openInterestChange:market.openInterestChange},
   });
   assert.equal(d.action,"WAIT");
-  assert.equal(d.reason,"EXECUTION_COST_INPUTS_STALE_OR_MISSING");
+  assert.equal(d.reason,"EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE");
 });
