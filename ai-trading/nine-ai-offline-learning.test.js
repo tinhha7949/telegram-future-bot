@@ -136,7 +136,7 @@ test("a newly qualified candidate reports shadow started on the same daily run",
   const { memoryDb } = require("./test-fixtures.cjs"),
     db = memoryDb(),
     start = 1700000000000,
-    now = start + 100 * l.DAY_MS,
+    now = start + 250 * l.DAY_MS,
     service = l.createOfflineLearning(db, { now: () => now });
   await service.initialize();
   for (let i = 0; i < 30; i++) {
