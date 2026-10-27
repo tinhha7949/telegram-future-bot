@@ -136,15 +136,15 @@ test("a newly qualified candidate reports shadow started on the same daily run",
   const { memoryDb } = require("./test-fixtures.cjs"),
     db = memoryDb(),
     start = 1700000000000,
-    now = start + 100 * l.DAY_MS,
+    now = start + 250 * l.DAY_MS,
     service = l.createOfflineLearning(db, { now: () => now });
   await service.initialize();
   for (let i = 0; i < 30; i++) {
     const r = row(i);
-    r.signalTime = start + i * 3 * l.DAY_MS;
+    r.signalTime = start + i * 7 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
-      expectedR: i % 2 === 0 ? 0.75 : 0.68,
+      expectedR: i % 2 === 0 ? 0.85 : 0.60,
       cost: 0.15,
       baseUncertainty: 0.1,
     });
@@ -246,7 +246,7 @@ test("candidate qualification has no 400-row, trade-count or extra .02R-uplift g
     r.signalTime = 1700000000000 + i * 7 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
-      expectedR: i % 2 === 0 ? 0.75 : 0.68,
+      expectedR: i % 2 === 0 ? 0.85 : 0.60,
       cost: 0.15,
       baseUncertainty: 0.1,
     });
@@ -267,11 +267,11 @@ test("candidate selection is fit on train and a validation loss cannot be rescue
     r.signalTime = 1700000000000 + i * 7 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
-      expectedR: i % 2 === 0 ? 0.75 : 0.68,
+      expectedR: i % 2 === 0 ? 0.85 : 0.60,
       cost: 0.15,
       baseUncertainty: 0.1,
     });
-    r.evaluations[24].longNetR = i < 18 || i >= 24 ? (i % 2 === 0 ? 1 : -1) : (i % 2 === 0 ? -1 : 1);
+    r.evaluations[24].longNetR = i < 18 ? (i % 2 === 0 ? 1 : -1) : i < 24 ? (i % 2 === 0 ? -1 : 1) : (i % 2 === 0 ? 1 : -1);
     return r;
   });
   const result = l.trainCandidate(rows, l.DEFAULT_CHAMPION);

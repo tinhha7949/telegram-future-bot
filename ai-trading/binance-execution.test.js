@@ -292,3 +292,50 @@ test("accountState keeps the margin gate fail-closed when symbolConfig is unavai
   assert.equal(state.leverageBySymbol.XANUSDT, undefined,
     "must not invent leverage when Binance configuration is unavailable");
 });
+
+
+test("detailed sizing explains safe rejections without changing the legacy sizeTrade result", () => {
+  const info = {
+    filters: [
+      { filterType: "LOT_SIZE", stepSize: ".1", minQty: ".1", maxQty: "10000" },
+      { filterType: "MARKET_LOT_SIZE", stepSize: ".1", minQty: ".1", maxQty: "10000" },
+      { filterType: "PRICE_FILTER", tickSize: ".01" },
+      { filterType: "MIN_NOTIONAL", notional: "5" },
+    ],
+  };
+  const tooSmall = sizeTrade(
+    { side: "LONG", entry: 1, sl: .8, tp1: 1.3, tp2: 1.6 },
+    10, .05, info, { detailed: true },
+  );
+  assert.deepEqual(tooSmall, { ok: false, reason: "MIN_NOTIONAL_EXCEEDS_RISK_BUDGET" });
+  assert.equal(sizeTrade(
+    { side: "LONG", entry: 1, sl: .8, tp1: 1.3, tp2: 1.6 },
+    10, .05, info,
+  ), null, "legacy callers still receive null on a rejected size");
+  const badPlan = sizeTrade(
+    { side: "LONG", entry: 1, sl: 1.1, tp1: 1.3, tp2: 1.6 },
+    100, .05, info, { detailed: true },
+  );
+  assert.deepEqual(badPlan, { ok: false, reason: "INVALID_PROTECTIVE_LEVELS" });
+  const badInput = sizeTrade(
+    { side: "LONG", entry: NaN, sl: .8, tp1: 1.3, tp2: 1.6 },
+    100, .05, info, { detailed: true },
+  );
+  assert.deepEqual(badInput, { ok: false, reason: "INVALID_SIZING_INPUT" });
+});
+
+test("detailed sizing identifies when split TP legs cannot meet exchange minimum quantity", () => {
+  const info = {
+    filters: [
+      { filterType: "LOT_SIZE", stepSize: ".1", minQty: "2", maxQty: "10000" },
+      { filterType: "MARKET_LOT_SIZE", stepSize: ".1", minQty: "2", maxQty: "10000" },
+      { filterType: "PRICE_FILTER", tickSize: ".01" },
+      { filterType: "MIN_NOTIONAL", notional: "1" },
+    ],
+  };
+  const result = sizeTrade(
+    { side: "LONG", entry: 1, sl: .98, tp1: 1.03, tp2: 1.04 },
+    1, .05, info, { detailed: true },
+  );
+  assert.deepEqual(result, { ok: false, reason: "TP_LEG_MIN_QTY_EXCEEDS_RISK_BUDGET" });
+});

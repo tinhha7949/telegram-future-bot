@@ -59,9 +59,18 @@ function symbolRules(info) {
     minNotional: Number(notional?.notional ?? notional?.minNotional ?? 5),
   };
 }
-function sizeTrade(decision, equity, riskFraction, info) {
-  const r = symbolRules(info),
-    long = decision.side === "LONG",
+function sizeTrade(decision, equity, riskFraction, info, { detailed = false } = {}) {
+  const fail = (reason) => detailed ? { ok: false, reason } : null;
+  let r;
+  try {
+    r = symbolRules(info);
+  } catch (error) {
+    if (detailed) return fail("INVALID_SYMBOL_RULES");
+    throw error;
+  }
+  if (!["LONG", "SHORT"].includes(decision?.side))
+    return fail("INVALID_SIDE");
+  const long = decision.side === "LONG",
     entry = Number(decision.entry);
   const ai7 = decision.tradePlan?.outcomeMode === "AI7_LABELED";
   // Exchange tick rounding never widens an AI-7 p80 stop beyond its quantile.
@@ -78,26 +87,38 @@ function sizeTrade(decision, equity, riskFraction, info) {
     long ? "ceil" : "floor",
   );
   if (
-    !(entry > 0 && equity > 0 && riskFraction > 0 && riskFraction <= 1) ||
+    ![entry, Number(equity), Number(riskFraction), Number(decision.sl), Number(decision.tp1), Number(decision.tp2 ?? decision.tp)]
+      .every(Number.isFinite) ||
+    !(entry > 0 && equity > 0 && riskFraction > 0 && riskFraction <= 1)
+  )
+    return fail("INVALID_SIZING_INPUT");
+  if (
+    ![sl, tp1, tp2].every((v) => Number.isFinite(v) && v > 0) ||
     (long
       ? !(sl < entry && entry < tp1 && tp1 <= tp2)
       : !(tp2 <= tp1 && tp1 < entry && entry < sl))
   )
-    return null;
+    return fail("INVALID_PROTECTIVE_LEVELS");
   const budget = equity * riskFraction,
     distance = Math.abs(entry - sl);
   if (Math.abs(tp1 - entry) + Number.EPSILON * Math.max(entry, tp1) <
-      CONFIG.MIN_RR * distance) return null;
+      CONFIG.MIN_RR * distance) return fail("MIN_REWARD_RISK_NOT_MET");
   const totalLots = CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1];
   const quantity = roundStep(Math.min(budget / distance, r.maxQty), totalLots * r.step);
+  if (!(Number.isFinite(quantity) && quantity > 0))
+    return fail("RISK_BUDGET_BELOW_ORDER_STEP");
   const tp1Quantity = roundStep(quantity * CONFIG.TP_BATCHES[0] / totalLots, r.step);
   const tp2Quantity = roundStep(quantity - tp1Quantity, r.step);
   if (
-    !(tp1Quantity >= r.minQty && tp2Quantity >= r.minQty && quantity * entry >= r.minNotional) ||
-    !isRiskWithinBudget(quantity * distance, budget)
+    !(Number.isFinite(tp1Quantity) && Number.isFinite(tp2Quantity)) ||
+    tp1Quantity < r.minQty || tp2Quantity < r.minQty
   )
-    return null;
-  return {
+    return fail("TP_LEG_MIN_QTY_EXCEEDS_RISK_BUDGET");
+  if (quantity * entry < r.minNotional)
+    return fail("MIN_NOTIONAL_EXCEEDS_RISK_BUDGET");
+  if (!isRiskWithinBudget(quantity * distance, budget))
+    return fail("RISK_BUDGET_EXCEEDED_AFTER_ROUNDING");
+  const sizing = {
     quantity,
     tp1Quantity,
     tp2Quantity,
@@ -109,6 +130,7 @@ function sizeTrade(decision, equity, riskFraction, info) {
     notional: quantity * entry,
     rules: r,
   };
+  return detailed ? { ok: true, sizing } : sizing;
 }
 
 class BinanceExchange {
