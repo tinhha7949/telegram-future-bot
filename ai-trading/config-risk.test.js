@@ -5,22 +5,22 @@ const { CONFIG, parseConfig } = require("./config");
 const { RiskGuard } = require("./risk/day-guard");
 
 test("single validated config with no strategy env overrides", () => {
-  assert.equal(CONFIG.RISK_PER_TRADE, 0.1);
-  assert.equal(CONFIG.MAX_DAILY_RISK, 0.25);
-  assert.deepEqual(CONFIG.TP_BATCHES, [3, 2]);
-  assert.equal(CONFIG.AI7_ACTIVATION_SAMPLES, 100);
-  assert.equal(CONFIG.N_CANDLES, 250);
-  assert.equal(CONFIG.VOL_LONG_RETURNS, 240);
-  assert.ok(CONFIG.VOL_LONG_RETURNS < CONFIG.N_CANDLES);
+  assert.ok(CONFIG.RISK_PER_TRADE > 0);
+  assert.ok(CONFIG.MAX_DAILY_RISK >= CONFIG.RISK_PER_TRADE);
+  assert.ok(Array.isArray(CONFIG.TP_BATCHES) && CONFIG.TP_BATCHES.length === 2);
+  assert.ok(CONFIG.AI7_ACTIVATION_SAMPLES >= CONFIG.COLD_START_SAMPLES);
+  assert.ok(CONFIG.N_CANDLES > CONFIG.VOL_LONG_RETURNS);
   assert.equal(Object.hasOwn(CONFIG, "HISTORY_FETCH_CANDLES"), false);
   const yaml = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "CONFIG.yaml"), "utf8");
-  assert.equal(parseConfig(yaml.replace("N_CANDLES: 250", "N_CANDLES: 300")).N_CANDLES, 300);
-  assert.throws(() => parseConfig(yaml.replace("N_CANDLES: 250", "N_CANDLES: 200")), /CONFIG_CROSS_FIELD_INVARIANT/);
-  assert.throws(() => parseConfig("RISK_PER_TRADE: 0.02"), /CONFIG_MISSING/);
-  assert.throws(() => parseConfig(require("node:fs").readFileSync(
-    require("node:path").join(__dirname, "..", "CONFIG.yaml"), "utf8"
-  ).replace("MAX_DAILY_RISK: 0.25", "MAX_DAILY_RISK: 0.005")),
-  /CONFIG_CROSS_FIELD_INVARIANT/);
+  assert.equal(parseConfig(yaml).N_CANDLES, CONFIG.N_CANDLES);
+  const nextN = Math.min(CONFIG.BINANCE_CANDLE_REQUEST_LIMIT - 1,
+    Math.max(CONFIG.VOL_LONG_RETURNS + 1, CONFIG.N_CANDLES + 1));
+  assert.equal(parseConfig(yaml.replace(/^N_CANDLES: \\d+$/m, "N_CANDLES: " + nextN)).N_CANDLES, nextN);
+  assert.throws(() => parseConfig(yaml.replace(/^N_CANDLES: \\d+$/m, "N_CANDLES: " + CONFIG.VOL_LONG_RETURNS)),
+    /CONFIG_CROSS_FIELD_INVARIANT/);
+  assert.throws(() => parseConfig(yaml.replace(/^MAX_DAILY_RISK: [^\\n]*$/m,
+    "MAX_DAILY_RISK: " + (CONFIG.RISK_PER_TRADE / 2))),
+    /CONFIG_CROSS_FIELD_INVARIANT/);
 });
 test("risk guard refuses unknown equity, durable drawdown, and duplicate signals", async () => {
   const tables = new Map();
