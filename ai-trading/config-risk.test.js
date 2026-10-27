@@ -15,10 +15,10 @@ test("single validated config with no strategy env overrides", () => {
   assert.equal(parseConfig(yaml).N_CANDLES, CONFIG.N_CANDLES);
   const nextN = Math.min(CONFIG.BINANCE_CANDLE_REQUEST_LIMIT - 1,
     Math.max(CONFIG.VOL_LONG_RETURNS + 1, CONFIG.N_CANDLES + 1));
-  assert.equal(parseConfig(yaml.replace(/^N_CANDLES: \\d+$/m, "N_CANDLES: " + nextN)).N_CANDLES, nextN);
-  assert.throws(() => parseConfig(yaml.replace(/^N_CANDLES: \\d+$/m, "N_CANDLES: " + CONFIG.VOL_LONG_RETURNS)),
+  assert.equal(parseConfig(yaml.replace(/^N_CANDLES: \d+$/m, "N_CANDLES: " + nextN)).N_CANDLES, nextN);
+  assert.throws(() => parseConfig(yaml.replace(/^N_CANDLES: \d+$/m, "N_CANDLES: " + CONFIG.VOL_LONG_RETURNS)),
     /CONFIG_CROSS_FIELD_INVARIANT/);
-  assert.throws(() => parseConfig(yaml.replace(/^MAX_DAILY_RISK: [^\\n]*$/m,
+  assert.throws(() => parseConfig(yaml.replace(/^MAX_DAILY_RISK: [^\n]*$/m,
     "MAX_DAILY_RISK: " + (CONFIG.RISK_PER_TRADE / 2))),
     /CONFIG_CROSS_FIELD_INVARIANT/);
 });
@@ -53,11 +53,15 @@ test("risk guard refuses unknown equity, durable drawdown, and duplicate signals
   }};
   const g = new RiskGuard(db, { now: () => Date.UTC(2026, 9, 23) });
   assert.equal((await g.reserve("bad", NaN)).ok, false);
+  const allowed = Math.floor(CONFIG.MAX_DAILY_RISK / CONFIG.RISK_PER_TRADE + 1e-9);
+  assert.ok(allowed >= 1);
   assert.equal((await g.reserve("a", 1000)).ok, true);
   assert.equal((await g.reserve("a", 1000)).ok, false);
-  assert.equal((await g.reserve("b", 1000)).ok, true);
-  assert.equal((await g.reserve("c", 1000)).reason, "MAX_DAILY_RISK_REACHED");
-  assert.equal((await g.assess(849)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
-  assert.equal(g.config.EQUITY_START,1000);
+  for (let i = 1; i < allowed; i++)
+    assert.equal((await g.reserve("risk-" + i, 1000)).ok, true);
+  assert.equal((await g.reserve("over-capacity", 1000)).reason, "MAX_DAILY_RISK_REACHED");
+  const belowCircuit = Math.max(1, 1000 * (1 - CONFIG.MAX_DRAWDOWN_CIRCUIT - 0.01));
+  assert.equal((await g.assess(belowCircuit)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
+  assert.equal(g.config.EQUITY_START,CONFIG.EQUITY_START);
   assert.equal((await new RiskGuard(db).assess(1000)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
 });
