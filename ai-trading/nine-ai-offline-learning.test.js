@@ -136,12 +136,12 @@ test("a newly qualified candidate reports shadow started on the same daily run",
   const { memoryDb } = require("./test-fixtures.cjs"),
     db = memoryDb(),
     start = 1700000000000,
-    now = start + 250 * l.DAY_MS,
+    now = start + 179 * l.DAY_MS,
     service = l.createOfflineLearning(db, { now: () => now });
   await service.initialize();
   for (let i = 0; i < 30; i++) {
     const r = row(i);
-    r.signalTime = start + i * 7 * l.DAY_MS;
+    r.signalTime = start + i * 6 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
       expectedR: i % 2 === 0 ? 0.85 : 0.60,
