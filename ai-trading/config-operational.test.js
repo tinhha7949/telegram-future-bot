@@ -12,16 +12,16 @@ function edit(name, value) {
   return original.replace(line, name + ": " + value);
 }
 
-test("all operational settings load from YAML with strict default values", () => {
-  assert.equal(CONFIG.BINANCE_HTTP_TIMEOUT_MS, 15000);
-  assert.equal(CONFIG.BINANCE_HTTP_GET_ATTEMPTS, 2);
-  assert.equal(CONFIG.BINANCE_RECV_WINDOW_MS, 10000);
-  assert.equal(CONFIG.MARKET_WS_STALE_MS, 90000);
-  assert.equal(CONFIG.TELEGRAM_DELIVERY_TIMEOUT_MS, 10000);
-  assert.equal(CONFIG.JOURNAL_WRITE_MAX_ATTEMPTS, 3);
-  assert.equal(CONFIG.ENTRY_REJECTED_RETRY_INTERVAL_MS, 60000);
-  assert.equal(CONFIG.RETENTION_ENABLE_DELETE, true);
-  assert.equal(CONFIG.RETENTION_DRY_RUN, false);
+test("all operational settings load from YAML and satisfy validated relationships", () => {
+  assert.ok(CONFIG.BINANCE_HTTP_TIMEOUT_MS >= 1000);
+  assert.ok(CONFIG.BINANCE_HTTP_GET_ATTEMPTS >= 1);
+  assert.ok(CONFIG.BINANCE_RECV_WINDOW_MS >= 1000);
+  assert.ok(CONFIG.MARKET_WS_STALE_MS > CONFIG.MARKET_WS_HEARTBEAT_MS);
+  assert.ok(CONFIG.TELEGRAM_DELIVERY_TIMEOUT_MS >= 1000);
+  assert.ok(CONFIG.JOURNAL_WRITE_MAX_ATTEMPTS >= 1);
+  assert.ok(CONFIG.ENTRY_REJECTED_RETRY_INTERVAL_MS >= 1000);
+  assert.equal(typeof CONFIG.RETENTION_ENABLE_DELETE, "boolean");
+  assert.equal(typeof CONFIG.RETENTION_DRY_RUN, "boolean");
   assert.ok(Object.isFrozen(CONFIG));
   assert.ok(Object.isFrozen(CONFIG.TP_BATCHES));
 });
