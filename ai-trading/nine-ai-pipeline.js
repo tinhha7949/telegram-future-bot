@@ -421,16 +421,28 @@ function analyzeNineAI({
             },
     },
   };
-  if (
-    funding === null ||
-    oi === null ||
-    fee === null ||
-    fee < 0 ||
-    Object.values(fundingBySide).some((v) => v === null) ||
-    slip === null ||
-    age < 0
-  )
-    return wait("EXECUTION_COST_INPUTS_STALE_OR_MISSING", {
+  const costInputFailure =
+    snapshotAt === null
+      ? "MISSING_MARKET_SNAPSHOT_AT"
+      : age < 0
+        ? "FUTURE_MARKET_SNAPSHOT"
+        : funding === null
+          ? "MISSING_FUNDING_RATE"
+          : oi === null
+            ? "MISSING_OPEN_INTEREST_CHANGE"
+            : fee === null
+              ? "MISSING_ROUND_TRIP_FEE"
+              : fee < 0
+                ? "INVALID_ROUND_TRIP_FEE"
+                : fundingBySide.LONG === null
+                  ? "MISSING_LONG_FUNDING_COST"
+                  : fundingBySide.SHORT === null
+                    ? "MISSING_SHORT_FUNDING_COST"
+                    : slip === null
+                      ? "MISSING_SLIPPAGE"
+                      : null;
+  if (costInputFailure)
+    return wait("EXECUTION_COST_INPUTS_" + costInputFailure, {
       regime,
       agents,
       featureSnapshot,
