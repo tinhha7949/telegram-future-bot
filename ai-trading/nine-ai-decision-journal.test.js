@@ -142,8 +142,20 @@ assert.ok(learnedLossWindow.adjustment < 0);
   };
   const collection = {
     async listIndexes() {
-      return { toArray: async () => journal.JOURNAL_INDEXES.slice(0, -1)
-        .map(([key, options]) => ({ ...options, key })) };
+      const currentIndexName = "uniq_nine_ai_v7_symbol_candle";
+      const pendingIndexName = journal.JOURNAL_INDEXES.at(-1)[1].name;
+      const existing = journal.JOURNAL_INDEXES
+        .filter(([, options]) => ![currentIndexName, pendingIndexName].includes(options.name))
+        .map(([key, options]) => ({ ...options, key }));
+      // A deployed database may still have the v5 name/spec from schema version 5.
+      // It must be preserved, not mistaken for the current v7 index.
+      existing.push({
+        name: "uniq_nine_ai_v5_symbol_candle",
+        key: { symbol: 1, signalTime: 1 },
+        unique: true,
+        partialFilterExpression: { decisionSchemaVersion: 5 },
+      });
+      return { toArray: async () => existing };
     },
     async createIndex(keys, options) { createdIndexes.push({ keys, options }); },
     find(_filter, options) { cacheProjection = options?.projection; return cursor; },
@@ -160,8 +172,9 @@ assert.ok(learnedLossWindow.adjustment < 0);
   };
   await journal.initialize({ collection: () => collection });
   assert.deepEqual(createdIndexes.map((index) => index.options.name), [
+    "uniq_nine_ai_v7_symbol_candle",
     journal.JOURNAL_INDEXES.at(-1)[1].name,
-  ], "startup should create only a missing index and skip verified existing indexes");
+  ], "startup should preserve the legacy v5 index and create the current v7 index plus any other missing index");
   assert.equal(cacheProjection["decisionSnapshot.executionDecision"], 1);
   assert.equal(cacheProjection.marketWindow, undefined,
     "current-schema windows should load compact features instead of raw candles");
