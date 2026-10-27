@@ -3,7 +3,7 @@ const {test}=require("node:test");
 const assert=require("node:assert/strict");
 const {RecentOHLCVStore,encodeRecent,decodeRecent}=require("./ohlcv");
 const {CONFIG}=require("../../config");
-test("archive keeps only 500 contiguous closed bars and reconstructs without time shift",()=>{
+test("archive keeps configured contiguous closed bars and reconstructs without time shift",()=>{
  const end=1700000000000;
  const rows=Array.from({length:600},(_,i)=>{
    const at=end+i*14400000,close=100+i*0.01;
@@ -13,7 +13,7 @@ test("archive keeps only 500 contiguous closed bars and reconstructs without tim
  const back=decodeRecent(encoded);
  assert.equal(encoded.count,CONFIG.N_CANDLES);
  assert.equal(back.length,CONFIG.N_CANDLES);
- assert.equal(back[0][0],rows[100][0]);
+ assert.equal(back[0][0],rows[rows.length-CONFIG.N_CANDLES][0]);
  assert.equal(back.at(-1)[6],rows.at(-1)[6]);
  assert.ok(Math.abs(back.at(-1)[4]-rows.at(-1)[4])<0.01);
  assert.ok(encoded.compressed.length<500*5*4);
@@ -31,7 +31,7 @@ test("store writes compressed bounded snapshot once per symbol",async()=>{
    return [at,100,101,99,100,1,at+14399999];
  });
  const result=await new RecentOHLCVStore(db).store("BTCUSDT",rows);
- assert.equal(result.count,500);
+ assert.equal(result.count,CONFIG.N_CANDLES);
  assert.equal(saved.filter._id,"BTCUSDT");
  assert.equal(saved.doc.compressed instanceof Buffer,true);
  assert.equal(saved.options.upsert,true);
