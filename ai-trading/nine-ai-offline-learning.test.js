@@ -145,7 +145,7 @@ test("a newly qualified candidate reports shadow started on the same daily run",
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
       expectedR: i % 2 === 0 ? 0.75 : 0.6,
-      cost: 0.1,
+      cost: 0.15,
       baseUncertainty: 0.1,
     });
     r.evaluations[24].longNetR = i % 2 === 0 ? 1 : -1;
@@ -198,7 +198,7 @@ test("shadow cannot promote before 14 complete days plus 24-bar outcome maturity
       ...r.decisionSnapshot.edges.LONG,
       p: 0.6,
       expectedR: i % 2 === 0 ? 0.75 : 0.6,
-      cost: 0.1,
+      cost: 0.15,
       baseUncertainty: 0.1,
     };
     r.evaluations[24].longNetR = i % 2 === 0 ? 0.1 : -0.2;
@@ -247,7 +247,7 @@ test("candidate qualification has no 400-row, trade-count or extra .02R-uplift g
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
       expectedR: i % 2 === 0 ? 0.75 : 0.6,
-      cost: 0.1,
+      cost: 0.15,
       baseUncertainty: 0.1,
     });
     r.evaluations[24].longNetR = i % 2 === 0 ? 1 : -1;
@@ -268,7 +268,7 @@ test("candidate selection is fit on train and a validation loss cannot be rescue
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
       expectedR: i % 2 === 0 ? 0.75 : 0.6,
-      cost: 0.1,
+      cost: 0.15,
       baseUncertainty: 0.1,
     });
     r.evaluations[24].longNetR = i < 18 || i >= 24 ? (i % 2 === 0 ? 1 : -1) : (i % 2 === 0 ? -1 : 1);
