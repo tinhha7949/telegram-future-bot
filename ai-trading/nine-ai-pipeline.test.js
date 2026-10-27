@@ -224,6 +224,14 @@ test("20/90-day realized volatility and momentum use only closed 4h returns", ()
   }
 });
 
+test("analysis uses exactly the configured number of latest closed 4h candles", () => {
+  const f = fixture();
+  const full = p.analyzeNineAI(f);
+  const bounded = p.analyzeNineAI({ ...f, candles4h: f.candles4h.slice(-CONFIG.N_CANDLES) });
+  assert.deepEqual(bounded, full);
+  assert.equal(p.closedCandles(f.candles4h, f.market.now).slice(-CONFIG.N_CANDLES).length, CONFIG.N_CANDLES);
+});
+
 test("opposing momentum within 4h history cannot classify an uptrend", () => {
   const f = fixture(),
     cs = p.closedCandles(f.candles4h, f.market.now);
