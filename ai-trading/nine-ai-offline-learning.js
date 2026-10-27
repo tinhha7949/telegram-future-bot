@@ -396,7 +396,7 @@ function createOfflineLearning(db, options = {}) {
     return state?.policySchemaVersion === DECISION_SCHEMA_VERSION
       ? {
           ...DEFAULT_CHAMPION, ...(state.params || {}),
-          minEdge: Math.max(CONFIG.MIN_EDGE, Number(state.params?.minEdge) || CONFIG.MIN_EDGE),
+          minEdge: Math.min(CONFIG.WAIT_EDGE_MAX, Math.max(CONFIG.MIN_EDGE, Number(state.params?.minEdge) || CONFIG.MIN_EDGE)),
           gapEdge: CONFIG.EDGE_GAP, uncertaintyPenalty: 0,
         }
       : { ...DEFAULT_CHAMPION };
