@@ -28,10 +28,12 @@ open position continues independent SL/TP/timeout management.
 | AI-8 Fill | Spread, depth, OI, latency | Expected price/slippage; configured SLIPPAGE_BPS fallback when estimation is unavailable |
 | AI-9 Meta | Specialist outputs and regime track record | Exactly one LONG/SHORT/WAIT using net expected edge and strict direction gap |
 
-The analysis feed fetches at least 541 *closed* bars to compute 540 returns
-for exact 90-day realized volatility. The compressed float32/delta/gzip
-archive keeps the most recent `N_CANDLES=500` per symbol, and is not used as
-the high-precision feature input. Features and labels exclude future bars,
+The live analysis requests `N_CANDLES + 1` exchange bars because Binance may
+include the currently-forming bar. It discards that bar and analyzes exactly
+`N_CANDLES` contiguous closed 4h bars. `N_CANDLES` is the single YAML source
+for live analysis and the compressed float32/delta/gzip OHLCV archive. The
+`VOL_LONG_RETURNS` window must fit inside the configured candle window; the
+runtime never expands it to satisfy an old 90-day requirement. Features and labels exclude future bars,
 future closures and unclosed candles. The candle/market freshness window is
 one 4h bar; an older decision cannot be resurrected from cache.
 
@@ -49,12 +51,13 @@ round_trip_fee_pct = 2 * FEE_TAKER * 100
 Funding may be a cost or credit; realized settlement reconciles actual
 exchange fees and signed funding and does not subtract slippage a second time
 from exchange-native realized PnL. The probabilities are not certified
-calibrated probabilities at cold start. `MIN_EDGE` is at least 0.15;
-`EDGE_GAP` is 0.05; the two comparisons are strict. Low confidence and
+calibrated probabilities at cold start. `MIN_EDGE` and `EDGE_GAP` are read from `CONFIG.yaml`; the two comparisons
+are strict. The effective minimum edge may rise under the configured WAIT-rate
+policy, but is bounded by `WAIT_EDGE_MAX`. Low confidence and
 prediction-vs-realized calibration drift add uncertainty rather than
-allowing blind parameter changes. AI-6 must be CONFIRMED and in the proposed
-trade direction with finite funding/OI and nonzero liquidation imbalance;
-UNAVAILABLE, NEUTRAL and opposite flow yield WAIT. A fresh liquidation
+allowing blind parameter changes. AI-6 requires valid funding/OI and liquidation inputs. Directional flow must
+agree with the proposed trade; neutral flow is handled explicitly by the
+meta-policy and does not invent a direction. A fresh liquidation
 reading is checked again before MARKET. This fail-closed rule can sharply
 reduce trading opportunities during quiet or unavailable flow periods.
 The 20-day and configured long-window volatility lookbacks, confidence weights, target quantiles,
