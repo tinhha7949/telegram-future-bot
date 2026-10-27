@@ -12,7 +12,7 @@ test("UTC session metrics use realized net R/fees/funding and durable high-water
  await wait.store.insertOne({at:now-2,action:"LONG"});
  await db.collection("nine_ai_global_risk").insertOne({_id:"GLOBAL",maxDrawdown:0.992});
  await db.collection("nine_ai_global_risk").insertOne({_id:RUN_RISK_ID,maxDrawdown:0.08,halted:false});
- const s=await sessionReport(db,wait,{now:()=>now});
+ const s=await sessionReport(db,wait,{now:()=>now,config:{...CONFIG,WAIT_MIN_RATIO:0.6}});
  assert.equal(s.complete,true);assert.equal(s.trades,2);
  assert.equal(s.winrate,0.5);assert.equal(s.meanNetR,-0.25);
  assert.equal(s.feesUSDT,1.2);assert.ok(Math.abs(s.fundingUSDT-0.1)<1e-10);
