@@ -132,6 +132,9 @@ class BinanceExchange {
     this.budget = budget || new RequestBudget({ now, wait });
     this.requestCache = new Map();
     this.requestPending = new Map();
+    this.symbolConfigCache = null;
+    this.symbolConfigAt = 0;
+    this.symbolConfigPending = null;
     this.observations = new WeakMap();
     this.marketFeed =
       marketFeed ||
@@ -315,18 +318,53 @@ class BinanceExchange {
     // new entries have no free margin and is rejected by the entry margin gate.
     if (!(Number.isFinite(equity) && equity > 0 && Number.isFinite(availableBalance)))
       throw new Error("INVALID_AVAILABLE_BALANCE");
-    const leverageBySymbol = Object.fromEntries(
-      (Array.isArray(account.positions) ? account.positions : [])
-        .filter((position) => typeof position.symbol === "string" && position.symbol)
-        .map((position) => [
-          position.symbol,
-          {
-            leverage: Number(position.leverage),
-            maxNotional: Number(position.maxNotional ?? position.maxNotionalValue),
-          },
-        ]),
-    );
+    // V3 account responses only include symbols with positions or open orders.
+    // Symbol leverage configuration lives on /fapi/v1/symbolConfig and must be
+    // loaded separately so new symbols can pass margin validation without
+    // guessing a default leverage.
+    const leverageBySymbol = {};
+    for (const position of Array.isArray(account.positions) ? account.positions : []) {
+      if (typeof position.symbol !== "string" || !position.symbol) continue;
+      const leverage = Number(position.leverage);
+      if (!(Number.isFinite(leverage) && leverage > 0)) continue;
+      leverageBySymbol[position.symbol] = {
+        leverage,
+        maxNotional: Number(position.maxNotional ?? position.maxNotionalValue),
+      };
+    }
+    try {
+      const configs = await this.symbolConfigurations();
+      for (const config of configs) {
+        if (typeof config?.symbol !== "string" || !config.symbol) continue;
+        const leverage = Number(config.leverage);
+        if (!(Number.isFinite(leverage) && leverage > 0)) continue;
+        leverageBySymbol[config.symbol] = {
+          leverage,
+          maxNotional: Number(config.maxNotionalValue ?? config.maxNotional),
+        };
+      }
+    } catch {
+      // Keep any valid account-position values; missing symbol leverage remains
+      // absent and the entry margin gate will reject it safely.
+    }
     return { equity, availableBalance, leverageBySymbol };
+  }
+  async symbolConfigurations() {
+    if (this.symbolConfigCache && this.now() - this.symbolConfigAt < CONFIG.BINANCE_METADATA_CACHE_MS)
+      return this.symbolConfigCache;
+    if (this.symbolConfigPending) return this.symbolConfigPending;
+    const pending = this.request("/fapi/v1/symbolConfig", {}, { signed: true }).then((rows) => {
+      if (!Array.isArray(rows)) throw new Error("INVALID_SYMBOL_CONFIG_RESPONSE");
+      this.symbolConfigCache = rows;
+      this.symbolConfigAt = this.now();
+      return rows;
+    });
+    this.symbolConfigPending = pending;
+    try {
+      return await pending;
+    } finally {
+      this.symbolConfigPending = null;
+    }
   }
   async equity() { return (await this.accountState()).equity; }
   async symbols() {

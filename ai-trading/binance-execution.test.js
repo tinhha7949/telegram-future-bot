@@ -246,3 +246,49 @@ test("negative finite available balance is a valid account state with no free ma
     },
   });
 });
+
+test("accountState loads leverage for symbols without positions from cached symbolConfig", async () => {
+  const calls = [];
+  const e = new BinanceExchange();
+  e.request = async (path, params, options) => {
+    calls.push({ path, params, options });
+    if (path === "/fapi/v3/account") return {
+      multiAssetsMargin: false,
+      availableBalance: "7.8",
+      assets: [{ asset: "USDT", walletBalance: "8", unrealizedProfit: "0" }],
+      positions: [],
+    };
+    if (path === "/fapi/v1/symbolConfig") return [
+      { symbol: "XANUSDT", leverage: 10, maxNotionalValue: "100000" },
+      { symbol: "XAUTUSDT", leverage: 20, maxNotionalValue: "50000" },
+    ];
+    throw new Error("UNEXPECTED_REQUEST_" + path);
+  };
+  const first = await e.accountState();
+  const second = await e.accountState();
+  assert.deepEqual(first.leverageBySymbol, {
+    XANUSDT: { leverage: 10, maxNotional: 100000 },
+    XAUTUSDT: { leverage: 20, maxNotional: 50000 },
+  });
+  assert.deepEqual(second.leverageBySymbol, first.leverageBySymbol);
+  assert.equal(calls.filter((call) => call.path === "/fapi/v1/symbolConfig").length, 1,
+    "symbol configuration is cached rather than fetched on every account check");
+  assert.deepEqual(calls.find((call) => call.path === "/fapi/v1/symbolConfig").options,
+    { signed: true });
+});
+
+test("accountState keeps the margin gate fail-closed when symbolConfig is unavailable", async () => {
+  const e = new BinanceExchange();
+  e.request = async (path) => {
+    if (path === "/fapi/v3/account") return {
+      multiAssetsMargin: false,
+      availableBalance: "8",
+      assets: [{ asset: "USDT", walletBalance: "8", unrealizedProfit: "0" }],
+      positions: [],
+    };
+    throw new Error("symbol config unavailable");
+  };
+  const state = await e.accountState();
+  assert.equal(state.leverageBySymbol.XANUSDT, undefined,
+    "must not invent leverage when Binance configuration is unavailable");
+});
