@@ -1,7 +1,7 @@
 "use strict";
 const { CONFIG } = require("./config");
 const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
-const DECISION_SCHEMA_VERSION = 6; // Invalidates old decision/50:50 outcome contracts.
+const DECISION_SCHEMA_VERSION = 7; // Invalidates decisions made with the old 90-day candle window.
 const FUNDING_HOT_RATE = CONFIG.FUNDING_HOT_RATE;
 const fundingIsHot = (rate) =>
   Number.isFinite(rate) && Math.abs(rate) > FUNDING_HOT_RATE;
