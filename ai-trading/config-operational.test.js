@@ -20,6 +20,9 @@ test("all operational settings load from YAML and satisfy validated relationship
   assert.ok(CONFIG.TELEGRAM_DELIVERY_TIMEOUT_MS >= 1000);
   assert.ok(CONFIG.JOURNAL_WRITE_MAX_ATTEMPTS >= 1);
   assert.ok(CONFIG.ENTRY_REJECTED_RETRY_INTERVAL_MS >= 1000);
+  assert.ok(CONFIG.COMMAND_HTTP_ATTEMPTS >= 1);
+  assert.ok(CONFIG.COMMAND_HTTP_RETRY_MS >= 100);
+  assert.ok(CONFIG.COMMAND_HTTP_TIMEOUT_MS > CONFIG.COMMAND_LONG_POLL_SECONDS * 1000);
   assert.equal(typeof CONFIG.RETENTION_ENABLE_DELETE, "boolean");
   assert.equal(typeof CONFIG.RETENTION_DRY_RUN, "boolean");
   assert.ok(Object.isFrozen(CONFIG));
@@ -30,6 +33,7 @@ test("safe operational parameters can be changed in YAML without modifying code"
   assert.equal(parseConfig(edit("BINANCE_HTTP_GET_ATTEMPTS", "4")).BINANCE_HTTP_GET_ATTEMPTS, 4);
   assert.equal(parseConfig(edit("MARKET_WS_HEARTBEAT_MS", "20000")).MARKET_WS_HEARTBEAT_MS, 20000);
   assert.equal(parseConfig(edit("JOURNAL_WRITE_MAX_ATTEMPTS", "5")).JOURNAL_WRITE_MAX_ATTEMPTS, 5);
+  assert.equal(parseConfig(edit("COMMAND_HTTP_ATTEMPTS", "3")).COMMAND_HTTP_ATTEMPTS, 3);
   assert.equal(parseConfig(edit("RETENTION_ENABLE_DELETE", "false")).RETENTION_ENABLE_DELETE, false);
   assert.equal(parseConfig(edit("RETENTION_DRY_RUN", "true")).RETENTION_DRY_RUN, true);
 });
@@ -40,6 +44,8 @@ test("invalid booleans and unsafe operational values abort startup, never silent
     ["RETENTION_DRY_RUN", "1", /CONFIG_INVALID_BOOLEAN_RETENTION_DRY_RUN/],
     ["BINANCE_HTTP_GET_ATTEMPTS", "0", /CONFIG_INVALID_NUMBER_BINANCE_HTTP_GET_ATTEMPTS/],
     ["BINANCE_HTTP_GET_ATTEMPTS", "100", /CONFIG_UNSAFE_OPERATIONAL_VALUE_BINANCE_HTTP_GET_ATTEMPTS/],
+    ["COMMAND_HTTP_ATTEMPTS", "100", /CONFIG_UNSAFE_OPERATIONAL_VALUE_COMMAND_HTTP_ATTEMPTS/],
+    ["COMMAND_HTTP_RETRY_MS", "0", /CONFIG_INVALID_NUMBER_COMMAND_HTTP_RETRY_MS/],
     ["BINANCE_RECV_WINDOW_MS", "120000", /CONFIG_UNSAFE_OPERATIONAL_VALUE_BINANCE_RECV_WINDOW_MS/],
     ["BINANCE_REQUEST_WEIGHT_LIMIT", "9999", /CONFIG_UNSAFE_OPERATIONAL_VALUE_BINANCE_REQUEST_WEIGHT_LIMIT/],
     ["BINANCE_BACKGROUND_BUDGET_RATIO", "0.99", /CONFIG_UNSAFE_OPERATIONAL_VALUE_BINANCE_BACKGROUND_BUDGET_RATIO/],
@@ -59,6 +65,7 @@ test("cross-field contradictions abort before any API connections", () => {
     () => parseConfig(edit("MARKET_WS_STALE_MS", "20000")),
     /CONFIG_CROSS_FIELD_INVARIANT/,
   );
+  assert.throws(() => parseConfig(edit("COMMAND_HTTP_TIMEOUT_MS", String(CONFIG.COMMAND_LONG_POLL_SECONDS * 1000))), /CONFIG_CROSS_FIELD_INVARIANT/);
   assert.throws(
     () => parseConfig(edit("MARKET_WS_RECONNECT_BASE_MS", "20000")
       .replace("MARKET_WS_RECONNECT_MAX_MS: 30000", "MARKET_WS_RECONNECT_MAX_MS: 1000")),
