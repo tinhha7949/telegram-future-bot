@@ -2,6 +2,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { RiskGuard, RUN_RISK_ID } = require("./day-guard");
+const { CONFIG } = require("../config");
+const TEST_RISK_CONFIG = { ...CONFIG, MAX_DRAWDOWN_CIRCUIT: 0.15 };
 
 // Exercise the Mongo update contract including $setOnInsert and $max.
 function riskDb() {
@@ -56,16 +58,16 @@ test("new bot session ignores historical 99.2% drawdown and configured starting 
 
 test("bot high-water and drawdown latch survive restart, never auto-reset", async () => {
   const db = riskDb();
-  const guard = new RiskGuard(db);
+  const guard = new RiskGuard(db, { config: TEST_RISK_CONFIG });
   assert.equal((await guard.assess(100)).ok, true);
   assert.equal((await guard.assess(110)).drawdown, 0);
-  const restarted = new RiskGuard(db);
+  const restarted = new RiskGuard(db, { config: TEST_RISK_CONFIG });
   const next = await restarted.assess(104);
   assert.ok(Math.abs(next.drawdown - 6 / 110) < 1e-12);
   assert.equal(next.startEquity, 100);
   assert.equal(next.peakEquity, 110);
   assert.equal((await restarted.assess(92)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
-  assert.equal((await new RiskGuard(db).assess(120)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
+  assert.equal((await new RiskGuard(db, { config: TEST_RISK_CONFIG }).assess(120)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
   assert.ok((await db.collection("nine_ai_global_risk").findOne({ _id: RUN_RISK_ID })).maxDrawdown >= 0.15);
 });
 
