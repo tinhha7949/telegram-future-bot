@@ -8,4 +8,6 @@ assert.match(source, /const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;/);
 assert.match(source, /new RiskGuard\(db/);
 assert.equal(CONFIG.RISK_PER_TRADE, 0.1);
 assert.equal(CONFIG.N_CANDLES, 250);
+assert.match(source, /const HISTORY_4H_LIMIT = CONFIG\.N_CANDLES \+ 1;/);
+assert.doesNotMatch(source, /HISTORY_FETCH_CANDLES/);
 console.log("NINE-AI CENTRALIZED LIVE CONFIG TESTS PASSED");
