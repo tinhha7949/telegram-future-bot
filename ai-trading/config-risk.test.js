@@ -5,15 +5,15 @@ const { CONFIG, parseConfig } = require("./config");
 const { RiskGuard } = require("./risk/day-guard");
 
 test("single validated config with no strategy env overrides", () => {
-  assert.equal(CONFIG.RISK_PER_TRADE, 0.01);
-  assert.equal(CONFIG.MAX_DAILY_RISK, 0.025);
+  assert.equal(CONFIG.RISK_PER_TRADE, 0.1);
+  assert.equal(CONFIG.MAX_DAILY_RISK, 0.25);
   assert.deepEqual(CONFIG.TP_BATCHES, [3, 2]);
   assert.equal(CONFIG.AI7_ACTIVATION_SAMPLES, 100);
   assert.equal(CONFIG.HISTORY_FETCH_CANDLES, CONFIG.VOL_90D_RETURNS + 1);
   assert.throws(() => parseConfig("RISK_PER_TRADE: 0.02"), /CONFIG_MISSING/);
   assert.throws(() => parseConfig(require("node:fs").readFileSync(
     require("node:path").join(__dirname, "..", "CONFIG.yaml"), "utf8"
-  ).replace("MAX_DAILY_RISK: 0.025", "MAX_DAILY_RISK: 0.005")),
+  ).replace("MAX_DAILY_RISK: 0.25", "MAX_DAILY_RISK: 0.005")),
   /CONFIG_CROSS_FIELD_INVARIANT/);
 });
 test("risk guard refuses unknown equity, durable drawdown, and duplicate signals", async () => {
