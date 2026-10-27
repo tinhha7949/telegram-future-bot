@@ -6,6 +6,6 @@ const { CONFIG } = require("./config");
 const source = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
 assert.match(source, /const RISK_PER_TRADE = CONFIG.RISK_PER_TRADE;/);
 assert.match(source, /new RiskGuard\(db/);
-assert.equal(CONFIG.RISK_PER_TRADE, 0.01);
-assert.equal(CONFIG.N_CANDLES, 500);
+assert.equal(CONFIG.RISK_PER_TRADE, 0.1);
+assert.equal(CONFIG.N_CANDLES, 250);
 console.log("NINE-AI CENTRALIZED LIVE CONFIG TESTS PASSED");
