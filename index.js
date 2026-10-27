@@ -18,7 +18,9 @@ function scanPauseReason({ runtimeFault = false, uncertain = false, untracked = 
   if (untracked > 0) return "UNTRACKED_EXCHANGE_POSITION";
   return null;
 }
-const HISTORY_4H_LIMIT = CONFIG.HISTORY_FETCH_CANDLES;
+// Fetch one extra bar because Binance may include the still-forming 4h candle.
+// The pipeline and DB archive retain exactly CONFIG.N_CANDLES closed bars.
+const HISTORY_4H_LIMIT = CONFIG.N_CANDLES + 1;
 
 const fs = require("node:fs"),
   path = require("node:path"),
