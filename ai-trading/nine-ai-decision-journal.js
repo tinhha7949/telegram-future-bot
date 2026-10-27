@@ -561,7 +561,7 @@ const JOURNAL_INDEXES = Object.freeze([
     partialFilterExpression: { decisionSchemaVersion: 4 },
   }],
   [{ symbol: 1, signalTime: 1 }, {
-    unique: true, name: "uniq_nine_ai_v5_symbol_candle",
+    unique: true, name: "uniq_nine_ai_v7_symbol_candle",
     partialFilterExpression: { decisionSchemaVersion: DECISION_SCHEMA_VERSION },
   }],
   // Supports the global newest-record scan; the symbol-prefixed index cannot
