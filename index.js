@@ -721,47 +721,6 @@ async function main() {
       entriesPaused: () => entriesPaused,
     });
   }, "MARKET_SCAN");
-  // Commands have their own loop. A Telegram outage cannot stall SL/TP/timeout management.
-  let updateId = 0;
-  const commands = every(CONFIG.COMMAND_POLL_INTERVAL_MS, async () => {
-    if (!process.env.BOT_TOKEN || !process.env.CHAT_ID) return;
-    const url = `https://api.telegram.org/bot${process.env.BOT_TOKEN}/getUpdates?offset=${updateId + 1}&timeout=${CONFIG.COMMAND_LONG_POLL_SECONDS}`;
-    let res;
-    for (let attempt = 0; attempt < CONFIG.COMMAND_HTTP_ATTEMPTS; attempt++) {
-      try {
-        res = await fetch(url, {
-          signal: AbortSignal.timeout(CONFIG.COMMAND_HTTP_TIMEOUT_MS),
-        });
-      } catch (error) {
-        if (attempt + 1 >= CONFIG.COMMAND_HTTP_ATTEMPTS) throw error;
-        await sleep(CONFIG.COMMAND_HTTP_RETRY_MS * (attempt + 1));
-        continue;
-      }
-      if (res.ok) break;
-      // Retry transient Telegram server failures only; auth and rate-limit
-      // responses are not retried in a tight loop.
-      if (res.status >= 500 && attempt + 1 < CONFIG.COMMAND_HTTP_ATTEMPTS) {
-        await sleep(CONFIG.COMMAND_HTTP_RETRY_MS * (attempt + 1));
-        continue;
-      }
-      return;
-    }
-    if (!res?.ok) return;
-    const payload = await res.json();
-    for (const u of payload.result || []) {
-      updateId = Math.max(updateId, u.update_id);
-      if (
-        String(u.message?.chat?.id) === String(process.env.CHAT_ID) &&
-        u.message?.text === "/status"
-      )
-        await telegram(
-          process.env.BOT_TOKEN,
-          process.env.CHAT_ID,
-          `BOT OK | active=${lifecycle.active.size} | entriesPaused=${entriesPaused || lifecycle.uncertain || !!lifecycle.untracked.size}`,
-        );
-    }
-  }, "TELEGRAM_COMMANDS");
-  void commands();
   void scan();
   console.log(
     "NINE-AI READY: closed 4h decisions; independent protection/timeout; daily offline learning",
