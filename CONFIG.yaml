@@ -1,5 +1,5 @@
 # Canonical trading strategy settings. Do not override risk/strategy via .env.
-N_CANDLES: 500
+N_CANDLES: 250
 TIMEFRAME: "4h"
 EQUITY_START: 1000.0
 RISK_PER_TRADE: 0.05
