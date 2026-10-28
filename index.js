@@ -94,26 +94,6 @@ function acquirePidLock() {
   }
   throw new Error("PID_LOCK_UNAVAILABLE");
 }
-async function telegram(token, chatId, text) {
-  if (!token || !chatId) return false;
-  try {
-    const res = await fetch(
-      `https://api.telegram.org/bot${token}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: String(text).slice(0, CONFIG.TELEGRAM_MAX_MESSAGE_CHARS),
-        }),
-        signal: AbortSignal.timeout(CONFIG.TELEGRAM_HTTP_TIMEOUT_MS),
-      },
-    );
-    return res.ok && (await res.json()).ok === true;
-  } catch (_) {
-    return false;
-  }
-}
 async function marketSnapshot(exchange, symbol, now = Date.now()) {
   const observe = async (route, params, ttl = 0) => {
     const started = Date.now();
