@@ -11,5 +11,5 @@ assert.ok(Number.isSafeInteger(CONFIG.N_CANDLES));
 assert.ok(CONFIG.N_CANDLES > CONFIG.VOL_LONG_RETURNS);
 assert.match(source, /const HISTORY_4H_LIMIT = CONFIG\.N_CANDLES \+ 1;/);
 assert.doesNotMatch(source, /HISTORY_FETCH_CANDLES/);
-assert.match(source, /attempt < CONFIG\.COMMAND_HTTP_ATTEMPTS/);
+assert.doesNotMatch(source, /getUpdates|TELEGRAM_COMMANDS|COMMAND_HTTP_ATTEMPTS/);
 console.log("NINE-AI CENTRALIZED LIVE CONFIG TESTS PASSED");
