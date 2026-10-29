@@ -50,7 +50,8 @@ test("AI-6 requires valid liquidation data but cannot veto direction by its sign
     false,
   );
   assert.equal(
-    validateExecution(d, { ...market, liquidationImbalance: -0.5 }, now).reason,
-    "CURRENT_FLOW_CONFLICT",
+    validateExecution(d, { ...market, liquidationImbalance: -0.5 }, now).ok,
+    true,
+    "AI-9 must remain the sole direction selector",
   );
 });
