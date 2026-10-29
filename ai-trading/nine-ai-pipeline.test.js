@@ -14,6 +14,14 @@ for (const side of ["LONG", "SHORT"])
       assert.equal(d.side, side);
       assert.equal(d.agents.continuation.side, side);
       assert.equal(d.agents.meanReversion.enabled, false);
+      assert.equal(d.agents.probability[side], d.edges[side].p);
+      assert.equal(d.agents.expectedReturn[side], d.edges[side].expectedR);
+      assert.equal(d.agents.confidence.confidenceScore, d.regime.regime_conf);
+      assert.equal(d.agents.confidence.uncertaintyPenaltyBySide[side], d.edges[side].baseUncertainty);
+      assert.equal(d.agents.riskGuardian.vetoed, false);
+      assert.equal(d.agents.slTp.planBySide[side], d.edges[side].plan);
+      assert.equal(d.agents.execution.estimatedSlippagePct, d.featureSnapshot.estSlippagePct);
+      assert.equal(d.agents.decision.side, side);
       assert.equal(d.edges[side].distMAE.samples, 120);
       assert.equal(d.tradePlan.closePercentAtTP1, 60);
       assert.equal(d.tradePlan.timeoutMs, 96 * 3600000);
@@ -130,6 +138,7 @@ for (const side of ["LONG", "SHORT"]) {
       assert.equal(d.agents.outcome.source, "ATR_COLD_START_EXIT_PLAN");
       assert.equal(d.tradePlan.outcomeMode, "AI2_INITIAL");
       assert.equal(d.tradePlan.stopMethod, "ATR14_COLD_START_STOP");
+      assert.ok(Math.abs(d.tp2 - d.entry) + 1e-10 >= CONFIG.FALLBACK_TP2_R * Math.abs(d.entry - d.sl));
       assert.equal(
         d.edges[side].probabilitySource,
         "FEATURE_SCORE_UNCALIBRATED",
@@ -406,4 +415,21 @@ test("missing execution-cost inputs identify the exact failed input and remain W
   });
   assert.equal(missingOi.action, "WAIT");
   assert.equal(missingOi.reason, "EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE");
+});
+
+
+test("AI-7 recency weighting sorts labels newest-first regardless of query order", () => {
+  const f = fixture();
+  const source = f.outcomes[0];
+  const labels = [
+    { ...source, tradeId: "oldest", closedAt: f.market.now - 3000, maePct: 0.1, mfePct: 1.1 },
+    { ...source, tradeId: "newest", closedAt: f.market.now - 1000, maePct: 0.9, mfePct: 3.9 },
+    { ...source, tradeId: "middle", closedAt: f.market.now - 2000, maePct: 0.5, mfePct: 2.5 },
+  ];
+  const d = p.analyzeNineAI({ ...f, outcomes: labels });
+  const ordered = [...labels].sort((a, b) => b.closedAt - a.closedAt);
+  const weighted = require("./online-learning").weightedPercentile;
+  assert.equal(d.edges.LONG.distMAE.p80, weighted(ordered.map(o => o.maePct), CONFIG.MAE_PERCENTILE));
+  assert.equal(d.edges.LONG.distMFE.p50, weighted(ordered.map(o => o.mfePct), CONFIG.MFE_TP1_PERCENTILE));
+  assert.equal(d.edges.LONG.distMFE.p90, weighted(ordered.map(o => o.mfePct), CONFIG.MFE_TP2_PERCENTILE));
 });
