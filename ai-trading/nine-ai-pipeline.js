@@ -237,14 +237,14 @@ function analyzeNineAI({
     return wait("REGIME_NOT_TREND", { regime, agents: { regime } });
 
   // AI-6 hard market-data vetoes run before specialist models and AI-9.
-  const snapshotAt = finite(market.snapshotAt),
-    earlyAge = snapshotAt === null ? Infinity : now - snapshotAt,
+  const earlySnapshotAt = finite(market.snapshotAt),
+    earlyAge = earlySnapshotAt === null ? Infinity : now - earlySnapshotAt,
     earlyFunding = finite(market.fundingRate),
     earlySpread = finite(market.spreadPct),
     earlyDepth = finite(market.depthNotional),
     earlyOi = finite(market.openInterestChange),
     earlyLatency = finite(market.latencyMs);
-  if (snapshotAt === null)
+  if (earlySnapshotAt === null)
     return wait("EXECUTION_COST_INPUTS_MISSING_MARKET_SNAPSHOT_AT", { regime, agents: { regime } });
   if (earlyAge < 0)
     return wait("EXECUTION_COST_INPUTS_FUTURE_MARKET_SNAPSHOT", { regime, agents: { regime } });
