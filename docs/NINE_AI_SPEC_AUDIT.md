@@ -12,7 +12,7 @@ Cache/quyết định và candidate từ phiên bản trước được giữ đ
 | --- | --- |
 | Một công thức AI-9 | p × E[R] − fee − funding − slippage − penalty; chi phí cùng đơn vị R; so sánh ngưỡng và gap bằng dấu > nghiêm ngặt |
 | E[R theo hướng/regime/setup] | Trung bình gross R thực, có cả thắng và thua, từ track-record/nhãn đã đóng trước quyết định; chỉ khi chưa có R thực mới dùng ước lượng khởi tạo từ kế hoạch thoát |
-| MAE p80 của lệnh thắng | Lọc nhóm thắng rồi lấy p80; không trộn cấu trúc/ATR vào mức AI-7 |
+| MAE p80 của nhãn thật cùng setup/hướng | Lấy MAE từ toàn bộ nhãn đóng hợp lệ cùng setup/hướng, gồm thắng và thua; không trộn cấu trúc/ATR vào SL khi AI-7 đã có dữ liệu |
 | MFE p50/p90 của lệnh đã label | Lấy cả lệnh thắng lẫn thua; đã gỡ điều kiện chỉ lấy lệnh thắng cho TP |
 | Cost đúng dấu | Funding trả là chi phí dương, nhận là khoản âm; live, kiểm tra trước lệnh và đánh giá offline cùng cách tính |
 | Calibration | predicted_R = p × E[R] − cost; lưu riêng edge đã trừ uncertainty; không dùng edge thay predicted_R |
@@ -24,10 +24,10 @@ nine-ai-expectancy.test.js kiểm các nhóm thắng/thua cho phân vị và E[R
 
 ## Quy tắc đặt SL/TP
 
-- Khi AI-7 dùng được: SL chỉ lấy MAE p80 của lệnh thắng; TP1/TP2 lấy MFE p50/p90 của toàn bộ lệnh đã label. Không trộn hỗ trợ, kháng cự hoặc ATR vào SL AI-7. Mức giá được tính lại theo entry khớp thực tế; làm tròn SL về phía entry theo tick của sàn, không nới xa phân vị.
-- Khi chưa có dữ liệu phân vị thắng dùng được: dùng tạm AI-2 như người dùng đã cho phép. Không giả lập các nhãn thành lệnh thật và không thêm điều kiện đủ 30 lệnh thắng.
+- Khi AI-7 dùng được: SL lấy MAE p80, TP1/TP2 lấy MFE p50/p90 từ nhãn thật hợp lệ cùng setup/hướng, bao gồm cả lệnh thắng và thua. Không trộn hỗ trợ, kháng cự hoặc ATR vào SL AI-7. Mức giá được tính lại theo entry khớp thực tế; làm tròn SL về phía entry theo tick của sàn, không nới xa phân vị.
+- Khi chưa có nhãn thật hợp lệ: dùng kế hoạch khởi tạo AI-2 với SL = 1,5 × ATR14 theo cấu hình hiện hành. Không giả lập nhãn thành lệnh thật và không chờ đủ 30 nhãn mới bật AI-7.
 - AI-7 gom MAE/MFE theo regime/setup; không tự bắt thêm cùng coin hoặc cùng hướng. Xác suất của một hướng vẫn học từ kết quả của chính hướng đó, đúng p(a).
-- TP1 đóng 50%, TP2 phần còn lại; hai phân vị bằng nhau vẫn có hai lệnh chốt nửa vị thế được theo dõi riêng. Timeout 24 nến/96h và biến risk đầu index.js được giữ theo thiết kế.
+- TP1 đóng 60%, TP2 đóng 40% theo `CONFIG.TP_BATCHES` hiện tại. Timeout 24 nến/96h lấy từ `CONFIG.TIMEOUT_BARS`. Các giá trị cấu hình và rủi ro hiện hữu được giữ nguyên, không bị hardcode lại trong bản rà soát này.
 
 ## Những điều kiện ngoài thiết kế đã gỡ
 
@@ -49,11 +49,11 @@ nine-ai-expectancy.test.js kiểm các nhóm thắng/thua cho phân vị và E[R
 
 Bản mô tả cho biết các đại lượng phải tính nhưng không cung cấp toàn bộ hệ số số học. Source công khai cách tính confidence, xác suất ban đầu, slippage, độ già dữ liệu, minEdge/gapEdge và định nghĩa funding nóng. Xác suất ban đầu và slippage là ước lượng bằng công thức; vòng candidate huấn luyện ngưỡng quyết định minEdge/gapEdge. Không mô tả các hệ số này như đã được người dùng quy định hoặc đã được chứng minh dự báo chính xác.
 
-Các định nghĩa số hiện có: high-vol từ phân vị 0,8; momentum từ 30/120 nến 4h; range breakout 20 nến, volume > trung bình và nến tiếp theo giữ vùng, không đuổi sau một độ rộng range; funding nóng khi trị tuyệt đối > 0,0008 mỗi kỳ; minEdge mặc định 0,05R và gapEdge 0,10R. Đây là cách lượng hóa các khái niệm chưa có ngưỡng số trong mô tả, không thể tuyên bố người dùng đã chỉ định chính xác chúng.
+Các định nghĩa số đang lấy từ cấu hình: high-vol từ phân vị 0,8; momentum từ 30/120 nến 4h; range breakout 20 nến, volume > trung bình và nến tiếp theo giữ vùng, không đuổi sau một độ rộng range; funding nóng khi trị tuyệt đối >= `CONFIG.FUNDING_HOT` (hiện là 0,0005 mỗi kỳ); `MIN_EDGE` hiện là 0,15R, `EARLY_MIN_EDGE` là 0,30R và `EDGE_GAP` là 0,05R. `EARLY_PHASE_LABELS` hiện là 30 nhưng `ADAPT_PHASE_LABELS` hiện là 100; vì yêu cầu giữ nguyên cấu hình hiện tại, chuyển pha MATURE theo file cấu hình hiện tại bắt đầu từ 100 nhãn, không phải 150. Có thể đặt `ADAPT_PHASE_LABELS: 150` trong cấu hình nếu muốn mốc MATURE là 150. Đây là cách lượng hóa các khái niệm chưa có ngưỡng số trong mô tả, không thể tuyên bố người dùng đã chỉ định chính xác chúng.
 
 Các nến 1 phút còn lại chỉ phục vụ đo MAE/MFE khi có vị thế và quy đổi phí; không tạo tín hiệu vào lệnh. Đo biên phút vào/ra dùng giá quan sát, không phải toàn bộ tick. Chi phí funding tương lai và slippage là dự báo; log đóng lệnh dùng phí/funding thực. Kiểm thử không thay thế việc xác minh vận hành trên VPS/sàn thật.
 
-Vòng live ngoài regime không xu hướng vẫn WAIT theo đúng pseudocode người dùng, vì vậy Mean Reversion chỉ xuất phân tích trong RANGE/HIGH_VOL. Không tự mở lệnh mean-reversion trái với bước WAIT đó.
+Vòng live ngoài regime không xu hướng vẫn WAIT theo đúng pseudocode người dùng, vì vậy Mean Reversion không thể tự mở lệnh trong RANGE/HIGH_VOL. Đây là giới hạn có chủ ý của gate AI-1, dù module mean-reversion vẫn được mô tả và kiểm thử.
 
 ## Kiểm thử đối chiếu
 
