@@ -55,11 +55,11 @@ test("risk guard refuses unknown equity, durable drawdown, and duplicate signals
   assert.equal((await g.reserve("bad", NaN)).ok, false);
   const allowed = Math.floor(CONFIG.MAX_DAILY_RISK / CONFIG.RISK_PER_TRADE + 1e-9);
   assert.ok(allowed >= 1);
-  assert.equal((await g.reserve("a", 1000)).ok, true);
-  assert.equal((await g.reserve("a", 1000)).ok, false);
+  assert.equal((await g.reserve("a", 1000, { labelCount: 150 })).ok, true);
+  assert.equal((await g.reserve("a", 1000, { labelCount: 150 })).ok, false);
   for (let i = 1; i < allowed; i++)
-    assert.equal((await g.reserve("risk-" + i, 1000)).ok, true);
-  assert.equal((await g.reserve("over-capacity", 1000)).reason, "MAX_DAILY_RISK_REACHED");
+    assert.equal((await g.reserve("risk-" + i, 1000, { labelCount: 150 })).ok, true);
+  assert.equal((await g.reserve("over-capacity", 1000, { labelCount: 150 })).reason, "MAX_DAILY_RISK_REACHED");
   const belowCircuit = Math.max(1, 1000 * (1 - CONFIG.MAX_DRAWDOWN_CIRCUIT - 0.01));
   assert.equal((await g.assess(belowCircuit)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
   assert.equal(g.config.EQUITY_START,CONFIG.EQUITY_START);
