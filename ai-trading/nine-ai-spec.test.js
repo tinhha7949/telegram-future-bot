@@ -7,6 +7,7 @@ const {
   applyPolicy,
   selectDirectionCandidate,
   netEdge,
+  uncertaintyFor,
   DECISION_SCHEMA_VERSION,
 } = require("./nine-ai-policy");
 const { finalizeDecision } = require("./nine-ai-central-decision-engine");
@@ -337,4 +338,32 @@ test("AI7 activates from the first COMPLETE losing outcome; no winning-only gate
   assert.equal(d.edges.LONG.distMAE.samples,100);
   assert.equal(d.edges.LONG.distMFE.samples,100);
   assert.equal(d.edges.LONG.plan.stopMethod,"LABELED_MAE_P80");
+});
+
+test("AI-5 applies zero, graduated and full uncertainty penalties by confidence", () => {
+  const { CONFIG } = require("./config");
+  const now = 1000000;
+  const uncertainty = confidence => uncertaintyFor(
+    { regime_conf: confidence },
+    now - 100,
+    now - 1,
+    now,
+    { uncertaintyPenalty: 0 },
+  );
+  assert.equal(uncertainty(CONFIG.CONF_HIGH), 0);
+  assert.ok(Math.abs(
+    uncertainty((CONFIG.CONF_LOW + CONFIG.CONF_HIGH) / 2) -
+      CONFIG.LOW_CONF_PENALTY / 2,
+  ) < 1e-12);
+  assert.equal(uncertainty(CONFIG.CONF_LOW - 0.01), CONFIG.LOW_CONF_PENALTY);
+  assert.equal(
+    uncertaintyFor(
+      { regime_conf: CONFIG.CONF_HIGH },
+      now - 100,
+      now - 1,
+      now,
+      { uncertaintyPenalty: 0, earlyPhase: true },
+    ),
+    CONFIG.EARLY_UNCERTAINTY_PENALTY,
+  );
 });
