@@ -67,6 +67,15 @@ test("risk guard refuses unknown equity, durable drawdown, and duplicate signals
   for (let i = 1; i < allowed; i++)
     assert.equal((await g.reserve("risk-" + i, 1000, { labelCount: 150 })).ok, true);
   assert.equal((await g.reserve("over-capacity", 1000, { labelCount: 150 })).reason, "MAX_DAILY_RISK_REACHED");
+
+  // The strategy cap is hard: configuration may lower it, never raise it above 3.
+  g.now = () => Date.UTC(2026, 9, 24);
+  g.config.MAX_DAILY_RISK = 0.9;
+  g.config.MAX_TRADES_PER_DAY = 10;
+  for (let i = 1; i <= 3; i++)
+    assert.equal((await g.reserve("hard-cap-" + i, 1000, { labelCount: 150 })).ok, true);
+  assert.equal((await g.reserve("hard-cap-4", 1000, { labelCount: 150 })).reason, "MAX_TRADES_PER_DAY_REACHED");
+
   const belowCircuit = Math.max(1, 1000 * (1 - testConfig.MAX_DRAWDOWN_CIRCUIT - 0.01));
   assert.equal((await g.assess(belowCircuit)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
   assert.equal(g.config.EQUITY_START, CONFIG.EQUITY_START);
