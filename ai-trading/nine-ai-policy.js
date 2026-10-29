@@ -79,6 +79,9 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
         fundingIsHot(guardian.fundingRate) ||
         guardian.spreadPct > CONFIG.MAX_SPREAD_PCT ||
         guardian.depthNotional <= 0 ||
+        guardian.latencyMs < 0 ||
+        guardian.roundTripFeePct < 0 ||
+        guardian.markPrice <= 0 ||
         guardian.snapshotAgeMs < 0 || guardian.snapshotAgeMs > BAR_MS ||
         !guardian.allowedSides.length ||
         guardian.allowedSides.some(side => !["LONG", "SHORT"].includes(side)) ||
