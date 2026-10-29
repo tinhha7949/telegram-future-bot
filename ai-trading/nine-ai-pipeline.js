@@ -576,7 +576,15 @@ function analyzeNineAI({
           }
         : null;
       // No quantile SL/TP until sufficient direction-matched realized outcomes.
-      const ai7Ready = samples.length >= CONFIG.AI7_ACTIVATION_SAMPLES;
+      // Keep the legacy threshold and explicit activation threshold aligned
+  // without silently ignoring either configured safety floor.
+  const ai7MinimumLabels = Math.max(
+    1,
+    CONFIG.COLD_START_SAMPLES,
+    CONFIG.MIN_LABELS_FOR_ATR7,
+    CONFIG.AI7_ACTIVATION_SAMPLES,
+  );
+  const ai7Ready = samples.length >= ai7MinimumLabels;
       const entry = last.close;
       const stop = ai7Ready
         ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)
