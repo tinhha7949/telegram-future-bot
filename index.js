@@ -5,6 +5,7 @@ const { CONFIG } = require("./ai-trading/config");
 const { assessAvailableMargin } = require("./ai-trading/execution-risk");
 const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
+const { riskForPhase, phaseForLabelCount, countRealizedLabels, calibrationPenaltyForState } = require("./ai-trading/online-learning");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
 const { MemoryGuard } = require("./ai-trading/risk/memory-guard");
@@ -220,8 +221,10 @@ async function executeDecisions(
     riskGuard,
     isStopped = () => false,
     entriesPaused = () => false,
+    labelCount = 0,
   },
 ) {
+  const activeRiskPerTrade = riskForPhase(labelCount);
   signals.sort((a, b) => b.edges[b.side].edge - a.edges[a.side].edge);
   for (const decision of signals) {
     let reservationKey = null;
@@ -274,7 +277,7 @@ async function executeDecisions(
       const sizingResult = sizeTrade(
         decision,
         equity,
-        TRADE_CONFIG.riskPerTrade,
+        activeRiskPerTrade,
         await exchange.info(decision.symbol),
         { detailed: true },
       );
@@ -299,7 +302,7 @@ async function executeDecisions(
 
       if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size) break;
 
-      const reservation = await riskGuard.reserve(`${decision.symbol}:${decision.signalAt}`, equity);
+      const reservation = await riskGuard.reserve(`${decision.symbol}:${decision.signalAt}`, equity, { labelCount });
 
       if (!reservation.ok) { console.log("ENTRY WAIT", decision.symbol, reservation.reason); continue; }
       reservationKey = `${decision.symbol}:${decision.signalAt}`;
@@ -572,14 +575,21 @@ async function main() {
     }
     await journal.settleMatured(symbol, h4);
     const market = await marketSnapshot(exchange, symbol);
+    const labelCount = countRealizedLabels(outcomes);
+    const phase = phaseForLabelCount(labelCount);
+    const activeMinEdge = phase === "EARLY"
+      ? CONFIG.EARLY_MIN_EDGE
+      : phase === "ADAPT"
+        ? CONFIG.MIN_EDGE
+        : Math.max(CONFIG.MIN_EDGE, Number(champion?.minEdge) || 0, minEdge);
     let decision = pipeline.analyzeNineAI({
       symbol,
       candles4h: h4,
       outcomes,
       market: { ...market, trackRecord },
-      config: { ...champion, minEdge: Math.max(minEdge, Number(champion?.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP },
+      config: { ...champion, minEdge: activeMinEdge, gapEdge: CONFIG.EDGE_GAP },
     });
-    decision = { ...decision, riskPerTradePct: RISK_PER_TRADE };
+    decision = { ...decision, riskPerTradePct: riskForPhase(labelCount) };
     decision = central.finalizeDecision(decision, {
       symbol,
       scannedAt: Date.now(),
@@ -637,10 +647,16 @@ async function main() {
     if (!adaptive.ok) { console.error("SCAN WAIT", adaptive.reason); return; }
 
     // Apply measured calibration drift as a penalty, not an untested model update.
-     const latestLearning=await db.collection("nine_ai_daily_learning_reports")
-       .find({}).sort({runAt:-1}).limit(1).toArray();
-     const calibrationPenalty=latestLearning[0]?.calibration?.status ===
+     const [latestLearning, onlineCalibration] = await Promise.all([
+       db.collection("nine_ai_daily_learning_reports").find({}).sort({runAt:-1}).limit(1).toArray(),
+       db.collection("nine_ai_online_calibration").findOne({ _id: "GLOBAL" }),
+     ]);
+     const dailyCalibrationPenalty = latestLearning[0]?.calibration?.status ===
        "RED_FLAG_CALIBRATION_DRIFT" ? CONFIG.LOW_CONF_PENALTY : 0;
+     const calibrationPenalty = Math.max(
+       dailyCalibrationPenalty,
+       calibrationPenaltyForState(onlineCalibration),
+     );
      const cutoffAt = Date.now();
     const [symbols, champion, track, outcomes] = await Promise.all([
       universe(exchange),
@@ -699,6 +715,7 @@ async function main() {
       riskGuard,
       isStopped: () => stopped,
       entriesPaused: () => entriesPaused,
+      labelCount: countRealizedLabels(outcomes),
     });
   }, "MARKET_SCAN");
   void scan();

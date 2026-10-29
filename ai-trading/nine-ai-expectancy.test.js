@@ -14,7 +14,7 @@ const {
 } = require("./nine-ai-offline-learning");
 const { executeDecisions, marketSnapshot } = require("../index");
 
-test("AI7 uses 100 realized excursions, including losses, for MAE/MFE and TP1 RR floor", () => {
+test("AI7 uses recency-weighted realized excursions, including losses, for MAE/MFE and TP1 RR floor", () => {
   const f = fixture(), base = f.outcomes[0];
   const outcomes = Array.from({length:100},(_,i)=>({
     ...base, tradeId:"population-"+i, win:i<75,
@@ -26,9 +26,10 @@ test("AI7 uses 100 realized excursions, including losses, for MAE/MFE and TP1 RR
   assert.equal(d.agents.outcome.enabled,true);
   assert.equal(d.agents.outcome.dist_MAE.samples,100);
   assert.equal(d.agents.outcome.dist_MFE.samples,100);
-  assert.equal(d.agents.outcome.dist_MAE.p80,percentile(outcomes.map(o=>o.maePct),0.8));
-  assert.equal(d.agents.outcome.dist_MFE.p50,percentile(outcomes.map(o=>o.mfePct),0.5));
-  assert.equal(d.agents.outcome.dist_MFE.p90,percentile(outcomes.map(o=>o.mfePct),0.9));
+  const weightedPercentile = require("./online-learning").weightedPercentile;
+  assert.equal(d.agents.outcome.dist_MAE.p80,weightedPercentile(outcomes.map(o=>o.maePct),0.8));
+  assert.equal(d.agents.outcome.dist_MFE.p50,weightedPercentile(outcomes.map(o=>o.mfePct),0.5));
+  assert.equal(d.agents.outcome.dist_MFE.p90,weightedPercentile(outcomes.map(o=>o.mfePct),0.9));
   assert.equal(d.tradePlan.targetMethod,"LABELED_MFE_P50_P90");
   assert.ok((d.tp1-d.entry)/(d.entry-d.sl)>=0.8-1e-12);
 });

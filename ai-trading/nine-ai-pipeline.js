@@ -1,5 +1,6 @@
 "use strict";
 const { CONFIG } = require("./config");
+const { weightedPercentile, phaseForLabelCount, countRealizedLabels } = require("./online-learning");
 const {
   DEFAULT_POLICY,
   applyPolicy,
@@ -168,7 +169,8 @@ function analyzeNineAI({
   config = {},
 } = {}) {
   const now = finite(market.now, Date.now()),
-    cs = closedCandles(candles4h, now).slice(-CONFIG.N_CANDLES);
+    cs = closedCandles(candles4h, now).slice(-CONFIG.N_CANDLES),
+    phase = phaseForLabelCount(countRealizedLabels(outcomes, now));
   const wait = (reason, extra = {}) => ({
     symbol,
     setup: "NINE_AI_4H",
@@ -365,7 +367,7 @@ function analyzeNineAI({
     candleCutoffAt: now,
     closedOIAt: finite(market.oiObservedAt),
   };
-  const policy = { ...DEFAULT_POLICY, ...config, minEdge: Math.max(CONFIG.MIN_EDGE, Number(config.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP };
+  const policy = { ...DEFAULT_POLICY, ...config, earlyPhase: phase === "EARLY", minEdge: Math.max(CONFIG.MIN_EDGE, Number(config.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP };
   const agents = {
     regime,
     structure: {
@@ -479,28 +481,19 @@ function analyzeNineAI({
         wins = samples.filter((o) => o.win);
       let distMAE = samples.length
         ? {
-            p80: percentile(
-              samples.map((o) => o.maePct),
-              CONFIG.MAE_PERCENTILE,
-            ),
+            p80: weightedPercentile(samples.map((o) => o.maePct), CONFIG.MAE_PERCENTILE),
             samples: samples.length,
           }
         : null;
       let distMFE = samples.length
         ? {
-            p50: percentile(
-              samples.map((o) => o.mfePct),
-              CONFIG.MFE_TP1_PERCENTILE,
-            ),
-            p90: percentile(
-              samples.map((o) => o.mfePct),
-              CONFIG.MFE_TP2_PERCENTILE,
-            ),
+            p50: weightedPercentile(samples.map((o) => o.mfePct), CONFIG.MFE_TP1_PERCENTILE),
+            p90: weightedPercentile(samples.map((o) => o.mfePct), CONFIG.MFE_TP2_PERCENTILE),
             samples: samples.length,
           }
         : null;
       // No quantile SL/TP until sufficient direction-matched realized outcomes.
-      const ai7Ready = samples.length >= CONFIG.AI7_ACTIVATION_SAMPLES;
+      const ai7Ready = samples.length >= CONFIG.MIN_LABELS_FOR_ATR7;
       const entry = last.close;
       const stop = ai7Ready
         ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)
@@ -555,7 +548,7 @@ function analyzeNineAI({
         : probabilitySamples
           ? track.winningSamples
           : 0;
-      const modelP = initialProbability(
+      const modelP = phase === "EARLY" ? 0.5 : initialProbability(
         m.type,
         regime.momentum20,
         m.type === "BREAKOUT" ? breakoutVolumeRatio : volumeRatio,
@@ -666,6 +659,7 @@ function analyzeNineAI({
       minEdge: policy.minEdge,
       gapEdge: policy.gapEdge,
       uncertaintyPenalty: policy.uncertaintyPenalty,
+      earlyPhase: phase === "EARLY",
     },
     candles: cs.length,
   };
