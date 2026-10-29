@@ -3,7 +3,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { CONFIG } = require("./config");
 const { fixture } = require("./test-fixtures.cjs");
-const { vetoMarketSnapshot, vetoAvailableMargin } = require("./ai6-risk-guardian");
+const { vetoMarketSnapshot, vetoAvailableMargin, beforeEnterGate } = require("./ai6-risk-guardian");
 
 test("AI-6 market guardian blocks stale/missing data, hot funding and wide spread", () => {
   const f = fixture();
@@ -49,4 +49,31 @@ test("AI-6 balance guardian checks margin before broker submission", () => {
     sizing,
     symbol: "TESTUSDT",
   }).reason, "AI6_VETO_BALANCE_UNAVAILABLE");
+});
+
+test("beforeEnterGate requires the risk state, fresh market and sufficient balance", () => {
+  const f = fixture();
+  const account = {
+    equity: 8,
+    availableBalance: 10,
+    leverageBySymbol: { TESTUSDT: { leverage: 10, maxNotional: 1000 } },
+  };
+  const accepted = beforeEnterGate({
+    market: f.market,
+    account,
+    sizing: { notional: 50 },
+    symbol: "TESTUSDT",
+    riskState: { ok: true },
+    now: f.market.now,
+  });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.reason, "BEFORE_ENTER_GATE_ACCEPTED");
+  assert.equal(beforeEnterGate({
+    market: f.market,
+    account,
+    sizing: { notional: 50 },
+    symbol: "TESTUSDT",
+    riskState: { ok: false, reason: "DRAWDOWN_CIRCUIT_LATCHED" },
+    now: f.market.now,
+  }).reason, "DRAWDOWN_CIRCUIT_LATCHED");
 });
