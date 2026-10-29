@@ -675,11 +675,9 @@ function analyzeNineAI({
         Number.isFinite(track.meanGrossR)
           ? track.meanGrossR
           : null;
-      // EARLY has no calibrated payoff model: use the initial exit geometry
-      // until ADAPT rather than leaking a one-label/track-record estimate.
-      const expectedR = phase === "EARLY"
-        ? quantileRewardR
-        : trackedExpectedR ?? mean(realizedReturns) ?? quantileRewardR;
+      // E[R] learns immediately from valid realized returns/track records.
+      // EARLY's neutral prior applies to AI-3 probability, not to R units.
+      const expectedR = trackedExpectedR ?? mean(realizedReturns) ?? quantileRewardR;
       estimates.push({
         ...m,
         setupKey,
@@ -699,7 +697,7 @@ function analyzeNineAI({
         p,
         expectedR,
         expectedRSource:
-          phase !== "EARLY" && (realizedReturns.length || trackedExpectedR !== null)
+          realizedReturns.length || trackedExpectedR !== null
             ? "REALIZED_GROSS_R_BY_DIRECTION_REGIME_SETUP"
             : "INITIAL_EXIT_GEOMETRY_UNCALIBRATED",
         distMAE,
