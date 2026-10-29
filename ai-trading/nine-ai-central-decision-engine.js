@@ -49,6 +49,15 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   ) {
     return wait(decision, decision.reason || "NINE_AI_CHOSE_WAIT");
   }
+  const priorAuthorization = decision.centralDecisionEngine;
+  if (priorAuthorization?.authority === "NINE_AI_ONLY" &&
+      priorAuthorization?.result === "AUTHORIZED" &&
+      (String(priorAuthorization.symbol || "").toUpperCase() !==
+        String(decision.symbol || "").toUpperCase() ||
+       String(priorAuthorization.side || "").toUpperCase() !== side ||
+       Number(priorAuthorization.signalAt) !== Number(decision.signalAt) ||
+       priorAuthorization.decisionSchemaVersion !== decision.decisionSchemaVersion))
+    return wait(decision, "CENTRAL_AUTHORIZATION_BINDING_MISMATCH");
   if (decision.setup !== "NINE_AI_4H")
     return wait(decision, "NON_CANONICAL_NINE_AI_SETUP_REJECTED");
   if (decision.decisionSchemaVersion !== DECISION_SCHEMA_VERSION)
@@ -199,6 +208,10 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
       version: 1,
       authority: "NINE_AI_ONLY",
       result: "AUTHORIZED",
+      symbol: String(symbol || decision.symbol).toUpperCase(),
+      side,
+      signalAt,
+      decisionSchemaVersion: decision.decisionSchemaVersion,
       reason: "NINE_AI_DECISION_PASSED_INVARIANTS",
       validatedAt: new Date(Number(scannedAt)).toISOString(),
       roleCount: REQUIRED_ROLES.length,
