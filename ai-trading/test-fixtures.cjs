@@ -55,6 +55,7 @@ function fixture(side = "LONG", now = Date.now()) {
     market: {
       now,
       snapshotAt: now,
+      markPrice: candles4h.at(-1)[4],
       fundingRate: 0.0001,
       openInterestChange: 1,
       spreadPct: 0.01,
