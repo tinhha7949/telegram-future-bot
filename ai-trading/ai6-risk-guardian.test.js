@@ -17,6 +17,10 @@ test("AI-6 market guardian blocks stale/missing data, hot funding and wide sprea
     [{ ...f.market, openInterestChange: null }, "EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE"],
     [{ ...f.market, depthNotional: 0 }, "EXECUTION_COST_INPUTS_MISSING_ORDERBOOK_DEPTH"],
     [{ ...f.market, latencyMs: null }, "EXECUTION_COST_INPUTS_MISSING_LATENCY"],
+    [{ ...f.market, liquidationImbalance: null }, "FLOW_UNAVAILABLE_OR_UNCERTAIN"],
+    [{ ...f.market, roundTripFeePct: null }, "EXECUTION_COST_INPUTS_MISSING_ROUND_TRIP_FEE"],
+    [{ ...f.market, expectedFundingCostPctBySide: null }, "EXECUTION_COST_INPUTS_MISSING_LONG_FUNDING_COST"],
+    [{ ...f.market, markPrice: null }, "EXECUTION_COST_INPUTS_MISSING_MARK_PRICE"],
   ];
   for (const [market, reason] of cases) {
     const result = vetoMarketSnapshot(market, f.market.now);
