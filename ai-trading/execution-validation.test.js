@@ -36,7 +36,7 @@ test("cached decisions revalidate current flow, costs, price and snapshot age", 
   );
 });
 
-test("neutral liquidation flow is allowed while missing or opposing flow still waits", () => {
+test("AI-6 requires valid liquidation data but cannot veto direction by its sign", () => {
   const f = fixture(),
     d = analyzeNineAI(f),
     now = f.market.now + 1,
