@@ -58,7 +58,7 @@ test("AI-6 hard-vetoes a spread above the configured maximum before model scorin
   assert.equal(blocked.reason, "SPREAD_TOO_WIDE");
   assert.equal(blocked.agents.structure, undefined);
 });
-test("EARLY uses the 0.30 edge threshold and does not learn expected R from track records", () => {
+test("EARLY uses the 0.30 edge threshold, neutral AI-3 prior, and immediate AI-4 learning", () => {
   const f = { ...fixture(), outcomes: [] };
   const setupKey = "UPTREND_CONTINUATION_LONG";
   const d = p.analyzeNineAI({
@@ -70,8 +70,8 @@ test("EARLY uses the 0.30 edge threshold and does not learn expected R from trac
   });
   assert.equal(d.decisionPolicy.minEdge, CONFIG.EARLY_MIN_EDGE);
   assert.equal(d.edges.LONG.p, 0.5);
-  assert.notEqual(d.edges.LONG.expectedR, 99);
-  assert.equal(d.edges.LONG.expectedRSource, "INITIAL_EXIT_GEOMETRY_UNCALIBRATED");
+  assert.equal(d.edges.LONG.expectedR, 99);
+  assert.equal(d.edges.LONG.expectedRSource, "REALIZED_GROSS_R_BY_DIRECTION_REGIME_SETUP");
 });
 test("invalid or simulated labels never masquerade as an AI-7 model", () => {
   const f = fixture();
