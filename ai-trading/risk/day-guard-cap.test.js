@@ -14,6 +14,10 @@ function mockDb() {
         if (rows.has(row._id)) throw new Error("duplicate");
         rows.set(row._id, { ...row });
       },
+      async deleteOne({ _id }) {
+        const deleted = rows.delete(_id);
+        return { deletedCount: deleted ? 1 : 0 };
+      },
       async countDocuments(query) {
         return [...rows.values()].filter(row => row.day === query.day &&
           ["RESERVED", "RELEASING"].includes(row.status)).length;
