@@ -39,6 +39,8 @@ function validateExecution(decision, market, now = Date.now()) {
     return { ok: false, reason: market?.snapshotAt > now || now - Number(market?.snapshotAt) > CONFIG.MARKET_WS_STALE_MS ? "MARKET_SNAPSHOT_STALE" : "EXECUTION_INPUTS_UNAVAILABLE" };
   if (fundingIsHot(market.fundingRate))
     return { ok: false, reason: "CURRENT_FLOW_BLOCKED" };
+  if (market.spreadPct > CONFIG.MAX_SPREAD_PCT)
+    return { ok: false, reason: "SPREAD_TOO_WIDE" };
   // The fresh market reading must still corroborate the same side.
   // Missing/neutral/opposing liquidation makes execution uncertain => WAIT.
   // No recent liquidation cascade is neutral; an observed opposing cascade
