@@ -680,6 +680,8 @@ function analyzeNineAI({
           spreadPct: spread,
           deviationAtr: deviation,
           liquidationImbalance: liq,
+          side,
+          structureBias,
         },
       );
       const moduleUncertaintyPenalty = calibrationPenaltyForState(
