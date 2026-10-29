@@ -4,7 +4,7 @@ require("dotenv").config();
 const { CONFIG } = require("./ai-trading/config");
 const { beforeEnterGate } = require("./ai-trading/ai6-risk-guardian");
 const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
-const { RiskGuard } = require("./ai-trading/risk/day-guard");
+const { RiskGuard, HARD_MAX_TRADES_PER_DAY } = require("./ai-trading/risk/day-guard");
 const { riskForPhase, phaseForLabelCount, countRealizedLabels, calibrationPenaltyForState } = require("./ai-trading/online-learning");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
@@ -254,9 +254,18 @@ async function executeDecisions(
     authorizedSignals.push(decision);
   }
   authorizedSignals.sort((a, b) => b.edges[b.side].edge - a.edges[a.side].edge);
+  let entriesSubmittedThisScan = 0;
   for (const decision of authorizedSignals) {
+    if (entriesSubmittedThisScan >= HARD_MAX_TRADES_PER_DAY) break;
     let reservationKey = null;
     let entryAttempted = false;
+    let trade = null;
+    let entryCounted = false;
+    const countEntry = () => {
+      if (entryCounted) return;
+      entriesSubmittedThisScan++;
+      entryCounted = true;
+    };
     if (
       isStopped() ||
       entriesPaused() ||
@@ -339,7 +348,7 @@ async function executeDecisions(
       if (!reservation.ok) { console.log("ENTRY WAIT", decision.symbol, reservation.reason); continue; }
       reservationKey = `${decision.symbol}:${decision.signalAt}`;
 
-      const trade = newTrade(decision, sizing);
+      trade = newTrade(decision, sizing);
       trade.executionValidation = {
         ...validation,
         ai6MarketVeto: entryGate.marketVeto,
@@ -353,13 +362,15 @@ async function executeDecisions(
       try {
         const entered = await lifecycle.enter(trade);
         entryAttempted = trade.entryOrderAttempted === true;
+        if (entered || entryAttempted) countEntry();
         if (!entered && mayReleaseEntryRiskReservation(trade)) {
           await riskGuard.release(trade.signalKey);
           reservationKey = null;
         }
       } catch (error) {
-        entryAttempted = trade.entryOrderAttempted === true;
-        if (mayReleaseEntryRiskReservation(trade)) {
+        entryAttempted = trade?.entryOrderAttempted === true;
+        if (entryAttempted) countEntry();
+        if (trade && mayReleaseEntryRiskReservation(trade)) {
           await riskGuard.release(trade.signalKey);
           reservationKey = null;
         }
