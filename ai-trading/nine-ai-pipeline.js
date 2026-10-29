@@ -615,7 +615,7 @@ function analyzeNineAI({
           }
         : null;
       // No quantile SL/TP until sufficient direction-matched realized outcomes.
-      const ai7Ready = samples.length >= CONFIG.MIN_LABELS_FOR_ATR7;
+      const ai7Ready = samples.length >= CONFIG.AI7_ACTIVATION_SAMPLES;
       const entry = last.close;
       const stop = ai7Ready
         ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)
@@ -755,7 +755,10 @@ function analyzeNineAI({
     else if (!chosen)
       edges[side] = {
         eligible: false,
-        p: 0,
+        // EARLY AI-3 keeps neutral priors for both directions. Eligibility,
+        // not a fabricated p=0, prevents a side without a confirmed setup
+        // from being traded.
+        p: phase === "EARLY" ? 0.5 : 0,
         expectedR: 0,
         cost: 0,
         baseUncertainty,
