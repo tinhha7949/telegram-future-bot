@@ -9,6 +9,7 @@ function mockDb() {
     if (!stores.has(name)) stores.set(name, new Map());
     const rows = stores.get(name);
     return {
+      rows,
       async findOne({ _id }) { return rows.get(_id) || null; },
       async insertOne(row) {
         if (rows.has(row._id)) throw new Error("duplicate");
