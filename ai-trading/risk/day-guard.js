@@ -4,6 +4,8 @@ const { phaseForLabelCount, riskForPhase } = require("../online-learning");
 
 // Versioned, bot-activation-scoped ledger. Never import prior account/history peaks.
 const RUN_RISK_ID = "BOT_RUN_V2";
+// Strategy invariant: config may lower this limit, but can never raise it.
+const HARD_MAX_TRADES_PER_DAY = 3;
 const fail = reason => ({ ok: false, reason });
 class RiskGuard {
   constructor(db, { config = CONFIG, now = () => Date.now(), alert = async () => {} } = {}) {
@@ -83,6 +85,7 @@ class RiskGuard {
     if (!(amount > 0 && Number.isFinite(amount))) return fail("INVALID_RISK_AMOUNT");
     const day = new Date(this.now()).toISOString().slice(0, 10);
     const dayKey = "UTC:" + day;
+    const maxTradesPerDay = Math.min(HARD_MAX_TRADES_PER_DAY, this.config.MAX_TRADES_PER_DAY);
     try {
       await this.reservations.insertOne({
         _id: signalKey,
@@ -128,7 +131,7 @@ class RiskGuard {
         await discardUnchargedReservation();
         return fail("DAILY_RISK_STATE_UNCERTAIN");
       }
-      if ((Number(bucket.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY) {
+      if ((Number(bucket.usedTrades) || 0) >= maxTradesPerDay) {
         try { await this.alert("MAX TRADES PER DAY REACHED: new entries disabled until next UTC day"); }
         catch (error) { console.error("RISK ALERT FAILED", error.message); }
         await discardUnchargedReservation();
@@ -142,13 +145,13 @@ class RiskGuard {
         {
           _id: dayKey,
           usedRisk: { $lte: capacity - amount },
-          usedTrades: { $lt: this.config.MAX_TRADES_PER_DAY },
+          usedTrades: { $lt: maxTradesPerDay },
         },
         { $inc: { usedRisk: amount, usedTrades: 1 } },
       );
       if (result.matchedCount !== 1 || result.modifiedCount !== 1) {
         const current = await this.days.findOne({ _id: dayKey });
-        if ((Number(current?.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY) {
+        if ((Number(current?.usedTrades) || 0) >= maxTradesPerDay) {
           await discardUnchargedReservation();
           return fail("MAX_TRADES_PER_DAY_REACHED");
         }
@@ -205,4 +208,4 @@ class RiskGuard {
     }
   }
 }
-module.exports = { RiskGuard, RUN_RISK_ID };
+module.exports = { RiskGuard, RUN_RISK_ID, HARD_MAX_TRADES_PER_DAY };
