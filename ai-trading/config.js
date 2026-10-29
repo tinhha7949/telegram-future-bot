@@ -207,6 +207,8 @@ function parseConfig(text) {
       out.TELEGRAM_DELIVERY_RETRY_BASE_MS > out.TELEGRAM_DELIVERY_RETRY_MAX_MS ||
       out.JOURNAL_MIN_SAMPLES > out.JOURNAL_MAX_RECORDS ||
       out.JOURNAL_LOAD_BATCH_SIZE > out.JOURNAL_MAX_RECORDS ||
+      !Number.isInteger(out.REGIME_EMA_FAST) || !Number.isInteger(out.REGIME_EMA_SLOW) ||
+      !Number.isInteger(out.REGIME_ADX_PERIOD) || out.REGIME_EMA_FAST >= out.REGIME_EMA_SLOW ||
       out.TIMEFRAME !== "4h" ||
       !Array.isArray(out.TP_BATCHES) ||
       out.TP_BATCHES.length !== 2 ||
