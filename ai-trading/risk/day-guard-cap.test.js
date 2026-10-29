@@ -56,6 +56,7 @@ test("daily risk cap blocks a third mature-phase 1% reservation", async () => {
   const third = await guard.reserve("mature-3", 1000, { labelCount: 150 });
   assert.equal(third.ok, false);
   assert.equal(third.reason, "MAX_DAILY_RISK_REACHED");
+  assert.equal(db.collection("nine_ai_risk_reservations").rows.has("mature-3"), false);
 });
 test("hard max trades per UTC day blocks the fourth entry reservation", async () => {
   const db = mockDb();
@@ -67,4 +68,5 @@ test("hard max trades per UTC day blocks the fourth entry reservation", async ()
   const fourth = await guard.reserve("trade-4", 1000, { labelCount: 0 });
   assert.equal(fourth.ok, false);
   assert.equal(fourth.reason, "MAX_TRADES_PER_DAY_REACHED");
+  assert.equal(db.collection("nine_ai_risk_reservations").rows.has("trade-4"), false);
 });
