@@ -223,6 +223,10 @@ test("EARLY only authorizes a structure-aligned trend-pullback setup", () => {
   assert.equal(d.agents.continuation.p, 0.5);
   assert.equal(d.agents.breakout.p, 0.5);
   assert.equal(d.agents.meanReversion.p, 0.5);
+  assert.equal(d.agents.probability.LONG, 0.5);
+  assert.equal(d.agents.probability.SHORT, 0.5);
+  assert.equal(d.edges.SHORT.eligible, false);
+  assert.equal(d.edges.SHORT.reason, "NO_ACTIVE_SETUP");
   if (d.action !== "WAIT") {
     assert.equal(d.setupKey, "UPTREND_CONTINUATION");
     assert.equal(d.agents.continuation.side, "LONG");
