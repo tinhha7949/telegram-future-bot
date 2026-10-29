@@ -22,6 +22,19 @@ const finite = (v, d = null) =>
   v == null || v === "" ? d : Number.isFinite(Number(v)) ? Number(v) : d;
 const mean = (xs) =>
   xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null;
+const TERMINAL_CANDIDATE_STATUSES = Object.freeze(["SHADOW_REJECTED", "PROMOTED_CHAMPION"]);
+function terminalCandidateIdsToPrune(rows, promotedCandidateId = null, keepCount = 2) {
+  const terminal = (Array.isArray(rows) ? rows : [])
+    .filter(row => TERMINAL_CANDIDATE_STATUSES.includes(row.status))
+    .sort((a, b) => {
+      const at = new Date(a.createdAt || 0).getTime();
+      const bt = new Date(b.createdAt || 0).getTime();
+      return (Number.isFinite(bt) ? bt : 0) - (Number.isFinite(at) ? at : 0);
+    });
+  const keep = new Set(terminal.slice(0, Math.max(0, keepCount)).map(row => String(row._id)));
+  if (promotedCandidateId != null) keep.add(String(promotedCandidateId));
+  return terminal.filter(row => !keep.has(String(row._id))).map(row => row._id);
+}
 function trainingWindowFilter(asOf, config = CONFIG) {
   const cutoff = Number(asOf);
   if (!Number.isFinite(cutoff)) throw new Error("INVALID_TRAINING_WINDOW_CUTOFF");
@@ -541,6 +554,21 @@ function createOfflineLearning(db, options = {}) {
     return { recorded: true, tradeId, realizedR };
   }
 
+  async function pruneTerminalCandidates() {
+    if (typeof candidates.deleteMany !== "function") return 0;
+    const activeChampion = await championState.findOne({ _id: "active" });
+    const rows = await candidates.find({
+      status: { $in: TERMINAL_CANDIDATE_STATUSES },
+    }).toArray();
+    const staleIds = terminalCandidateIdsToPrune(rows, activeChampion?.promotedCandidateId, 2);
+    if (!staleIds.length) return 0;
+    const result = await candidates.deleteMany({
+      _id: { $in: staleIds },
+      status: { $in: TERMINAL_CANDIDATE_STATUSES },
+    });
+    return Number(result.deletedCount) || 0;
+  }
+
   async function runDailyCycle() {
     const runAt = now();
     const runDate = new Date(runAt).toISOString().slice(0, 10);
@@ -715,7 +743,9 @@ function createOfflineLearning(db, options = {}) {
       }
     }
 
+    const prunedTerminalCandidates = await pruneTerminalCandidates();
     const report = {
+      prunedTerminalCandidates,
       runDate,
       runAt: new Date(runAt),
       calibration,
@@ -735,6 +765,7 @@ function createOfflineLearning(db, options = {}) {
     getTrackRecord,
     recordClosedTrade,
     runDailyCycle,
+    pruneTerminalCandidates,
     calibrationSummary,
     trainCandidate,
     evaluatePolicy,
@@ -750,6 +781,7 @@ module.exports = {
   SHADOW_MS,
   DEFAULT_CHAMPION,
   trainingWindowFilter,
+  terminalCandidateIdsToPrune,
   policyAction,
   rowNetR,
   usableOpportunity,
