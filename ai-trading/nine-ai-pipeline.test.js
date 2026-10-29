@@ -262,6 +262,13 @@ test("stale/future data and a gap in configured closed 4h history abstain", () =
     "WAIT",
   );
 });
+test("duplicate valid candle timestamps invalidate the feed instead of being silently deduplicated", () => {
+  const f = fixture();
+  const duplicated = [...f.candles4h, f.candles4h.at(-1).slice()];
+  const d = p.analyzeNineAI({ ...f, candles4h: duplicated });
+  assert.equal(d.action, "WAIT");
+  assert.equal(d.reason, "INSUFFICIENT_CONFIGURED_CLOSED_4H_HISTORY");
+});
 test("unclosed candles never change point-in-time features", () => {
   const f = fixture(),
     before = p.analyzeNineAI(f),
