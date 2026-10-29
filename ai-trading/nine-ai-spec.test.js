@@ -129,7 +129,7 @@ test("AI6 lets neutral flow through, but missing or opposing liquidation still w
     });
     assert.equal(d.action, "WAIT");
     assert.equal(d.reason,
-      imbalance === null ? "FLOW_UNAVAILABLE_OR_UNCERTAIN" : "FLOW_DIRECTION_CONFLICT");
+      imbalance === null ? "FLOW_UNAVAILABLE_OR_UNCERTAIN" : "AI6_DIRECTION_VETO");
     assert.equal(finalizeDecision(d, {
       symbol: f.symbol,
       scannedAt: f.market.now + 1,
