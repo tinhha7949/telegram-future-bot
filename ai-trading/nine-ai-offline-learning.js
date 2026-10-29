@@ -22,6 +22,16 @@ const finite = (v, d = null) =>
   v == null || v === "" ? d : Number.isFinite(Number(v)) ? Number(v) : d;
 const mean = (xs) =>
   xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null;
+function trainingWindowFilter(asOf, config = CONFIG) {
+  const cutoff = Number(asOf);
+  if (!Number.isFinite(cutoff)) throw new Error("INVALID_TRAINING_WINDOW_CUTOFF");
+  return {
+    signalTime: {
+      $gte: cutoff - config.TRAIN_WINDOW_CANDLES * BAR_MS,
+      $lte: cutoff,
+    },
+  };
+}
 const sortTime = (a, b) =>
   Number(a.signalTime || 0) - Number(b.signalTime || 0);
 const OPPORTUNITY_PROJECTION = {
@@ -644,11 +654,8 @@ function createOfflineLearning(db, options = {}) {
       const rows = await journal
         .find(
           {
-            // Use only the recent rolling candle horizon, never the whole DB.
-            signalTime: { $gte: Math.max(
-              runAt - CONFIG.DAILY_TRAIN_LOOKBACK_DAYS * DAY_MS,
-              runAt - CONFIG.TRAIN_WINDOW_CANDLES * BAR_MS,
-            ) },
+            // Train on the configured rolling candle window and exclude future-dated rows.
+            ...trainingWindowFilter(runAt),
             outcomeStatus: "EVALUATED",
             "decisionSnapshot.setup": "NINE_AI_4H",
             "evaluations.24.contract": CONTRACT,
@@ -733,6 +740,7 @@ module.exports = {
   PURGE_EMBARGO_MS,
   SHADOW_MS,
   DEFAULT_CHAMPION,
+  trainingWindowFilter,
   policyAction,
   rowNetR,
   usableOpportunity,
