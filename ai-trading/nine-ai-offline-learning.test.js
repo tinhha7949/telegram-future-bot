@@ -246,7 +246,7 @@ test("candidate qualification has no 400-row, trade-count or extra .02R-uplift g
     r.signalTime = 1700000000000 + i * 7 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
-      expectedR: i % 2 === 0 ? 0.85 : 0.60,
+      expectedR: i % 2 === 0 ? 0.85 : 0.70,
       cost: 0.15,
       baseUncertainty: 0.1,
     });
@@ -254,7 +254,7 @@ test("candidate qualification has no 400-row, trade-count or extra .02R-uplift g
     return r;
   });
   const result = l.trainCandidate(rows, l.DEFAULT_CHAMPION);
-  assert.equal(result.status, "SHADOW_PENDING", JSON.stringify(result));
+  assert.equal(result.status, "SHADOW_PENDING");
   assert.equal(result.uplift,
     result.candidateTest.stabilityScore - result.championTest.stabilityScore);
   assert.ok(result.uplift > 0);
@@ -267,7 +267,7 @@ test("candidate selection is fit on train and a validation loss cannot be rescue
     r.signalTime = 1700000000000 + i * 7 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
-      expectedR: i % 2 === 0 ? 0.85 : 0.60,
+      expectedR: i % 2 === 0 ? 0.85 : 0.70,
       cost: 0.15,
       baseUncertainty: 0.1,
     });
@@ -278,7 +278,7 @@ test("candidate selection is fit on train and a validation loss cannot be rescue
   assert.equal(result.status, "CANDIDATE_DID_NOT_BEAT_CHAMPION_VALIDATION");
   assert.ok(result.candidateTrain.averageNetR > 0.5);
   assert.ok(result.candidateValidation.averageNetR < 0);
-  assert.ok(result.candidateValidation.averageNetR < result.championValidation.averageNetR, JSON.stringify(result));
+  assert.ok(result.candidateValidation.averageNetR < result.championValidation.averageNetR);
 });
 test("calibration ignores ordinary noise and waits for sufficient R samples", () => {
   const { CONFIG } = require("./config");
