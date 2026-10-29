@@ -31,7 +31,15 @@ for (const side of ["LONG", "SHORT"])
       );
       const other = d.edges[side === "LONG" ? "SHORT" : "LONG"];
       assert.equal(other.eligible, false);
-      assert.equal(other.p, 0);
+      assert.ok(Number.isFinite(other.p));
+      assert.ok(other.p >= 0 && other.p <= 1);
+      assert.equal(d.agents.probability.pLong, d.edges.LONG.p);
+      assert.equal(d.agents.probability.pShort, d.edges.SHORT.p);
+      assert.equal(d.agents.expectedReturn.eRLong, d.edges.LONG.expectedR);
+      assert.equal(d.agents.expectedReturn.eRShort, d.edges.SHORT.expectedR);
+      assert.equal(d.agents.confidence.score, d.regime.regime_conf);
+      assert.equal(d.agents.riskGuardian.marketVeto, "PASSED");
+      assert.equal(d.featureSnapshot.candleCutoffAt, d.signalAt);
     },
   );
 test("AI-1 uses EMA, ADX and ATR, and non-trend regimes gate downstream agents immediately", () => {
@@ -47,6 +55,9 @@ test("AI-1 uses EMA, ADX and ATR, and non-trend regimes gate downstream agents i
   assert.equal(blocked.action, "WAIT");
   assert.equal(blocked.reason, "REGIME_NOT_TREND");
   assert.equal(blocked.agents.structure, undefined);
+  assert.equal(blocked.agents.probability, undefined);
+  assert.equal(blocked.agents.expectedReturn, undefined);
+  assert.equal(blocked.agents.confidence, undefined);
 });
 test("AI-6 hard-vetoes a spread above the configured maximum before model scoring", () => {
   const f = fixture();

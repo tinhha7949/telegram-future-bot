@@ -7,6 +7,7 @@ const {
   applyPolicy,
   selectDirectionCandidate,
   netEdge,
+  uncertaintyFor,
   DECISION_SCHEMA_VERSION,
 } = require("./nine-ai-policy");
 const { finalizeDecision } = require("./nine-ai-central-decision-engine");
@@ -129,7 +130,7 @@ test("AI6 lets neutral flow through, but missing or opposing liquidation still w
     });
     assert.equal(d.action, "WAIT");
     assert.equal(d.reason,
-      imbalance === null ? "FLOW_UNAVAILABLE_OR_UNCERTAIN" : "FLOW_DIRECTION_CONFLICT");
+      imbalance === null ? "FLOW_UNAVAILABLE_OR_UNCERTAIN" : "AI6_DIRECTION_VETO");
     assert.equal(finalizeDecision(d, {
       symbol: f.symbol,
       scannedAt: f.market.now + 1,
@@ -166,9 +167,13 @@ test("AI-9 selects setup by its net edge, never a fixed role priority", () => {
   const f = fixture(),
     d = analyzeNineAI(f);
   d.agents.structure.structure_bias = "BEARISH";
-  d.agents.flow = { confirmation: "NEUTRAL", confirmationSide: null };
+  d.agents.riskGuardian = {
+    ...d.agents.riskGuardian,
+    marketVeto: "BLOCKED",
+    reason: "FLOW_UNAVAILABLE_OR_UNCERTAIN",
+  };
   assert.equal(applyPolicy(d, d.decisionPolicy).side, "WAIT");
-  d.agents.flow = analyzeNineAI(f).agents.flow;
+  d.agents.riskGuardian = analyzeNineAI(f).agents.riskGuardian;
   assert.equal(applyPolicy(d, d.decisionPolicy).side, "LONG");
 });
 test("stale data increases uncertainty without a hidden five-minute cutoff", () => {
@@ -333,4 +338,32 @@ test("AI7 activates from the first COMPLETE losing outcome; no winning-only gate
   assert.equal(d.edges.LONG.distMAE.samples,100);
   assert.equal(d.edges.LONG.distMFE.samples,100);
   assert.equal(d.edges.LONG.plan.stopMethod,"LABELED_MAE_P80");
+});
+
+test("AI-5 applies zero, graduated and full uncertainty penalties by confidence", () => {
+  const { CONFIG } = require("./config");
+  const now = 1000000;
+  const uncertainty = confidence => uncertaintyFor(
+    { regime_conf: confidence },
+    now - 100,
+    now - 1,
+    now,
+    { uncertaintyPenalty: 0 },
+  );
+  assert.equal(uncertainty(CONFIG.CONF_HIGH), 0);
+  assert.ok(Math.abs(
+    uncertainty((CONFIG.CONF_LOW + CONFIG.CONF_HIGH) / 2) -
+      CONFIG.LOW_CONF_PENALTY / 2,
+  ) < 1e-12);
+  assert.equal(uncertainty(CONFIG.CONF_LOW - 0.01), CONFIG.LOW_CONF_PENALTY);
+  assert.equal(
+    uncertaintyFor(
+      { regime_conf: CONFIG.CONF_HIGH },
+      now - 100,
+      now - 1,
+      now,
+      { uncertaintyPenalty: 0, earlyPhase: true },
+    ),
+    CONFIG.EARLY_UNCERTAINTY_PENALTY,
+  );
 });

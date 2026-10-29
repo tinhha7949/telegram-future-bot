@@ -2,9 +2,9 @@
 require("dotenv").config();
 
 const { CONFIG } = require("./ai-trading/config");
-const { assessAvailableMargin } = require("./ai-trading/execution-risk");
+const { beforeEnterGate } = require("./ai-trading/ai6-risk-guardian");
 const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
-const { RiskGuard } = require("./ai-trading/risk/day-guard");
+const { RiskGuard, HARD_MAX_TRADES_PER_DAY } = require("./ai-trading/risk/day-guard");
 const { riskForPhase, phaseForLabelCount, countRealizedLabels, calibrationPenaltyForState } = require("./ai-trading/online-learning");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
@@ -217,8 +217,13 @@ function isNineAiAuthorizedSignal(decision) {
   const side = String(decision?.side || "").toUpperCase();
   const edge = decision?.edges?.[side];
   const central = decision?.centralDecisionEngine;
-  const centralAuthorityValid = central == null ||
-    (central.authority === "NINE_AI_ONLY" && central.result === "AUTHORIZED");
+  const centralAuthorityValid =
+    central?.authority === "NINE_AI_ONLY" &&
+    central?.result === "AUTHORIZED" &&
+    String(central?.authorizedSymbol || "").toUpperCase() === String(decision?.symbol || "").toUpperCase() &&
+    Number(central?.signalAt) === Number(decision?.signalAt) &&
+    String(central?.side || "").toUpperCase() === side &&
+    central?.decisionSchemaVersion === decision?.decisionSchemaVersion;
   return decision?.authorizedForExecution === true &&
     centralAuthorityValid &&
     decision?.setup === "NINE_AI_4H" &&
@@ -249,9 +254,18 @@ async function executeDecisions(
     authorizedSignals.push(decision);
   }
   authorizedSignals.sort((a, b) => b.edges[b.side].edge - a.edges[a.side].edge);
+  let entriesSubmittedThisScan = 0;
   for (const decision of authorizedSignals) {
+    if (entriesSubmittedThisScan >= HARD_MAX_TRADES_PER_DAY) break;
     let reservationKey = null;
     let entryAttempted = false;
+    let trade = null;
+    let entryCounted = false;
+    const countEntry = () => {
+      if (entryCounted) return;
+      entriesSubmittedThisScan++;
+      entryCounted = true;
+    };
     if (
       isStopped() ||
       entriesPaused() ||
@@ -310,20 +324,20 @@ async function executeDecisions(
       }
       const sizing = sizingResult.sizing;
 
-      const leverage = account.leverageBySymbol?.[decision.symbol];
       // AI-6 execution-time veto: verify actual account balance, leverage and
       // exchange margin immediately before reserving risk or submitting an order.
       // Do not fetch account state for every scanned symbol; that would waste REST
       // weight and can hit Binance limits without improving decision quality.
-      const margin = assessAvailableMargin({
-        availableBalance: account.availableBalance,
-        notional: sizing.notional,
-        leverage: leverage?.leverage,
-        maxNotional: leverage?.maxNotional,
-        multiplier: CONFIG.RISK_RESERVATION_MIN_MARGIN_MULTIPLIER,
+      const entryGate = beforeEnterGate({
+        market: fresh,
+        account,
+        sizing,
+        symbol: decision.symbol,
+        riskState: gate,
+        now: Date.now(),
       });
-      if (!margin.ok) {
-        console.log("ENTRY WAIT", decision.symbol, "AI6_VETO_" + margin.reason);
+      if (!entryGate.ok) {
+        console.log("ENTRY WAIT", decision.symbol, entryGate.reason);
         continue;
       }
 
@@ -334,8 +348,12 @@ async function executeDecisions(
       if (!reservation.ok) { console.log("ENTRY WAIT", decision.symbol, reservation.reason); continue; }
       reservationKey = `${decision.symbol}:${decision.signalAt}`;
 
-      const trade = newTrade(decision, sizing);
-      trade.executionValidation = validation;
+      trade = newTrade(decision, sizing);
+      trade.executionValidation = {
+        ...validation,
+        ai6MarketVeto: entryGate.marketVeto,
+        ai6BalanceVeto: entryGate.marginVeto,
+      };
       if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size) {
         await riskGuard.release(reservationKey);
         reservationKey = null;
@@ -344,13 +362,15 @@ async function executeDecisions(
       try {
         const entered = await lifecycle.enter(trade);
         entryAttempted = trade.entryOrderAttempted === true;
+        if (entered || entryAttempted) countEntry();
         if (!entered && mayReleaseEntryRiskReservation(trade)) {
           await riskGuard.release(trade.signalKey);
           reservationKey = null;
         }
       } catch (error) {
-        entryAttempted = trade.entryOrderAttempted === true;
-        if (mayReleaseEntryRiskReservation(trade)) {
+        entryAttempted = trade?.entryOrderAttempted === true;
+        if (entryAttempted) countEntry();
+        if (trade && mayReleaseEntryRiskReservation(trade)) {
           await riskGuard.release(trade.signalKey);
           reservationKey = null;
         }

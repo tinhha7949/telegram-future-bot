@@ -15,7 +15,12 @@ function authorizedSignal() {
     centralDecisionEngine: {
       authority: "NINE_AI_ONLY",
       result: "AUTHORIZED",
+      authorizedSymbol: "TESTUSDT",
+      signalAt: 1700000000000,
+      side: "LONG",
+      decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     },
+    signalAt: 1700000000000,
     edges: {
       LONG: { eligible: true, edge: 0.5 },
       SHORT: { eligible: false, edge: 0.1 },
@@ -30,6 +35,9 @@ test("only an explicitly authorized AI-9 decision can reach the broker", () => {
     { setup: "LEGACY_SETUP" },
     { action: "SHORT" },
     { decisionSchemaVersion: DECISION_SCHEMA_VERSION - 1 },
+    { centralDecisionEngine: undefined },
+    { symbol: "OTHERUSDT" },
+    { signalAt: 1700000000001 },
     { centralDecisionEngine: { authority: "OTHER", result: "AUTHORIZED" } },
     { centralDecisionEngine: { authority: "NINE_AI_ONLY", result: "ABSTAIN" } },
     { edges: { LONG: { eligible: false, edge: 0.5 } } },

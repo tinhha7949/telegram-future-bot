@@ -38,7 +38,7 @@ function initialStructurePlan({
   ].sort((a, b) => a - b);
   const stopDistance = CONFIG.AI7_ATR_MULTIPLIER * atr;
   const first = Math.max(CONFIG.MIN_RR * stopDistance, distances[0] ?? 0);
-  const second = Math.max(CONFIG.MIN_TP2_R * stopDistance, distances.find(d => d > first) ?? 0, first);
+  const second = Math.max(CONFIG.FALLBACK_TP2_R * stopDistance, distances.find(d => d > first) ?? 0, first);
   const plan = {
     entry,
     sl: entry - sign * stopDistance,

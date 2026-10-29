@@ -7,6 +7,7 @@ const { analyzeNineAI, percentile } = require("./nine-ai-pipeline");
 const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const { validateExecution } = require("./execution-validation");
 const { newTrade } = require("./trade-lifecycle");
+const { finalizeDecision } = require("./nine-ai-central-decision-engine");
 const {
   createOfflineLearning,
   calibrationSummary,
@@ -244,15 +245,15 @@ test("funding credits retain their sign in snapshots, live edge and execution va
 
 // Explicit mock: production must require a durable risk ledger, never a missing guard.
 const permitRisk = { assess: async()=>({ok:true}), reserve: async()=>({ok:true}) };
-test("runtime tries all approved signals beyond ten and permits multiple entries in one scan", async () => {
+test("runtime evaluates signals beyond ten but never submits more than three entries per scan", async () => {
   const f = fixture(),
-    base = require("./nine-ai-central-decision-engine").finalizeDecision(
-      analyzeNineAI(f), { symbol: f.symbol, scannedAt: f.market.now + 1 },
-    ),
-    signals = Array.from({ length: 12 }, (_, i) => ({
-      ...structuredClone(base),
-      symbol: "TEST" + i + "USDT",
-    }));
+    signals = Array.from({ length: 12 }, (_, i) => {
+      const symbol = "TEST" + i + "USDT";
+      return finalizeDecision(
+        analyzeNineAI({ ...f, symbol }),
+        { symbol, scannedAt: f.market.now + 1 },
+      );
+    });
   const entered = [],
     lifecycle = {
       uncertain: false,
@@ -289,12 +290,17 @@ test("runtime tries all approved signals beyond ten and permits multiple entries
     riskGuard: permitRisk,
     async report() {},
   });
-  assert.equal(entered.length, 12);
+  assert.deepEqual(entered.map((t) => t.symbol), ["TEST0USDT", "TEST1USDT", "TEST2USDT"]);
 });
 
 test("one symbol's API failure does not discard the remaining approved signals", async () => {
-  const base = analyzeNineAI(fixture()), entered = [];
-  const signals = ["FIRSTUSDT", "SECONDUSDT"].map((symbol) => ({ ...structuredClone(base), symbol }));
+  const f = fixture(), entered = [];
+  const signals = ["FIRSTUSDT", "SECONDUSDT"].map((symbol) =>
+    finalizeDecision(
+      analyzeNineAI({ ...f, symbol }),
+      { symbol, scannedAt: f.market.now + 1 },
+    ),
+  );
   const exchange = fakeExchange(), request = exchange.request;
   exchange.request = async (route, params) => {
     if (params.symbol === "FIRSTUSDT") throw new Error("temporary symbol outage");
@@ -307,7 +313,12 @@ test("one symbol's API failure does not discard the remaining approved signals",
 });
 
 test("a pause arriving during awaited preparation prevents the market submission", async () => {
-  const base = analyzeNineAI(fixture()), exchange = fakeExchange();
+  const f = fixture(), symbol = f.symbol;
+  const base = finalizeDecision(
+    analyzeNineAI(f),
+    { symbol, scannedAt: f.market.now + 1 },
+  );
+  const exchange = fakeExchange();
   let paused = false, entries = 0;
   const info = exchange.info;
   exchange.info = async () => { paused = true; return info(); };

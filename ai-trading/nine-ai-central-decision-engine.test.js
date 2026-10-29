@@ -3,12 +3,16 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { fixture } = require("./test-fixtures.cjs");
 const { analyzeNineAI } = require("./nine-ai-pipeline");
-const { finalizeDecision } = require("./nine-ai-central-decision-engine");
+const { finalizeDecision, MIN_CANDLES } = require("./nine-ai-central-decision-engine");
+const { CONFIG } = require("./config");
 test("central guard rejects corruption, stale signals and incomplete policies", () => {
   const f = fixture(),
     base = analyzeNineAI(f),
     options = { symbol: f.symbol, scannedAt: f.market.now + 1 };
+  assert.equal(MIN_CANDLES, CONFIG.N_CANDLES);
   assert.equal(finalizeDecision(base, options).side, "LONG");
+  assert.equal(finalizeDecision({ ...base, candles: MIN_CANDLES - 1 }, options).reason, "INSUFFICIENT_CLOSED_CANDLES");
+  assert.equal(finalizeDecision({ ...base, action: "WAIT" }, options).reason, "AI9_ACTION_SIDE_MISMATCH");
   for (const patch of [
     { symbol: "OTHER" },
     { agents: null },

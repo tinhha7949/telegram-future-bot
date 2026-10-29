@@ -1,5 +1,6 @@
 "use strict";
 const { CONFIG } = require("./config");
+const { vetoMarketSnapshot } = require("./ai6-risk-guardian");
 const { weightedPercentile, phaseForLabelCount, countRealizedLabels, calibrationPenaltyForState } = require("./online-learning");
 const {
   DEFAULT_POLICY,
@@ -238,34 +239,13 @@ function analyzeNineAI({
   if (!["UPTREND", "DOWNTREND"].includes(regime.regime))
     return wait("REGIME_NOT_TREND", { regime, agents: { regime } });
 
-  // AI-6 hard market-data vetoes run before specialist models and AI-9.
-  const earlySnapshotAt = finite(market.snapshotAt),
-    earlyAge = earlySnapshotAt === null ? Infinity : now - earlySnapshotAt,
-    earlyFunding = finite(market.fundingRate),
-    earlySpread = finite(market.spreadPct),
-    earlyDepth = finite(market.depthNotional),
-    earlyOi = finite(market.openInterestChange),
-    earlyLatency = finite(market.latencyMs);
-  if (earlySnapshotAt === null)
-    return wait("EXECUTION_COST_INPUTS_MISSING_MARKET_SNAPSHOT_AT", { regime, agents: { regime } });
-  if (earlyAge < 0)
-    return wait("EXECUTION_COST_INPUTS_FUTURE_MARKET_SNAPSHOT", { regime, agents: { regime } });
-  if (earlyAge > BAR_MS)
-    return wait("STALE_MARKET_SNAPSHOT", { regime, agents: { regime } });
-  if (earlyFunding === null)
-    return wait("EXECUTION_COST_INPUTS_MISSING_FUNDING_RATE", { regime, agents: { regime } });
-  if (fundingIsHot(earlyFunding))
-    return wait("HOT_FUNDING", { regime, agents: { regime } });
-  if (earlyOi === null)
-    return wait("EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE", { regime, agents: { regime } });
-  if (earlySpread === null || earlySpread < 0)
-    return wait("EXECUTION_COST_INPUTS_MISSING_SPREAD", { regime, agents: { regime } });
-  if (earlySpread > CONFIG.MAX_SPREAD_PCT)
-    return wait("SPREAD_TOO_WIDE", { regime, agents: { regime } });
-  if (earlyDepth === null || earlyDepth <= 0)
-    return wait("EXECUTION_COST_INPUTS_MISSING_ORDERBOOK_DEPTH", { regime, agents: { regime } });
-  if (earlyLatency === null || earlyLatency < 0)
-    return wait("EXECUTION_COST_INPUTS_MISSING_LATENCY", { regime, agents: { regime } });
+  // AI-6 is a hard gate. If it vetoes, AI-2 through AI-9 do not run.
+  const marketVeto = vetoMarketSnapshot(market, now, CONFIG, BAR_MS);
+  if (!marketVeto.ok)
+    return wait(marketVeto.reason, {
+      regime,
+      agents: { regime, riskGuardian: { marketVeto: "BLOCKED", reason: marketVeto.reason } },
+    });
 
   const ranges = cs
     .slice(1)
@@ -442,12 +422,30 @@ function analyzeNineAI({
     structureBias,
     observedAt: now,
     trackRecord: market.trackRecord || {},
-    candleCutoffAt: now,
+    candleCutoffAt: last.closeTime,
     closedOIAt: finite(market.oiObservedAt),
   };
   const policy = { ...DEFAULT_POLICY, ...config, earlyPhase: phase === "EARLY", minEdge: Math.max(phase === "EARLY" ? CONFIG.EARLY_MIN_EDGE : CONFIG.MIN_EDGE, Number(config.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP };
   const agents = {
     regime,
+    riskGuardian: {
+      marketVeto: "PASSED",
+      balanceVeto: "REQUIRED_BEFORE_BROKER",
+      allowedSides: marketVeto.allowedSides,
+      snapshotAgeMs: marketVeto.snapshotAgeMs,
+      maxSnapshotAgeMs: BAR_MS,
+      fundingRate: marketVeto.fundingRate,
+      openInterestChange: marketVeto.openInterestChange,
+      liquidationImbalance: marketVeto.liquidationImbalance,
+      fundingHot: false,
+      spreadPct: marketVeto.spreadPct,
+      depthNotional: marketVeto.depthNotional,
+      latencyMs: marketVeto.latencyMs,
+      roundTripFeePct: marketVeto.roundTripFeePct,
+      fundingCostPctBySide: marketVeto.fundingCostPctBySide,
+      markPrice: marketVeto.markPrice,
+      maxSpreadPct: CONFIG.MAX_SPREAD_PCT,
+    },
     structure: {
       structure_bias: structureBias,
       support,
@@ -582,7 +580,15 @@ function analyzeNineAI({
           }
         : null;
       // No quantile SL/TP until sufficient direction-matched realized outcomes.
-      const ai7Ready = samples.length >= CONFIG.MIN_LABELS_FOR_ATR7;
+      // Keep the legacy threshold and explicit activation threshold aligned
+  // without silently ignoring either configured safety floor.
+  const ai7MinimumLabels = Math.max(
+    1,
+    CONFIG.COLD_START_SAMPLES,
+    CONFIG.MIN_LABELS_FOR_ATR7,
+    CONFIG.AI7_ACTIVATION_SAMPLES,
+  );
+  const ai7Ready = samples.length >= ai7MinimumLabels;
       const entry = last.close;
       const stop = ai7Ready
         ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)
@@ -710,25 +716,38 @@ function analyzeNineAI({
     }
     const chosen = selectDirectionCandidate(estimates, baseUncertainty);
     // A missing/invalid initial structure plan cannot be replaced with invented quantiles.
-    if (active.length && !chosen)
+    if (!chosen) {
+      // AI-3 still publishes a neutral/feature prior for each direction even
+      // when no executable setup exists. Eligibility, not a fake p=0, keeps
+      // AI-9 from authorizing a direction without a real setup.
+      const fallbackP = phase === "EARLY" ? 0.5 : initialProbability(
+        "CONTINUATION",
+        regime.momentum20,
+        volumeRatio,
+        {
+          fundingRate: funding,
+          openInterestChange: oi,
+          spreadPct: spread,
+          deviationAtr: deviation,
+          liquidationImbalance: liq,
+        },
+      );
       edges[side] = {
         eligible: false,
-        p: null,
-        expectedR: null,
-        cost: null,
-        baseUncertainty,
-        reason: "NO_VALID_STRUCTURE_OR_LABELED_EXIT_PLAN",
-      };
-    else if (!chosen)
-      edges[side] = {
-        eligible: false,
-        p: 0,
+        p: fallbackP,
         expectedR: 0,
         cost: 0,
         baseUncertainty,
-        reason: "NO_ACTIVE_SETUP",
+        reason: active.length
+          ? "NO_VALID_STRUCTURE_OR_LABELED_EXIT_PLAN"
+          : "NO_ACTIVE_SETUP",
         plan: null,
+        probabilitySource: phase === "EARLY"
+          ? "EARLY_NEUTRAL_PRIOR"
+          : "FEATURE_SCORE_UNCALIBRATED",
+        expectedRSource: "NO_EXECUTABLE_SETUP",
       };
+    }
     else {
       edges[side] = {
         ...chosen,
@@ -748,6 +767,42 @@ function analyzeNineAI({
       }
     }
   }
+  // Explicit AI-3/4/5 contracts: direction estimates are data inputs;
+  // only AI-9 may turn them into LONG/SHORT/WAIT.
+  agents.probability = {
+    pLong: edges.LONG.p,
+    pShort: edges.SHORT.p,
+    sourceBySide: {
+      LONG: edges.LONG.probabilitySource || "DIRECTIONAL_SETUP_ESTIMATE",
+      SHORT: edges.SHORT.probabilitySource || "DIRECTIONAL_SETUP_ESTIMATE",
+    },
+    phase,
+  };
+  agents.expectedReturn = {
+    eRLong: edges.LONG.expectedR,
+    eRShort: edges.SHORT.expectedR,
+    unit: "R",
+    sourceBySide: {
+      LONG: edges.LONG.expectedRSource || "DIRECTIONAL_SETUP_ESTIMATE",
+      SHORT: edges.SHORT.expectedRSource || "DIRECTIONAL_SETUP_ESTIMATE",
+    },
+  };
+  agents.confidence = {
+    score: regime.regime_conf,
+    band: regime.regime_conf >= CONFIG.CONF_HIGH
+      ? "HIGH"
+      : regime.regime_conf < CONFIG.CONF_LOW
+        ? "LOW"
+        : "MEDIUM",
+    uncertaintyPenalty: baseUncertainty,
+    uncertaintyPenaltyBySide: {
+      LONG: edges.LONG.baseUncertainty,
+      SHORT: edges.SHORT.baseUncertainty,
+    },
+    earlyPenalty: phase === "EARLY" ? CONFIG.EARLY_UNCERTAINTY_PENALTY : 0,
+    dataQuality: "VALID",
+    snapshotAgeMs: marketVeto.snapshotAgeMs,
+  };
   const meta = applyPolicy({ regime, agents, edges }, policy);
   const extra = {
     regime,

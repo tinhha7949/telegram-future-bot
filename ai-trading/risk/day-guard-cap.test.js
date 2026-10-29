@@ -65,22 +65,37 @@ test("daily risk cap blocks a third mature-phase reservation independently of ed
   assert.equal(third.reason, "MAX_DAILY_RISK_REACHED");
   assert.equal(db.collection("nine_ai_risk_reservations").rows.has("mature-3"), false);
 });
-test("hard max trades per UTC day blocks entries beyond the configured cap", async () => {
+test("hard ceiling is three trades per UTC day even when config allows five", async () => {
   const db = mockDb();
-  const maxTrades = CONFIG.MAX_TRADES_PER_DAY;
-  // Ensure daily risk does not become the earlier limit in this test.
+  const { HARD_MAX_TRADES_PER_DAY } = require("./day-guard");
+  assert.equal(HARD_MAX_TRADES_PER_DAY, 3);
   const config = {
     ...CONFIG,
-    MAX_DAILY_RISK: CONFIG.EARLY_RISK * (maxTrades + 1) + 1e-9,
+    MAX_TRADES_PER_DAY: 5,
+    MAX_DAILY_RISK: Math.max(CONFIG.MAX_DAILY_RISK, CONFIG.EARLY_RISK * 4),
   };
   const guard = new RiskGuard(db, { config, now: () => Date.UTC(2026, 9, 29, 12) });
-  for (let i = 1; i <= maxTrades; i++) {
+  for (let i = 1; i <= 3; i++) {
     const r = await guard.reserve("trade-" + i, 1000, { labelCount: 0 });
     assert.equal(r.ok, true, JSON.stringify(r));
   }
-  const nextTradeKey = "trade-" + (maxTrades + 1);
-  const blocked = await guard.reserve(nextTradeKey, 1000, { labelCount: 0 });
+  const blocked = await guard.reserve("trade-4", 1000, { labelCount: 0 });
   assert.equal(blocked.ok, false);
   assert.equal(blocked.reason, "MAX_TRADES_PER_DAY_REACHED");
-  assert.equal(db.collection("nine_ai_risk_reservations").rows.has(nextTradeKey), false);
+  assert.equal(db.collection("nine_ai_risk_reservations").rows.has("trade-4"), false);
+});
+
+test("daily trade config can tighten but cannot raise the hard three-trade ceiling", async () => {
+  const db = mockDb();
+  const config = {
+    ...CONFIG,
+    MAX_TRADES_PER_DAY: 2,
+    MAX_DAILY_RISK: Math.max(CONFIG.MAX_DAILY_RISK, CONFIG.EARLY_RISK * 4),
+  };
+  const guard = new RiskGuard(db, { config, now: () => Date.UTC(2026, 9, 29, 12) });
+  for (let i = 1; i <= 2; i++)
+    assert.equal((await guard.reserve("lower-cap-" + i, 1000, { labelCount: 0 })).ok, true);
+  const blocked = await guard.reserve("lower-cap-3", 1000, { labelCount: 0 });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, "MAX_TRADES_PER_DAY_REACHED");
 });
