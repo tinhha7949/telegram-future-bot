@@ -73,6 +73,7 @@ function vetoMarketSnapshot(market = {}, now = Date.now(), config = CONFIG, barM
       ? ["LONG", "SHORT"]
       : liquidationImbalance > 0 ? ["LONG"] : ["SHORT"],
     roundTripFeePct,
+    fundingCostPctBySide: { LONG: finite(market.expectedFundingCostPctBySide.LONG), SHORT: finite(market.expectedFundingCostPctBySide.SHORT) },
     markPrice,
     latencyMs,
   };
