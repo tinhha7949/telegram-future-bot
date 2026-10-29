@@ -47,13 +47,27 @@ test("online calibration updates on one label and penalizes measured prediction 
   assert.ok(second.weight > 1);
 });
 
+test("risk sizing does not compound after consecutive losses", () => {
+  const { riskForPhase } = require("./online-learning");
+  const equity = 8;
+  const first = equity * riskForPhase(0);
+  const afterLoss = equity * riskForPhase(0);
+  const afterManyLosses = equity * riskForPhase(0);
+  assert.equal(first, 0.02);
+  assert.equal(afterLoss, first);
+  assert.equal(afterManyLosses, first);
+});
 test("phase count ignores simulated labels and duplicate trade IDs", () => {
   const valid = {
     tradeId: "real-1", labeled: true, source: "REALIZED_CLOSED_TRADE",
     accountingSchemaVersion: 2, closedAt: 50, maePct: 0.2, mfePct: 0.4,
+    side: "LONG", setupKey: "UPTREND_CONTINUATION", win: false,
+    featureSnapshot: { snapshotAt: 40 },
   };
   assert.equal(countRealizedLabels([valid, { ...valid }, {
     ...valid, tradeId: "paper-1", source: "SIMULATED",
   }], 100), 1);
   assert.equal(countRealizedLabels([{ ...valid, closedAt: 101 }], 100), 0);
+  assert.equal(countRealizedLabels([{ ...valid, featureSnapshot: null }], 100), 0);
+  assert.equal(countRealizedLabels([{ ...valid, win: undefined }], 100), 0);
 });
