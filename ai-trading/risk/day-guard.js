@@ -152,7 +152,7 @@ class RiskGuard {
       );
       if (result.matchedCount !== 1 || result.modifiedCount !== 1) {
         const current = await this.days.findOne({ _id: dayKey });
-        if ((Number(current?.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY) {
+        if ((Number(current?.usedTrades) || 0) >= maxTradesPerDay) {
           await discardUnchargedReservation();
           return fail("MAX_TRADES_PER_DAY_REACHED");
         }
