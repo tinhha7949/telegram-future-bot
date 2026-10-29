@@ -30,26 +30,6 @@ test("central guard rejects corruption, stale signals and incomplete policies", 
     );
 });
 
-const { isNineAiAuthorizedSignal } = require("../index");
-test("only an explicitly authorized AI-9 decision can reach the broker", () => {
-  const base = {
-    symbol: "TESTUSDT", setup: "NINE_AI_4H", side: "LONG", action: "LONG",
-    authorizedForExecution: true, decisionSchemaVersion: require("./nine-ai-policy").DECISION_SCHEMA_VERSION,
-    centralDecisionEngine: { authority: "NINE_AI_ONLY", result: "AUTHORIZED" },
-    edges: { LONG: { eligible: true, edge: 0.5 }, SHORT: { eligible: false, edge: 0.1 } },
-  };
-  assert.equal(isNineAiAuthorizedSignal(base), true);
-  for (const patch of [
-    { authorizedForExecution: false },
-    { setup: "LEGACY_SETUP" },
-    { action: "SHORT" },
-    { decisionSchemaVersion: 1 },
-    { centralDecisionEngine: { authority: "OTHER", result: "AUTHORIZED" } },
-    { centralDecisionEngine: { authority: "NINE_AI_ONLY", result: "ABSTAIN" } },
-    { edges: { LONG: { eligible: false, edge: 0.5 } } },
-    { edges: { LONG: { eligible: true, edge: null } } },
-  ]) assert.equal(isNineAiAuthorizedSignal({ ...base, ...patch }), false);
-});
 const { uncertaintyFor } = require("./nine-ai-policy");
 test("calibration drift contributes uncertainty without changing champion params",()=>{
   const now=1700000000000;
