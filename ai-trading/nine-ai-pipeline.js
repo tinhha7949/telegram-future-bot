@@ -699,7 +699,7 @@ function analyzeNineAI({
         p,
         expectedR,
         expectedRSource:
-          realizedReturns.length || trackedExpectedR !== null
+          phase !== "EARLY" && (realizedReturns.length || trackedExpectedR !== null)
             ? "REALIZED_GROSS_R_BY_DIRECTION_REGIME_SETUP"
             : "INITIAL_EXIT_GEOMETRY_UNCALIBRATED",
         distMAE,
