@@ -578,7 +578,9 @@ async function main() {
     const phase = phaseForLabelCount(outcomes.length);
     const activeMinEdge = phase === "EARLY"
       ? CONFIG.EARLY_MIN_EDGE
-      : Math.max(CONFIG.MIN_EDGE, Number(champion?.minEdge) || 0, minEdge);
+      : phase === "ADAPT"
+        ? CONFIG.MIN_EDGE
+        : Math.max(CONFIG.MIN_EDGE, Number(champion?.minEdge) || 0, minEdge);
     let decision = pipeline.analyzeNineAI({
       symbol,
       candles4h: h4,

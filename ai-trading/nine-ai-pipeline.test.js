@@ -55,8 +55,8 @@ test("invalid or simulated labels never masquerade as an AI-7 model", () => {
     ...f,
     outcomes: Array(60).fill(f.outcomes[0]),
   });
-  assert.equal(deduplicated.agents.outcome.dist_MAE.samples, 1);
-  assert.equal(deduplicated.agents.outcome.enabled, true);
+  assert.equal(deduplicated.edges.LONG.distMAE.samples, 1);
+  assert.equal(deduplicated.edges.LONG.outcomeMode, "AI7_LABELED");
 });
 test("initial trades require cost inputs and block hot funding", () => {
   const f = { ...fixture(), outcomes: [] };

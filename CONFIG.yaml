@@ -25,8 +25,7 @@ MEMORY_LIMIT_MB: 500
 FEE_TAKER: 0.0006
 SLIPPAGE_BPS: 3
 
-# Explicit resolutions of underspecified/conflicting strategy requirements.
-# AI-7 stays in fallback until 100 completed, direction-matched labels.
+# AI-7 uses the first valid, direction-matched realized closed-trade label immediately.
 AI7_ACTIVATION_SAMPLES: 1
 AI7_ATR_MULTIPLIER: 1.5
 FALLBACK_TP2_R: 1.6

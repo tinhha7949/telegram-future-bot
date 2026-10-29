@@ -144,7 +144,7 @@ test("a newly qualified candidate reports shadow started on the same daily run",
     r.signalTime = start + i * 6 * l.DAY_MS;
     Object.assign(r.decisionSnapshot.edges.LONG, {
       p: 0.6,
-      expectedR: i % 2 === 0 ? 0.85 : 0.60,
+      expectedR: i % 2 === 0 ? 0.85 : 0.70,
       cost: 0.15,
       baseUncertainty: 0.1,
     });

@@ -258,8 +258,8 @@ test("empty database -> AI-2 initial trade -> restart -> close -> first real lab
   const f = fixture("LONG", Math.max(Date.now(), outcomes[0].closedAt + 2000));
   const next = analyzeNineAI({ ...f, outcomes });
   assert.equal(next.action, "LONG");
-  assert.equal(next.agents.outcome.enabled, false);
-  assert.equal(next.tradePlan.outcomeMode, "AI2_INITIAL");
+  assert.equal(next.agents.outcome.enabled, true);
+  assert.equal(next.tradePlan.outcomeMode, "AI7_LABELED");
   const matured = [...f.outcomes.filter(o => o.setupKey === outcomes[0].setupKey)
     .slice(0, 99), outcomes[0]];
   const trained = analyzeNineAI({ ...f, outcomes: matured });
