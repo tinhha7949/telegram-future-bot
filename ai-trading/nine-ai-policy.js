@@ -67,6 +67,11 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
       guardian.liquidationImbalance,
       guardian.spreadPct,
       guardian.depthNotional,
+      guardian.latencyMs,
+      guardian.roundTripFeePct,
+      guardian.markPrice,
+      guardian.fundingCostPctBySide?.LONG,
+      guardian.fundingCostPctBySide?.SHORT,
       guardian.snapshotAgeMs,
     ];
     if (guardian.marketVeto !== "PASSED" ||
