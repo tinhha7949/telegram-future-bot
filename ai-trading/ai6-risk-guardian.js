@@ -96,4 +96,27 @@ function vetoAvailableMargin({ account, sizing, symbol, config = CONFIG } = {}) 
     : { ok: false, reason: "AI6_VETO_" + margin.reason, margin };
 }
 
-module.exports = { vetoMarketSnapshot, vetoAvailableMargin };
+function beforeEnterGate({
+  market,
+  account,
+  sizing,
+  symbol,
+  riskState,
+  now = Date.now(),
+  config = CONFIG,
+} = {}) {
+  if (riskState?.ok !== true)
+    return { ok: false, reason: riskState?.reason || "RISK_STATE_UNAVAILABLE" };
+  const marketVeto = vetoMarketSnapshot(market, now, config);
+  if (!marketVeto.ok) return { ...marketVeto, stage: "AI6_MARKET" };
+  const marginVeto = vetoAvailableMargin({ account, sizing, symbol, config });
+  if (!marginVeto.ok) return { ...marginVeto, stage: "AI6_BALANCE", marketVeto };
+  return {
+    ok: true,
+    reason: "BEFORE_ENTER_GATE_ACCEPTED",
+    marketVeto,
+    marginVeto,
+  };
+}
+
+module.exports = { vetoMarketSnapshot, vetoAvailableMargin, beforeEnterGate };
