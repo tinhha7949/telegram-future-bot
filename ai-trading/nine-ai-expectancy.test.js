@@ -34,7 +34,7 @@ test("AI7 uses recency-weighted realized excursions, including losses, for MAE/M
   assert.ok((d.tp1-d.entry)/(d.entry-d.sl)>=0.8-1e-12);
 });
 
-test("E[R] uses realized gross R for the direction/regime/setup, including losses", () => {
+test("E[R] uses realized gross R for the direction/regime/setup, including losses even in EARLY", () => {
   const f = fixture(),
     base = f.outcomes[0];
   const outcomes = [
