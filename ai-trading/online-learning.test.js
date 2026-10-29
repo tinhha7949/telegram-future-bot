@@ -2,7 +2,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { CONFIG } = require("./config");
-const { phaseForLabelCount, riskForPhase, weightedPercentile } = require("./online-learning");
+const { phaseForLabelCount, riskForPhase, weightedPercentile, updateOnlineCalibration, calibrationPenaltyForState } = require("./online-learning");
+const { uncertaintyFor } = require("./nine-ai-policy");
 test("LIVE starts with zero labels and risk remains at early micro-risk", () => {
   assert.equal(CONFIG.MODE, "LIVE");
   assert.equal(phaseForLabelCount(0), "EARLY");
@@ -25,4 +26,23 @@ test("first completed trade immediately produces usable MAE/MFE quantiles", () =
 test("recency decay gives a newer sample more weight than an older sample", () => {
   assert.equal(weightedPercentile([10, 1], 0.5, 0.95), 10);
   assert.equal(weightedPercentile([10, 1], 0.5, 1), 1);
+});
+
+test("early uncertainty penalty is applied on top of confidence penalty", () => {
+  assert.equal(uncertaintyFor({ regime_conf: 0.8 }, 1000, 1000, 1001, {
+    uncertaintyPenalty: 0, earlyPhase: true,
+  }), CONFIG.EARLY_UNCERTAINTY_PENALTY);
+  assert.equal(uncertaintyFor({ regime_conf: 0.4 }, 1000, 1000, 1001, {
+    uncertaintyPenalty: 0, earlyPhase: true,
+  }), CONFIG.LOW_CONF_PENALTY + CONFIG.EARLY_UNCERTAINTY_PENALTY);
+});
+test("online calibration updates on one label and penalizes measured prediction drift", () => {
+  const first = updateOnlineCalibration(null, 1, 0, 1000);
+  assert.equal(first.samples, 1);
+  assert.equal(first.biasR, 1);
+  assert.equal(first.maeR, 1);
+  assert.equal(calibrationPenaltyForState(first), CONFIG.LOW_CONF_PENALTY);
+  const second = updateOnlineCalibration(first, 0, 0, 2000);
+  assert.equal(second.samples, 2);
+  assert.ok(second.weight > 1);
 });

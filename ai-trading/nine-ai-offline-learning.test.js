@@ -227,6 +227,7 @@ test("accounting retries use the stable trade key even when Mongo IDs appear aft
     createdAt: 1,
     actualQuantity: 2,
     initialRisk: 1,
+    nineAiPredictionSnapshot: { predictedR: 1 },
   };
   const closed = { accountingComplete: true, pnl: 2, grossRealizedPnl: 2 };
   await service.recordClosedTrade(trade, closed);
@@ -239,6 +240,8 @@ test("accounting retries use the stable trade key even when Mongo IDs appear aft
     db.collection("nine_ai_actual_outcomes").rows[0].tradeId,
     "TEST:1",
   );
+  assert.equal(db.collection("nine_ai_online_calibration").rows.length, 1);
+  assert.equal(db.collection("nine_ai_online_calibration").rows[0].samples, 1);
 });
 test("candidate qualification has no 400-row, trade-count or extra .02R-uplift gate", () => {
   const rows = Array.from({ length: 30 }, (_, i) => {
