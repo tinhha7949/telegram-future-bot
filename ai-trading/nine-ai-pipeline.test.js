@@ -94,7 +94,7 @@ for (const side of ["LONG", "SHORT"]) {
         "FEATURE_SCORE_UNCALIBRATED",
       );
       assert.equal(d.edges[side].p, 0.5);
-      assert.equal(d.edges[side].uncertaintyPenalty, CONFIG.EARLY_UNCERTAINTY_PENALTY);
+      assert.equal(d.edges[side].uncertaintyPenalty, require("./config").CONFIG.EARLY_UNCERTAINTY_PENALTY);
       assert.equal(d.closePercentAtTP1, 60);
       assert.equal(d.timeoutCandles, 24);
       assert.equal(
