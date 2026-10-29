@@ -571,7 +571,7 @@ function analyzeNineAI({
           }
         : null;
       // No quantile SL/TP until sufficient direction-matched realized outcomes.
-      const ai7Ready = samples.length >= CONFIG.MIN_LABELS_FOR_ATR7;
+      const ai7Ready = samples.length >= CONFIG.AI7_ACTIVATION_SAMPLES;
       const entry = last.close;
       const stop = ai7Ready
         ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)
