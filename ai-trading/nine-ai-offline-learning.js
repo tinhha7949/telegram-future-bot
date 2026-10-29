@@ -743,7 +743,13 @@ function createOfflineLearning(db, options = {}) {
       }
     }
 
-    const prunedTerminalCandidates = await pruneTerminalCandidates();
+    let prunedTerminalCandidates = 0;
+    try {
+      prunedTerminalCandidates = await pruneTerminalCandidates();
+    } catch (error) {
+      // Retention maintenance must not suppress the daily learning report.
+      console.error("POLICY CANDIDATE RETENTION FAILED", error.message);
+    }
     const report = {
       prunedTerminalCandidates,
       runDate,
