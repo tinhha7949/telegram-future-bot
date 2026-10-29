@@ -4,6 +4,15 @@ const assert = require("node:assert/strict");
 const l = require("./nine-ai-offline-learning");
 const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const { CONTRACT } = require("./opportunity-outcome");
+test("model history retains the latest two terminal candidates plus the active champion reference", () => {
+  const rows = [
+    { _id: "old", status: "SHADOW_REJECTED", createdAt: new Date(1000) },
+    { _id: "mid", status: "PROMOTED_CHAMPION", createdAt: new Date(2000) },
+    { _id: "new", status: "SHADOW_REJECTED", createdAt: new Date(3000) },
+    { _id: "active-shadow", status: "SHADOW_PENDING", createdAt: new Date(4000) },
+  ];
+  assert.deepEqual(l.terminalCandidateIdsToPrune(rows, "mid", 2), ["old"]);
+});
 test("candidate training window uses exactly the configured recent 3000 4h bars and excludes future rows", () => {
   const asOf = 1800000000000;
   assert.deepEqual(l.trainingWindowFilter(asOf), {
