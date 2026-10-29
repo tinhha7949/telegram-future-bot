@@ -5,6 +5,7 @@ const { fixture, memoryDb } = require("./test-fixtures.cjs");
 const { CONFIG } = require("./config");
 const { analyzeNineAI, percentile } = require("./nine-ai-pipeline");
 const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
+const { finalizeDecision } = require("./nine-ai-central-decision-engine");
 const { validateExecution } = require("./execution-validation");
 const { newTrade } = require("./trade-lifecycle");
 const {
@@ -294,7 +295,13 @@ test("runtime tries all approved signals beyond ten and permits multiple entries
 
 test("one symbol's API failure does not discard the remaining approved signals", async () => {
   const base = analyzeNineAI(fixture()), entered = [];
-  const signals = ["FIRSTUSDT", "SECONDUSDT"].map((symbol) => ({ ...structuredClone(base), symbol }));
+  const scannedAt = base.featureSnapshot.observedAt + 1;
+  const signals = ["FIRSTUSDT", "SECONDUSDT"].map((symbol) =>
+    finalizeDecision(
+      { ...structuredClone(base), symbol },
+      { symbol, scannedAt },
+    ),
+  );
   const exchange = fakeExchange(), request = exchange.request;
   exchange.request = async (route, params) => {
     if (params.symbol === "FIRSTUSDT") throw new Error("temporary symbol outage");
