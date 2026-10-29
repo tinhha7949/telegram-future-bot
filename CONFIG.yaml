@@ -1,4 +1,4 @@
-# Canonical trading strategy settings. Do not override risk/strategy via .env.
+# Canonical LIVE trading strategy settings. Do not override risk/strategy via .env.
 N_CANDLES: 500
 TIMEFRAME: "4h"
 EQUITY_START: 1000.0
