@@ -49,29 +49,43 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
   if (!["UPTREND", "DOWNTREND"].includes(decision?.regime?.regime))
     return { ...result, reason: "REGIME_NOT_TREND" };
   const flow = decision?.agents?.flow;
-  if (flow?.confirmation === "BLOCKED_HOT_FUNDING" ||
-      fundingIsHot(flow?.fundingRate))
+  const guardian = decision?.agents?.riskGuardian;
+  if (guardian?.marketVeto === "BLOCKED")
+    return { ...result, reason: guardian.reason || "AI6_MARKET_VETO" };
+  // Defense in depth for legacy/corrupted snapshots. Live pipeline decisions
+  // must carry an explicit AI-6 PASS plus the set of permitted directions.
+  if (fundingIsHot(flow?.fundingRate))
     return { ...result, reason: "HOT_FUNDING" };
-  // A live, zero liquidation imbalance is neutral flow, not missing data.
-  // AI-6 may confirm a direction when a cascade exists and may veto an opposing
-  // side; in neutral conditions AI-9 remains the sole direction selector.
-  const validFlowInputs = [
-    flow?.fundingRate,
-    flow?.openInterestChange,
-    flow?.liquidationImbalance,
-  ].every(finite);
-  const neutralFlow =
-    flow?.confirmation === "NEUTRAL" &&
-    flow.confirmationSide == null &&
-    flow.liquidationImbalance === 0;
-  const directionalFlow =
-    flow?.confirmation === "CONFIRMED" &&
-    ["LONG", "SHORT"].includes(flow.confirmationSide) &&
-    flow.liquidationImbalance !== 0 &&
-    flow.confirmationSide ===
-      (flow.liquidationImbalance > 0 ? "LONG" : "SHORT");
-  if (!validFlowInputs || (!neutralFlow && !directionalFlow))
-    return { ...result, reason: "FLOW_UNAVAILABLE_OR_UNCERTAIN" };
+  let allowedSides;
+  if (Array.isArray(guardian?.allowedSides)) {
+    if (guardian.marketVeto !== "PASSED" ||
+        !guardian.allowedSides.length ||
+        guardian.allowedSides.some(side => !["LONG", "SHORT"].includes(side)) ||
+        new Set(guardian.allowedSides).size !== guardian.allowedSides.length)
+      return { ...result, reason: "AI6_GUARDIAN_OUTPUT_INVALID" };
+    allowedSides = guardian.allowedSides;
+  } else {
+    // Backward-compatible interpretation for historical journal snapshots
+    // written before the explicit AI-6 direction contract existed.
+    const validFlowInputs = [
+      flow?.fundingRate,
+      flow?.openInterestChange,
+      flow?.liquidationImbalance,
+    ].every(finite);
+    const neutralFlow =
+      flow?.confirmation === "NEUTRAL" &&
+      flow.confirmationSide == null &&
+      flow.liquidationImbalance === 0;
+    const directionalFlow =
+      flow?.confirmation === "CONFIRMED" &&
+      ["LONG", "SHORT"].includes(flow.confirmationSide) &&
+      flow.liquidationImbalance !== 0 &&
+      flow.confirmationSide ===
+        (flow.liquidationImbalance > 0 ? "LONG" : "SHORT");
+    if (!validFlowInputs || (!neutralFlow && !directionalFlow))
+      return { ...result, reason: "FLOW_UNAVAILABLE_OR_UNCERTAIN" };
+    allowedSides = neutralFlow ? ["LONG", "SHORT"] : [flow.confirmationSide];
+  }
   for (const side of ["LONG", "SHORT"]) {
     const c = decision?.edges?.[side];
     if (
@@ -96,22 +110,21 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
       other = result.edges[side === "LONG" ? "SHORT" : "LONG"];
     if (
       c.eligible === true &&
-      (neutralFlow || side === flow.confirmationSide) &&
+      allowedSides.includes(side) &&
       c.plan &&
       c.edge > params.minEdge &&
       c.edge - other.edge > params.gapEdge
     )
       return { ...result, side, reason: side + "_NET_EDGE_WINS" };
   }
-  // Audit the more attractive setup when flow points against that side.
-  // Never authorize a competing direction by bypassing the flow gate.
-  for (const side of ["LONG", "SHORT"]) {
+  // The AI-6 guardian supplies the permitted direction set. AI-9 may only
+  // choose within that set; an otherwise-qualified blocked side must WAIT.
+  const directionVetoed = ["LONG", "SHORT"].some(side => {
     const c = result.edges[side], other = result.edges[side === "LONG" ? "SHORT" : "LONG"];
-    if (directionalFlow && side !== flow.confirmationSide &&
-        c?.eligible && c.plan && c.edge > params.minEdge &&
-        c.edge - other.edge > params.gapEdge)
-      return { ...result, reason: "FLOW_DIRECTION_CONFLICT" };
-  }
+    return c?.eligible === true && !allowedSides.includes(side) && c.plan &&
+      c.edge > params.minEdge && c.edge - other.edge > params.gapEdge;
+  });
+  if (directionVetoed) return { ...result, reason: "AI6_DIRECTION_VETO" };
   return result;
 }
 module.exports = {
