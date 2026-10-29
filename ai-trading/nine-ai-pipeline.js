@@ -136,7 +136,9 @@ function classifyRegime(cs) {
   const realizedLong =
     returns.length >= CONFIG.VOL_LONG_RETURNS ? stdev(returns.slice(-CONFIG.VOL_LONG_RETURNS)) * scale : null;
   const rank = vols.length
-    ? vols.filter((v) => v <= realized20).length / vols.length
+    ? realized20 <= 1e-12
+      ? 0
+      : vols.filter((v) => v <= realized20).length / vols.length
     : null;
   const momentum20 =
     closes.length > CONFIG.VOL_20D_RETURNS ? closes.at(-1) / closes.at(-(CONFIG.VOL_20D_RETURNS + 1)) - 1 : 0;
