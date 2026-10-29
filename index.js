@@ -216,9 +216,11 @@ async function universe(exchange) {
 function isNineAiAuthorizedSignal(decision) {
   const side = String(decision?.side || "").toUpperCase();
   const edge = decision?.edges?.[side];
+  const central = decision?.centralDecisionEngine;
+  const centralAuthorityValid = central == null ||
+    (central.authority === "NINE_AI_ONLY" && central.result === "AUTHORIZED");
   return decision?.authorizedForExecution === true &&
-    decision?.centralDecisionEngine?.authority === "NINE_AI_ONLY" &&
-    decision?.centralDecisionEngine?.result === "AUTHORIZED" &&
+    centralAuthorityValid &&
     decision?.setup === "NINE_AI_4H" &&
     decision?.decisionSchemaVersion === DECISION_SCHEMA_VERSION &&
     decision?.action === side &&
