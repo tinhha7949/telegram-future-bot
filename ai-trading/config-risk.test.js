@@ -51,17 +51,24 @@ test("risk guard refuses unknown equity, durable drawdown, and duplicate signals
       },
     };
   }};
-  const g = new RiskGuard(db, { now: () => Date.UTC(2026, 9, 23) });
+  // Isolate daily-risk behavior from editable production defaults such as
+  // MAX_TRADES_PER_DAY. These values are test fixtures, not strategy defaults.
+  const testConfig = {
+    ...CONFIG,
+    MAX_DAILY_RISK: CONFIG.RISK_PER_TRADE * 2.5,
+    MAX_TRADES_PER_DAY: Math.max(CONFIG.MAX_TRADES_PER_DAY, 10),
+  };
+  const g = new RiskGuard(db, { config: testConfig, now: () => Date.UTC(2026, 9, 23) });
   assert.equal((await g.reserve("bad", NaN)).ok, false);
-  const allowed = Math.floor(CONFIG.MAX_DAILY_RISK / CONFIG.RISK_PER_TRADE + 1e-9);
+  const allowed = Math.floor(testConfig.MAX_DAILY_RISK / testConfig.RISK_PER_TRADE + 1e-9);
   assert.ok(allowed >= 1);
   assert.equal((await g.reserve("a", 1000, { labelCount: 150 })).ok, true);
   assert.equal((await g.reserve("a", 1000, { labelCount: 150 })).ok, false);
   for (let i = 1; i < allowed; i++)
     assert.equal((await g.reserve("risk-" + i, 1000, { labelCount: 150 })).ok, true);
   assert.equal((await g.reserve("over-capacity", 1000, { labelCount: 150 })).reason, "MAX_DAILY_RISK_REACHED");
-  const belowCircuit = Math.max(1, 1000 * (1 - CONFIG.MAX_DRAWDOWN_CIRCUIT - 0.01));
+  const belowCircuit = Math.max(1, 1000 * (1 - testConfig.MAX_DRAWDOWN_CIRCUIT - 0.01));
   assert.equal((await g.assess(belowCircuit)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
-  assert.equal(g.config.EQUITY_START,CONFIG.EQUITY_START);
-  assert.equal((await new RiskGuard(db).assess(1000)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
+  assert.equal(g.config.EQUITY_START, CONFIG.EQUITY_START);
+  assert.equal((await new RiskGuard(db, { config: testConfig }).assess(1000)).reason, "DRAWDOWN_CIRCUIT_LATCHED");
 });
