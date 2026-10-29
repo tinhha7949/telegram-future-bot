@@ -28,13 +28,14 @@ function validateExecution(decision, market, now = Date.now()) {
   if (
     !values.every((v) => typeof v === "number" && Number.isFinite(v)) ||
     market.snapshotAt > now ||
+    now - market.snapshotAt > CONFIG.MARKET_WS_STALE_MS ||
     market.depthNotional <= 0 ||
     market.spreadPct < 0 ||
     market.latencyMs < 0 ||
     market.roundTripFeePct < 0 ||
     market.markPrice <= 0
   )
-    return { ok: false, reason: "EXECUTION_INPUTS_UNAVAILABLE" };
+    return { ok: false, reason: market?.snapshotAt > now || now - Number(market?.snapshotAt) > require("./config").CONFIG.MARKET_WS_STALE_MS ? "MARKET_SNAPSHOT_STALE" : "EXECUTION_INPUTS_UNAVAILABLE" };
   if (fundingIsHot(market.fundingRate))
     return { ok: false, reason: "CURRENT_FLOW_BLOCKED" };
   // The fresh market reading must still corroborate the same side.
@@ -77,7 +78,7 @@ function validateExecution(decision, market, now = Date.now()) {
       now,
       decision.decisionPolicy,
       decision.featureSnapshot,
-    );
+    ) + Math.max(0, Number(c.moduleUncertaintyPenalty) || 0);
   }
   if (applyPolicy(refreshed, decision.decisionPolicy).side !== decision.side)
     return { ok: false, reason: "CURRENT_COST_OR_UNCERTAINTY_BLOCKED" };
