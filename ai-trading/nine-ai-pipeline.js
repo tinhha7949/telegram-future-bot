@@ -814,7 +814,7 @@ function analyzeNineAI({
     snapshotAgeMs: age,
     snapshotAt,
     openInterestChange: oi,
-    orderbookDepthNotional: depth,
+    depthNotional: depth,
     latencyMs: latency,
   };
   agents.slTp = {
