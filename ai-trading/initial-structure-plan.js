@@ -58,18 +58,37 @@ function initialStructurePlan({
 // These are uncalibrated estimates, not probabilities learned from nonexistent trades.
 function initialProbability(type, momentum, volumeRatio, market = {}) {
   const sigmoid = (value) => 1 / (1 + Math.exp(-value));
+  const side = String(market.side || "").toUpperCase();
+  const bias = String(market.structureBias || "NEUTRAL").toUpperCase();
+  const targetBias = side === "LONG" ? "BULLISH" : side === "SHORT" ? "BEARISH" : null;
+  const alignment = !targetBias || !["BULLISH", "BEARISH"].includes(bias)
+    ? 0
+    : bias === targetBias ? 1 : -1;
+  const m = Number(momentum);
+  const directionalMomentum = side === "LONG" ? m : side === "SHORT" ? -m : Math.abs(m);
+  // AI-2 is a directional feature, not an authority: aligned structure
+  // reinforces momentum; opposing structure reduces or reverses that evidence.
+  // EDGE_GAP supplies a config-controlled minimum structural contribution.
+  const momentumScore = targetBias
+    ? directionalMomentum + alignment * (Math.abs(m) + CONFIG.EDGE_GAP)
+    : Math.abs(m);
+  const momentumTerm = Number.isFinite(momentumScore)
+    ? momentumScore * CONFIG.INITIAL_CONTINUATION_MOMENTUM_WEIGHT
+    : 0;
   if (type === "CONTINUATION")
     return sigmoid(
-      Math.abs(momentum) * CONFIG.INITIAL_CONTINUATION_MOMENTUM_WEIGHT +
+      momentumTerm +
         Math.log1p(Math.max(-CONFIG.INITIAL_OI_LOG_LOWER_MAGNITUDE, Number(market.openInterestChange) / 100)) +
         1 -
         Math.abs(Number(market.fundingRate)) / FUNDING_HOT_RATE,
     );
   if (type === "BREAKOUT")
-    return sigmoid(volumeRatio - 1 - Math.max(0, Number(market.spreadPct)));
+    return sigmoid(
+      volumeRatio - 1 - Math.max(0, Number(market.spreadPct)) + momentumTerm,
+    );
   return sigmoid(
     Math.abs(Number(market.deviationAtr)) *
-      Math.abs(Number(market.liquidationImbalance)),
+      Math.abs(Number(market.liquidationImbalance)) + momentumTerm,
   );
 }
 
