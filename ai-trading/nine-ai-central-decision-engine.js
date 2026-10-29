@@ -51,6 +51,8 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   ) {
     return wait(decision, decision.reason || "NINE_AI_CHOSE_WAIT");
   }
+  if (String(decision.action || "").toUpperCase() !== side)
+    return wait(decision, "AI9_ACTION_SIDE_MISMATCH");
   if (decision.setup !== "NINE_AI_4H")
     return wait(decision, "NON_CANONICAL_NINE_AI_SETUP_REJECTED");
   if (decision.decisionSchemaVersion !== DECISION_SCHEMA_VERSION)
