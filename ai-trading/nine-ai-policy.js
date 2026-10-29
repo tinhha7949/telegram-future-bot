@@ -32,9 +32,16 @@ function uncertaintyFor(regime, snapshotAt, signalAt, now, policy = DEFAULT_POLI
     return Infinity;
   if (now - signalAt > BAR_MS || now - snapshotAt > BAR_MS)
     return Infinity;
-  const penalty=Number(policy?.uncertaintyPenalty);
+  const penalty = Number(policy?.uncertaintyPenalty);
   if (!Number.isFinite(penalty) || penalty < 0) return Infinity;
-  return (regime.regime_conf < CONFIG.CONF_LOW ? CONFIG.LOW_CONF_PENALTY : 0) +
+  const confidence = regime.regime_conf;
+  const confidencePenalty = confidence < CONFIG.CONF_LOW
+    ? CONFIG.LOW_CONF_PENALTY
+    : confidence >= CONFIG.CONF_HIGH
+      ? 0
+      : CONFIG.LOW_CONF_PENALTY *
+        ((CONFIG.CONF_HIGH - confidence) / (CONFIG.CONF_HIGH - CONFIG.CONF_LOW));
+  return confidencePenalty +
     (policy?.earlyPhase === true ? CONFIG.EARLY_UNCERTAINTY_PENALTY : 0) + penalty;
 }
 function applyPolicy(decision, policy = DEFAULT_POLICY) {
