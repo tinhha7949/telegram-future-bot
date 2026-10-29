@@ -431,6 +431,7 @@ function analyzeNineAI({
     riskGuardian: {
       marketVeto: "PASSED",
       balanceVeto: "REQUIRED_BEFORE_BROKER",
+      allowedSides: marketVeto.allowedSides,
       snapshotAgeMs: marketVeto.snapshotAgeMs,
       maxSnapshotAgeMs: BAR_MS,
       fundingHot: false,
