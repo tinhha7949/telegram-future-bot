@@ -34,37 +34,35 @@ test("AI7 uses recency-weighted realized excursions, including losses, for MAE/M
   assert.ok((d.tp1-d.entry)/(d.entry-d.sl)>=0.8-1e-12);
 });
 
-test("E[R] uses realized gross R for the direction/regime/setup, including losses", () => {
+test("AI-4 uses realized gross R after the EARLY phase, including losses and excluding other groups", () => {
   const f = fixture(),
     base = f.outcomes[0];
-  const outcomes = [
-    { ...base, tradeId: "win", grossR: 3, win: true },
-    { ...base, tradeId: "loss", grossR: -1, win: false },
+  const outcomes = Array.from({ length: 30 }, (_, i) => ({
+    ...base,
+    tradeId: "same-setup-" + i,
+    grossR: i < 15 ? 3 : -1,
+    win: i < 15,
+  })).concat([
     { ...base, tradeId: "other-side", side: "SHORT", grossR: 99 },
-    {
-      ...base,
-      tradeId: "other-regime",
-      setupKey: "DOWNTREND_CONTINUATION",
-      grossR: 999,
-    },
-  ];
+    { ...base, tradeId: "other-regime", setupKey: "DOWNTREND_CONTINUATION", grossR: 999 },
+  ]);
   const d = analyzeNineAI({ ...f, outcomes });
   assert.equal(d.edges.LONG.expectedR, 1);
-  assert.equal(
-    d.edges.LONG.expectedRSource,
-    "REALIZED_GROSS_R_BY_DIRECTION_REGIME_SETUP",
-  );
+  assert.equal(d.edges.LONG.expectedRSource, "REALIZED_GROSS_R_BY_DIRECTION_REGIME_SETUP");
   const negative = analyzeNineAI({
     ...f,
-    outcomes: outcomes
-      .slice(0, 2)
-      .map((o, i) => ({ ...o, grossR: i ? -3 : 1 })),
+    outcomes: Array.from({ length: 30 }, (_, i) => ({
+      ...base,
+      tradeId: "negative-" + i,
+      grossR: i < 15 ? 1 : -3,
+      win: i < 15,
+    })),
   });
   assert.equal(negative.edges.LONG.expectedR, -1);
   assert.equal(negative.action, "WAIT");
 });
 
-test("existing complete track record supplies E[R] before gross-R excursion labels exist", () => {
+test("MATURE track record supplies E[R] after the configured label threshold", () => {
   const f = fixture(),
     first = analyzeNineAI(f),
     key = first.setupKey + "_LONG";

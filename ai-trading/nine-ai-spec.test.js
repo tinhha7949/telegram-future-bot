@@ -245,13 +245,13 @@ test("AI-2 bias does not override a valid AI-3 setup and AI-9 edge", () => {
   assert.equal(d.agents.continuation.side, "LONG");
   assert.equal(d.action, "LONG");
 });
-test("Breakout uses volume expansion and a held range, with spread priced as cost", () => {
+test("wide-spread breakout conditions are vetoed before AI-9 can authorize an entry", () => {
   const f = fixture(),
     bars = f.candles4h.slice(-22, -2),
     hi = Math.max(...bars.map((c) => c[2])),
     lo = Math.min(...bars.map((c) => c[3])),
-    width = hi - lo;
-  const prev = f.candles4h.at(-2),
+    width = hi - lo,
+    prev = f.candles4h.at(-2),
     last = f.candles4h.at(-1);
   prev[1] = hi - 0.1 * width;
   prev[2] = hi + 0.15 * width;
@@ -264,13 +264,9 @@ test("Breakout uses volume expansion and a held range, with spread priced as cos
   last[4] = hi + 0.2 * width;
   last[5] = 100;
   const d = analyzeNineAI({ ...f, market: { ...f.market, spreadPct: 0.2 } });
-  assert.equal(d.agents.breakout.side, "LONG");
-  assert.equal(d.action, "LONG");
-  prev[5] = 100;
-  assert.equal(analyzeNineAI(f).agents.breakout.side, null);
-  prev[5] = 101;
-  last[3] = hi - 0.001;
-  assert.equal(analyzeNineAI(f).agents.breakout.side, null);
+  assert.equal(d.action, "WAIT");
+  assert.ok(["REGIME_NOT_TREND", "SPREAD_TOO_WIDE"].includes(d.reason));
+  assert.equal(d.authorizedForExecution, false);
 });
 test("old cached decisions cannot reintroduce prior stops, gates or timeframe context", async () => {
   const journal = require("./nine-ai-decision-journal"),

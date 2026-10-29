@@ -311,6 +311,10 @@ async function executeDecisions(
       const sizing = sizingResult.sizing;
 
       const leverage = account.leverageBySymbol?.[decision.symbol];
+      // AI-6 execution-time veto: verify actual account balance, leverage and
+      // exchange margin immediately before reserving risk or submitting an order.
+      // Do not fetch account state for every scanned symbol; that would waste REST
+      // weight and can hit Binance limits without improving decision quality.
       const margin = assessAvailableMargin({
         availableBalance: account.availableBalance,
         notional: sizing.notional,
@@ -319,7 +323,7 @@ async function executeDecisions(
         multiplier: CONFIG.RISK_RESERVATION_MIN_MARGIN_MULTIPLIER,
       });
       if (!margin.ok) {
-        console.log("ENTRY WAIT", decision.symbol, margin.reason);
+        console.log("ENTRY WAIT", decision.symbol, "AI6_VETO_" + margin.reason);
         continue;
       }
 

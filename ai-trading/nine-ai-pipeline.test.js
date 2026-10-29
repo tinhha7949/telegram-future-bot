@@ -34,6 +34,45 @@ for (const side of ["LONG", "SHORT"])
       assert.equal(other.p, 0);
     },
   );
+test("AI-1 uses EMA, ADX and ATR, and non-trend regimes gate downstream agents immediately", () => {
+  const f = fixture();
+  const trend = p.classifyRegime(p.closedCandles(f.candles4h, f.market.now));
+  assert.ok(Number.isFinite(trend.ema_fast));
+  assert.ok(Number.isFinite(trend.ema_slow));
+  assert.ok(Number.isFinite(trend.adx));
+  assert.ok(Number.isFinite(trend.atr14));
+
+  const flat = f.candles4h.map((c) => [c[0], 100, 100.1, 99.9, 100, c[5], c[6]]);
+  const blocked = p.analyzeNineAI({ ...f, candles4h: flat, outcomes: [] });
+  assert.equal(blocked.action, "WAIT");
+  assert.equal(blocked.reason, "REGIME_NOT_TREND");
+  assert.equal(blocked.agents.structure, undefined);
+});
+test("AI-6 hard-vetoes a spread above the configured maximum before model scoring", () => {
+  const f = fixture();
+  const blocked = p.analyzeNineAI({
+    ...f,
+    market: { ...f.market, spreadPct: CONFIG.MAX_SPREAD_PCT + 0.01 },
+  });
+  assert.equal(blocked.action, "WAIT");
+  assert.equal(blocked.reason, "SPREAD_TOO_WIDE");
+  assert.equal(blocked.agents.structure, undefined);
+});
+test("EARLY uses the 0.30 edge threshold and neutral AI-3/AI-4 priors", () => {
+  const f = { ...fixture(), outcomes: [] };
+  const setupKey = "UPTREND_CONTINUATION_LONG";
+  const d = p.analyzeNineAI({
+    ...f,
+    market: {
+      ...f.market,
+      trackRecord: { [setupKey]: { samples: 100, winningSamples: 90, meanGrossR: 99 } },
+    },
+  });
+  assert.equal(d.decisionPolicy.minEdge, CONFIG.EARLY_MIN_EDGE);
+  assert.equal(d.edges.LONG.p, 0.5);
+  assert.notEqual(d.edges.LONG.expectedR, 99);
+  assert.equal(d.edges.LONG.expectedRSource, "INITIAL_EXIT_GEOMETRY_UNCALIBRATED");
+});
 test("invalid or simulated labels never masquerade as an AI-7 model", () => {
   const f = fixture();
   for (const outcomes of [
@@ -69,7 +108,9 @@ test("initial trades require cost inputs and block hot funding", () => {
       p.analyzeNineAI({ ...f, market: { ...f.market, [field]: null } }).action,
       "WAIT",
     );
-  assert.equal(p.analyzeNineAI({ ...f, market: { ...f.market, depthNotional: null } }).action, "LONG");
+  const missingDepth = p.analyzeNineAI({ ...f, market: { ...f.market, depthNotional: null } });
+  assert.equal(missingDepth.action, "WAIT");
+  assert.equal(missingDepth.reason, "EXECUTION_COST_INPUTS_MISSING_ORDERBOOK_DEPTH");
   assert.equal(
     p.analyzeNineAI({ ...f, market: { ...f.market, fundingRate: 0.002 } })
       .action,
