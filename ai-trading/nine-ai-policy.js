@@ -4,7 +4,7 @@ const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const DECISION_SCHEMA_VERSION = 7; // Invalidates decisions made with the old 90-day candle window.
 const FUNDING_HOT_RATE = CONFIG.FUNDING_HOT;
 const fundingIsHot = (rate) =>
-  Number.isFinite(rate) && Math.abs(rate) > FUNDING_HOT_RATE;
+  Number.isFinite(rate) && Math.abs(rate) >= FUNDING_HOT_RATE;
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
 const DEFAULT_POLICY = Object.freeze({
   minEdge: CONFIG.MIN_EDGE,
@@ -32,7 +32,8 @@ function uncertaintyFor(regime, snapshotAt, signalAt, now, policy = DEFAULT_POLI
     return Infinity;
   const penalty=Number(policy?.uncertaintyPenalty);
   if (!Number.isFinite(penalty) || penalty < 0) return Infinity;
-  return (regime.regime_conf < CONFIG.CONF_LOW ? CONFIG.LOW_CONF_PENALTY : 0) + penalty;
+  return (regime.regime_conf < CONFIG.CONF_LOW ? CONFIG.LOW_CONF_PENALTY : 0) +
+    (policy?.earlyPhase === true ? CONFIG.EARLY_UNCERTAINTY_PENALTY : 0) + penalty;
 }
 function applyPolicy(decision, policy = DEFAULT_POLICY) {
   const params = { ...DEFAULT_POLICY, ...policy },

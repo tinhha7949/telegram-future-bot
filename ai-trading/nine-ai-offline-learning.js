@@ -1,5 +1,6 @@
 "use strict";
 const {CONFIG}=require("./config");
+const { updateOnlineCalibration } = require("./online-learning");
 const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const { CONTRACT } = require("./opportunity-outcome");
 const { getTradeActualRisk } = require("./trade-accounting");
@@ -506,7 +507,17 @@ function createOfflineLearning(db, options = {}) {
       source: "REALIZED_CLOSED_TRADE",
       createdAt: new Date(now()),
     };
+    const priorActual = typeof actuals.findOne === "function"
+      ? await actuals.findOne({ tradeId }) : null;
     await actuals.updateOne({ tradeId }, { $set: row }, { upsert: true });
+    // The actual-outcome write is the idempotency boundary: a retry of the same
+    // close must not double-count its online calibration residual.
+    if (typeof actuals.findOne === "function" && !priorActual && Number.isFinite(row.predictedR)) {
+      const calibration = db.collection("nine_ai_online_calibration");
+      const previous = await calibration.findOne({ _id: "GLOBAL" });
+      const next = updateOnlineCalibration(previous, row.predictedR, realizedR, row.closedAt);
+      if (next) await calibration.updateOne({ _id: "GLOBAL" }, { $set: next }, { upsert: true });
+    }
     trackRecordCache = null;
     return { recorded: true, tradeId, realizedR };
   }

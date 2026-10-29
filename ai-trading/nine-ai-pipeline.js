@@ -1,6 +1,6 @@
 "use strict";
 const { CONFIG } = require("./config");
-const { weightedPercentile } = require("./online-learning");
+const { weightedPercentile, phaseForLabelCount } = require("./online-learning");
 const {
   DEFAULT_POLICY,
   applyPolicy,
@@ -169,7 +169,8 @@ function analyzeNineAI({
   config = {},
 } = {}) {
   const now = finite(market.now, Date.now()),
-    cs = closedCandles(candles4h, now).slice(-CONFIG.N_CANDLES);
+    cs = closedCandles(candles4h, now).slice(-CONFIG.N_CANDLES),
+    phase = phaseForLabelCount(outcomes.length);
   const wait = (reason, extra = {}) => ({
     symbol,
     setup: "NINE_AI_4H",
@@ -366,7 +367,7 @@ function analyzeNineAI({
     candleCutoffAt: now,
     closedOIAt: finite(market.oiObservedAt),
   };
-  const policy = { ...DEFAULT_POLICY, ...config, minEdge: Math.max(CONFIG.MIN_EDGE, Number(config.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP };
+  const policy = { ...DEFAULT_POLICY, ...config, earlyPhase: phase === "EARLY", minEdge: Math.max(CONFIG.MIN_EDGE, Number(config.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP };
   const agents = {
     regime,
     structure: {
@@ -547,7 +548,7 @@ function analyzeNineAI({
         : probabilitySamples
           ? track.winningSamples
           : 0;
-      const modelP = initialProbability(
+      const modelP = phase === "EARLY" ? 0.5 : initialProbability(
         m.type,
         regime.momentum20,
         m.type === "BREAKOUT" ? breakoutVolumeRatio : volumeRatio,
@@ -658,6 +659,7 @@ function analyzeNineAI({
       minEdge: policy.minEdge,
       gapEdge: policy.gapEdge,
       uncertaintyPenalty: policy.uncertaintyPenalty,
+      earlyPhase: phase === "EARLY",
     },
     candles: cs.length,
   };

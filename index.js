@@ -5,7 +5,7 @@ const { CONFIG } = require("./ai-trading/config");
 const { assessAvailableMargin } = require("./ai-trading/execution-risk");
 const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
-const { riskForPhase, phaseForLabelCount } = require("./ai-trading/online-learning");
+const { riskForPhase, phaseForLabelCount, calibrationPenaltyForState } = require("./ai-trading/online-learning");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
 const { MemoryGuard } = require("./ai-trading/risk/memory-guard");
@@ -646,10 +646,16 @@ async function main() {
     if (!adaptive.ok) { console.error("SCAN WAIT", adaptive.reason); return; }
 
     // Apply measured calibration drift as a penalty, not an untested model update.
-     const latestLearning=await db.collection("nine_ai_daily_learning_reports")
-       .find({}).sort({runAt:-1}).limit(1).toArray();
-     const calibrationPenalty=latestLearning[0]?.calibration?.status ===
+     const [latestLearning, onlineCalibration] = await Promise.all([
+       db.collection("nine_ai_daily_learning_reports").find({}).sort({runAt:-1}).limit(1).toArray(),
+       db.collection("nine_ai_online_calibration").findOne({ _id: "GLOBAL" }),
+     ]);
+     const dailyCalibrationPenalty = latestLearning[0]?.calibration?.status ===
        "RED_FLAG_CALIBRATION_DRIFT" ? CONFIG.LOW_CONF_PENALTY : 0;
+     const calibrationPenalty = Math.max(
+       dailyCalibrationPenalty,
+       calibrationPenaltyForState(onlineCalibration),
+     );
      const cutoffAt = Date.now();
     const [symbols, champion, track, outcomes] = await Promise.all([
       universe(exchange),
