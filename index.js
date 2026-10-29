@@ -2,7 +2,7 @@
 require("dotenv").config();
 
 const { CONFIG } = require("./ai-trading/config");
-const { vetoAvailableMargin } = require("./ai-trading/ai6-risk-guardian");
+const { beforeEnterGate } = require("./ai-trading/ai6-risk-guardian");
 const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
 const { riskForPhase, phaseForLabelCount, countRealizedLabels, calibrationPenaltyForState } = require("./ai-trading/online-learning");
@@ -314,13 +314,16 @@ async function executeDecisions(
       // exchange margin immediately before reserving risk or submitting an order.
       // Do not fetch account state for every scanned symbol; that would waste REST
       // weight and can hit Binance limits without improving decision quality.
-      const margin = vetoAvailableMargin({
+      const entryGate = beforeEnterGate({
+        market: fresh,
         account,
         sizing,
         symbol: decision.symbol,
+        riskState: gate,
+        now: Date.now(),
       });
-      if (!margin.ok) {
-        console.log("ENTRY WAIT", decision.symbol, margin.reason);
+      if (!entryGate.ok) {
+        console.log("ENTRY WAIT", decision.symbol, entryGate.reason);
         continue;
       }
 
@@ -334,7 +337,8 @@ async function executeDecisions(
       const trade = newTrade(decision, sizing);
       trade.executionValidation = {
         ...validation,
-        ai6BalanceVeto: { ok: margin.ok, reason: margin.reason, margin: margin.margin },
+        ai6MarketVeto: entryGate.marketVeto,
+        ai6BalanceVeto: entryGate.marginVeto,
       };
       if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size) {
         await riskGuard.release(reservationKey);
