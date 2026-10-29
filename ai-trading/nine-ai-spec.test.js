@@ -94,7 +94,7 @@ test("fractal high is the middle of its two adjacent highs", () => {
   ];
   assert.deepEqual(swingPoints(cs).highs, [{ index: 1, price: 3 }]);
 });
-test("AI6 lets neutral flow through, but missing or opposing liquidation still waits", () => {
+test("AI-6 blocks missing flow data but never selects or vetoes direction", () => {
   const f = fixture(),
     confirmed = analyzeNineAI(f);
   assert.equal(confirmed.action, "LONG");
@@ -122,25 +122,37 @@ test("AI6 lets neutral flow through, but missing or opposing liquidation still w
     true,
   );
 
-  for (const imbalance of [null, -0.8]) {
-    const d = analyzeNineAI({
-      ...f,
-      market: { ...f.market, liquidationImbalance: imbalance },
-    });
-    assert.equal(d.action, "WAIT");
-    assert.equal(d.reason,
-      imbalance === null ? "FLOW_UNAVAILABLE_OR_UNCERTAIN" : "FLOW_DIRECTION_CONFLICT");
-    assert.equal(finalizeDecision(d, {
-      symbol: f.symbol,
-      scannedAt: f.market.now + 1,
-    }).action, "WAIT");
-    const validation = validateExecution(
-      confirmed,
-      { ...f.market, liquidationImbalance: imbalance, markPrice: confirmed.entry },
-      f.market.now + 1,
-    );
-    assert.equal(validation.ok, false);
-  }
+  const missing = analyzeNineAI({
+    ...f,
+    market: { ...f.market, liquidationImbalance: null },
+  });
+  assert.equal(missing.action, "WAIT");
+  assert.equal(missing.reason, "FLOW_UNAVAILABLE_OR_UNCERTAIN");
+  assert.equal(finalizeDecision(missing, {
+    symbol: f.symbol,
+    scannedAt: f.market.now + 1,
+  }).action, "WAIT");
+  assert.equal(validateExecution(
+    confirmed,
+    { ...f.market, liquidationImbalance: null, markPrice: confirmed.entry },
+    f.market.now + 1,
+  ).ok, false);
+
+  const opposing = analyzeNineAI({
+    ...f,
+    market: { ...f.market, liquidationImbalance: -0.8 },
+  });
+  assert.equal(opposing.action, "LONG");
+  assert.equal(opposing.agents.flow.confirmationSide, "SHORT");
+  assert.equal(finalizeDecision(opposing, {
+    symbol: f.symbol,
+    scannedAt: f.market.now + 1,
+  }).action, "LONG");
+  assert.equal(validateExecution(
+    confirmed,
+    { ...f.market, liquidationImbalance: -0.8, markPrice: confirmed.entry },
+    f.market.now + 1,
+  ).ok, true);
 
   const noSetup = fixture();
   noSetup.candles4h.at(-1)[4] = noSetup.candles4h.at(-2)[4];
