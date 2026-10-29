@@ -473,6 +473,65 @@ function createOfflineLearning(db, options = {}) {
     return trackRecordCache;
   }
 
+  async function rebuildOnlineCalibration() {
+    if (typeof actuals.find !== "function") return { rebuilt: false, reason: "ACTUAL_OUTCOME_QUERY_UNAVAILABLE" };
+    const rows = await actuals
+      .find({
+        source: "REALIZED_CLOSED_TRADE",
+        accountingSchemaVersion: 2,
+        closedAt: { $lte: now() },
+      })
+      .sort({ closedAt: -1 })
+      .limit(CONFIG.RECENT_LABELS_LIMIT)
+      .toArray();
+    const ordered = rows
+      .filter((item) =>
+        Number.isFinite(Number(item.closedAt)) &&
+        Number.isFinite(Number(item.predictedR)) &&
+        Number.isFinite(Number(item.realizedR)),
+      )
+      .sort((a, b) =>
+        Number(a.closedAt) - Number(b.closedAt) ||
+        String(a.tradeId).localeCompare(String(b.tradeId)),
+      );
+    if (!ordered.length) return { rebuilt: false, reason: "NO_CALIBRATION_PAIRS" };
+    let globalState = null;
+    const setupStates = new Map();
+    for (const item of ordered) {
+      globalState = updateOnlineCalibration(
+        globalState,
+        Number(item.predictedR),
+        Number(item.realizedR),
+        Number(item.closedAt),
+      );
+      if (typeof item.setupKey === "string" && item.setupKey) {
+        setupStates.set(
+          item.setupKey,
+          updateOnlineCalibration(
+            setupStates.get(item.setupKey) || null,
+            Number(item.predictedR),
+            Number(item.realizedR),
+            Number(item.closedAt),
+          ),
+        );
+      }
+    }
+    const calibration = db.collection("nine_ai_online_calibration");
+    await calibration.updateOne(
+      { _id: "GLOBAL" },
+      { $set: { ...globalState, setupKey: null, rebuiltAt: now(), rebuildSource: "REALIZED_ACTUAL_OUTCOMES" } },
+      { upsert: true },
+    );
+    for (const [setupKey, state] of setupStates) {
+      await calibration.updateOne(
+        { _id: "SETUP:" + setupKey },
+        { $set: { ...state, setupKey, rebuiltAt: now(), rebuildSource: "REALIZED_ACTUAL_OUTCOMES" } },
+        { upsert: true },
+      );
+    }
+    return { rebuilt: true, samples: ordered.length, setups: setupStates.size };
+  }
+
   async function recordClosedTrade(trade, closed) {
     const riskBudget = getTradeActualRisk(trade);
     const netPnl = finite(closed?.pnl);
@@ -530,26 +589,13 @@ function createOfflineLearning(db, options = {}) {
       source: "REALIZED_CLOSED_TRADE",
       createdAt: new Date(now()),
     };
-    const priorActual = typeof actuals.findOne === "function"
-      ? await actuals.findOne({ tradeId }) : null;
     await actuals.updateOne({ tradeId }, { $set: row }, { upsert: true });
-    // The actual-outcome write is the idempotency boundary: a retry of the same
-    // close must not double-count its online calibration residual.
-    if (typeof actuals.findOne === "function" && !priorActual && Number.isFinite(row.predictedR)) {
-      const calibration = db.collection("nine_ai_online_calibration");
-      // Update the global baseline and the responsible setup/module together.
-      // Each close is idempotent at the actual-outcome boundary above.
-      const calibrationIds = ["GLOBAL", row.setupKey ? "SETUP:" + row.setupKey : null].filter(Boolean);
-      for (const calibrationId of calibrationIds) {
-        const previous = await calibration.findOne({ _id: calibrationId });
-        const next = updateOnlineCalibration(previous, row.predictedR, realizedR, row.closedAt);
-        if (next) await calibration.updateOne(
-          { _id: calibrationId },
-          { $set: { ...next, setupKey: row.setupKey || null } },
-          { upsert: true },
-        );
-      }
-    }
+    // Rebuild from the idempotent actual-outcome ledger instead of incrementing
+    // a separate aggregate. If a process dies after the actual row is saved or
+    // halfway through calibration writes, retrying this close deterministically
+    // restores the same recency-weighted aggregates without losing or double
+    // counting the first label.
+    await rebuildOnlineCalibration();
     trackRecordCache = null;
     return { recorded: true, tradeId, realizedR };
   }
