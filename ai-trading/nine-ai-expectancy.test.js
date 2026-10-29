@@ -245,7 +245,7 @@ test("funding credits retain their sign in snapshots, live edge and execution va
 
 // Explicit mock: production must require a durable risk ledger, never a missing guard.
 const permitRisk = { assess: async()=>({ok:true}), reserve: async()=>({ok:true}) };
-test("runtime tries all approved signals beyond ten and permits multiple entries in one scan", async () => {
+test("runtime evaluates signals beyond ten but never submits more than three entries per scan", async () => {
   const f = fixture(),
     signals = Array.from({ length: 12 }, (_, i) => {
       const symbol = "TEST" + i + "USDT";
@@ -290,7 +290,7 @@ test("runtime tries all approved signals beyond ten and permits multiple entries
     riskGuard: permitRisk,
     async report() {},
   });
-  assert.equal(entered.length, 12);
+  assert.deepEqual(entered.map((t) => t.symbol), ["TEST0USDT", "TEST1USDT", "TEST2USDT"]);
 });
 
 test("one symbol's API failure does not discard the remaining approved signals", async () => {
