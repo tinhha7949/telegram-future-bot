@@ -1,6 +1,6 @@
 "use strict";
 const { CONFIG } = require("./config");
-const { weightedPercentile, phaseForLabelCount } = require("./online-learning");
+const { weightedPercentile, phaseForLabelCount, countRealizedLabels } = require("./online-learning");
 const {
   DEFAULT_POLICY,
   applyPolicy,
@@ -170,7 +170,7 @@ function analyzeNineAI({
 } = {}) {
   const now = finite(market.now, Date.now()),
     cs = closedCandles(candles4h, now).slice(-CONFIG.N_CANDLES),
-    phase = phaseForLabelCount(outcomes.length);
+    phase = phaseForLabelCount(countRealizedLabels(outcomes, now));
   const wait = (reason, extra = {}) => ({
     symbol,
     setup: "NINE_AI_4H",

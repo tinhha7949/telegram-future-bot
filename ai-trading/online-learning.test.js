@@ -2,7 +2,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { CONFIG } = require("./config");
-const { phaseForLabelCount, riskForPhase, weightedPercentile, updateOnlineCalibration, calibrationPenaltyForState } = require("./online-learning");
+const { phaseForLabelCount, countRealizedLabels, riskForPhase, weightedPercentile, updateOnlineCalibration, calibrationPenaltyForState } = require("./online-learning");
 const { uncertaintyFor } = require("./nine-ai-policy");
 test("LIVE starts with zero labels and risk remains at early micro-risk", () => {
   assert.equal(CONFIG.MODE, "LIVE");
@@ -45,4 +45,15 @@ test("online calibration updates on one label and penalizes measured prediction 
   const second = updateOnlineCalibration(first, 0, 0, 2000);
   assert.equal(second.samples, 2);
   assert.ok(second.weight > 1);
+});
+
+test("phase count ignores simulated labels and duplicate trade IDs", () => {
+  const valid = {
+    tradeId: "real-1", labeled: true, source: "REALIZED_CLOSED_TRADE",
+    accountingSchemaVersion: 2, closedAt: 50, maePct: 0.2, mfePct: 0.4,
+  };
+  assert.equal(countRealizedLabels([valid, { ...valid }, {
+    ...valid, tradeId: "paper-1", source: "SIMULATED",
+  }], 100), 1);
+  assert.equal(countRealizedLabels([{ ...valid, closedAt: 101 }], 100), 0);
 });

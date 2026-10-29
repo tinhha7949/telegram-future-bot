@@ -61,8 +61,8 @@ function fixture(side = "LONG", now = Date.now()) {
       depthNotional: 1000000,
       latencyMs: 100,
       liquidationImbalance: side === "LONG" ? 0.3 : -0.3,
-      roundTripFeePct: 0.1,
-      expectedFundingCostPctBySide: { LONG: 0.12, SHORT: 0 },
+      roundTripFeePct: 0.02,
+      expectedFundingCostPctBySide: { LONG: 0.01, SHORT: 0 },
     },
   };
 }

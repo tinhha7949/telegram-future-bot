@@ -6,6 +6,21 @@ function phaseForLabelCount(labelCount, config = CONFIG) {
   if (n < config.ADAPT_PHASE_LABELS) return "ADAPT";
   return "MATURE";
 }
+function countRealizedLabels(outcomes, now = Date.now()) {
+  if (!Array.isArray(outcomes)) return 0;
+  const seen = new Set();
+  for (const row of outcomes) {
+    const id = row?.tradeId == null ? "" : String(row.tradeId);
+    const closedAt = Number(row?.closedAt);
+    if (!id || seen.has(id) || row?.labeled !== true ||
+        row?.source !== "REALIZED_CLOSED_TRADE" || row?.accountingSchemaVersion !== 2 ||
+        !Number.isFinite(closedAt) || closedAt > now ||
+        !Number.isFinite(Number(row?.maePct)) || Number(row.maePct) < 0 ||
+        !Number.isFinite(Number(row?.mfePct)) || Number(row.mfePct) < 0) continue;
+    seen.add(id);
+  }
+  return seen.size;
+}
 function riskForPhase(labelCount, config = CONFIG) {
   const phase = phaseForLabelCount(labelCount, config);
   if (phase === "EARLY") return config.EARLY_RISK;
@@ -61,6 +76,6 @@ function calibrationPenaltyForState(state, config = CONFIG) {
   return Math.min(config.LOW_CONF_PENALTY, excessMae + excessBias);
 }
 module.exports = {
-  phaseForLabelCount, riskForPhase, weightedPercentile,
+  phaseForLabelCount, countRealizedLabels, riskForPhase, weightedPercentile,
   updateOnlineCalibration, calibrationPenaltyForState,
 };

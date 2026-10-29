@@ -5,7 +5,7 @@ const { CONFIG } = require("./ai-trading/config");
 const { assessAvailableMargin } = require("./ai-trading/execution-risk");
 const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
-const { riskForPhase, phaseForLabelCount, calibrationPenaltyForState } = require("./ai-trading/online-learning");
+const { riskForPhase, phaseForLabelCount, countRealizedLabels, calibrationPenaltyForState } = require("./ai-trading/online-learning");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
 const { MemoryGuard } = require("./ai-trading/risk/memory-guard");
@@ -575,7 +575,8 @@ async function main() {
     }
     await journal.settleMatured(symbol, h4);
     const market = await marketSnapshot(exchange, symbol);
-    const phase = phaseForLabelCount(outcomes.length);
+    const labelCount = countRealizedLabels(outcomes);
+    const phase = phaseForLabelCount(labelCount);
     const activeMinEdge = phase === "EARLY"
       ? CONFIG.EARLY_MIN_EDGE
       : phase === "ADAPT"
@@ -588,7 +589,7 @@ async function main() {
       market: { ...market, trackRecord },
       config: { ...champion, minEdge: activeMinEdge, gapEdge: CONFIG.EDGE_GAP },
     });
-    decision = { ...decision, riskPerTradePct: riskForPhase(outcomes.length) };
+    decision = { ...decision, riskPerTradePct: riskForPhase(labelCount) };
     decision = central.finalizeDecision(decision, {
       symbol,
       scannedAt: Date.now(),
@@ -714,7 +715,7 @@ async function main() {
       riskGuard,
       isStopped: () => stopped,
       entriesPaused: () => entriesPaused,
-      labelCount: outcomes.length,
+      labelCount: countRealizedLabels(outcomes),
     });
   }, "MARKET_SCAN");
   void scan();
