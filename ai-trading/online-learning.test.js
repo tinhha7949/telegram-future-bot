@@ -7,16 +7,21 @@ const { uncertaintyFor } = require("./nine-ai-policy");
 test("LIVE starts with zero labels and risk remains at early micro-risk", () => {
   assert.equal(CONFIG.MODE, "LIVE");
   assert.equal(phaseForLabelCount(0), "EARLY");
-  assert.equal(riskForPhase(0), 0.0025);
-  assert.equal(riskForPhase(29), CONFIG.EARLY_RISK);
+  assert.equal(riskForPhase(0), CONFIG.EARLY_RISK);
+  assert.equal(riskForPhase(CONFIG.EARLY_PHASE_LABELS - 1), CONFIG.EARLY_RISK);
 });
-test("phase transition is exact at 29->30 and 149->150 labels", () => {
-  assert.equal(phaseForLabelCount(29), "EARLY");
-  assert.equal(phaseForLabelCount(30), "ADAPT");
-  assert.equal(riskForPhase(30), 0.005);
-  assert.equal(phaseForLabelCount(149), "ADAPT");
-  assert.equal(phaseForLabelCount(150), "MATURE");
-  assert.equal(riskForPhase(150), 0.01);
+test("phase transitions and risk follow the configured label boundaries", () => {
+  const earlyLast = CONFIG.EARLY_PHASE_LABELS - 1;
+  const adaptFirst = CONFIG.EARLY_PHASE_LABELS;
+  const adaptLast = CONFIG.ADAPT_PHASE_LABELS - 1;
+  const matureFirst = CONFIG.ADAPT_PHASE_LABELS;
+  assert.equal(phaseForLabelCount(earlyLast), "EARLY");
+  assert.equal(riskForPhase(earlyLast), CONFIG.EARLY_RISK);
+  assert.equal(phaseForLabelCount(adaptFirst), "ADAPT");
+  assert.equal(riskForPhase(adaptFirst), CONFIG.ADAPT_RISK);
+  assert.equal(phaseForLabelCount(adaptLast), "ADAPT");
+  assert.equal(phaseForLabelCount(matureFirst), "MATURE");
+  assert.equal(riskForPhase(matureFirst), CONFIG.RISK_PER_TRADE);
 });
 test("first completed trade immediately produces usable MAE/MFE quantiles", () => {
   assert.equal(weightedPercentile([0.7], 0.8), 0.7);
@@ -53,7 +58,7 @@ test("risk sizing does not compound after consecutive losses", () => {
   const first = equity * riskForPhase(0);
   const afterLoss = equity * riskForPhase(0);
   const afterManyLosses = equity * riskForPhase(0);
-  assert.equal(first, 0.02);
+  assert.equal(first, equity * CONFIG.EARLY_RISK);
   assert.equal(afterLoss, first);
   assert.equal(afterManyLosses, first);
 });
