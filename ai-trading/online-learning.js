@@ -12,9 +12,14 @@ function countRealizedLabels(outcomes, now = Date.now()) {
   for (const row of outcomes) {
     const id = row?.tradeId == null ? "" : String(row.tradeId);
     const closedAt = Number(row?.closedAt);
+    const snapshotAt = Number(row?.featureSnapshot?.snapshotAt);
     if (!id || seen.has(id) || row?.labeled !== true ||
         row?.source !== "REALIZED_CLOSED_TRADE" || row?.accountingSchemaVersion !== 2 ||
-        !Number.isFinite(closedAt) || closedAt > now ||
+        !Number.isFinite(closedAt) || closedAt <= 0 || closedAt > now ||
+        !Number.isFinite(snapshotAt) || snapshotAt <= 0 || snapshotAt > closedAt ||
+        !["LONG", "SHORT"].includes(String(row?.side || "").toUpperCase()) ||
+        typeof row?.setupKey !== "string" || !row.setupKey ||
+        typeof row?.win !== "boolean" ||
         !Number.isFinite(Number(row?.maePct)) || Number(row.maePct) < 0 ||
         !Number.isFinite(Number(row?.mfePct)) || Number(row.mfePct) < 0) continue;
     seen.add(id);
