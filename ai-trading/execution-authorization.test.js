@@ -12,9 +12,14 @@ function authorizedSignal() {
     action: "LONG",
     authorizedForExecution: true,
     decisionSchemaVersion: DECISION_SCHEMA_VERSION,
+    signalAt: 1700000000000,
     centralDecisionEngine: {
       authority: "NINE_AI_ONLY",
       result: "AUTHORIZED",
+      symbol: "TESTUSDT",
+      side: "LONG",
+      signalAt: 1700000000000,
+      decisionSchemaVersion: DECISION_SCHEMA_VERSION,
     },
     edges: {
       LONG: { eligible: true, edge: 0.5 },

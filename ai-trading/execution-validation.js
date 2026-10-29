@@ -41,15 +41,9 @@ function validateExecution(decision, market, now = Date.now()) {
     return { ok: false, reason: "CURRENT_FLOW_BLOCKED" };
   if (market.spreadPct > CONFIG.MAX_SPREAD_PCT)
     return { ok: false, reason: "SPREAD_TOO_WIDE" };
-  // The fresh market reading must still corroborate the same side.
-  // Missing/neutral/opposing liquidation makes execution uncertain => WAIT.
-  // No recent liquidation cascade is neutral; an observed opposing cascade
-  // still vetoes the signal. Missing/stale liquidation data was rejected above.
-  if (
-    (market.liquidationImbalance < 0 && decision.side === "LONG") ||
-    (market.liquidationImbalance > 0 && decision.side === "SHORT")
-  )
-    return { ok: false, reason: "CURRENT_FLOW_CONFLICT" };
+  // AI-6 is veto-only: fresh liquidation data must be present and finite,
+  // but its sign must never select or veto LONG versus SHORT. AI-9 alone
+  // chooses direction from the recomputed net edges.
   const slippage = Math.min(
     CONFIG.FILL_MAX_SLIPPAGE_PCT,
     market.spreadPct +

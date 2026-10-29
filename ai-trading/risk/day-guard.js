@@ -4,6 +4,8 @@ const { phaseForLabelCount, riskForPhase } = require("../online-learning");
 
 // Versioned, bot-activation-scoped ledger. Never import prior account/history peaks.
 const RUN_RISK_ID = "BOT_RUN_V2";
+// Hard strategy invariant: editable configuration may lower this cap, never raise it.
+const HARD_MAX_TRADES_PER_UTC_DAY = 3;
 const fail = reason => ({ ok: false, reason });
 class RiskGuard {
   constructor(db, { config = CONFIG, now = () => Date.now(), alert = async () => {} } = {}) {
@@ -81,6 +83,8 @@ class RiskGuard {
     const riskPct = riskForPhase(labelCount, this.config);
     const amount = equity * riskPct;
     if (!(amount > 0 && Number.isFinite(amount))) return fail("INVALID_RISK_AMOUNT");
+    const maxTradesPerDay = Math.min(Number(this.config.MAX_TRADES_PER_DAY), HARD_MAX_TRADES_PER_UTC_DAY);
+    if (!Number.isInteger(maxTradesPerDay) || maxTradesPerDay < 1) return fail("DAILY_TRADE_CAP_CONFIG_INVALID");
     const day = new Date(this.now()).toISOString().slice(0, 10);
     const dayKey = "UTC:" + day;
     try {
@@ -128,7 +132,7 @@ class RiskGuard {
         await discardUnchargedReservation();
         return fail("DAILY_RISK_STATE_UNCERTAIN");
       }
-      if ((Number(bucket.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY) {
+      if ((Number(bucket.usedTrades) || 0) >= maxTradesPerDay) {
         try { await this.alert("MAX TRADES PER DAY REACHED: new entries disabled until next UTC day"); }
         catch (error) { console.error("RISK ALERT FAILED", error.message); }
         await discardUnchargedReservation();
@@ -142,7 +146,7 @@ class RiskGuard {
         {
           _id: dayKey,
           usedRisk: { $lte: capacity - amount },
-          usedTrades: { $lt: this.config.MAX_TRADES_PER_DAY },
+          usedTrades: { $lt: maxTradesPerDay },
         },
         { $inc: { usedRisk: amount, usedTrades: 1 } },
       );

@@ -13,15 +13,15 @@ const {
 const REQUIRED_ROLES = Object.freeze([
   "AI-1 Regime",
   "AI-2 Structure",
-  "AI-3 Continuation",
-  "AI-4 Breakout",
-  "AI-5 Mean Reversion",
-  "AI-6 Flow",
-  "AI-7 Outcome",
-  "AI-8 Fill/Slippage",
-  "AI-9 Meta/Decision",
+  "AI-3 Probability",
+  "AI-4 Expected Return",
+  "AI-5 Confidence",
+  "AI-6 Risk Guardian",
+  "AI-7 SL/TP Optimizer",
+  "AI-8 Execution",
+  "AI-9 Decision",
 ]);
-const MIN_CANDLES = CONFIG.HISTORY_FETCH_CANDLES;
+const MIN_CANDLES = CONFIG.N_CANDLES;
 
 function wait(decision, reason) {
   return {
@@ -49,6 +49,15 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   ) {
     return wait(decision, decision.reason || "NINE_AI_CHOSE_WAIT");
   }
+  const priorAuthorization = decision.centralDecisionEngine;
+  if (priorAuthorization?.authority === "NINE_AI_ONLY" &&
+      priorAuthorization?.result === "AUTHORIZED" &&
+      (String(priorAuthorization.symbol || "").toUpperCase() !==
+        String(decision.symbol || "").toUpperCase() ||
+       String(priorAuthorization.side || "").toUpperCase() !== side ||
+       Number(priorAuthorization.signalAt) !== Number(decision.signalAt) ||
+       priorAuthorization.decisionSchemaVersion !== decision.decisionSchemaVersion))
+    return wait(decision, "CENTRAL_AUTHORIZATION_BINDING_MISMATCH");
   if (decision.setup !== "NINE_AI_4H")
     return wait(decision, "NON_CANONICAL_NINE_AI_SETUP_REJECTED");
   if (decision.decisionSchemaVersion !== DECISION_SCHEMA_VERSION)
@@ -58,6 +67,31 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   if (!decision.agents || !decision.regime || !decision.edges) {
     return wait(decision, "CANONICAL_AGENT_OUTPUT_INCOMPLETE");
   }
+  const requiredOutputs = [
+    "regime", "structure", "probability", "expectedReturn", "confidence",
+    "riskGuardian", "slTp", "execution", "decision",
+  ];
+  if (requiredOutputs.some((name) =>
+    !decision.agents[name] || typeof decision.agents[name] !== "object"
+  )) return wait(decision, "CANONICAL_AGENT_OUTPUT_INCOMPLETE");
+  const guardian = decision.agents.riskGuardian;
+  if (guardian.vetoed !== false || guardian.status !== "PASS" ||
+      guardian.fundingHot === true ||
+      !Number.isFinite(guardian.fundingRate) ||
+      !Number.isFinite(guardian.spreadPct) || guardian.spreadPct < 0 ||
+      !Number.isFinite(guardian.maxSpreadPct) ||
+      guardian.spreadPct > guardian.maxSpreadPct ||
+      !Number.isFinite(guardian.snapshotAgeMs) ||
+      guardian.snapshotAgeMs < 0 || guardian.snapshotAgeMs > BAR_MS ||
+      !Number.isFinite(guardian.openInterestChange) ||
+      !Number.isFinite(guardian.depthNotional) || guardian.depthNotional <= 0 ||
+      !Number.isFinite(guardian.latencyMs) || guardian.latencyMs < 0)
+    return wait(decision, "AI6_RISK_GUARDIAN_VETO");
+  if (String(decision.agents.decision.side || "").toUpperCase() !== side ||
+      decision.agents.decision.authorizedForExecution !== true ||
+      Number(decision.agents.decision.minEdge) !== Number(decision.decisionPolicy?.minEdge) ||
+      Number(decision.agents.decision.gapEdge) !== Number(decision.decisionPolicy?.gapEdge))
+    return wait(decision, "AI9_DECISION_OUTPUT_MISMATCH");
   if (
     symbol &&
     String(decision.symbol || "").toUpperCase() !== String(symbol).toUpperCase()
@@ -102,6 +136,45 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
     return wait(decision, "STALE_OR_INVALID_EXECUTION_SNAPSHOT");
   }
   if (!decision.decisionPolicy) return wait(decision, "MISSING_META_POLICY");
+  if (!Number.isFinite(decision.regime.regime_conf) ||
+      !Number.isFinite(decision.agents.confidence.confidenceScore) ||
+      Math.abs(decision.regime.regime_conf - decision.agents.confidence.confidenceScore) > 1e-12)
+    return wait(decision, "AI5_CONFIDENCE_OUTPUT_MISMATCH");
+  const execution = decision.agents.execution;
+  if (!Number.isFinite(execution.estimatedSlippagePct) ||
+      execution.estimatedSlippagePct < 0 ||
+      !Number.isFinite(decision.featureSnapshot?.estSlippagePct) ||
+      Math.abs(execution.estimatedSlippagePct - decision.featureSnapshot.estSlippagePct) > 1e-12 ||
+      execution.entryOrderType !== "MARKET" ||
+      execution.stopOrderType !== "STOP_MARKET" ||
+      execution.takeProfitOrderType !== "TAKE_PROFIT_MARKET")
+    return wait(decision, "AI8_EXECUTION_OUTPUT_MISMATCH");
+  const selectedPlan = decision.agents.slTp.planBySide?.[side];
+  const tpBatchTotal = CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1];
+  const expectedTp1Percent = CONFIG.TP_BATCHES[0] / tpBatchTotal * 100;
+  const expectedTp2Percent = CONFIG.TP_BATCHES[1] / tpBatchTotal * 100;
+  if (!selectedPlan ||
+      Number(selectedPlan.entry) !== Number(decision.entry) ||
+      Number(selectedPlan.sl) !== Number(decision.sl) ||
+      Number(selectedPlan.tp1) !== Number(decision.tp1) ||
+      Number(selectedPlan.tp2) !== Number(decision.tp2) ||
+      Number(decision.agents.slTp.timeoutCandles) !== CONFIG.TIMEOUT_BARS ||
+      Math.abs(Number(decision.agents.slTp.closePercentAtTP1) - expectedTp1Percent) > 1e-9 ||
+      Math.abs(Number(decision.agents.slTp.closePercentAtTP2) - expectedTp2Percent) > 1e-9)
+    return wait(decision, "AI7_SLTP_OUTPUT_MISMATCH");
+  for (const direction of ["LONG", "SHORT"]) {
+    const edge = decision.edges[direction];
+    const penalty = decision.agents.confidence.uncertaintyPenaltyBySide?.[direction];
+    if (!edge || typeof edge.p !== "number" || !Number.isFinite(edge.p) ||
+        typeof edge.expectedR !== "number" || !Number.isFinite(edge.expectedR) ||
+        typeof edge.cost !== "number" || !Number.isFinite(edge.cost) ||
+        Number(decision.agents.probability[direction]) !== edge.p ||
+        Number(decision.agents.expectedReturn[direction]) !== edge.expectedR ||
+        !Number.isFinite(penalty) || Math.abs(penalty - Number(edge.baseUncertainty)) > 1e-12 ||
+        !Number.isFinite(execution.costRBySide?.[direction]) ||
+        Math.abs(execution.costRBySide[direction] - edge.cost) > 1e-12)
+      return wait(decision, "AI3_AI4_AI5_AI8_OUTPUT_MISMATCH");
+  }
   const timed = {
     ...decision,
     edges: Object.fromEntries(
@@ -135,6 +208,10 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
       version: 1,
       authority: "NINE_AI_ONLY",
       result: "AUTHORIZED",
+      symbol: String(symbol || decision.symbol).toUpperCase(),
+      side,
+      signalAt,
+      decisionSchemaVersion: decision.decisionSchemaVersion,
       reason: "NINE_AI_DECISION_PASSED_INVARIANTS",
       validatedAt: new Date(Number(scannedAt)).toISOString(),
       roleCount: REQUIRED_ROLES.length,

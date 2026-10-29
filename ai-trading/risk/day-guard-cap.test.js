@@ -67,18 +67,19 @@ test("daily risk cap blocks a third mature-phase reservation independently of ed
 });
 test("hard max trades per UTC day blocks entries beyond the configured cap", async () => {
   const db = mockDb();
-  const maxTrades = CONFIG.MAX_TRADES_PER_DAY;
-  // Ensure daily risk does not become the earlier limit in this test.
+  const hardMaxTrades = 3;
+  // Deliberately configure a higher limit to prove the invariant cannot be raised.
   const config = {
     ...CONFIG,
-    MAX_DAILY_RISK: CONFIG.EARLY_RISK * (maxTrades + 1) + 1e-9,
+    MAX_TRADES_PER_DAY: Math.max(CONFIG.MAX_TRADES_PER_DAY, hardMaxTrades + 2),
+    MAX_DAILY_RISK: CONFIG.EARLY_RISK * (hardMaxTrades + 1) + 1e-9,
   };
   const guard = new RiskGuard(db, { config, now: () => Date.UTC(2026, 9, 29, 12) });
-  for (let i = 1; i <= maxTrades; i++) {
+  for (let i = 1; i <= hardMaxTrades; i++) {
     const r = await guard.reserve("trade-" + i, 1000, { labelCount: 0 });
     assert.equal(r.ok, true, JSON.stringify(r));
   }
-  const nextTradeKey = "trade-" + (maxTrades + 1);
+  const nextTradeKey = "trade-" + (hardMaxTrades + 1);
   const blocked = await guard.reserve(nextTradeKey, 1000, { labelCount: 0 });
   assert.equal(blocked.ok, false);
   assert.equal(blocked.reason, "MAX_TRADES_PER_DAY_REACHED");

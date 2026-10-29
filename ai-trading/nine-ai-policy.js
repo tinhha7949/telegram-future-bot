@@ -53,8 +53,8 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
       fundingIsHot(flow?.fundingRate))
     return { ...result, reason: "HOT_FUNDING" };
   // A live, zero liquidation imbalance is neutral flow, not missing data.
-  // AI-6 may confirm a direction when a cascade exists and may veto an opposing
-  // side; in neutral conditions AI-9 remains the sole direction selector.
+  // AI-6 validates flow availability/consistency only; its sign never chooses
+  // or vetoes a direction. AI-9 remains the sole direction selector.
   const validFlowInputs = [
     flow?.fundingRate,
     flow?.openInterestChange,
@@ -96,22 +96,14 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
       other = result.edges[side === "LONG" ? "SHORT" : "LONG"];
     if (
       c.eligible === true &&
-      (neutralFlow || side === flow.confirmationSide) &&
       c.plan &&
       c.edge > params.minEdge &&
       c.edge - other.edge > params.gapEdge
     )
       return { ...result, side, reason: side + "_NET_EDGE_WINS" };
   }
-  // Audit the more attractive setup when flow points against that side.
-  // Never authorize a competing direction by bypassing the flow gate.
-  for (const side of ["LONG", "SHORT"]) {
-    const c = result.edges[side], other = result.edges[side === "LONG" ? "SHORT" : "LONG"];
-    if (directionalFlow && side !== flow.confirmationSide &&
-        c?.eligible && c.plan && c.edge > params.minEdge &&
-        c.edge - other.edge > params.gapEdge)
-      return { ...result, reason: "FLOW_DIRECTION_CONFLICT" };
-  }
+  // AI-6 is a veto-only guardian. Valid directional flow is an input for
+  // auditing, never a side selector or a veto of AI-9's edge winner.
   return result;
 }
 module.exports = {

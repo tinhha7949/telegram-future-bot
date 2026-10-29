@@ -177,7 +177,12 @@ function classifyRegime(cs) {
 }
 function validLabels(outcomes, symbol, setupKey, side, now) {
   const seen = new Set();
-  return outcomes.filter((o) => {
+  // Quantile weights are age-based: newest realized label must be first,
+  // independent of the caller's DB/query ordering.
+  const ordered = (Array.isArray(outcomes) ? outcomes : [])
+    .slice()
+    .sort((a, b) => finite(b?.closedAt, 0) - finite(a?.closedAt, 0));
+  return ordered.filter((o) => {
     if (
       o?.source !== "REALIZED_CLOSED_TRADE" ||
       o.labeled !== true ||
@@ -245,27 +250,45 @@ function analyzeNineAI({
     earlySpread = finite(market.spreadPct),
     earlyDepth = finite(market.depthNotional),
     earlyOi = finite(market.openInterestChange),
-    earlyLatency = finite(market.latencyMs);
-  if (earlySnapshotAt === null)
-    return wait("EXECUTION_COST_INPUTS_MISSING_MARKET_SNAPSHOT_AT", { regime, agents: { regime } });
-  if (earlyAge < 0)
-    return wait("EXECUTION_COST_INPUTS_FUTURE_MARKET_SNAPSHOT", { regime, agents: { regime } });
-  if (earlyAge > BAR_MS)
-    return wait("STALE_MARKET_SNAPSHOT", { regime, agents: { regime } });
-  if (earlyFunding === null)
-    return wait("EXECUTION_COST_INPUTS_MISSING_FUNDING_RATE", { regime, agents: { regime } });
-  if (fundingIsHot(earlyFunding))
-    return wait("HOT_FUNDING", { regime, agents: { regime } });
-  if (earlyOi === null)
-    return wait("EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE", { regime, agents: { regime } });
-  if (earlySpread === null || earlySpread < 0)
-    return wait("EXECUTION_COST_INPUTS_MISSING_SPREAD", { regime, agents: { regime } });
-  if (earlySpread > CONFIG.MAX_SPREAD_PCT)
-    return wait("SPREAD_TOO_WIDE", { regime, agents: { regime } });
-  if (earlyDepth === null || earlyDepth <= 0)
-    return wait("EXECUTION_COST_INPUTS_MISSING_ORDERBOOK_DEPTH", { regime, agents: { regime } });
-  if (earlyLatency === null || earlyLatency < 0)
-    return wait("EXECUTION_COST_INPUTS_MISSING_LATENCY", { regime, agents: { regime } });
+    earlyLatency = finite(market.latencyMs),
+    earlyLiquidation = finite(market.liquidationImbalance),
+    earlyFee = finite(market.roundTripFeePct),
+    earlyFundingLong = finite(market.expectedFundingCostPctBySide?.LONG),
+    earlyFundingShort = finite(market.expectedFundingCostPctBySide?.SHORT);
+  const veto = (reason) => wait(reason, {
+    regime,
+    agents: {
+      regime,
+      riskGuardian: {
+        vetoed: true,
+        status: "VETO",
+        reason,
+        snapshotAt: earlySnapshotAt,
+        snapshotAgeMs: earlyAge,
+        fundingRate: earlyFunding,
+        spreadPct: earlySpread,
+        depthNotional: earlyDepth,
+        openInterestChange: earlyOi,
+        latencyMs: earlyLatency,
+        liquidationImbalance: earlyLiquidation,
+      },
+    },
+  });
+  if (earlySnapshotAt === null) return veto("EXECUTION_COST_INPUTS_MISSING_MARKET_SNAPSHOT_AT");
+  if (earlyAge < 0) return veto("EXECUTION_COST_INPUTS_FUTURE_MARKET_SNAPSHOT");
+  if (earlyAge > BAR_MS) return veto("STALE_MARKET_SNAPSHOT");
+  if (earlyFunding === null) return veto("EXECUTION_COST_INPUTS_MISSING_FUNDING_RATE");
+  if (fundingIsHot(earlyFunding)) return veto("HOT_FUNDING");
+  if (earlyOi === null) return veto("EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE");
+  if (earlySpread === null || earlySpread < 0) return veto("EXECUTION_COST_INPUTS_MISSING_SPREAD");
+  if (earlySpread > CONFIG.MAX_SPREAD_PCT) return veto("SPREAD_TOO_WIDE");
+  if (earlyDepth === null || earlyDepth <= 0) return veto("EXECUTION_COST_INPUTS_MISSING_ORDERBOOK_DEPTH");
+  if (earlyLatency === null || earlyLatency < 0) return veto("EXECUTION_COST_INPUTS_MISSING_LATENCY");
+  if (earlyLiquidation === null) return veto("FLOW_UNAVAILABLE_OR_UNCERTAIN");
+  if (earlyFee === null) return veto("EXECUTION_COST_INPUTS_MISSING_ROUND_TRIP_FEE");
+  if (earlyFee < 0) return veto("EXECUTION_COST_INPUTS_INVALID_ROUND_TRIP_FEE");
+  if (earlyFundingLong === null) return veto("EXECUTION_COST_INPUTS_MISSING_LONG_FUNDING_COST");
+  if (earlyFundingShort === null) return veto("EXECUTION_COST_INPUTS_MISSING_SHORT_FUNDING_COST");
 
   const ranges = cs
     .slice(1)
@@ -521,12 +544,22 @@ function analyzeNineAI({
                     : slip === null
                       ? "MISSING_SLIPPAGE"
                       : null;
-  if (costInputFailure)
-    return wait("EXECUTION_COST_INPUTS_" + costInputFailure, {
-      regime,
-      agents,
-      featureSnapshot,
-    });
+  if (costInputFailure) {
+    const reason = "EXECUTION_COST_INPUTS_" + costInputFailure;
+    agents.riskGuardian = {
+      vetoed: true,
+      status: "VETO",
+      reason,
+      snapshotAt,
+      snapshotAgeMs: age,
+      fundingRate: funding,
+      spreadPct: spread,
+      depthNotional: depth,
+      openInterestChange: oi,
+      latencyMs: latency,
+    };
+    return wait(reason, { regime, agents, featureSnapshot });
+  }
   const baseUncertainty = uncertaintyFor(
     regime,
     snapshotAt,
@@ -749,6 +782,81 @@ function analyzeNineAI({
     }
   }
   const meta = applyPolicy({ regime, agents, edges }, policy);
+  // Canonical role outputs: setup candidates are inputs to AI-3/4/5, not
+  // substitutes for those agents. Keep every role's output auditable.
+  agents.probability = {
+    LONG: edges.LONG?.p ?? null,
+    SHORT: edges.SHORT?.p ?? null,
+  };
+  agents.expectedReturn = {
+    LONG: edges.LONG?.expectedR ?? null,
+    SHORT: edges.SHORT?.expectedR ?? null,
+  };
+  agents.confidence = {
+    confidenceScore: regime.regime_conf,
+    uncertaintyPenaltyBySide: {
+      LONG: edges.LONG?.baseUncertainty ?? baseUncertainty,
+      SHORT: edges.SHORT?.baseUncertainty ?? baseUncertainty,
+    },
+    modulePenaltyBySide: {
+      LONG: edges.LONG?.moduleUncertaintyPenalty ?? 0,
+      SHORT: edges.SHORT?.moduleUncertaintyPenalty ?? 0,
+    },
+    earlyPhase: phase === "EARLY",
+  };
+  agents.riskGuardian = {
+    vetoed: false,
+    status: "PASS",
+    fundingRate: funding,
+    fundingHot,
+    spreadPct: spread,
+    maxSpreadPct: CONFIG.MAX_SPREAD_PCT,
+    snapshotAgeMs: age,
+    snapshotAt,
+    openInterestChange: oi,
+    depthNotional: depth,
+    latencyMs: latency,
+  };
+  agents.slTp = {
+    planBySide: {
+      LONG: edges.LONG?.plan ?? null,
+      SHORT: edges.SHORT?.plan ?? null,
+    },
+    sourceBySide: {
+      LONG: edges.LONG?.outcomeSource ?? null,
+      SHORT: edges.SHORT?.outcomeSource ?? null,
+    },
+    distributionsBySide: {
+      LONG: { mae: edges.LONG?.distMAE ?? null, mfe: edges.LONG?.distMFE ?? null },
+      SHORT: { mae: edges.SHORT?.distMAE ?? null, mfe: edges.SHORT?.distMFE ?? null },
+    },
+    closePercentAtTP1: (CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
+    closePercentAtTP2: (CONFIG.TP_BATCHES[1] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
+    fallbackStopAtrMultiple: CONFIG.AI7_ATR_MULTIPLIER,
+    minRR: CONFIG.MIN_RR,
+    timeoutCandles: CONFIG.TIMEOUT_BARS,
+  };
+  agents.execution = {
+    ...agents.fill,
+    estimatedSlippagePct: slip,
+    costRBySide: {
+      LONG: edges.LONG?.cost ?? null,
+      SHORT: edges.SHORT?.cost ?? null,
+    },
+    entryOrderType: "MARKET",
+    stopOrderType: "STOP_MARKET",
+    takeProfitOrderType: "TAKE_PROFIT_MARKET",
+    protectionMode: "SEPARATE_CONDITIONAL_ORDERS_WITH_RECOVERY",
+    timing: "FRESH_MARKET_AND_MARGIN_REVALIDATION",
+  };
+  agents.decision = {
+    side: meta.side,
+    reason: meta.reason,
+    authorizedForExecution: ["LONG", "SHORT"].includes(meta.side),
+    minEdge: policy.minEdge,
+    gapEdge: policy.gapEdge,
+    edges: meta.edges,
+  };
   const extra = {
     regime,
     agents,

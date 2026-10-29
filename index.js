@@ -217,8 +217,12 @@ function isNineAiAuthorizedSignal(decision) {
   const side = String(decision?.side || "").toUpperCase();
   const edge = decision?.edges?.[side];
   const central = decision?.centralDecisionEngine;
-  const centralAuthorityValid = central == null ||
-    (central.authority === "NINE_AI_ONLY" && central.result === "AUTHORIZED");
+  const centralAuthorityValid = central?.authority === "NINE_AI_ONLY" &&
+    central?.result === "AUTHORIZED" &&
+    String(central?.symbol || "").toUpperCase() === String(decision?.symbol || "").toUpperCase() &&
+    String(central?.side || "").toUpperCase() === side &&
+    Number(central?.signalAt) === Number(decision?.signalAt) &&
+    central?.decisionSchemaVersion === decision?.decisionSchemaVersion;
   return decision?.authorizedForExecution === true &&
     centralAuthorityValid &&
     decision?.setup === "NINE_AI_4H" &&
