@@ -2,7 +2,7 @@
 require("dotenv").config();
 
 const { CONFIG } = require("./ai-trading/config");
-const { assessAvailableMargin } = require("./ai-trading/execution-risk");
+const { vetoAvailableMargin } = require("./ai-trading/ai6-risk-guardian");
 const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
 const { riskForPhase, phaseForLabelCount, countRealizedLabels, calibrationPenaltyForState } = require("./ai-trading/online-learning");
@@ -217,8 +217,8 @@ function isNineAiAuthorizedSignal(decision) {
   const side = String(decision?.side || "").toUpperCase();
   const edge = decision?.edges?.[side];
   const central = decision?.centralDecisionEngine;
-  const centralAuthorityValid = central == null ||
-    (central.authority === "NINE_AI_ONLY" && central.result === "AUTHORIZED");
+  const centralAuthorityValid =
+    central?.authority === "NINE_AI_ONLY" && central?.result === "AUTHORIZED";
   return decision?.authorizedForExecution === true &&
     centralAuthorityValid &&
     decision?.setup === "NINE_AI_4H" &&
@@ -315,15 +315,13 @@ async function executeDecisions(
       // exchange margin immediately before reserving risk or submitting an order.
       // Do not fetch account state for every scanned symbol; that would waste REST
       // weight and can hit Binance limits without improving decision quality.
-      const margin = assessAvailableMargin({
-        availableBalance: account.availableBalance,
-        notional: sizing.notional,
-        leverage: leverage?.leverage,
-        maxNotional: leverage?.maxNotional,
-        multiplier: CONFIG.RISK_RESERVATION_MIN_MARGIN_MULTIPLIER,
+      const margin = vetoAvailableMargin({
+        account,
+        sizing,
+        symbol: decision.symbol,
       });
       if (!margin.ok) {
-        console.log("ENTRY WAIT", decision.symbol, "AI6_VETO_" + margin.reason);
+        console.log("ENTRY WAIT", decision.symbol, margin.reason);
         continue;
       }
 
@@ -335,7 +333,10 @@ async function executeDecisions(
       reservationKey = `${decision.symbol}:${decision.signalAt}`;
 
       const trade = newTrade(decision, sizing);
-      trade.executionValidation = validation;
+      trade.executionValidation = {
+        ...validation,
+        ai6BalanceVeto: { ok: margin.ok, reason: margin.reason, margin: margin.margin },
+      };
       if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size) {
         await riskGuard.release(reservationKey);
         reservationKey = null;
