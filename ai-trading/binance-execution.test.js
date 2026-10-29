@@ -54,7 +54,7 @@ test("distinct targets submit independent reduce-only TP1 60% and TP2 40%", asyn
   assert.equal(calls[1].reduceOnly, "true");
   assert.equal(calls[1].quantity, 0.8);
 });
-test("ambiguous market POST is queried by the same ID and is never blindly repeated", async () => {
+test("idempotentOrder: ambiguous market POST is queried by the same ID and is never blindly repeated", async () => {
   const calls = [];
   const e = new BinanceExchange({
     key: "fake",
