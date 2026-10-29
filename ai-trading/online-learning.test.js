@@ -78,3 +78,19 @@ test("phase count ignores simulated labels and duplicate trade IDs", () => {
   assert.equal(countRealizedLabels([{ ...valid, maePct: "0.2" }], 100), 0);
   assert.equal(countRealizedLabels([{ ...valid, accountingSchemaVersion: 1 }], 100), 0);
 });
+
+test("spec phase boundaries are EARLY 0-29, ADAPT 30-149, MATURE from 150 when configured", () => {
+  const specConfig = {
+    ...CONFIG,
+    EARLY_PHASE_LABELS: 30,
+    ADAPT_PHASE_LABELS: 150,
+  };
+  assert.equal(phaseForLabelCount(29, specConfig), "EARLY");
+  assert.equal(phaseForLabelCount(30, specConfig), "ADAPT");
+  assert.equal(phaseForLabelCount(149, specConfig), "ADAPT");
+  assert.equal(phaseForLabelCount(150, specConfig), "MATURE");
+  assert.equal(riskForPhase(29, specConfig), specConfig.EARLY_RISK);
+  assert.equal(riskForPhase(30, specConfig), specConfig.ADAPT_RISK);
+  assert.equal(riskForPhase(149, specConfig), specConfig.ADAPT_RISK);
+  assert.equal(riskForPhase(150, specConfig), specConfig.RISK_PER_TRADE);
+});
