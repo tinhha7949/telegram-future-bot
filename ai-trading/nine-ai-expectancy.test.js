@@ -245,15 +245,28 @@ test("funding credits retain their sign in snapshots, live edge and execution va
 
 // Explicit mock: production must require a durable risk ledger, never a missing guard.
 const permitRisk = { assess: async()=>({ok:true}), reserve: async()=>({ok:true}) };
-test("runtime tries all approved signals beyond ten and permits multiple entries in one scan", async () => {
+test("runtime scans beyond ten signals but the risk gate caps entries at three", async () => {
   const f = fixture(),
-    base = require("./nine-ai-central-decision-engine").finalizeDecision(
-      analyzeNineAI(f), { symbol: f.symbol, scannedAt: f.market.now + 1 },
-    ),
-    signals = Array.from({ length: 12 }, (_, i) => ({
-      ...structuredClone(base),
-      symbol: "TEST" + i + "USDT",
-    }));
+    scannedAt = f.market.now + 1,
+    base = finalizeDecision(analyzeNineAI(f), { symbol: f.symbol, scannedAt }),
+    signals = Array.from({ length: 12 }, (_, i) => {
+      const symbol = "TEST" + i + "USDT";
+      return finalizeDecision(
+        analyzeNineAI({ ...f, symbol }),
+        { symbol, scannedAt },
+      );
+    });
+  const limitedRisk = () => {
+    let used = 0;
+    return {
+      assess: async () => ({ ok: true }),
+      reserve: async () => {
+        if (used >= 3) return { ok: false, reason: "MAX_TRADES_PER_DAY_REACHED" };
+        used++;
+        return { ok: true };
+      },
+    };
+  };
   const entered = [],
     lifecycle = {
       uncertain: false,
@@ -276,7 +289,7 @@ test("runtime tries all approved signals beyond ten and permits multiple entries
       Number(symbol.match(/\d+/)[0]) < 10 ? base.sl - 1 : entry,
     ),
     lifecycle,
-    riskGuard: permitRisk,
+    riskGuard: limitedRisk(),
     async report() {},
   });
   assert.deepEqual(
@@ -287,10 +300,10 @@ test("runtime tries all approved signals beyond ten and permits multiple entries
   await executeDecisions(signals, {
     exchange: fakeExchange(),
     lifecycle,
-    riskGuard: permitRisk,
+    riskGuard: limitedRisk(),
     async report() {},
   });
-  assert.equal(entered.length, 12);
+  assert.equal(entered.length, 3);
 });
 
 test("one symbol's API failure does not discard the remaining approved signals", async () => {
