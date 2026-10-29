@@ -19,6 +19,7 @@ test("all operational settings load from YAML and satisfy validated relationship
   assert.ok(CONFIG.MARKET_WS_STALE_MS > CONFIG.MARKET_WS_HEARTBEAT_MS);
   assert.ok(CONFIG.TELEGRAM_DELIVERY_TIMEOUT_MS >= 1000);
   assert.ok(CONFIG.JOURNAL_WRITE_MAX_ATTEMPTS >= 1);
+  assert.equal(CONFIG.WAIT_MIN_RATIO, 0.6);
   assert.ok(CONFIG.ENTRY_REJECTED_RETRY_INTERVAL_MS >= 1000);
   assert.equal(typeof CONFIG.RETENTION_ENABLE_DELETE, "boolean");
   assert.equal(typeof CONFIG.RETENTION_DRY_RUN, "boolean");

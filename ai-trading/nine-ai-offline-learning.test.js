@@ -4,6 +4,15 @@ const assert = require("node:assert/strict");
 const l = require("./nine-ai-offline-learning");
 const { applyPolicy, DECISION_SCHEMA_VERSION } = require("./nine-ai-policy");
 const { CONTRACT } = require("./opportunity-outcome");
+test("candidate training window uses exactly the configured recent 3000 4h bars and excludes future rows", () => {
+  const asOf = 1800000000000;
+  assert.deepEqual(l.trainingWindowFilter(asOf), {
+    signalTime: {
+      $gte: asOf - 3000 * l.BAR_MS,
+      $lte: asOf,
+    },
+  });
+});
 const plan = { entry: 100, sl: 99, tp1: 102, tp2: 104 };
 const row = (i = 0) => ({
   signalTime: 1700000000000 + i * l.BAR_MS,

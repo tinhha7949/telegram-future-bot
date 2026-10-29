@@ -1,6 +1,7 @@
 "use strict";
 const assert = require("assert");
 const retention = require("./nine-ai-db-retention");
+const { CONFIG } = require("./config");
 
 const config = { limitMB: 500, triggerRatio: 0.86, targetRatio: 0.60 };
 assert.strictEqual(retention.DEFAULTS.limitMB, 500);
@@ -84,11 +85,12 @@ assert.strictEqual(byName.trades.days, 90);
 assert.deepStrictEqual(byName.trades.filter, { result: { $in: ["WIN", "LOSS", "CLOSED_UNRESOLVED"] } });
 const journalSpecs = specs.filter(s => s.name === "nine_ai_decision_journal");
 assert.strictEqual(journalSpecs.length, 2, "journal has separate directional and WAIT retention");
-assert.strictEqual(journalSpecs.find(s => s.category === "evaluated_decision").days, 90);
+assert.strictEqual(retention.DECISION_RETENTION_DAYS, Math.ceil((CONFIG.TRAIN_WINDOW_CANDLES + CONFIG.TIMEOUT_BARS) * CONFIG.BAR_HOURS / 24));
+assert.strictEqual(journalSpecs.find(s => s.category === "evaluated_decision").days, retention.DECISION_RETENTION_DAYS);
 assert.deepStrictEqual(journalSpecs.find(s => s.category === "evaluated_decision").filter, {
   outcomeStatus: "EVALUATED", side: { $ne: "WAIT" }
 });
-assert.strictEqual(journalSpecs.find(s => s.category === "evaluated_wait_decision").days, 90);
+assert.strictEqual(journalSpecs.find(s => s.category === "evaluated_wait_decision").days, retention.DECISION_RETENTION_DAYS);
 assert.deepStrictEqual(journalSpecs.find(s => s.category === "evaluated_wait_decision").filter, {
   outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
 });
@@ -250,7 +252,7 @@ async function testExpiredWaitRowsArePrunedBelowCapacityThreshold() {
               assert.deepStrictEqual(pipeline[0].$match, {
                 outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
               });
-              return [{ _id: "expired-wait", _retentionDate: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000) }];
+              return [{ _id: "expired-wait", _retentionDate: new Date(Date.now() - (retention.DECISION_RETENTION_DAYS + 1) * 24 * 60 * 60 * 1000) }];
             }
           };
         },

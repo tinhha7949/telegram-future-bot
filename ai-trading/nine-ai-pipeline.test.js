@@ -148,17 +148,31 @@ for (const side of ["LONG", "SHORT"]) {
     },
   );
 }
-test("a losing first label immediately updates probability and MAE/MFE quantiles", () => {
+test("EARLY keeps p=0.5 while the first closed-trade label updates MAE/MFE quantiles", () => {
   const f = fixture();
   const d = p.analyzeNineAI({
     ...f,
     outcomes: [{ ...f.outcomes[0], win: false }],
   });
   assert.equal(d.edges.LONG.samples, 1);
-  assert.ok(d.edges.LONG.p > 0 && d.edges.LONG.p < 0.5);
+  assert.equal(d.edges.LONG.p, 0.5);
   assert.equal(d.edges.LONG.outcomeMode, "AI7_LABELED");
   assert.equal(d.edges.LONG.distMAE.samples, 1);
   assert.equal(d.edges.LONG.distMFE.samples, 1);
+});
+test("ADAPT learns probability from realized outcomes after 30 valid labels", () => {
+  const f = fixture();
+  const outcomes = Array.from({ length: 30 }, (_, i) => ({
+    ...f.outcomes[0],
+    tradeId: "adapt-loss-" + i,
+    closedAt: f.market.now - (i + 1) * 1000,
+    win: false,
+  }));
+  const d = p.analyzeNineAI({ ...f, outcomes });
+  assert.equal(d.edges.LONG.probabilitySamples, 30);
+  assert.ok(d.edges.LONG.p < 0.5);
+  assert.equal(d.edges.LONG.distMAE.samples, 30);
+  assert.equal(d.edges.LONG.distMFE.samples, 30);
 });
 test("AI7 quantiles activate from the first complete label for the same setup and side", () => {
   const weightedPercentile = require("./online-learning").weightedPercentile;

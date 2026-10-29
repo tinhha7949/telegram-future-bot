@@ -1,5 +1,6 @@
 "use strict";
 const { CONFIG } = require("./config");
+const DECISION_RETENTION_DAYS = Math.ceil((CONFIG.TRAIN_WINDOW_CANDLES + CONFIG.TIMEOUT_BARS) * CONFIG.BAR_HOURS / 24);
 
 // Capacity-aware MongoDB retention. Only runs when estimated collection storage
 // crosses the configured threshold. Never drops collections/indexes. The explicit
@@ -30,17 +31,16 @@ const SPECS = Object.freeze([
     "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
     "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
     "scannedAt", "signalTime", "createdAt"
-  ], days: CONFIG.RETENTION_HISTORY_DAYS, category: "evaluated_decision", filter: {
+  ], days: DECISION_RETENTION_DAYS, category: "evaluated_decision", filter: {
     outcomeStatus: "EVALUATED", side: { $ne: "WAIT" }
   } },
-  // WAIT rows remain useful after their forward outcomes mature, but they are
-  // generated much more frequently than trades. Keep one week of evaluated WAIT
-  // evidence; never delete pending or actual-trade records.
+  // Retain evaluated WAIT rows through the same rolling training horizon;
+  // capacity cleanup still prioritizes older WAIT evidence before actual labels.
   { name: "nine_ai_decision_journal", dateFields: [
     "actualOutcomeRecordedAt", "actualOutcome.closedAt", "evaluations.16.evaluatedAt",
     "researchVariants.now_16.evaluatedAt", "researchVariants.wait2_16.evaluatedAt",
     "scannedAt", "signalTime", "createdAt"
-  ], days: CONFIG.RETENTION_HISTORY_DAYS, category: "evaluated_wait_decision", filter: {
+  ], days: DECISION_RETENTION_DAYS, category: "evaluated_wait_decision", filter: {
     outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
   } },
   { name: "nine_ai_learning_outcomes", dateFields: ["closedAt"], days: CONFIG.RETENTION_HISTORY_DAYS,
@@ -393,7 +393,7 @@ function createRetention(db, overrides = {}) {
 }
 
 module.exports = {
-  DEFAULTS, SPECS, EXTRA_SPECS, sortByRetentionPriority,
+  DEFAULTS, SPECS, EXTRA_SPECS, DECISION_RETENTION_DAYS, sortByRetentionPriority,
   configFromEnv, estimateUsageMB, shouldCleanup, makeCutoffQuery,
   makeRetentionDateExpression, makeSafeDeleteQuery,
   getSpecs, toTimestamp, sortOldestCandidates, createRetention

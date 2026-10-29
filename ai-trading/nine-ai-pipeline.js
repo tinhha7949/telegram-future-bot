@@ -562,7 +562,7 @@ function analyzeNineAI({
       );
       // Update the feature model with real outcomes, without a minimum-count gate
       // or forcing the probability to zero/one after a single observed trade.
-      const p = (probabilityWins + modelP) / (probabilitySamples + 1);
+      const p = phase === "EARLY" ? 0.5 : (probabilityWins + modelP) / (probabilitySamples + 1);
       // Before realized returns exist, AI-2/7 exit geometry supplies the initial
       // payoff estimate. Observed gross R then supplies E[R|a,regime,setup];
       // AI-9 subtracts execution cost once, in the same R unit.
