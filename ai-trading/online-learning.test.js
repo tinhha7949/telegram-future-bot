@@ -70,4 +70,6 @@ test("phase count ignores simulated labels and duplicate trade IDs", () => {
   assert.equal(countRealizedLabels([{ ...valid, closedAt: 101 }], 100), 0);
   assert.equal(countRealizedLabels([{ ...valid, featureSnapshot: null }], 100), 0);
   assert.equal(countRealizedLabels([{ ...valid, win: undefined }], 100), 0);
+  assert.equal(countRealizedLabels([{ ...valid, maePct: "0.2" }], 100), 0);
+  assert.equal(countRealizedLabels([{ ...valid, accountingSchemaVersion: 1 }], 100), 0);
 });
