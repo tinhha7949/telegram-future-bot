@@ -250,27 +250,45 @@ function analyzeNineAI({
     earlySpread = finite(market.spreadPct),
     earlyDepth = finite(market.depthNotional),
     earlyOi = finite(market.openInterestChange),
-    earlyLatency = finite(market.latencyMs);
-  if (earlySnapshotAt === null)
-    return wait("EXECUTION_COST_INPUTS_MISSING_MARKET_SNAPSHOT_AT", { regime, agents: { regime } });
-  if (earlyAge < 0)
-    return wait("EXECUTION_COST_INPUTS_FUTURE_MARKET_SNAPSHOT", { regime, agents: { regime } });
-  if (earlyAge > BAR_MS)
-    return wait("STALE_MARKET_SNAPSHOT", { regime, agents: { regime } });
-  if (earlyFunding === null)
-    return wait("EXECUTION_COST_INPUTS_MISSING_FUNDING_RATE", { regime, agents: { regime } });
-  if (fundingIsHot(earlyFunding))
-    return wait("HOT_FUNDING", { regime, agents: { regime } });
-  if (earlyOi === null)
-    return wait("EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE", { regime, agents: { regime } });
-  if (earlySpread === null || earlySpread < 0)
-    return wait("EXECUTION_COST_INPUTS_MISSING_SPREAD", { regime, agents: { regime } });
-  if (earlySpread > CONFIG.MAX_SPREAD_PCT)
-    return wait("SPREAD_TOO_WIDE", { regime, agents: { regime } });
-  if (earlyDepth === null || earlyDepth <= 0)
-    return wait("EXECUTION_COST_INPUTS_MISSING_ORDERBOOK_DEPTH", { regime, agents: { regime } });
-  if (earlyLatency === null || earlyLatency < 0)
-    return wait("EXECUTION_COST_INPUTS_MISSING_LATENCY", { regime, agents: { regime } });
+    earlyLatency = finite(market.latencyMs),
+    earlyLiquidation = finite(market.liquidationImbalance),
+    earlyFee = finite(market.roundTripFeePct),
+    earlyFundingLong = finite(market.expectedFundingCostPctBySide?.LONG),
+    earlyFundingShort = finite(market.expectedFundingCostPctBySide?.SHORT);
+  const veto = (reason) => wait(reason, {
+    regime,
+    agents: {
+      regime,
+      riskGuardian: {
+        vetoed: true,
+        status: "VETO",
+        reason,
+        snapshotAt: earlySnapshotAt,
+        snapshotAgeMs: earlyAge,
+        fundingRate: earlyFunding,
+        spreadPct: earlySpread,
+        depthNotional: earlyDepth,
+        openInterestChange: earlyOi,
+        latencyMs: earlyLatency,
+        liquidationImbalance: earlyLiquidation,
+      },
+    },
+  });
+  if (earlySnapshotAt === null) return veto("EXECUTION_COST_INPUTS_MISSING_MARKET_SNAPSHOT_AT");
+  if (earlyAge < 0) return veto("EXECUTION_COST_INPUTS_FUTURE_MARKET_SNAPSHOT");
+  if (earlyAge > BAR_MS) return veto("STALE_MARKET_SNAPSHOT");
+  if (earlyFunding === null) return veto("EXECUTION_COST_INPUTS_MISSING_FUNDING_RATE");
+  if (fundingIsHot(earlyFunding)) return veto("HOT_FUNDING");
+  if (earlyOi === null) return veto("EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE");
+  if (earlySpread === null || earlySpread < 0) return veto("EXECUTION_COST_INPUTS_MISSING_SPREAD");
+  if (earlySpread > CONFIG.MAX_SPREAD_PCT) return veto("SPREAD_TOO_WIDE");
+  if (earlyDepth === null || earlyDepth <= 0) return veto("EXECUTION_COST_INPUTS_MISSING_ORDERBOOK_DEPTH");
+  if (earlyLatency === null || earlyLatency < 0) return veto("EXECUTION_COST_INPUTS_MISSING_LATENCY");
+  if (earlyLiquidation === null) return veto("FLOW_UNAVAILABLE_OR_UNCERTAIN");
+  if (earlyFee === null) return veto("EXECUTION_COST_INPUTS_MISSING_ROUND_TRIP_FEE");
+  if (earlyFee < 0) return veto("EXECUTION_COST_INPUTS_INVALID_ROUND_TRIP_FEE");
+  if (earlyFundingLong === null) return veto("EXECUTION_COST_INPUTS_MISSING_LONG_FUNDING_COST");
+  if (earlyFundingShort === null) return veto("EXECUTION_COST_INPUTS_MISSING_SHORT_FUNDING_COST");
 
   const ranges = cs
     .slice(1)
@@ -526,12 +544,22 @@ function analyzeNineAI({
                     : slip === null
                       ? "MISSING_SLIPPAGE"
                       : null;
-  if (costInputFailure)
-    return wait("EXECUTION_COST_INPUTS_" + costInputFailure, {
-      regime,
-      agents,
-      featureSnapshot,
-    });
+  if (costInputFailure) {
+    const reason = "EXECUTION_COST_INPUTS_" + costInputFailure;
+    agents.riskGuardian = {
+      vetoed: true,
+      status: "VETO",
+      reason,
+      snapshotAt,
+      snapshotAgeMs: age,
+      fundingRate: funding,
+      spreadPct: spread,
+      depthNotional: depth,
+      openInterestChange: oi,
+      latencyMs: latency,
+    };
+    return wait(reason, { regime, agents, featureSnapshot });
+  }
   const baseUncertainty = uncertaintyFor(
     regime,
     snapshotAt,
