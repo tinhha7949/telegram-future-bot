@@ -141,14 +141,17 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
       execution.takeProfitOrderType !== "TAKE_PROFIT_MARKET")
     return wait(decision, "AI8_EXECUTION_OUTPUT_MISMATCH");
   const selectedPlan = decision.agents.slTp.planBySide?.[side];
+  const tpBatchTotal = CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1];
+  const expectedTp1Percent = CONFIG.TP_BATCHES[0] / tpBatchTotal * 100;
+  const expectedTp2Percent = CONFIG.TP_BATCHES[1] / tpBatchTotal * 100;
   if (!selectedPlan ||
       Number(selectedPlan.entry) !== Number(decision.entry) ||
       Number(selectedPlan.sl) !== Number(decision.sl) ||
       Number(selectedPlan.tp1) !== Number(decision.tp1) ||
       Number(selectedPlan.tp2) !== Number(decision.tp2) ||
       Number(decision.agents.slTp.timeoutCandles) !== CONFIG.TIMEOUT_BARS ||
-      Number(decision.agents.slTp.closePercentAtTP1) !== 60 ||
-      Number(decision.agents.slTp.closePercentAtTP2) !== 40)
+      Math.abs(Number(decision.agents.slTp.closePercentAtTP1) - expectedTp1Percent) > 1e-9 ||
+      Math.abs(Number(decision.agents.slTp.closePercentAtTP2) - expectedTp2Percent) > 1e-9)
     return wait(decision, "AI7_SLTP_OUTPUT_MISMATCH");
   for (const direction of ["LONG", "SHORT"]) {
     const edge = decision.edges[direction];
