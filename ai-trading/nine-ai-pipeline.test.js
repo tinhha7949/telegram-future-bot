@@ -433,3 +433,15 @@ test("AI-7 recency weighting sorts labels newest-first regardless of query order
   assert.equal(d.edges.LONG.distMFE.p50, weighted(ordered.map(o => o.mfePct), CONFIG.MFE_TP1_PERCENTILE));
   assert.equal(d.edges.LONG.distMFE.p90, weighted(ordered.map(o => o.mfePct), CONFIG.MFE_TP2_PERCENTILE));
 });
+
+
+test("AI-6 reports opposing flow but leaves direction selection to AI-9", () => {
+  const f = fixture("LONG");
+  const d = p.analyzeNineAI({
+    ...f,
+    market: { ...f.market, liquidationImbalance: -0.3 },
+  });
+  assert.equal(d.agents.flow.confirmationSide, "SHORT");
+  assert.equal(d.agents.riskGuardian.vetoed, false);
+  assert.equal(d.action, "LONG");
+});
