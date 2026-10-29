@@ -65,9 +65,23 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   if (requiredOutputs.some((name) =>
     !decision.agents[name] || typeof decision.agents[name] !== "object"
   )) return wait(decision, "CANONICAL_AGENT_OUTPUT_INCOMPLETE");
-  if (decision.agents.riskGuardian.vetoed !== false)
+  const guardian = decision.agents.riskGuardian;
+  if (guardian.vetoed !== false || guardian.status !== "PASS" ||
+      guardian.fundingHot === true ||
+      !Number.isFinite(guardian.fundingRate) ||
+      !Number.isFinite(guardian.spreadPct) || guardian.spreadPct < 0 ||
+      !Number.isFinite(guardian.maxSpreadPct) ||
+      guardian.spreadPct > guardian.maxSpreadPct ||
+      !Number.isFinite(guardian.snapshotAgeMs) ||
+      guardian.snapshotAgeMs < 0 || guardian.snapshotAgeMs > BAR_MS ||
+      !Number.isFinite(guardian.openInterestChange) ||
+      !Number.isFinite(guardian.depthNotional) || guardian.depthNotional <= 0 ||
+      !Number.isFinite(guardian.latencyMs) || guardian.latencyMs < 0)
     return wait(decision, "AI6_RISK_GUARDIAN_VETO");
-  if (String(decision.agents.decision.side || "").toUpperCase() !== side)
+  if (String(decision.agents.decision.side || "").toUpperCase() !== side ||
+      decision.agents.decision.authorizedForExecution !== true ||
+      Number(decision.agents.decision.minEdge) !== Number(decision.decisionPolicy?.minEdge) ||
+      Number(decision.agents.decision.gapEdge) !== Number(decision.decisionPolicy?.gapEdge))
     return wait(decision, "AI9_DECISION_OUTPUT_MISMATCH");
   if (
     symbol &&
@@ -113,13 +127,41 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
     return wait(decision, "STALE_OR_INVALID_EXECUTION_SNAPSHOT");
   }
   if (!decision.decisionPolicy) return wait(decision, "MISSING_META_POLICY");
+  if (!Number.isFinite(decision.regime.regime_conf) ||
+      !Number.isFinite(decision.agents.confidence.confidenceScore) ||
+      Math.abs(decision.regime.regime_conf - decision.agents.confidence.confidenceScore) > 1e-12)
+    return wait(decision, "AI5_CONFIDENCE_OUTPUT_MISMATCH");
+  const execution = decision.agents.execution;
+  if (!Number.isFinite(execution.estimatedSlippagePct) ||
+      execution.estimatedSlippagePct < 0 ||
+      !Number.isFinite(decision.featureSnapshot?.estSlippagePct) ||
+      Math.abs(execution.estimatedSlippagePct - decision.featureSnapshot.estSlippagePct) > 1e-12 ||
+      execution.entryOrderType !== "MARKET" ||
+      execution.stopOrderType !== "STOP_MARKET" ||
+      execution.takeProfitOrderType !== "TAKE_PROFIT_MARKET")
+    return wait(decision, "AI8_EXECUTION_OUTPUT_MISMATCH");
+  const selectedPlan = decision.agents.slTp.planBySide?.[side];
+  if (!selectedPlan ||
+      Number(selectedPlan.entry) !== Number(decision.entry) ||
+      Number(selectedPlan.sl) !== Number(decision.sl) ||
+      Number(selectedPlan.tp1) !== Number(decision.tp1) ||
+      Number(selectedPlan.tp2) !== Number(decision.tp2) ||
+      Number(decision.agents.slTp.timeoutCandles) !== CONFIG.TIMEOUT_BARS ||
+      Number(decision.agents.slTp.closePercentAtTP1) !== 60 ||
+      Number(decision.agents.slTp.closePercentAtTP2) !== 40)
+    return wait(decision, "AI7_SLTP_OUTPUT_MISMATCH");
   for (const direction of ["LONG", "SHORT"]) {
     const edge = decision.edges[direction];
-    if (!edge || !Number.isFinite(Number(edge.p)) ||
-        !Number.isFinite(Number(edge.expectedR)) ||
-        Number(decision.agents.probability[direction]) !== Number(edge.p) ||
-        Number(decision.agents.expectedReturn[direction]) !== Number(edge.expectedR))
-      return wait(decision, "AI3_AI4_OUTPUT_MISMATCH");
+    const penalty = decision.agents.confidence.uncertaintyPenaltyBySide?.[direction];
+    if (!edge || typeof edge.p !== "number" || !Number.isFinite(edge.p) ||
+        typeof edge.expectedR !== "number" || !Number.isFinite(edge.expectedR) ||
+        typeof edge.cost !== "number" || !Number.isFinite(edge.cost) ||
+        Number(decision.agents.probability[direction]) !== edge.p ||
+        Number(decision.agents.expectedReturn[direction]) !== edge.expectedR ||
+        !Number.isFinite(penalty) || Math.abs(penalty - Number(edge.baseUncertainty)) > 1e-12 ||
+        !Number.isFinite(execution.costRBySide?.[direction]) ||
+        Math.abs(execution.costRBySide[direction] - edge.cost) > 1e-12)
+      return wait(decision, "AI3_AI4_AI5_AI8_OUTPUT_MISMATCH");
   }
   const timed = {
     ...decision,
