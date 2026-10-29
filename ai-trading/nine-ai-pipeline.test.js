@@ -64,6 +64,8 @@ test("AI-6 hard-vetoes a spread above the configured maximum before model scorin
   });
   assert.equal(blocked.action, "WAIT");
   assert.equal(blocked.reason, "SPREAD_TOO_WIDE");
+  assert.equal(blocked.agents.riskGuardian.vetoed, true);
+  assert.equal(blocked.agents.riskGuardian.status, "VETO");
   assert.equal(blocked.agents.structure, undefined);
 });
 test("EARLY uses the 0.30 edge threshold and neutral AI-3/AI-4 priors", () => {
