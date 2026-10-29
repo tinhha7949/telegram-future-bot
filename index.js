@@ -5,6 +5,7 @@ const { CONFIG } = require("./ai-trading/config");
 const { assessAvailableMargin } = require("./ai-trading/execution-risk");
 const { connectMongoWithRetry, retryMongoOperation } = require("./ai-trading/mongo-connect");
 const { RiskGuard } = require("./ai-trading/risk/day-guard");
+const { riskForPhase, phaseForLabelCount } = require("./ai-trading/online-learning");
 const { WaitRateControl } = require("./ai-trading/risk/wait-rate");
 const { RecentOHLCVStore } = require("./ai-trading/data/store/ohlcv");
 const { MemoryGuard } = require("./ai-trading/risk/memory-guard");
@@ -220,8 +221,10 @@ async function executeDecisions(
     riskGuard,
     isStopped = () => false,
     entriesPaused = () => false,
+    labelCount = 0,
   },
 ) {
+  const activeRiskPerTrade = riskForPhase(labelCount);
   signals.sort((a, b) => b.edges[b.side].edge - a.edges[a.side].edge);
   for (const decision of signals) {
     let reservationKey = null;
@@ -274,7 +277,7 @@ async function executeDecisions(
       const sizingResult = sizeTrade(
         decision,
         equity,
-        TRADE_CONFIG.riskPerTrade,
+        activeRiskPerTrade,
         await exchange.info(decision.symbol),
         { detailed: true },
       );
@@ -299,7 +302,7 @@ async function executeDecisions(
 
       if (isStopped() || entriesPaused() || lifecycle.uncertain || lifecycle.untracked.size) break;
 
-      const reservation = await riskGuard.reserve(`${decision.symbol}:${decision.signalAt}`, equity);
+      const reservation = await riskGuard.reserve(`${decision.symbol}:${decision.signalAt}`, equity, { labelCount });
 
       if (!reservation.ok) { console.log("ENTRY WAIT", decision.symbol, reservation.reason); continue; }
       reservationKey = `${decision.symbol}:${decision.signalAt}`;
@@ -572,14 +575,18 @@ async function main() {
     }
     await journal.settleMatured(symbol, h4);
     const market = await marketSnapshot(exchange, symbol);
+    const phase = phaseForLabelCount(outcomes.length);
+    const activeMinEdge = phase === "EARLY"
+      ? CONFIG.EARLY_MIN_EDGE
+      : Math.max(CONFIG.MIN_EDGE, Number(champion?.minEdge) || 0, minEdge);
     let decision = pipeline.analyzeNineAI({
       symbol,
       candles4h: h4,
       outcomes,
       market: { ...market, trackRecord },
-      config: { ...champion, minEdge: Math.max(minEdge, Number(champion?.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP },
+      config: { ...champion, minEdge: activeMinEdge, gapEdge: CONFIG.EDGE_GAP },
     });
-    decision = { ...decision, riskPerTradePct: RISK_PER_TRADE };
+    decision = { ...decision, riskPerTradePct: riskForPhase(outcomes.length) };
     decision = central.finalizeDecision(decision, {
       symbol,
       scannedAt: Date.now(),
@@ -699,6 +706,7 @@ async function main() {
       riskGuard,
       isStopped: () => stopped,
       entriesPaused: () => entriesPaused,
+      labelCount: outcomes.length,
     });
   }, "MARKET_SCAN");
   void scan();

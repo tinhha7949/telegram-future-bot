@@ -1,5 +1,6 @@
 "use strict";
 const { CONFIG } = require("../config");
+const { phaseForLabelCount, riskForPhase } = require("../online-learning");
 
 // Versioned, bot-activation-scoped ledger. Never import prior account/history peaks.
 const RUN_RISK_ID = "BOT_RUN_V2";
@@ -72,11 +73,13 @@ class RiskGuard {
   // Conservatively charge the FULL configured per-trade risk. Failed or
   // ambiguous orders never return capacity because they might have filled.
   // Unique signal reservations stop duplicate entry after retry/restart.
-  async reserve(signalKey, equity) {
+  async reserve(signalKey, equity, { labelCount = 0 } = {}) {
     if (!signalKey || typeof signalKey !== "string") return fail("INVALID_SIGNAL_KEY");
     const health = await this.assess(equity);
     if (!health.ok) return health;
-    const amount = equity * this.config.RISK_PER_TRADE;
+    const phase = phaseForLabelCount(labelCount, this.config);
+    const riskPct = riskForPhase(labelCount, this.config);
+    const amount = equity * riskPct;
     if (!(amount > 0 && Number.isFinite(amount))) return fail("INVALID_RISK_AMOUNT");
     const day = new Date(this.now()).toISOString().slice(0, 10);
     const dayKey = "UTC:" + day;
@@ -95,18 +98,43 @@ class RiskGuard {
     try {
       await this.days.updateOne(
         { _id: dayKey },
-        { $setOnInsert: { startingEquity: equity, usedRisk: 0 } },
+        { $setOnInsert: { startingEquity: equity, usedRisk: 0, usedTrades: 0 } },
         { upsert: true },
       );
-      const bucket = await this.days.findOne({ _id: dayKey });
+      let bucket = await this.days.findOne({ _id: dayKey });
+      if (!bucket) return fail("DAILY_RISK_STATE_UNCERTAIN");
+      if (!Number.isFinite(bucket.usedTrades)) {
+        let existingTrades = 0;
+        if (typeof this.reservations.countDocuments === "function") {
+          existingTrades = await this.reservations.countDocuments({
+            day: dayKey, status: { $in: ["RESERVED", "RELEASING"] },
+          });
+        }
+        await this.days.updateOne({ _id: dayKey }, { $set: { usedTrades: existingTrades } });
+        bucket = await this.days.findOne({ _id: dayKey });
+      }
       const capacity = bucket?.startingEquity * this.config.MAX_DAILY_RISK;
       if (!(Number.isFinite(capacity) && capacity > 0))
         return fail("DAILY_RISK_STATE_UNCERTAIN");
+      if ((Number(bucket.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY) {
+        try { await this.alert("MAX TRADES PER DAY REACHED: new entries disabled until next UTC day"); }
+        catch (error) { console.error("RISK ALERT FAILED", error.message); }
+        return fail("MAX_TRADES_PER_DAY_REACHED");
+      }
+      if ((Number(bucket.usedRisk) || 0) + amount > capacity + 1e-12)
+        return fail("MAX_DAILY_RISK_REACHED");
       const result = await this.days.updateOne(
-        { _id: dayKey, usedRisk: { $lte: capacity - amount } },
-        { $inc: { usedRisk: amount } },
+        {
+          _id: dayKey,
+          usedRisk: { $lte: capacity - amount },
+          usedTrades: { $lt: this.config.MAX_TRADES_PER_DAY },
+        },
+        { $inc: { usedRisk: amount, usedTrades: 1 } },
       );
       if (result.matchedCount !== 1 || result.modifiedCount !== 1) {
+        const current = await this.days.findOne({ _id: dayKey });
+        if ((Number(current?.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY)
+          return fail("MAX_TRADES_PER_DAY_REACHED");
         try { await this.alert("DAILY RISK LIMIT: no new entries until next UTC day"); }
         catch (error) { console.error("RISK ALERT FAILED", error.message); }
         return fail("MAX_DAILY_RISK_REACHED");
@@ -115,7 +143,7 @@ class RiskGuard {
       // reserved budget remains consumed and duplicate signal remains blocked.
       await this.reservations.updateOne(
         { _id: signalKey },
-        { $set: { status: "RESERVED", reservedAt: this.now() } },
+        { $set: { status: "RESERVED", reservedAt: this.now(), tradeCountCharged: true, phase, riskPct } },
       );
       return { ok: true, day: dayKey, risk: amount };
     } catch (error) {
@@ -137,10 +165,15 @@ class RiskGuard {
       const row = reservation?.value ?? reservation;
       if (!row || row.status !== "RESERVED" ||
           !row.day || !(Number.isFinite(row.risk) && row.risk > 0)) return false;
-      const result = await this.days.updateOne(
-        { _id: row.day, usedRisk: { $gte: row.risk } },
-        { $inc: { usedRisk: -row.risk } },
-      );
+      const dayRow = typeof this.days.findOne === "function"
+        ? await this.days.findOne({ _id: row.day }) : null;
+      const filter = { _id: row.day, usedRisk: { $gte: row.risk } };
+      const decrement = { usedRisk: -row.risk };
+      if (row.tradeCountCharged === true && Number.isFinite(dayRow?.usedTrades)) {
+        filter.usedTrades = { $gte: 1 };
+        decrement.usedTrades = -1;
+      }
+      const result = await this.days.updateOne(filter, { $inc: decrement });
       if (result.matchedCount !== 1 || result.modifiedCount !== 1) return false;
       await this.reservations.updateOne(
         { _id: signalKey, status: "RELEASING" },

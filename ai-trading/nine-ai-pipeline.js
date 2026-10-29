@@ -1,5 +1,6 @@
 "use strict";
 const { CONFIG } = require("./config");
+const { weightedPercentile } = require("./online-learning");
 const {
   DEFAULT_POLICY,
   applyPolicy,
@@ -479,28 +480,19 @@ function analyzeNineAI({
         wins = samples.filter((o) => o.win);
       let distMAE = samples.length
         ? {
-            p80: percentile(
-              samples.map((o) => o.maePct),
-              CONFIG.MAE_PERCENTILE,
-            ),
+            p80: weightedPercentile(samples.map((o) => o.maePct), CONFIG.MAE_PERCENTILE),
             samples: samples.length,
           }
         : null;
       let distMFE = samples.length
         ? {
-            p50: percentile(
-              samples.map((o) => o.mfePct),
-              CONFIG.MFE_TP1_PERCENTILE,
-            ),
-            p90: percentile(
-              samples.map((o) => o.mfePct),
-              CONFIG.MFE_TP2_PERCENTILE,
-            ),
+            p50: weightedPercentile(samples.map((o) => o.mfePct), CONFIG.MFE_TP1_PERCENTILE),
+            p90: weightedPercentile(samples.map((o) => o.mfePct), CONFIG.MFE_TP2_PERCENTILE),
             samples: samples.length,
           }
         : null;
       // No quantile SL/TP until sufficient direction-matched realized outcomes.
-      const ai7Ready = samples.length >= CONFIG.AI7_ACTIVATION_SAMPLES;
+      const ai7Ready = samples.length >= CONFIG.MIN_LABELS_FOR_ATR7 && distMAE?.p80 > 0;
       const entry = last.close;
       const stop = ai7Ready
         ? entry * (1 + ((side === "LONG" ? -1 : 1) * distMAE.p80) / 100)

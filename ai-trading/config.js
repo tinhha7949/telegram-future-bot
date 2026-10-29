@@ -5,14 +5,17 @@ const path = require("node:path");
 // Deliberately tiny parser for this repository's restricted flat YAML syntax.
 // Invalid/unexpected values abort startup: never guess trading parameters.
 const KEYS = Object.freeze([
-  "N_CANDLES", "TIMEFRAME", "EQUITY_START", "RISK_PER_TRADE",
-  "MAX_DAILY_RISK", "MAX_DRAWDOWN_CIRCUIT", "MIN_RR", "MIN_EDGE",
-  "TP_BATCHES", "TIMEOUT_BARS", "COLD_START_SAMPLES", "WAIT_MIN_RATIO",
+  "N_CANDLES", "TIMEFRAME", "EQUITY_START", "MODE", "MODE_OVERRIDE",
+  "RISK_PER_TRADE", "EARLY_RISK", "ADAPT_RISK", "MAX_TRADES_PER_DAY",
+  "EARLY_PHASE_LABELS", "ADAPT_PHASE_LABELS", "RECENCY_DECAY",
+  "MIN_LABELS_FOR_ATR7", "MAX_DAILY_RISK", "MAX_DRAWDOWN_CIRCUIT",
+  "MIN_RR", "MIN_EDGE", "EARLY_MIN_EDGE", "TP_BATCHES", "TIMEOUT_BARS",
+  "COLD_START_SAMPLES", "WAIT_MIN_RATIO",
   "MEMORY_LIMIT_MB", "FEE_TAKER", "SLIPPAGE_BPS", "AI7_ACTIVATION_SAMPLES",
   "AI7_ATR_MULTIPLIER", "FALLBACK_TP2_R", "EDGE_GAP", "CONF_HIGH",
   "CONF_LOW", "LOW_CONF_PENALTY", "STALE_PENALTY", "VOL_20D_RETURNS",
   "VOL_LONG_RETURNS", "ATR_BARS",
-  "FUNDING_HOT_RATE", "HIGH_VOL_PERCENTILE",
+  "FUNDING_HOT", "HIGH_VOL_PERCENTILE",
   "WAIT_WINDOW_DAYS", "WAIT_EDGE_INCREMENT", "WAIT_EDGE_MAX", "MIN_TP2_R",
   "SHADOW_DAYS", "TRAIN_WINDOW_CANDLES", "DAILY_TRAIN_LOOKBACK_DAYS",
   "TRAIN_MAX_OPPORTUNITIES", "RISK_RESERVATION_MIN_MARGIN_MULTIPLIER",
@@ -100,7 +103,7 @@ const KEYS = Object.freeze([
   "RETENTION_ENABLE_DELETE",
   "RETENTION_DRY_RUN",
 ]);
-const BOOLEAN_KEYS = new Set(["RETENTION_ENABLE_DELETE", "RETENTION_DRY_RUN"]);
+const BOOLEAN_KEYS = new Set(["MODE_OVERRIDE", "RETENTION_ENABLE_DELETE", "RETENTION_DRY_RUN"]);
 // Reject implausible operational values: a bad edit must never disable
 // protection or create unbounded retry loops.
 const OPERATIONAL_LIMITS = Object.freeze({
@@ -184,7 +187,7 @@ function parseConfig(text) {
   for (const key of KEYS)
     if (!Object.hasOwn(out, key)) throw new Error("CONFIG_MISSING_" + key);
   for (const [key, v] of Object.entries(out)) {
-    if (["TIMEFRAME", "TP_BATCHES"].includes(key) || BOOLEAN_KEYS.has(key)) continue;
+    if (["TIMEFRAME", "MODE", "TP_BATCHES"].includes(key) || BOOLEAN_KEYS.has(key)) continue;
     if (!Number.isFinite(v) || v <= 0)
       throw new Error("CONFIG_INVALID_NUMBER_" + key);
   }
@@ -202,7 +205,13 @@ function parseConfig(text) {
       out.TIMEFRAME !== "4h" ||
       !Array.isArray(out.TP_BATCHES) ||
       out.TP_BATCHES.length !== 2 ||
-      out.TP_BATCHES.some(v => !Number.isSafeInteger(v) || v <= 0) ||
+      out.TP_BATCHES.some(v => !Number.isFinite(v) || v <= 0) ||
+      Math.abs(out.TP_BATCHES.reduce((sum, v) => sum + v, 0) - 1) > 1e-9 ||
+      out.MODE !== "LIVE" || out.MODE_OVERRIDE !== false ||
+      out.EARLY_RISK > out.ADAPT_RISK || out.ADAPT_RISK > out.RISK_PER_TRADE ||
+      out.EARLY_RISK > out.MAX_DAILY_RISK || out.ADAPT_RISK > out.MAX_DAILY_RISK ||
+      out.MAX_TRADES_PER_DAY < 1 || out.EARLY_PHASE_LABELS >= out.ADAPT_PHASE_LABELS ||
+      out.RECENCY_DECAY > 1 || out.EARLY_MIN_EDGE < out.MIN_EDGE ||
       out.RISK_PER_TRADE > out.MAX_DAILY_RISK ||
       out.MAX_DAILY_RISK >= 1 ||
       out.MAX_DRAWDOWN_CIRCUIT >= 1 ||
@@ -234,8 +243,8 @@ function parseConfig(text) {
       out.TRAIN_SPLIT_RATIO >= out.VALIDATION_SPLIT_RATIO ||
       out.VALIDATION_SPLIT_RATIO >= 1)
     throw new Error("CONFIG_CROSS_FIELD_INVARIANT");
-  for (const key of ["N_CANDLES", "TIMEOUT_BARS", "COLD_START_SAMPLES",
-      "AI7_ACTIVATION_SAMPLES", "ATR_BARS",
+  for (const key of ["N_CANDLES", "TIMEOUT_BARS", "COLD_START_SAMPLES", "AI7_ACTIVATION_SAMPLES",
+      "MAX_TRADES_PER_DAY", "EARLY_PHASE_LABELS", "ADAPT_PHASE_LABELS", "MIN_LABELS_FOR_ATR7", "ATR_BARS",
       "VOL_20D_RETURNS", "VOL_LONG_RETURNS", "BAR_HOURS",
       "MOMENTUM_SHORT_RETURNS", "STRUCTURE_SWING_RADIUS",
       "STRUCTURE_LOOKBACK_BARS", "STRUCTURE_FALLBACK_BARS",

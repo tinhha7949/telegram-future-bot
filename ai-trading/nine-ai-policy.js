@@ -2,7 +2,7 @@
 const { CONFIG } = require("./config");
 const BAR_MS = CONFIG.BAR_HOURS * 60 * 60 * 1000;
 const DECISION_SCHEMA_VERSION = 7; // Invalidates decisions made with the old 90-day candle window.
-const FUNDING_HOT_RATE = CONFIG.FUNDING_HOT_RATE;
+const FUNDING_HOT_RATE = CONFIG.FUNDING_HOT;
 const fundingIsHot = (rate) =>
   Number.isFinite(rate) && Math.abs(rate) > FUNDING_HOT_RATE;
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
