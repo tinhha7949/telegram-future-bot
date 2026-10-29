@@ -52,21 +52,38 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
   const guardian = decision?.agents?.riskGuardian;
   if (guardian?.marketVeto === "BLOCKED")
     return { ...result, reason: guardian.reason || "AI6_MARKET_VETO" };
-  // Defense in depth for legacy/corrupted snapshots. Live pipeline decisions
-  // must carry an explicit AI-6 PASS plus the set of permitted directions.
-  if (fundingIsHot(flow?.fundingRate))
-    return { ...result, reason: "HOT_FUNDING" };
   let allowedSides;
   if (Array.isArray(guardian?.allowedSides)) {
+    const guardianInputs = [
+      guardian.fundingRate,
+      guardian.openInterestChange,
+      guardian.liquidationImbalance,
+      guardian.spreadPct,
+      guardian.depthNotional,
+      guardian.snapshotAgeMs,
+    ];
     if (guardian.marketVeto !== "PASSED" ||
+        !guardianInputs.every(finite) ||
+        fundingIsHot(guardian.fundingRate) ||
+        guardian.spreadPct > CONFIG.MAX_SPREAD_PCT ||
+        guardian.depthNotional <= 0 ||
+        guardian.snapshotAgeMs < 0 || guardian.snapshotAgeMs > BAR_MS ||
         !guardian.allowedSides.length ||
         guardian.allowedSides.some(side => !["LONG", "SHORT"].includes(side)) ||
         new Set(guardian.allowedSides).size !== guardian.allowedSides.length)
+      return { ...result, reason: "AI6_GUARDIAN_OUTPUT_INVALID" };
+    const expectedAllowedSides = guardian.liquidationImbalance === 0
+      ? ["LONG", "SHORT"]
+      : guardian.liquidationImbalance > 0 ? ["LONG"] : ["SHORT"];
+    if (expectedAllowedSides.some(side => !guardian.allowedSides.includes(side)) ||
+        guardian.allowedSides.some(side => !expectedAllowedSides.includes(side)))
       return { ...result, reason: "AI6_GUARDIAN_OUTPUT_INVALID" };
     allowedSides = guardian.allowedSides;
   } else {
     // Backward-compatible interpretation for historical journal snapshots
     // written before the explicit AI-6 direction contract existed.
+    if (fundingIsHot(flow?.fundingRate))
+      return { ...result, reason: "HOT_FUNDING" };
     const validFlowInputs = [
       flow?.fundingRate,
       flow?.openInterestChange,
