@@ -1,6 +1,6 @@
 "use strict";
 const { CONFIG } = require("./config");
-const { weightedPercentile, phaseForLabelCount, countRealizedLabels } = require("./online-learning");
+const { weightedPercentile, phaseForLabelCount, countRealizedLabels, calibrationPenaltyForState } = require("./online-learning");
 const {
   DEFAULT_POLICY,
   applyPolicy,
@@ -241,11 +241,13 @@ function analyzeNineAI({
   const pullbackShort = prev.close > before.close || prev.high > before.high;
   const continuationSide = !fundingHot
     ? regime.regime === "UPTREND" &&
+      (!((phase === "EARLY")) || structureBias === "BULLISH") &&
       pullbackLong &&
       last.close > prev.high &&
       last.close > last.open
       ? "LONG"
       : regime.regime === "DOWNTREND" &&
+          (phase !== "EARLY" || structureBias === "BEARISH") &&
           pullbackShort &&
           last.close < prev.low &&
           last.close < last.open
@@ -457,7 +459,7 @@ function analyzeNineAI({
     policy,
     featureSnapshot,
   );
-  const models = [
+  const allModels = [
     {
       name: "continuation",
       type: "CONTINUATION",
@@ -470,6 +472,17 @@ function analyzeNineAI({
       side: revertSide,
     },
   ];
+  // With fewer than 30 valid labels, only the confirmed structure-aligned
+  // trend-pullback rule may authorize a trade. Other specialist probabilities
+  // remain neutral priors, but their setups cannot open a cold-start position.
+  const models = phase === "EARLY"
+    ? allModels.filter((m) => m.type === "CONTINUATION")
+    : allModels;
+  if (phase === "EARLY") {
+    agents.breakout.p = 0.5;
+    agents.meanReversion.p = 0.5;
+    agents.continuation.p = 0.5;
+  }
   const edges = {};
   for (const side of ["LONG", "SHORT"]) {
     const totalCostPct = fee + fundingBySide[side] + slip;
@@ -560,6 +573,10 @@ function analyzeNineAI({
           liquidationImbalance: liq,
         },
       );
+      const moduleUncertaintyPenalty = calibrationPenaltyForState(
+        market.calibrationBySetup?.[setupKey],
+      );
+      const setupUncertainty = baseUncertainty + moduleUncertaintyPenalty;
       // Update the feature model with real outcomes, without a minimum-count gate
       // or forcing the probability to zero/one after a single observed trade.
       const p = phase === "EARLY" ? 0.5 : (probabilityWins + modelP) / (probabilitySamples + 1);
@@ -587,6 +604,8 @@ function analyzeNineAI({
       estimates.push({
         ...m,
         setupKey,
+        baseUncertainty: setupUncertainty,
+        moduleUncertaintyPenalty,
         samples: samples.length,
         probabilitySamples,
         trackRecord: track,
@@ -635,7 +654,8 @@ function analyzeNineAI({
       edges[side] = {
         ...chosen,
         eligible: true,
-        baseUncertainty,
+        baseUncertainty: chosen.baseUncertainty,
+        moduleUncertaintyPenalty: chosen.moduleUncertaintyPenalty,
         modelEstimates: estimates.map((e) => ({
           name: e.name,
           p: e.p,
