@@ -434,3 +434,35 @@ test("online calibration recovers when the actual outcome persisted before a cal
   assert.equal(setup.meanPredictedR, 1);
   assert.equal(setup.meanRealizedR, 1);
 });
+
+
+test("incomplete shadow candidates are rejected after the 14-day window plus 24-bar maturity deadline", async () => {
+  const { memoryDb } = require("./test-fixtures.cjs");
+  const db = memoryDb();
+  const start = 1700000000000;
+  const now = start + l.SHADOW_MS + l.PURGE_EMBARGO_MS;
+  const service = l.createOfflineLearning(db, { now: () => now });
+  await service.initialize();
+  await db.collection("nine_ai_policy_candidates").insertOne({
+    _id: "incomplete-shadow",
+    status: "SHADOW_PENDING",
+    policySchemaVersion: DECISION_SCHEMA_VERSION,
+    params: { ...l.DEFAULT_CHAMPION, minEdge: 0.175 },
+    championParams: { ...l.DEFAULT_CHAMPION },
+    createdAt: new Date(start),
+    shadowStartedAt: start,
+  });
+  const incomplete = row(0);
+  incomplete.signalTime = start;
+  incomplete.outcomeStatus = "PARTIALLY_EVALUATED";
+  await db.collection("nine_ai_decision_journal").insertOne(incomplete);
+
+  const report = await service.runDailyCycle();
+  assert.equal(report.shadowResult.status, "SHADOW_REJECTED");
+  assert.equal(
+    db.collection("nine_ai_policy_candidates").rows.find(
+      (r) => r._id === "incomplete-shadow",
+    ).status,
+    "SHADOW_REJECTED",
+  );
+});

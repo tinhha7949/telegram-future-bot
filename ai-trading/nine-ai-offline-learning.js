@@ -709,7 +709,8 @@ function createOfflineLearning(db, options = {}) {
         shadowResult.status = "PROMOTED_CHAMPION";
       } else if (
         !sameChampion ||
-        (age >= SHADOW_MS && (labelsMature || !rows.length))
+        (age >= SHADOW_MS && (labelsMature || !rows.length)) ||
+        (age >= SHADOW_MS + PURGE_EMBARGO_MS && !labelsMature)
       ) {
         await candidates.updateOne(
           { _id: activeShadow._id },
