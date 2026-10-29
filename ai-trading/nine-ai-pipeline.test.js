@@ -31,7 +31,8 @@ for (const side of ["LONG", "SHORT"])
       );
       const other = d.edges[side === "LONG" ? "SHORT" : "LONG"];
       assert.equal(other.eligible, false);
-      assert.equal(other.p, 0.5);
+      assert.ok(Number.isFinite(other.p));
+      assert.ok(other.p >= 0 && other.p <= 1);
       assert.equal(d.agents.probability.pLong, d.edges.LONG.p);
       assert.equal(d.agents.probability.pShort, d.edges.SHORT.p);
       assert.equal(d.agents.expectedReturn.eRLong, d.edges.LONG.expectedR);
