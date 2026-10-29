@@ -831,15 +831,23 @@ function analyzeNineAI({
       SHORT: { mae: edges.SHORT?.distMAE ?? null, mfe: edges.SHORT?.distMFE ?? null },
     },
     closePercentAtTP1: (CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
+    closePercentAtTP2: (CONFIG.TP_BATCHES[1] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
+    fallbackStopAtrMultiple: CONFIG.AI7_ATR_MULTIPLIER,
+    minRR: CONFIG.MIN_RR,
     timeoutCandles: CONFIG.TIMEOUT_BARS,
   };
   agents.execution = {
     ...agents.fill,
     estimatedSlippagePct: slip,
-    costPctBySide: {
+    costRBySide: {
       LONG: edges.LONG?.cost ?? null,
       SHORT: edges.SHORT?.cost ?? null,
     },
+    entryOrderType: "MARKET",
+    stopOrderType: "STOP_MARKET",
+    takeProfitOrderType: "TAKE_PROFIT_MARKET",
+    protectionMode: "SEPARATE_CONDITIONAL_ORDERS_WITH_RECOVERY",
+    timing: "FRESH_MARKET_AND_MARGIN_REVALIDATION",
   };
   agents.decision = {
     side: meta.side,
