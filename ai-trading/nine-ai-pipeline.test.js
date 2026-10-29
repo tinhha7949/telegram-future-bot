@@ -160,6 +160,56 @@ test("EARLY keeps p=0.5 while the first closed-trade label updates MAE/MFE quant
   assert.equal(d.edges.LONG.distMAE.samples, 1);
   assert.equal(d.edges.LONG.distMFE.samples, 1);
 });
+test("EARLY only authorizes a structure-aligned trend-pullback setup", () => {
+  const f = { ...fixture("LONG"), outcomes: [] };
+  const d = p.analyzeNineAI(f);
+  assert.equal(d.agents.continuation.p, 0.5);
+  assert.equal(d.agents.breakout.p, 0.5);
+  assert.equal(d.agents.meanReversion.p, 0.5);
+  if (d.action !== "WAIT") {
+    assert.equal(d.setupKey, "UPTREND_CONTINUATION");
+    assert.equal(d.agents.continuation.side, "LONG");
+    assert.equal(d.agents.structure.structure_bias, "BULLISH");
+  }
+  const flatStructureCandles = f.candles4h.map((c) => c.slice());
+  const start = flatStructureCandles.length - CONFIG.STRUCTURE_LOOKBACK_BARS;
+  for (let i = start; i < flatStructureCandles.length; i++) {
+    const c = flatStructureCandles[i];
+    const base = 100 + i * 0.1;
+    c[1] = base;
+    c[4] = base + 0.05;
+    c[2] = base + 0.1;
+    c[3] = base - 0.1;
+  }
+  const before = flatStructureCandles.at(-3);
+  const prev = flatStructureCandles.at(-2);
+  const last = flatStructureCandles.at(-1);
+  prev[4] = before[4] - 0.05;
+  prev[1] = prev[4] + 0.02;
+  prev[2] = 100 + (flatStructureCandles.length - 2) * 0.1 + 0.1;
+  prev[3] = prev[4] - 0.2;
+  last[4] = prev[2] + 0.2;
+  last[1] = last[4] - 0.1;
+  last[2] = last[4] + 0.1;
+  last[3] = last[1] - 0.1;
+  const noStructure = p.analyzeNineAI({ ...f, candles4h: flatStructureCandles });
+  assert.equal(noStructure.action, "WAIT");
+  assert.equal(noStructure.agents.structure.structure_bias, "NEUTRAL");
+});
+test("setup calibration penalty follows the setup through AI-9", () => {
+  const f = fixture("LONG");
+  const d = p.analyzeNineAI({
+    ...f,
+    market: {
+      ...f.market,
+      calibrationBySetup: {
+        UPTREND_CONTINUATION: { samples: 1, maeR: 1, biasR: 1 },
+      },
+    },
+  });
+  assert.equal(d.edges.LONG.moduleUncertaintyPenalty, CONFIG.LOW_CONF_PENALTY);
+  assert.ok(d.edges.LONG.baseUncertainty >= CONFIG.LOW_CONF_PENALTY);
+});
 test("ADAPT learns probability from realized outcomes after 30 valid labels", () => {
   const f = fixture();
   const outcomes = Array.from({ length: 30 }, (_, i) => ({
@@ -211,6 +261,13 @@ test("stale/future data and a gap in configured closed 4h history abstain", () =
     }).action,
     "WAIT",
   );
+});
+test("duplicate valid candle timestamps invalidate the feed instead of being silently deduplicated", () => {
+  const f = fixture();
+  const duplicated = [...f.candles4h, f.candles4h.at(-1).slice()];
+  const d = p.analyzeNineAI({ ...f, candles4h: duplicated });
+  assert.equal(d.action, "WAIT");
+  assert.equal(d.reason, "INSUFFICIENT_CONFIGURED_CLOSED_4H_HISTORY");
 });
 test("unclosed candles never change point-in-time features", () => {
   const f = fixture(),

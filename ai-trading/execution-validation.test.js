@@ -29,6 +29,11 @@ test("cached decisions revalidate current flow, costs, price and snapshot age", 
     ).ok,
     false,
   );
+  assert.equal(
+    validateExecution({ ...d, featureSnapshot: { ...d.featureSnapshot, snapshotAt: now - 120000 } },
+      { ...market, snapshotAt: now - 120000 }, now).reason,
+    "MARKET_SNAPSHOT_STALE",
+  );
 });
 
 test("neutral liquidation flow is allowed while missing or opposing flow still waits", () => {

@@ -116,7 +116,7 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
             Number(scannedAt),
             decision.decisionPolicy,
             decision.featureSnapshot,
-          ),
+          ) + Math.max(0, Number(c.moduleUncertaintyPenalty) || 0),
         },
       ]),
     ),

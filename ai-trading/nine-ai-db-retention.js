@@ -81,6 +81,8 @@ const EXTRA_SPECS = Object.freeze([
     category:"derived_feature",filter:{snapshotAt:{$exists:true}}},
   {name:"nine_ai_model_checkpoints",dateFields:["createdAt"],days:CONFIG.RETENTION_HISTORY_DAYS,
     category:"failed_checkpoint",filter:{status:{$in:["FAILED","REJECTED","SUPERSEDED"]}}},
+  {name:"nine_ai_policy_candidates",dateFields:["shadowCompletedAt","createdAt"],days:CONFIG.RETENTION_HISTORY_DAYS,
+    category:"failed_checkpoint",filter:{status:{$in:["SHADOW_REJECTED","PROMOTED_CHAMPION"]}}},
   {name:"nine_ai_outcome_labels",dateFields:["closedAt"],days:CONFIG.RETENTION_LABEL_DAYS,
     category:"actual_label",filter:{source:"REALIZED_CLOSED_TRADE",labeled:true}},
   {name:"nine_ai_actual_outcomes",dateFields:["closedAt"],days:CONFIG.RETENTION_LABEL_DAYS,

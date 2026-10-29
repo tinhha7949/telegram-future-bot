@@ -9,10 +9,15 @@ function mockDb() {
     if (!stores.has(name)) stores.set(name, new Map());
     const rows = stores.get(name);
     return {
+      rows,
       async findOne({ _id }) { return rows.get(_id) || null; },
       async insertOne(row) {
         if (rows.has(row._id)) throw new Error("duplicate");
         rows.set(row._id, { ...row });
+      },
+      async deleteOne({ _id }) {
+        const deleted = rows.delete(_id);
+        return { deletedCount: deleted ? 1 : 0 };
       },
       async countDocuments(query) {
         return [...rows.values()].filter(row => row.day === query.day &&
@@ -44,6 +49,16 @@ function mockDb() {
   };
   return { collection };
 }
+test("daily risk cap blocks a third mature-phase 1% reservation", async () => {
+  const db = mockDb();
+  const guard = new RiskGuard(db, { now: () => Date.UTC(2026, 9, 29, 12) });
+  assert.equal((await guard.reserve("mature-1", 1000, { labelCount: 150 })).ok, true);
+  assert.equal((await guard.reserve("mature-2", 1000, { labelCount: 150 })).ok, true);
+  const third = await guard.reserve("mature-3", 1000, { labelCount: 150 });
+  assert.equal(third.ok, false);
+  assert.equal(third.reason, "MAX_DAILY_RISK_REACHED");
+  assert.equal(db.collection("nine_ai_risk_reservations").rows.has("mature-3"), false);
+});
 test("hard max trades per UTC day blocks the fourth entry reservation", async () => {
   const db = mockDb();
   const guard = new RiskGuard(db, { now: () => Date.UTC(2026, 9, 29, 12) });
@@ -54,4 +69,5 @@ test("hard max trades per UTC day blocks the fourth entry reservation", async ()
   const fourth = await guard.reserve("trade-4", 1000, { labelCount: 0 });
   assert.equal(fourth.ok, false);
   assert.equal(fourth.reason, "MAX_TRADES_PER_DAY_REACHED");
+  assert.equal(db.collection("nine_ai_risk_reservations").rows.has("trade-4"), false);
 });

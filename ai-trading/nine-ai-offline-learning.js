@@ -22,6 +22,19 @@ const finite = (v, d = null) =>
   v == null || v === "" ? d : Number.isFinite(Number(v)) ? Number(v) : d;
 const mean = (xs) =>
   xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null;
+const TERMINAL_CANDIDATE_STATUSES = Object.freeze(["SHADOW_REJECTED", "PROMOTED_CHAMPION"]);
+function terminalCandidateIdsToPrune(rows, promotedCandidateId = null, keepCount = 2) {
+  const terminal = (Array.isArray(rows) ? rows : [])
+    .filter(row => TERMINAL_CANDIDATE_STATUSES.includes(row.status))
+    .sort((a, b) => {
+      const at = new Date(a.createdAt || 0).getTime();
+      const bt = new Date(b.createdAt || 0).getTime();
+      return (Number.isFinite(bt) ? bt : 0) - (Number.isFinite(at) ? at : 0);
+    });
+  const keep = new Set(terminal.slice(0, Math.max(0, keepCount)).map(row => String(row._id)));
+  if (promotedCandidateId != null) keep.add(String(promotedCandidateId));
+  return terminal.filter(row => !keep.has(String(row._id))).map(row => row._id);
+}
 function trainingWindowFilter(asOf, config = CONFIG) {
   const cutoff = Number(asOf);
   if (!Number.isFinite(cutoff)) throw new Error("INVALID_TRAINING_WINDOW_CUTOFF");
@@ -524,12 +537,36 @@ function createOfflineLearning(db, options = {}) {
     // close must not double-count its online calibration residual.
     if (typeof actuals.findOne === "function" && !priorActual && Number.isFinite(row.predictedR)) {
       const calibration = db.collection("nine_ai_online_calibration");
-      const previous = await calibration.findOne({ _id: "GLOBAL" });
-      const next = updateOnlineCalibration(previous, row.predictedR, realizedR, row.closedAt);
-      if (next) await calibration.updateOne({ _id: "GLOBAL" }, { $set: next }, { upsert: true });
+      // Update the global baseline and the responsible setup/module together.
+      // Each close is idempotent at the actual-outcome boundary above.
+      const calibrationIds = ["GLOBAL", row.setupKey ? "SETUP:" + row.setupKey : null].filter(Boolean);
+      for (const calibrationId of calibrationIds) {
+        const previous = await calibration.findOne({ _id: calibrationId });
+        const next = updateOnlineCalibration(previous, row.predictedR, realizedR, row.closedAt);
+        if (next) await calibration.updateOne(
+          { _id: calibrationId },
+          { $set: { ...next, setupKey: row.setupKey || null } },
+          { upsert: true },
+        );
+      }
     }
     trackRecordCache = null;
     return { recorded: true, tradeId, realizedR };
+  }
+
+  async function pruneTerminalCandidates() {
+    if (typeof candidates.deleteMany !== "function") return 0;
+    const activeChampion = await championState.findOne({ _id: "active" });
+    const rows = await candidates.find({
+      status: { $in: TERMINAL_CANDIDATE_STATUSES },
+    }).toArray();
+    const staleIds = terminalCandidateIdsToPrune(rows, activeChampion?.promotedCandidateId, 2);
+    if (!staleIds.length) return 0;
+    const result = await candidates.deleteMany({
+      _id: { $in: staleIds },
+      status: { $in: TERMINAL_CANDIDATE_STATUSES },
+    });
+    return Number(result.deletedCount) || 0;
   }
 
   async function runDailyCycle() {
@@ -706,7 +743,15 @@ function createOfflineLearning(db, options = {}) {
       }
     }
 
+    let prunedTerminalCandidates = 0;
+    try {
+      prunedTerminalCandidates = await pruneTerminalCandidates();
+    } catch (error) {
+      // Retention maintenance must not suppress the daily learning report.
+      console.error("POLICY CANDIDATE RETENTION FAILED", error.message);
+    }
     const report = {
+      prunedTerminalCandidates,
       runDate,
       runAt: new Date(runAt),
       calibration,
@@ -726,6 +771,7 @@ function createOfflineLearning(db, options = {}) {
     getTrackRecord,
     recordClosedTrade,
     runDailyCycle,
+    pruneTerminalCandidates,
     calibrationSummary,
     trainCandidate,
     evaluatePolicy,
@@ -741,6 +787,7 @@ module.exports = {
   SHADOW_MS,
   DEFAULT_CHAMPION,
   trainingWindowFilter,
+  terminalCandidateIdsToPrune,
   policyAction,
   rowNetR,
   usableOpportunity,

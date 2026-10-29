@@ -20,7 +20,9 @@ function selectDirectionCandidate(estimates, baseUncertainty) {
     estimates
       .filter((c) => [c.p, c.expectedR, c.cost].every(finite))
       .sort(
-        (a, b) => netEdge(b, baseUncertainty) - netEdge(a, baseUncertainty),
+        (a, b) =>
+          netEdge(b, finite(b.baseUncertainty) ? b.baseUncertainty : baseUncertainty) -
+          netEdge(a, finite(a.baseUncertainty) ? a.baseUncertainty : baseUncertainty),
       )[0] || null
   );
 }

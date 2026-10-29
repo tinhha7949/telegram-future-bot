@@ -95,6 +95,13 @@ class RiskGuard {
       // Uncertain outcome or duplicate key: fail closed, never resubmit.
       return fail("RISK_RESERVATION_ALREADY_EXISTS_OR_UNCERTAIN");
     }
+    const discardUnchargedReservation = async () => {
+      if (typeof this.reservations.deleteOne === "function")
+        await this.reservations.deleteOne({
+          _id: signalKey,
+          status: "CLAIMED_BEFORE_RISK_RESERVATION",
+        });
+    };
     try {
       await this.days.updateOne(
         { _id: dayKey },
@@ -102,7 +109,10 @@ class RiskGuard {
         { upsert: true },
       );
       let bucket = await this.days.findOne({ _id: dayKey });
-      if (!bucket) return fail("DAILY_RISK_STATE_UNCERTAIN");
+      if (!bucket) {
+        await discardUnchargedReservation();
+        return fail("DAILY_RISK_STATE_UNCERTAIN");
+      }
       if (!Number.isFinite(bucket.usedTrades)) {
         let existingTrades = 0;
         if (typeof this.reservations.countDocuments === "function") {
@@ -114,15 +124,20 @@ class RiskGuard {
         bucket = await this.days.findOne({ _id: dayKey });
       }
       const capacity = bucket?.startingEquity * this.config.MAX_DAILY_RISK;
-      if (!(Number.isFinite(capacity) && capacity > 0))
+      if (!(Number.isFinite(capacity) && capacity > 0)) {
+        await discardUnchargedReservation();
         return fail("DAILY_RISK_STATE_UNCERTAIN");
+      }
       if ((Number(bucket.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY) {
         try { await this.alert("MAX TRADES PER DAY REACHED: new entries disabled until next UTC day"); }
         catch (error) { console.error("RISK ALERT FAILED", error.message); }
+        await discardUnchargedReservation();
         return fail("MAX_TRADES_PER_DAY_REACHED");
       }
-      if ((Number(bucket.usedRisk) || 0) + amount > capacity + 1e-12)
+      if ((Number(bucket.usedRisk) || 0) + amount > capacity + 1e-12) {
+        await discardUnchargedReservation();
         return fail("MAX_DAILY_RISK_REACHED");
+      }
       const result = await this.days.updateOne(
         {
           _id: dayKey,
@@ -133,10 +148,13 @@ class RiskGuard {
       );
       if (result.matchedCount !== 1 || result.modifiedCount !== 1) {
         const current = await this.days.findOne({ _id: dayKey });
-        if ((Number(current?.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY)
+        if ((Number(current?.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY) {
+          await discardUnchargedReservation();
           return fail("MAX_TRADES_PER_DAY_REACHED");
+        }
         try { await this.alert("DAILY RISK LIMIT: no new entries until next UTC day"); }
         catch (error) { console.error("RISK ALERT FAILED", error.message); }
+        await discardUnchargedReservation();
         return fail("MAX_DAILY_RISK_REACHED");
       }
       // Conservatively treat unsuccessful status writes as claimed: the

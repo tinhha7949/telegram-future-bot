@@ -248,7 +248,9 @@ test("funding credits retain their sign in snapshots, live edge and execution va
 const permitRisk = { assess: async()=>({ok:true}), reserve: async()=>({ok:true}) };
 test("runtime tries all approved signals beyond ten and permits multiple entries in one scan", async () => {
   const f = fixture(),
-    base = analyzeNineAI(f),
+    base = require("./nine-ai-central-decision-engine").finalizeDecision(
+      analyzeNineAI(f), { symbol: f.symbol, scannedAt: f.market.now + 1 },
+    ),
     signals = Array.from({ length: 12 }, (_, i) => ({
       ...structuredClone(base),
       symbol: "TEST" + i + "USDT",

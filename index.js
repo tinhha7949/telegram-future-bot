@@ -213,6 +213,21 @@ async function universe(exchange) {
   );
   return [...eligible].sort();
 }
+function isNineAiAuthorizedSignal(decision) {
+  const side = String(decision?.side || "").toUpperCase();
+  const edge = decision?.edges?.[side];
+  const central = decision?.centralDecisionEngine;
+  const centralAuthorityValid = central == null ||
+    (central.authority === "NINE_AI_ONLY" && central.result === "AUTHORIZED");
+  return decision?.authorizedForExecution === true &&
+    centralAuthorityValid &&
+    decision?.setup === "NINE_AI_4H" &&
+    decision?.decisionSchemaVersion === DECISION_SCHEMA_VERSION &&
+    decision?.action === side &&
+    ["LONG", "SHORT"].includes(side) &&
+    edge?.eligible === true &&
+    Number.isFinite(edge.edge);
+}
 async function executeDecisions(
   signals,
   {
@@ -225,8 +240,16 @@ async function executeDecisions(
   },
 ) {
   const activeRiskPerTrade = riskForPhase(labelCount);
-  signals.sort((a, b) => b.edges[b.side].edge - a.edges[a.side].edge);
-  for (const decision of signals) {
+  const authorizedSignals = [];
+  for (const decision of Array.isArray(signals) ? signals : []) {
+    if (!isNineAiAuthorizedSignal(decision)) {
+      console.log("ENTRY WAIT", decision?.symbol || "UNKNOWN", "AI9_AUTHORIZATION_REQUIRED");
+      continue;
+    }
+    authorizedSignals.push(decision);
+  }
+  authorizedSignals.sort((a, b) => b.edges[b.side].edge - a.edges[a.side].edge);
+  for (const decision of authorizedSignals) {
     let reservationKey = null;
     let entryAttempted = false;
     if (
@@ -559,7 +582,7 @@ async function main() {
   let scanReasons = new Map();
   const countWait = (reason) =>
     scanReasons.set(reason, (scanReasons.get(reason) || 0) + 1);
-  async function scanSymbol(symbol, champion, trackRecord, outcomes, minEdge) {
+  async function scanSymbol(symbol, champion, trackRecord, outcomes, minEdge, calibrationBySetup = {}) {
     const input = await loadDecisionInput(exchange, journal, symbol, Date.now(), recentStore);
     if (!input) return null;
     const { prior, h4, probe } = input;
@@ -586,7 +609,7 @@ async function main() {
       symbol,
       candles4h: h4,
       outcomes,
-      market: { ...market, trackRecord },
+      market: { ...market, trackRecord, calibrationBySetup },
       config: { ...champion, minEdge: activeMinEdge, gapEdge: CONFIG.EDGE_GAP },
     });
     decision = { ...decision, riskPerTradePct: riskForPhase(labelCount) };
@@ -647,10 +670,16 @@ async function main() {
     if (!adaptive.ok) { console.error("SCAN WAIT", adaptive.reason); return; }
 
     // Apply measured calibration drift as a penalty, not an untested model update.
-     const [latestLearning, onlineCalibration] = await Promise.all([
+     const [latestLearning, onlineCalibrationRows] = await Promise.all([
        db.collection("nine_ai_daily_learning_reports").find({}).sort({runAt:-1}).limit(1).toArray(),
-       db.collection("nine_ai_online_calibration").findOne({ _id: "GLOBAL" }),
+       db.collection("nine_ai_online_calibration").find({}).toArray(),
      ]);
+     const onlineCalibration = onlineCalibrationRows.find(row => row._id === "GLOBAL") || null;
+     const calibrationBySetup = Object.fromEntries(
+       onlineCalibrationRows
+         .filter(row => typeof row._id === "string" && row._id.startsWith("SETUP:"))
+         .map(row => [row._id.slice("SETUP:".length), row]),
+     );
      const dailyCalibrationPenalty = latestLearning[0]?.calibration?.status ===
        "RED_FLAG_CALIBRATION_DRIFT" ? CONFIG.LOW_CONF_PENALTY : 0;
      const calibrationPenalty = Math.max(
@@ -685,7 +714,7 @@ async function main() {
       const batch = await Promise.allSettled(
         symbols
           .slice(i, i + CONFIG.SCAN_BATCH_SIZE)
-          .map((s) => scanSymbol(s, {...champion,uncertaintyPenalty:calibrationPenalty}, track, outcomes, adaptive.minEdge)),
+          .map((s) => scanSymbol(s, {...champion,uncertaintyPenalty:calibrationPenalty}, track, outcomes, adaptive.minEdge, calibrationBySetup)),
       );
       for (const r of batch) {
         if (r.status === "fulfilled" && r.value) signals.push(r.value);
@@ -739,4 +768,5 @@ module.exports = {
   loadDecisionInput,
   scanPauseReason,
   mayReleaseEntryRiskReservation,
+  isNineAiAuthorizedSignal,
 };
