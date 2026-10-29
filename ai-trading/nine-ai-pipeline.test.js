@@ -160,6 +160,37 @@ test("EARLY keeps p=0.5 while the first closed-trade label updates MAE/MFE quant
   assert.equal(d.edges.LONG.distMAE.samples, 1);
   assert.equal(d.edges.LONG.distMFE.samples, 1);
 });
+test("EARLY only authorizes a structure-aligned trend-pullback setup", () => {
+  const f = { ...fixture("LONG"), outcomes: [] };
+  const d = p.analyzeNineAI(f);
+  assert.equal(d.agents.continuation.p, 0.5);
+  assert.equal(d.agents.breakout.p, 0.5);
+  assert.equal(d.agents.meanReversion.p, 0.5);
+  if (d.action !== "WAIT") {
+    assert.equal(d.setupKey, "UPTREND_CONTINUATION");
+    assert.equal(d.agents.continuation.side, "LONG");
+    assert.equal(d.agents.structure.structure_bias, "BULLISH");
+  }
+  const noStructure = p.analyzeNineAI({
+    ...f,
+    candles4h: f.candles4h.map((c) => c.slice()),
+  });
+  assert.ok(["LONG", "WAIT"].includes(noStructure.action));
+});
+test("setup calibration penalty follows the setup through AI-9", () => {
+  const f = fixture("LONG");
+  const d = p.analyzeNineAI({
+    ...f,
+    market: {
+      ...f.market,
+      calibrationBySetup: {
+        UPTREND_CONTINUATION: { samples: 1, maeR: 1, biasR: 1 },
+      },
+    },
+  });
+  assert.equal(d.edges.LONG.moduleUncertaintyPenalty, CONFIG.LOW_CONF_PENALTY);
+  assert.ok(d.edges.LONG.baseUncertainty >= CONFIG.LOW_CONF_PENALTY);
+});
 test("ADAPT learns probability from realized outcomes after 30 valid labels", () => {
   const f = fixture();
   const outcomes = Array.from({ length: 30 }, (_, i) => ({
