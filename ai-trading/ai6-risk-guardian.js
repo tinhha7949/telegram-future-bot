@@ -69,6 +69,9 @@ function vetoMarketSnapshot(market = {}, now = Date.now(), config = CONFIG, barM
     depthNotional,
     openInterestChange,
     liquidationImbalance,
+    allowedSides: liquidationImbalance === 0
+      ? ["LONG", "SHORT"]
+      : liquidationImbalance > 0 ? ["LONG"] : ["SHORT"],
     roundTripFeePct,
     markPrice,
     latencyMs,
