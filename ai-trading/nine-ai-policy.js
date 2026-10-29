@@ -53,8 +53,8 @@ function applyPolicy(decision, policy = DEFAULT_POLICY) {
       fundingIsHot(flow?.fundingRate))
     return { ...result, reason: "HOT_FUNDING" };
   // A live, zero liquidation imbalance is neutral flow, not missing data.
-  // AI-6 may confirm a direction when a cascade exists and may veto an opposing
-  // side; in neutral conditions AI-9 remains the sole direction selector.
+  // AI-6 validates flow availability/consistency only; its sign never chooses
+  // or vetoes a direction. AI-9 remains the sole direction selector.
   const validFlowInputs = [
     flow?.fundingRate,
     flow?.openInterestChange,
