@@ -21,6 +21,11 @@ for (const side of ["LONG", "SHORT"])
       assert.equal(d.agents.riskGuardian.vetoed, false);
       assert.equal(d.agents.slTp.planBySide[side], d.edges[side].plan);
       assert.equal(d.agents.execution.estimatedSlippagePct, d.featureSnapshot.estSlippagePct);
+      assert.equal(d.agents.execution.entryOrderType, "MARKET");
+      assert.equal(d.agents.execution.stopOrderType, "STOP_MARKET");
+      assert.equal(d.agents.execution.takeProfitOrderType, "TAKE_PROFIT_MARKET");
+      assert.equal(d.agents.execution.costRBySide[side], d.edges[side].cost);
+      assert.equal(d.agents.slTp.closePercentAtTP2, 40);
       assert.equal(d.agents.decision.side, side);
       assert.equal(d.edges[side].distMAE.samples, 120);
       assert.equal(d.tradePlan.closePercentAtTP1, 60);
