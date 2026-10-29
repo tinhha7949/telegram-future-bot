@@ -524,9 +524,18 @@ function createOfflineLearning(db, options = {}) {
     // close must not double-count its online calibration residual.
     if (typeof actuals.findOne === "function" && !priorActual && Number.isFinite(row.predictedR)) {
       const calibration = db.collection("nine_ai_online_calibration");
-      const previous = await calibration.findOne({ _id: "GLOBAL" });
-      const next = updateOnlineCalibration(previous, row.predictedR, realizedR, row.closedAt);
-      if (next) await calibration.updateOne({ _id: "GLOBAL" }, { $set: next }, { upsert: true });
+      // Update the global baseline and the responsible setup/module together.
+      // Each close is idempotent at the actual-outcome boundary above.
+      const calibrationIds = ["GLOBAL", row.setupKey ? "SETUP:" + row.setupKey : null].filter(Boolean);
+      for (const calibrationId of calibrationIds) {
+        const previous = await calibration.findOne({ _id: calibrationId });
+        const next = updateOnlineCalibration(previous, row.predictedR, realizedR, row.closedAt);
+        if (next) await calibration.updateOne(
+          { _id: calibrationId },
+          { $set: { ...next, setupKey: row.setupKey || null } },
+          { upsert: true },
+        );
+      }
     }
     trackRecordCache = null;
     return { recorded: true, tradeId, realizedR };
