@@ -41,7 +41,7 @@ function percentile(values, p) {
 }
 function closedCandles(input, now = Date.now()) {
   if (!Array.isArray(input)) return [];
-  return input
+  const closed = input
     .map((c) =>
       Array.isArray(c)
         ? {
@@ -73,8 +73,11 @@ function closedCandles(input, now = Date.now()) {
         c.high >= Math.max(c.open, c.close) &&
         c.low <= Math.min(c.open, c.close),
     )
-    .sort((a, b) => a.time - b.time)
-    .filter((c, i, all) => !i || c.time !== all[i - 1].time);
+    .sort((a, b) => a.time - b.time);
+  // Duplicate valid bars indicate a corrupt feed response; never silently
+  // pick one version and risk deriving a point-in-time feature from it.
+  if (closed.some((c, i, all) => i > 0 && c.time === all[i - 1].time)) return [];
+  return closed;
 }
 function hasContiguousHistory(cs, interval, minimum) {
   if (cs.length < minimum) return false;
