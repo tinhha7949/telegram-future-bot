@@ -30,6 +30,7 @@ test("only an explicitly authorized AI-9 decision can reach the broker", () => {
     { setup: "LEGACY_SETUP" },
     { action: "SHORT" },
     { decisionSchemaVersion: DECISION_SCHEMA_VERSION - 1 },
+    { centralDecisionEngine: undefined },
     { centralDecisionEngine: { authority: "OTHER", result: "AUTHORIZED" } },
     { centralDecisionEngine: { authority: "NINE_AI_ONLY", result: "ABSTAIN" } },
     { edges: { LONG: { eligible: false, edge: 0.5 } } },
