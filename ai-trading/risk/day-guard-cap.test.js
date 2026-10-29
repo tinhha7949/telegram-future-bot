@@ -44,6 +44,15 @@ function mockDb() {
   };
   return { collection };
 }
+test("daily risk cap blocks a third mature-phase 1% reservation", async () => {
+  const db = mockDb();
+  const guard = new RiskGuard(db, { now: () => Date.UTC(2026, 9, 29, 12) });
+  assert.equal((await guard.reserve("mature-1", 1000, { labelCount: 150 })).ok, true);
+  assert.equal((await guard.reserve("mature-2", 1000, { labelCount: 150 })).ok, true);
+  const third = await guard.reserve("mature-3", 1000, { labelCount: 150 });
+  assert.equal(third.ok, false);
+  assert.equal(third.reason, "MAX_DAILY_RISK_REACHED");
+});
 test("hard max trades per UTC day blocks the fourth entry reservation", async () => {
   const db = mockDb();
   const guard = new RiskGuard(db, { now: () => Date.UTC(2026, 9, 29, 12) });
