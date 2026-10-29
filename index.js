@@ -310,7 +310,6 @@ async function executeDecisions(
       }
       const sizing = sizingResult.sizing;
 
-      const leverage = account.leverageBySymbol?.[decision.symbol];
       // AI-6 execution-time veto: verify actual account balance, leverage and
       // exchange margin immediately before reserving risk or submitting an order.
       // Do not fetch account state for every scanned symbol; that would waste REST
