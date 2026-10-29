@@ -434,8 +434,12 @@ function analyzeNineAI({
       allowedSides: marketVeto.allowedSides,
       snapshotAgeMs: marketVeto.snapshotAgeMs,
       maxSnapshotAgeMs: BAR_MS,
+      fundingRate: marketVeto.fundingRate,
+      openInterestChange: marketVeto.openInterestChange,
+      liquidationImbalance: marketVeto.liquidationImbalance,
       fundingHot: false,
-      spreadPct: finite(market.spreadPct),
+      spreadPct: marketVeto.spreadPct,
+      depthNotional: marketVeto.depthNotional,
       maxSpreadPct: CONFIG.MAX_SPREAD_PCT,
     },
     structure: {
