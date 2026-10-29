@@ -99,6 +99,31 @@ function swingPoints(cs, radius = CONFIG.STRUCTURE_SWING_RADIUS) {
   }
   return { highs, lows };
 }
+function ema(values, period) {
+  if (!values.length || values.length < period) return null;
+  const alpha = 2 / (period + 1);
+  let value = mean(values.slice(0, period));
+  for (let i = period; i < values.length; i++) value = values[i] * alpha + value * (1 - alpha);
+  return value;
+}
+function directionalAdx(cs, period = CONFIG.REGIME_ADX_PERIOD) {
+  if (cs.length < period * 2 + 1) return null;
+  const dx = [];
+  for (let end = period; end < cs.length; end++) {
+    let tr = 0, plus = 0, minus = 0;
+    for (let i = end - period + 1; i <= end; i++) {
+      const current = cs[i], previous = cs[i - 1];
+      const up = current.high - previous.high, down = previous.low - current.low;
+      tr += Math.max(current.high - current.low, Math.abs(current.high - previous.close), Math.abs(current.low - previous.close));
+      plus += up > down && up > 0 ? up : 0;
+      minus += down > up && down > 0 ? down : 0;
+    }
+    if (tr <= 0) continue;
+    const pdi = 100 * plus / tr, mdi = 100 * minus / tr, denom = pdi + mdi;
+    dx.push(denom > 0 ? 100 * Math.abs(pdi - mdi) / denom : 0);
+  }
+  return dx.length >= period ? mean(dx.slice(-period)) : null;
+}
 function classifyRegime(cs) {
   const closes = cs.map((c) => c.close),
     returns = closes.slice(1).map((v, i) => Math.log(v / closes[i]));
@@ -116,10 +141,17 @@ function classifyRegime(cs) {
   const momentum20 =
     closes.length > CONFIG.VOL_20D_RETURNS ? closes.at(-1) / closes.at(-(CONFIG.VOL_20D_RETURNS + 1)) - 1 : 0;
   const momentum5 = closes.length > CONFIG.MOMENTUM_SHORT_RETURNS ? closes.at(-1) / closes.at(-(CONFIG.MOMENTUM_SHORT_RETURNS + 1)) - 1 : 0;
+  const emaFast = ema(closes, CONFIG.REGIME_EMA_FAST),
+    emaSlow = ema(closes, CONFIG.REGIME_EMA_SLOW),
+    adx = directionalAdx(cs),
+    ranges = cs.slice(1).map((c, i) => Math.max(c.high - c.low, Math.abs(c.high - cs[i].close), Math.abs(c.low - cs[i].close))),
+    atr14 = mean(ranges.slice(-CONFIG.ATR_BARS));
   let regime = "RANGE";
   if (rank !== null && rank >= CONFIG.HIGH_VOL_PERCENTILE) regime = "HIGH_VOL";
-  else if (momentum20 > 0 && momentum5 > 0) regime = "UPTREND";
-  else if (momentum20 < 0 && momentum5 < 0) regime = "DOWNTREND";
+  else if (adx !== null && adx >= CONFIG.REGIME_ADX_MIN && emaFast !== null && emaSlow !== null &&
+      momentum20 > 0 && momentum5 > 0 && closes.at(-1) > emaFast && emaFast > emaSlow) regime = "UPTREND";
+  else if (adx !== null && adx >= CONFIG.REGIME_ADX_MIN && emaFast !== null && emaSlow !== null &&
+      momentum20 < 0 && momentum5 < 0 && closes.at(-1) < emaFast && emaFast < emaSlow) regime = "DOWNTREND";
   return {
     regime,
     regime_conf: clamp(
@@ -129,6 +161,10 @@ function classifyRegime(cs) {
       0,
       1,
     ),
+    ema_fast: emaFast,
+    ema_slow: emaSlow,
+    adx,
+    atr14,
     realized_vol_20d: realized20,
     realized_vol_long_window: realizedLong,
     realized_vol_90d: null,
@@ -195,6 +231,40 @@ function analyzeNineAI({
     before = cs.at(-3),
     closes = cs.map((c) => c.close);
   const regime = classifyRegime(cs);
+  // AI-1 is the first decision gate. Do not run structure, specialist models,
+  // SL/TP optimization or AI-9 when the closed-bar regime is not directional.
+  if (!["UPTREND", "DOWNTREND"].includes(regime.regime))
+    return wait("REGIME_NOT_TREND", { regime, agents: { regime } });
+
+  // AI-6 hard market-data vetoes run before specialist models and AI-9.
+  const snapshotAt = finite(market.snapshotAt),
+    earlyAge = snapshotAt === null ? Infinity : now - snapshotAt,
+    earlyFunding = finite(market.fundingRate),
+    earlySpread = finite(market.spreadPct),
+    earlyDepth = finite(market.depthNotional),
+    earlyOi = finite(market.openInterestChange),
+    earlyLatency = finite(market.latencyMs);
+  if (snapshotAt === null)
+    return wait("EXECUTION_COST_INPUTS_MISSING_MARKET_SNAPSHOT_AT", { regime, agents: { regime } });
+  if (earlyAge < 0)
+    return wait("EXECUTION_COST_INPUTS_FUTURE_MARKET_SNAPSHOT", { regime, agents: { regime } });
+  if (earlyAge > BAR_MS)
+    return wait("STALE_MARKET_SNAPSHOT", { regime, agents: { regime } });
+  if (earlyFunding === null)
+    return wait("EXECUTION_COST_INPUTS_MISSING_FUNDING_RATE", { regime, agents: { regime } });
+  if (fundingIsHot(earlyFunding))
+    return wait("HOT_FUNDING", { regime, agents: { regime } });
+  if (earlyOi === null)
+    return wait("EXECUTION_COST_INPUTS_MISSING_OPEN_INTEREST_CHANGE", { regime, agents: { regime } });
+  if (earlySpread === null || earlySpread < 0)
+    return wait("EXECUTION_COST_INPUTS_MISSING_SPREAD", { regime, agents: { regime } });
+  if (earlySpread > CONFIG.MAX_SPREAD_PCT)
+    return wait("SPREAD_TOO_WIDE", { regime, agents: { regime } });
+  if (earlyDepth === null || earlyDepth <= 0)
+    return wait("EXECUTION_COST_INPUTS_MISSING_ORDERBOOK_DEPTH", { regime, agents: { regime } });
+  if (earlyLatency === null || earlyLatency < 0)
+    return wait("EXECUTION_COST_INPUTS_MISSING_LATENCY", { regime, agents: { regime } });
+
   const ranges = cs
     .slice(1)
     .map((c, i) =>
@@ -373,7 +443,7 @@ function analyzeNineAI({
     candleCutoffAt: now,
     closedOIAt: finite(market.oiObservedAt),
   };
-  const policy = { ...DEFAULT_POLICY, ...config, earlyPhase: phase === "EARLY", minEdge: Math.max(CONFIG.MIN_EDGE, Number(config.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP };
+  const policy = { ...DEFAULT_POLICY, ...config, earlyPhase: phase === "EARLY", minEdge: Math.max(phase === "EARLY" ? CONFIG.EARLY_MIN_EDGE : CONFIG.MIN_EDGE, Number(config.minEdge) || 0), gapEdge: CONFIG.EDGE_GAP };
   const agents = {
     regime,
     structure: {
@@ -603,8 +673,11 @@ function analyzeNineAI({
         Number.isFinite(track.meanGrossR)
           ? track.meanGrossR
           : null;
-      const expectedR =
-        trackedExpectedR ?? mean(realizedReturns) ?? quantileRewardR;
+      // EARLY has no calibrated payoff model: use the initial exit geometry
+      // until ADAPT rather than leaking a one-label/track-record estimate.
+      const expectedR = phase === "EARLY"
+        ? quantileRewardR
+        : trackedExpectedR ?? mean(realizedReturns) ?? quantileRewardR;
       estimates.push({
         ...m,
         setupKey,
