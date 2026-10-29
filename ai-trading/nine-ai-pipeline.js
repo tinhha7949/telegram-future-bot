@@ -177,7 +177,12 @@ function classifyRegime(cs) {
 }
 function validLabels(outcomes, symbol, setupKey, side, now) {
   const seen = new Set();
-  return outcomes.filter((o) => {
+  // Quantile weights are age-based: newest realized label must be first,
+  // independent of the caller's DB/query ordering.
+  const ordered = (Array.isArray(outcomes) ? outcomes : [])
+    .slice()
+    .sort((a, b) => finite(b?.closedAt, 0) - finite(a?.closedAt, 0));
+  return ordered.filter((o) => {
     if (
       o?.source !== "REALIZED_CLOSED_TRADE" ||
       o.labeled !== true ||
@@ -749,6 +754,73 @@ function analyzeNineAI({
     }
   }
   const meta = applyPolicy({ regime, agents, edges }, policy);
+  // Canonical role outputs: setup candidates are inputs to AI-3/4/5, not
+  // substitutes for those agents. Keep every role's output auditable.
+  agents.probability = {
+    LONG: edges.LONG?.p ?? null,
+    SHORT: edges.SHORT?.p ?? null,
+  };
+  agents.expectedReturn = {
+    LONG: edges.LONG?.expectedR ?? null,
+    SHORT: edges.SHORT?.expectedR ?? null,
+  };
+  agents.confidence = {
+    confidenceScore: regime.regime_conf,
+    uncertaintyPenaltyBySide: {
+      LONG: edges.LONG?.baseUncertainty ?? baseUncertainty,
+      SHORT: edges.SHORT?.baseUncertainty ?? baseUncertainty,
+    },
+    modulePenaltyBySide: {
+      LONG: edges.LONG?.moduleUncertaintyPenalty ?? 0,
+      SHORT: edges.SHORT?.moduleUncertaintyPenalty ?? 0,
+    },
+    earlyPhase: phase === "EARLY",
+  };
+  agents.riskGuardian = {
+    vetoed: false,
+    status: "PASS",
+    fundingRate: funding,
+    fundingHot,
+    spreadPct: spread,
+    maxSpreadPct: CONFIG.MAX_SPREAD_PCT,
+    snapshotAgeMs: age,
+    snapshotAt,
+    openInterestChange: oi,
+    orderbookDepthNotional: depth,
+    latencyMs: latency,
+  };
+  agents.slTp = {
+    planBySide: {
+      LONG: edges.LONG?.plan ?? null,
+      SHORT: edges.SHORT?.plan ?? null,
+    },
+    sourceBySide: {
+      LONG: edges.LONG?.outcomeSource ?? null,
+      SHORT: edges.SHORT?.outcomeSource ?? null,
+    },
+    distributionsBySide: {
+      LONG: { mae: edges.LONG?.distMAE ?? null, mfe: edges.LONG?.distMFE ?? null },
+      SHORT: { mae: edges.SHORT?.distMAE ?? null, mfe: edges.SHORT?.distMFE ?? null },
+    },
+    closePercentAtTP1: (CONFIG.TP_BATCHES[0] / (CONFIG.TP_BATCHES[0] + CONFIG.TP_BATCHES[1])) * 100,
+    timeoutCandles: CONFIG.TIMEOUT_BARS,
+  };
+  agents.execution = {
+    ...agents.fill,
+    estimatedSlippagePct: slip,
+    costPctBySide: {
+      LONG: edges.LONG?.cost ?? null,
+      SHORT: edges.SHORT?.cost ?? null,
+    },
+  };
+  agents.decision = {
+    side: meta.side,
+    reason: meta.reason,
+    authorizedForExecution: ["LONG", "SHORT"].includes(meta.side),
+    minEdge: policy.minEdge,
+    gapEdge: policy.gapEdge,
+    edges: meta.edges,
+  };
   const extra = {
     regime,
     agents,
