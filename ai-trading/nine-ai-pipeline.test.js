@@ -5,6 +5,7 @@ const p = require("./nine-ai-pipeline");
 const central = require("./nine-ai-central-decision-engine");
 const { fixture } = require("./test-fixtures.cjs");
 const { CONFIG } = require("./config");
+const { initialProbability } = require("./initial-structure-plan");
 for (const side of ["LONG", "SHORT"])
   test(
     "closed-candle " + side + " reaches the sole authorization boundary",
@@ -73,6 +74,33 @@ test("AI-6 hard-vetoes a spread above the configured maximum before model scorin
   assert.equal(blocked.agents.riskGuardian.status, "VETO");
   assert.equal(blocked.agents.structure, undefined);
 });
+
+test("AI-2 structure bias directionally adjusts AI-3 probability outside EARLY", () => {
+  const market = {
+    fundingRate: 0.0001,
+    openInterestChange: 1,
+    spreadPct: 0.01,
+    deviationAtr: 0.5,
+    liquidationImbalance: 0.3,
+  };
+  const longAligned = initialProbability("BREAKOUT", 0.02, 2, {
+    ...market, side: "LONG", structureBias: "BULLISH",
+  });
+  const longOpposed = initialProbability("BREAKOUT", 0.02, 2, {
+    ...market, side: "LONG", structureBias: "BEARISH",
+  });
+  const shortAligned = initialProbability("BREAKOUT", -0.02, 2, {
+    ...market, side: "SHORT", structureBias: "BEARISH",
+  });
+  const shortOpposed = initialProbability("BREAKOUT", -0.02, 2, {
+    ...market, side: "SHORT", structureBias: "BULLISH",
+  });
+  assert.ok(longAligned > longOpposed);
+  assert.ok(shortAligned > shortOpposed);
+  for (const p of [longAligned, longOpposed, shortAligned, shortOpposed])
+    assert.ok(Number.isFinite(p) && p > 0 && p < 1);
+});
+
 test("EARLY uses the 0.30 edge threshold and neutral AI-3/AI-4 priors", () => {
   const f = { ...fixture(), outcomes: [] };
   const setupKey = "UPTREND_CONTINUATION_LONG";
