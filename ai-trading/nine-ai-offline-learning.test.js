@@ -382,3 +382,55 @@ test("policy scoring optimizes net R per executed trade and penalizes drawdown",
   assert.equal(wait.stabilityScore,null);
   assert.equal(wait.totalNetR,0);
 });
+
+
+test("online calibration recovers when the actual outcome persisted before a calibration write failed", async () => {
+  const { memoryDb } = require("./test-fixtures.cjs");
+  const db = memoryDb();
+  const service = l.createOfflineLearning(db);
+  const calibration = db.collection("nine_ai_online_calibration");
+  const originalUpdate = calibration.updateOne.bind(calibration);
+  let failGlobalOnce = true;
+  calibration.updateOne = async (query, update, options) => {
+    if (failGlobalOnce && query?._id === "GLOBAL") {
+      failGlobalOnce = false;
+      throw new Error("simulated calibration write failure");
+    }
+    return originalUpdate(query, update, options);
+  };
+  const trade = {
+    signalKey: "RECOVERY:1",
+    tradeId: "RECOVERY:1",
+    symbol: "RECOVERYUSDT",
+    side: "LONG",
+    createdAt: 1,
+    actualQuantity: 2,
+    initialRisk: 1,
+    nineAiSetupKey: "UPTREND_CONTINUATION",
+    nineAiPredictionSnapshot: { predictedR: 1 },
+  };
+  const closed = {
+    accountingComplete: true,
+    pnl: 2,
+    grossRealizedPnl: 2,
+    closedAt: 1700000000000,
+  };
+  await assert.rejects(
+    service.recordClosedTrade(trade, closed),
+    /simulated calibration write failure/,
+  );
+  assert.equal(db.collection("nine_ai_actual_outcomes").rows.length, 1);
+  assert.equal(db.collection("nine_ai_online_calibration").rows.length, 0);
+
+  const recovered = await service.recordClosedTrade(trade, closed);
+  assert.equal(recovered.recorded, true);
+  assert.equal(db.collection("nine_ai_actual_outcomes").rows.length, 1);
+  const global = calibration.rows.find((r) => r._id === "GLOBAL");
+  const setup = calibration.rows.find((r) => r._id === "SETUP:UPTREND_CONTINUATION");
+  assert.equal(global.samples, 1);
+  assert.equal(global.meanPredictedR, 1);
+  assert.equal(global.meanRealizedR, 1);
+  assert.equal(setup.samples, 1);
+  assert.equal(setup.meanPredictedR, 1);
+  assert.equal(setup.meanRealizedR, 1);
+});
