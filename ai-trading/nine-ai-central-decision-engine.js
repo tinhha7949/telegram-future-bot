@@ -13,15 +13,15 @@ const {
 const REQUIRED_ROLES = Object.freeze([
   "AI-1 Regime",
   "AI-2 Structure",
-  "AI-3 Continuation",
-  "AI-4 Breakout",
-  "AI-5 Mean Reversion",
-  "AI-6 Flow",
-  "AI-7 Outcome",
-  "AI-8 Fill/Slippage",
-  "AI-9 Meta/Decision",
+  "AI-3 Probability",
+  "AI-4 Expected Return",
+  "AI-5 Confidence",
+  "AI-6 Risk Guardian",
+  "AI-7 SL/TP Optimizer",
+  "AI-8 Execution",
+  "AI-9 Decision",
 ]);
-const MIN_CANDLES = CONFIG.HISTORY_FETCH_CANDLES;
+const MIN_CANDLES = CONFIG.N_CANDLES;
 
 function wait(decision, reason) {
   return {
@@ -58,6 +58,17 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
   if (!decision.agents || !decision.regime || !decision.edges) {
     return wait(decision, "CANONICAL_AGENT_OUTPUT_INCOMPLETE");
   }
+  const requiredOutputs = [
+    "regime", "structure", "probability", "expectedReturn", "confidence",
+    "riskGuardian", "slTp", "execution", "decision",
+  ];
+  if (requiredOutputs.some((name) =>
+    !decision.agents[name] || typeof decision.agents[name] !== "object"
+  )) return wait(decision, "CANONICAL_AGENT_OUTPUT_INCOMPLETE");
+  if (decision.agents.riskGuardian.vetoed !== false)
+    return wait(decision, "AI6_RISK_GUARDIAN_VETO");
+  if (String(decision.agents.decision.side || "").toUpperCase() !== side)
+    return wait(decision, "AI9_DECISION_OUTPUT_MISMATCH");
   if (
     symbol &&
     String(decision.symbol || "").toUpperCase() !== String(symbol).toUpperCase()
@@ -102,6 +113,14 @@ function finalizeDecision(decision, { symbol, scannedAt = Date.now() } = {}) {
     return wait(decision, "STALE_OR_INVALID_EXECUTION_SNAPSHOT");
   }
   if (!decision.decisionPolicy) return wait(decision, "MISSING_META_POLICY");
+  for (const direction of ["LONG", "SHORT"]) {
+    const edge = decision.edges[direction];
+    if (!edge || !Number.isFinite(Number(edge.p)) ||
+        !Number.isFinite(Number(edge.expectedR)) ||
+        Number(decision.agents.probability[direction]) !== Number(edge.p) ||
+        Number(decision.agents.expectedReturn[direction]) !== Number(edge.expectedR))
+      return wait(decision, "AI3_AI4_OUTPUT_MISMATCH");
+  }
   const timed = {
     ...decision,
     edges: Object.fromEntries(
