@@ -62,4 +62,9 @@ test("broker signal gate requires explicit central AI-9 authorization", () => {
   const approved = finalizeDecision(raw, { symbol: f.symbol, scannedAt: f.market.now + 1 });
   assert.equal(isNineAiAuthorizedSignal(approved), true);
   assert.equal(isNineAiAuthorizedSignal({ ...approved, centralDecisionEngine: undefined }), false);
+  assert.equal(isNineAiAuthorizedSignal({ ...approved, symbol: "OTHERUSDT" }), false);
+  assert.equal(finalizeDecision(
+    { ...approved, symbol: "OTHERUSDT" },
+    { symbol: "OTHERUSDT", scannedAt: f.market.now + 2 },
+  ).reason, "CENTRAL_AUTHORIZATION_BINDING_MISMATCH");
 });
