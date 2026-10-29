@@ -41,6 +41,25 @@ function vetoMarketSnapshot(market = {}, now = Date.now(), config = CONFIG, barM
   if (latencyMs === null || latencyMs < 0)
     return { ok: false, reason: "EXECUTION_COST_INPUTS_MISSING_LATENCY" };
 
+  const liquidationImbalance = finite(market.liquidationImbalance);
+  if (liquidationImbalance === null)
+    return { ok: false, reason: "FLOW_UNAVAILABLE_OR_UNCERTAIN" };
+
+  const roundTripFeePct = finite(market.roundTripFeePct);
+  if (roundTripFeePct === null)
+    return { ok: false, reason: "EXECUTION_COST_INPUTS_MISSING_ROUND_TRIP_FEE" };
+  if (roundTripFeePct < 0)
+    return { ok: false, reason: "EXECUTION_COST_INPUTS_INVALID_ROUND_TRIP_FEE" };
+
+  for (const side of ["LONG", "SHORT"]) {
+    if (finite(market.expectedFundingCostPctBySide?.[side]) === null)
+      return { ok: false, reason: "EXECUTION_COST_INPUTS_MISSING_" + side + "_FUNDING_COST" };
+  }
+
+  const markPrice = finite(market.markPrice);
+  if (markPrice === null || markPrice <= 0)
+    return { ok: false, reason: "EXECUTION_COST_INPUTS_MISSING_MARK_PRICE" };
+
   return {
     ok: true,
     reason: "AI6_MARKET_VETO_PASSED",
@@ -49,6 +68,9 @@ function vetoMarketSnapshot(market = {}, now = Date.now(), config = CONFIG, barM
     spreadPct,
     depthNotional,
     openInterestChange,
+    liquidationImbalance,
+    roundTripFeePct,
+    markPrice,
     latencyMs,
   };
 }
