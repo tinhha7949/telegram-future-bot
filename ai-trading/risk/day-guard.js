@@ -124,8 +124,10 @@ class RiskGuard {
         bucket = await this.days.findOne({ _id: dayKey });
       }
       const capacity = bucket?.startingEquity * this.config.MAX_DAILY_RISK;
-      if (!(Number.isFinite(capacity) && capacity > 0))
+      if (!(Number.isFinite(capacity) && capacity > 0)) {
+        await discardUnchargedReservation();
         return fail("DAILY_RISK_STATE_UNCERTAIN");
+      }
       if ((Number(bucket.usedTrades) || 0) >= this.config.MAX_TRADES_PER_DAY) {
         try { await this.alert("MAX TRADES PER DAY REACHED: new entries disabled until next UTC day"); }
         catch (error) { console.error("RISK ALERT FAILED", error.message); }
