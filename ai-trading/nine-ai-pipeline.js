@@ -143,6 +143,7 @@ function validLabels(outcomes, symbol, setupKey, side, now) {
     if (
       o?.source !== "REALIZED_CLOSED_TRADE" ||
       o.labeled !== true ||
+      o.accountingSchemaVersion !== 2 ||
       o.setupKey !== setupKey ||
       // Never mix adverse/favorable excursion distributions across direction.
       // Cross-symbol pooling is permitted only for the identical regime/setup/side.
@@ -244,7 +245,7 @@ function analyzeNineAI({
   const pullbackShort = prev.close > before.close || prev.high > before.high;
   const continuationSide = !fundingHot
     ? regime.regime === "UPTREND" &&
-      (!((phase === "EARLY")) || structureBias === "BULLISH") &&
+      (phase !== "EARLY" || structureBias === "BULLISH") &&
       pullbackLong &&
       last.close > prev.high &&
       last.close > last.open
