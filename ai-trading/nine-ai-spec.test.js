@@ -166,9 +166,13 @@ test("AI-9 selects setup by its net edge, never a fixed role priority", () => {
   const f = fixture(),
     d = analyzeNineAI(f);
   d.agents.structure.structure_bias = "BEARISH";
-  d.agents.flow = { confirmation: "NEUTRAL", confirmationSide: null };
+  d.agents.riskGuardian = {
+    ...d.agents.riskGuardian,
+    marketVeto: "BLOCKED",
+    reason: "FLOW_UNAVAILABLE_OR_UNCERTAIN",
+  };
   assert.equal(applyPolicy(d, d.decisionPolicy).side, "WAIT");
-  d.agents.flow = analyzeNineAI(f).agents.flow;
+  d.agents.riskGuardian = analyzeNineAI(f).agents.riskGuardian;
   assert.equal(applyPolicy(d, d.decisionPolicy).side, "LONG");
 });
 test("stale data increases uncertainty without a hidden five-minute cutoff", () => {
