@@ -252,7 +252,7 @@ async function testExpiredWaitRowsArePrunedBelowCapacityThreshold() {
               assert.deepStrictEqual(pipeline[0].$match, {
                 outcomeStatus: "EVALUATED", side: "WAIT", actualTrade: { $ne: true }
               });
-              return [{ _id: "expired-wait", _retentionDate: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000) }];
+              return [{ _id: "expired-wait", _retentionDate: new Date(Date.now() - (retention.DECISION_RETENTION_DAYS + 1) * 24 * 60 * 60 * 1000) }];
             }
           };
         },
