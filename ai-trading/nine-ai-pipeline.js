@@ -440,6 +440,10 @@ function analyzeNineAI({
       fundingHot: false,
       spreadPct: marketVeto.spreadPct,
       depthNotional: marketVeto.depthNotional,
+      latencyMs: marketVeto.latencyMs,
+      roundTripFeePct: marketVeto.roundTripFeePct,
+      fundingCostPctBySide: marketVeto.fundingCostPctBySide,
+      markPrice: marketVeto.markPrice,
       maxSpreadPct: CONFIG.MAX_SPREAD_PCT,
     },
     structure: {
