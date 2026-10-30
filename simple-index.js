@@ -263,11 +263,29 @@ async function main() {
       const live=await positions(), liveSet=new Set(live.map(p=>p.symbol));
       const open=await trades.find({status:"OPEN"}).toArray();
       const tracked=new Set(open.map(t=>t.symbol));
-      for(const symbol of symbols) {
+      const scanStartedAt=Date.now();
+      let scanned=0, eligible=0, skipped=0, errors=0;
+      console.log("SCAN_CYCLE_START", "symbols="+symbols.length, "live="+liveSet.size, "tracked="+tracked.size);
+      for(let i=0;i<symbols.length;i++) {
         if(stopped) break;
-        if(liveSet.has(symbol)||tracked.has(symbol)) continue;
-        try { await tryEntry(symbol); } catch(e) { console.error("SYMBOL_SCAN_ERROR",symbol,e.message); }
+        const symbol=symbols[i];
+        scanned++;
+        if(liveSet.has(symbol)||tracked.has(symbol)) {
+          skipped++;
+        } else {
+          eligible++;
+          try { await tryEntry(symbol); }
+          catch(e) { errors++; console.error("SYMBOL_SCAN_ERROR",symbol,e.message); }
+        }
+        if(scanned%10===0||scanned===symbols.length) {
+          console.log("SCAN_PROGRESS", scanned+"/"+symbols.length,
+            "eligible="+eligible, "skipped="+skipped, "errors="+errors,
+            "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
+        }
       }
+      console.log("SCAN_CYCLE_COMPLETE", "scanned="+scanned+"/"+symbols.length,
+        "eligible="+eligible, "skipped="+skipped, "errors="+errors,
+        "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
     } catch(e) { console.error("CYCLE_ERROR",e.stack||e.message); }
     finally { busy=false; }
   }
