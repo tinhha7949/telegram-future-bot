@@ -80,6 +80,7 @@ async function main() {
     for(const t of open) {
       const p=liveMap.get(t.symbol);
       if(!p) {
+        try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("CLOSED_POSITION_ALGO_CLEANUP_WARN",t.symbol,e.message); }
         await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"CLOSED_EXTERNAL_OR_TPSL",closedAt:new Date(),closeReason:"POSITION_NOT_ON_EXCHANGE"}});
         await telegram("POSITION CLOSED "+t.symbol+"; exchange no longer reports an open position.");
         continue;
