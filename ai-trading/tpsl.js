@@ -2,7 +2,8 @@
 function buildProtection({side,entryPrice,atr,config,priceTick}) {
   if (!['LONG','SHORT'].includes(side) || !(entryPrice>0) || !(atr>0)) throw new Error('INVALID_PROTECTION_INPUT');
   const distance=Math.min(entryPrice*config.SL_MAX_PCT/100,Math.max(entryPrice*config.SL_MIN_PCT/100,atr*config.SL_ATR_MULTIPLIER));
-  const round=x=>priceTick>0?Math.round(x/priceTick)*priceTick:x;
+  const digits=priceTick>0?(String(priceTick).split('.')[1]||'').length:8;
+  const round=x=>priceTick>0?Number((Math.round(x/priceTick)*priceTick).toFixed(digits)):x;
   const sl=round(side==='LONG'?entryPrice-distance:entryPrice+distance);
   const tp=round(side==='LONG'?entryPrice+distance*config.REWARD_RISK:entryPrice-distance*config.REWARD_RISK);
   if (!(sl>0&&tp>0) || (side==='LONG'?!(sl<entryPrice&&tp>entryPrice):!(sl>entryPrice&&tp<entryPrice))) throw new Error('INVALID_PROTECTION_LEVELS');
