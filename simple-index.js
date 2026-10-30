@@ -8,7 +8,7 @@ const { buildProtection, splitQuantity, placeProtection } = require("./ai-tradin
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
-const RSI_HISTORY_CANDLES = 500;
+const RSI_HISTORY_CANDLES = 1000
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function floorStep(n, step) { if (!(step > 0)) return n; return Math.floor((n + step*1e-10)/step)*step; }
 function precision(step) { const s=String(step); return s.includes(".") ? s.length-s.indexOf(".")-1 : 0; }
@@ -93,6 +93,7 @@ async function main() {
     const pendingResults=await trades.find({resultNotificationPending:true,$or:[{resultNotificationNextAttemptAt:{$exists:false}},{resultNotificationNextAttemptAt:{$lte:now}}]}).toArray();
     for(const t of pendingResults) {
       try {
+        await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{resultNotificationLastAttemptAt:new Date(),resultNotificationNextAttemptAt:new Date(Date.now()+60000)},$inc:{resultNotificationAttempts:1}});
         let net=Number(t.realizedNetPnl), wallet=Number(t.walletBalanceAtClose);
         if(!Number.isFinite(net)) {
           const startTime=new Date(t.openedAt).getTime(), endTime=new Date(t.closedAt||Date.now()).getTime();
@@ -104,7 +105,6 @@ async function main() {
           if(!Number.isFinite(net)||!Number.isFinite(wallet)) continue;
           await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{realizedNetPnl:net,pnl:net,walletBalanceAtClose:wallet,pnlCalculatedAt:new Date()}});
         }
-        await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{resultNotificationLastAttemptAt:new Date(),resultNotificationNextAttemptAt:new Date(Date.now()+60000)},$inc:{resultNotificationAttempts:1}});
         const sent=await telegramResult((net>0?"WIN":net<0?"LOSS":"BREAKEVEN")+" "+t.side+" "+t.symbol+"\nNet PnL: "+net.toFixed(8)+" USDT\nWallet balance: "+(Number.isFinite(wallet)?wallet.toFixed(8):"N/A")+" USDT\nTrade ID: "+String(t._id));
         if(sent) await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{resultNotificationPending:false,resultNotifiedAt:new Date()},$unset:{resultNotificationNextAttemptAt:""}});
       } catch(e) { console.error("TRADE_RESULT_NOTIFICATION_FAILED",t.symbol,e.message); }
@@ -113,7 +113,7 @@ async function main() {
   async function notifyPendingEntries() {
     const now=new Date(), pending=await trades.find({status:"OPEN",entryNotificationPending:true,$or:[{entryNotificationNextAttemptAt:{$exists:false}},{entryNotificationNextAttemptAt:{$lte:now}}]}).toArray();
     for(const t of pending) {
-      const msg="ENTRY "+t.side+" "+t.symbol+"\nEntry: "+t.entryPrice+"\nSL: "+t.sl+"\nTP1: "+t.tp1+"\nTP2: "+t.tp2+"\nRSI"+C.RSI_PERIOD+" ("+C.ENTRY_TIMEFRAME+", closed candle): "+Number(t.rsi).toFixed(2)+"\nTrend "+C.TREND_TIMEFRAME+": "+t.trendSide+"\nTrade ID: "+String(t._id);
+      const msg="ENTRY "+t.side+" "+t.symbol+"\nEntry: "+t.entryPrice+"\nSL: "+t.sl+"\nTP1: "+t.tp1+"\nTP2: "+t.tp2+"\nRSI"+C.RSI_PERIOD+" ("+C.ENTRY_TIMEFRAME+", closed candle "+new Date(t.signalAt).toISOString()+"): "+Number(t.rsi).toFixed(2)+"\nTrend "+C.TREND_TIMEFRAME+": "+t.trendSide+"\nTrade ID: "+String(t._id);
       await trades.updateOne({_id:t._id,entryNotificationPending:true},{$set:{entryNotificationLastAttemptAt:new Date(),entryNotificationNextAttemptAt:new Date(Date.now()+60000)},$inc:{entryNotificationAttempts:1}});
       const sent=await telegramEntry(msg);
       if(sent)await trades.updateOne({_id:t._id,entryNotificationPending:true},{$set:{entryNotificationPending:false,entryNotifiedAt:new Date()},$unset:{entryNotificationNextAttemptAt:""}});
@@ -131,7 +131,7 @@ async function main() {
           try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("RECOVERY_ALGO_CANCEL_WARN",t.symbol,e.message); }
           const recovered=buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atr:Number(t.atr),config:C,priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
           await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl||recovered.sl,tp1:t.tp1||recovered.tp1,tp2:t.tp2||recovered.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.stepSize||0,minQty:rules.get(t.symbol)?.minQty||0,config:C});
-          await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true}});
+          await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true,entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0)}});
           
         } catch(e) { console.error("PENDING_POSITION_PROTECTION_RECOVERY_FAILED",t.symbol,e.message); }
       } else if(Date.now()-new Date(t.createdAt||t.openedAt).getTime()>60000) {
@@ -179,7 +179,7 @@ async function main() {
       binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:C.TREND_EMA_PERIOD+3}),
       binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD*10,C.ATR_PERIOD+1)})
     ]);
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),config:C});
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),config:C,now:Date.now()+binance.timeOffsetMs});
     if(!signal.side) return;
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
