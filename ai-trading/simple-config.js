@@ -21,7 +21,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   const required = [
     "QUOTE_ASSET", "MAX_SYMBOLS", "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT",
     "TREND_TIMEFRAME", "TREND_EMA_PERIOD", "ENTRY_TIMEFRAME", "RSI_PERIOD", "RSI_LONG_MAX", "RSI_SHORT_MIN",
-    "ATR_PERIOD", "SL_ATR_MULTIPLIER", "SL_MIN_PCT", "SL_MAX_PCT", "REWARD_RISK", "MAX_HOLD_HOURS",
+    "ATR_PERIOD", "SL_ATR_MULTIPLIER", "SL_MIN_PCT", "SL_MAX_PCT", "REWARD_RISK", "TP1_REWARD_RISK", "TP2_REWARD_RISK", "TP1_CLOSE_PERCENT", "TP2_CLOSE_PERCENT", "MAX_HOLD_HOURS",
     "MAX_OPEN_POSITIONS", "MAX_TRADES_PER_DAY", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT", "LEVERAGE",
     "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS", "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS",
     "MONGO_DB_NAME", "MONGO_TRADES_COLLECTION", "MONGO_STATE_COLLECTION", "DRY_RUN"
@@ -37,6 +37,9 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
       !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100 ||
       out.RSI_LONG_MAX >= out.RSI_SHORT_MIN || out.RSI_LONG_MAX >= 50 || out.RSI_SHORT_MIN <= 50 ||
       out.SL_MIN_PCT > out.SL_MAX_PCT || out.REWARD_RISK < 1 ||
+      out.TP1_REWARD_RISK <= 0 || out.TP2_REWARD_RISK <= out.TP1_REWARD_RISK ||
+      out.TP1_CLOSE_PERCENT <= 0 || out.TP2_CLOSE_PERCENT <= 0 || out.TP1_CLOSE_PERCENT >= 100 || out.TP2_CLOSE_PERCENT >= 100 ||
+      out.TP1_CLOSE_PERCENT + out.TP2_CLOSE_PERCENT !== 100 ||
       out.RISK_PER_TRADE_PCT >= 1 || out.MAX_POSITION_BALANCE_PCT > 1 ||
       !Number.isInteger(out.MAX_TRADES_PER_DAY) || !Number.isInteger(out.MAX_OPEN_POSITIONS) ||
       !Number.isInteger(out.TREND_EMA_PERIOD) || !Number.isInteger(out.RSI_PERIOD) ||
