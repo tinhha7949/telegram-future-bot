@@ -50,7 +50,7 @@ test("config rejects invalid RSI trigger thresholds", () => {
   const file = path.join(dir, "CONFIG.yaml");
   try {
     fs.writeFileSync(file, source.replace("RSI_LONG_TRIGGER: 70", "RSI_LONG_TRIGGER: 30"));
-    assert.throws(() => loadSimpleConfig(file), /SIMPLE_CONFIG_INVARIANT:RSI_LONG_TRIGGER/);
+    assert.throws(() => loadSimpleConfig(file), /SIMPLE_CONFIG_INVARIANT:RSI_LONG_RANGE/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
