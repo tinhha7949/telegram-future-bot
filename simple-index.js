@@ -62,6 +62,19 @@ async function main() {
   async function account() { return binance.signed("GET","/fapi/v2/account"); }
   async function reconcileAndManage() {
     const live=await positions(), liveMap=new Map(live.map(p=>[p.symbol,p]));
+    const pending=await trades.find({status:"ENTRY_PENDING"}).toArray();
+    for(const t of pending) {
+      const p=liveMap.get(t.symbol);
+      if(p) {
+        try {
+          await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl,tp:t.tp});
+          await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true}});
+          await telegram("RECOVERED POSITION "+t.side+" "+t.symbol+"; exchange protection restored.");
+        } catch(e) { console.error("PENDING_POSITION_PROTECTION_RECOVERY_FAILED",t.symbol,e.message); }
+      } else if(Date.now()-new Date(t.createdAt||t.openedAt).getTime()>60000) {
+        await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"ENTRY_FAILED",closedAt:new Date(),error:"NO_EXCHANGE_POSITION_AFTER_RECOVERY_WINDOW"}});
+      }
+    }
     const open=await trades.find({status:"OPEN"}).toArray();
     for(const t of open) {
       const p=liveMap.get(t.symbol);
@@ -132,6 +145,7 @@ async function main() {
         console.error("TPSL_PLACEMENT_FAILED_FORCE_CLOSE",symbol,e.message);
         const pos=(await positions()).find(p=>p.symbol===symbol);
         if(pos) await binance.signed("POST","/fapi/v1/order",{symbol,side:Number(pos.positionAmt)>0?"SELL":"BUY",type:"MARKET",quantity:Math.abs(Number(pos.positionAmt)).toFixed(precision(r.stepSize)),reduceOnly:"true",newOrderRespType:"RESULT"});
+        try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol}); } catch(cancelError) { console.error("TPSL_CLEANUP_WARN",symbol,cancelError.message); }
         await trades.updateOne({_id:inserted.insertedId},{$set:{status:"PROTECTION_FAILED_CLOSED",closedAt:new Date(),error:e.message}});
         throw e;
       }
