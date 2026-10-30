@@ -51,6 +51,16 @@ function closed(candles, now = Date.now()) {
     .filter(c => [c.high, c.low, c.close, c.closeTime].every(Number.isFinite));
 }
 
+function isLongRsi(value, config) {
+  return (value >= config.RSI_LONG_MIN && value <= config.RSI_LONG_MAX) ||
+    (value >= config.RSI_LONG_EXTREME_MIN && value <= config.RSI_LONG_EXTREME_MAX);
+}
+
+function isShortRsi(value, config) {
+  return (value >= config.RSI_SHORT_MIN && value <= config.RSI_SHORT_MAX) ||
+    (value >= config.RSI_SHORT_EXTREME_MIN && value <= config.RSI_SHORT_EXTREME_MAX);
+}
+
 function coreLogic({ trendCandles, entryCandles, config, now = Date.now() }) {
   const trend = closed(trendCandles, now), entry = closed(entryCandles, now);
   if (trend.length < config.TREND_EMA_PERIOD ||
@@ -65,10 +75,10 @@ function coreLogic({ trendCandles, entryCandles, config, now = Date.now() }) {
     return { side: null, reason: "INVALID_INDICATORS" };
   }
   const trendSide = price > trendEma ? "UP" : price < trendEma ? "DOWN" : "NEUTRAL";
-  if (trendSide === "UP" && valueRsi <= config.RSI_LONG_MAX) {
+  if (trendSide === "UP" && isLongRsi(valueRsi, config)) {
     return { side: "LONG", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, signalAt: entry.at(-1).closeTime };
   }
-  if (trendSide === "DOWN" && valueRsi >= config.RSI_SHORT_MIN) {
+  if (trendSide === "DOWN" && isShortRsi(valueRsi, config)) {
     return { side: "SHORT", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, signalAt: entry.at(-1).closeTime };
   }
   return {
@@ -77,4 +87,4 @@ function coreLogic({ trendCandles, entryCandles, config, now = Date.now() }) {
   };
 }
 
-module.exports = { ema, rsi, atr, closed, coreLogic };
+module.exports = { ema, rsi, atr, closed, isLongRsi, isShortRsi, coreLogic };
