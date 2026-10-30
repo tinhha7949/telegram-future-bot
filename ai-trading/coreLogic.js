@@ -52,13 +52,11 @@ function closed(candles, now = Date.now()) {
 }
 
 function isLongRsi(value, config) {
-  return (value >= config.RSI_LONG_MIN && value <= config.RSI_LONG_MAX) ||
-    (value >= config.RSI_LONG_EXTREME_MIN && value <= config.RSI_LONG_EXTREME_MAX);
+  return Number.isFinite(value) && value >= config.RSI_LONG_TRIGGER;
 }
 
 function isShortRsi(value, config) {
-  return (value >= config.RSI_SHORT_MIN && value <= config.RSI_SHORT_MAX) ||
-    (value >= config.RSI_SHORT_EXTREME_MIN && value <= config.RSI_SHORT_EXTREME_MAX);
+  return Number.isFinite(value) && value <= config.RSI_SHORT_TRIGGER;
 }
 
 function coreLogic({ trendCandles, entryCandles, config, now = Date.now() }) {

@@ -33,24 +33,22 @@ test("RSI reaches 100 for monotonic rise and 0 for monotonic fall", () => {
 
 test("ATR is positive for valid candles", () => assert.ok(atr(bars(20, 100, 0.1), 14) > 0));
 
-test("RSI entry bands include configured LONG and SHORT ranges only", () => {
-  for (const value of [1, 5, 10, 15, 20]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
-  for (const value of [80, 85, 90, 95, 99]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
-  for (const value of [0, 0.99, 20.01, 50, 79.99, 99.01, 100]) {
-    assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
-    assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
-  }
+test("RSI buys at or above 70 in an uptrend and sells at or below 30 in a downtrend", () => {
+  assert.equal(C.RSI_LONG_TRIGGER, 70);
+  assert.equal(C.RSI_SHORT_TRIGGER, 30);
+  for (const value of [70, 75, 90, 100]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
+  for (const value of [0, 10, 25, 30]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
+  for (const value of [0, 30, 69.99]) assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
+  for (const value of [30.01, 50, 70, 100]) assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
 });
 
-test("config accepts adjacent RSI bands and reports actual overlapping bands", () => {
-  assert.equal(C.RSI_LONG_EXTREME_MAX, C.RSI_LONG_MIN);
-  assert.equal(C.RSI_SHORT_MAX, C.RSI_SHORT_EXTREME_MIN);
+test("config rejects invalid RSI trigger thresholds", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "CONFIG.yaml"), "utf8");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "simple-config-"));
   const file = path.join(dir, "CONFIG.yaml");
   try {
-    fs.writeFileSync(file, source.replace("RSI_LONG_MIN: 10", "RSI_LONG_MIN: 9"));
-    assert.throws(() => loadSimpleConfig(file), /SIMPLE_CONFIG_INVARIANT:RSI_LONG_BANDS_OVERLAP/);
+    fs.writeFileSync(file, source.replace("RSI_LONG_TRIGGER: 70", "RSI_LONG_TRIGGER: 30"));
+    assert.throws(() => loadSimpleConfig(file), /SIMPLE_CONFIG_INVARIANT:RSI_LONG_TRIGGER/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
