@@ -69,12 +69,12 @@ async function main() {
         await telegram("POSITION CLOSED "+t.symbol+"; exchange no longer reports an open position.");
         continue;
       }
-      if(Date.now()-new Date(t.openedAt).getTime()>=C.MAX_HOLD_HOURS*3600000) {
+      if(Date.now()-new Date(t.openedAt).getTime()>=C.MAX_HOLD_HOURS*3600000 && (!t.closeRequestedAt || Date.now()-new Date(t.closeRequestedAt).getTime()>=30000)) {
         const amt=Number(p.positionAmt), side=amt>0?"SELL":"BUY", qty=Math.abs(amt);
         await binance.signed("DELETE","/fapi/v1/allOpenOrders",{symbol:t.symbol});
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("ALGO_CANCEL_WARN",t.symbol,e.message); }
         await binance.signed("POST","/fapi/v1/order",{symbol:t.symbol,side,type:"MARKET",quantity:qty.toFixed(precision(rules.get(t.symbol)?.stepSize||0.001)),reduceOnly:"true",newOrderRespType:"RESULT"});
-        await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"TIME_EXIT_SENT",closeRequestedAt:new Date(),closeReason:"MAX_HOLD_24H"}});
+        await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{closeRequestedAt:new Date(),closeReason:"MAX_HOLD_24H"}});
         await telegram("TIME EXIT SENT "+t.symbol+" after "+C.MAX_HOLD_HOURS+"h; verifying exchange closure.");
       }
     }
