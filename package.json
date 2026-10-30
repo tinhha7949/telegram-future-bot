@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "mongodb": "^6.3.0",
-    "ws": "^8.18.0",
     "dotenv": "^16.4.7"
   },
   "engines": {
