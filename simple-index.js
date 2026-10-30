@@ -155,7 +155,7 @@ async function main() {
       console.log("ENTRY_OK",symbol,signal.side,"qty="+qty,"sl="+actual.sl,"tp="+actual.tp);
     } catch(e) {
       const current=await trades.findOne({_id:inserted.insertedId});
-      if(current?.status==="ENTRY_PENDING") await trades.updateOne({_id:inserted.insertedId},{$set:{status:"ENTRY_FAILED",closedAt:new Date(),error:e.message}});
+      if(current?.status==="ENTRY_PENDING") await trades.updateOne({_id:inserted.insertedId},{$set:{lastError:e.message,lastAttemptAt:new Date()}});
       throw e;
     }
   }
