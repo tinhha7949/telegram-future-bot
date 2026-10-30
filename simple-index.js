@@ -56,10 +56,10 @@ async function main() {
   const rules=new Map();
   for(const s of info.symbols||[]) {
     const f=Object.fromEntries((s.filters||[]).map(x=>[x.filterType,x]));
-    const minFilter=f.NOTIONAL||f.MIN_NOTIONAL;
-    const minNotional=minFilter
-      ? Number(f.NOTIONAL ? (minFilter.applyMinToMarket===false?0:minFilter.minNotional) : (minFilter.applyToMarket===false?0:minFilter.notional))
-      : 0;
+    const marketMinimums=[];
+    if(f.MIN_NOTIONAL&&f.MIN_NOTIONAL.applyToMarket!==false) marketMinimums.push(Number(f.MIN_NOTIONAL.notional));
+    if(f.NOTIONAL&&f.NOTIONAL.applyMinToMarket!==false) marketMinimums.push(Number(f.NOTIONAL.minNotional));
+    const minNotional=Math.max(0,...marketMinimums.filter(n=>Number.isFinite(n)&&n>0));
     rules.set(s.symbol,{status:s.status,contractType:s.contractType,quoteAsset:s.quoteAsset,
       tickSize:Number(f.PRICE_FILTER?.tickSize||0.00000001),stepSize:Number(f.LOT_SIZE?.stepSize||0),
       minQty:Number(f.LOT_SIZE?.minQty||0),minNotional:Number.isFinite(minNotional)&&minNotional>0?minNotional:0});
