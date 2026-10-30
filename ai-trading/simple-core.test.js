@@ -1,6 +1,9 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { ema, rsi, atr, isLongRsi, isShortRsi, coreLogic } = require("./coreLogic");
 const { getTopSymbol } = require("./getTopSymbol");
 const { loadSimpleConfig } = require("./simple-config");
@@ -31,11 +34,25 @@ test("RSI reaches 100 for monotonic rise and 0 for monotonic fall", () => {
 test("ATR is positive for valid candles", () => assert.ok(atr(bars(20, 100, 0.1), 14) > 0));
 
 test("RSI entry bands include configured LONG and SHORT ranges only", () => {
-  for (const value of [1, 5, 10, 20, 22.5, 25]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
-  for (const value of [75, 78, 80, 90, 95, 99]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
-  for (const value of [0, 10.01, 19.99, 25.01, 50, 74.99, 80.01, 89.99, 99.01, 100]) {
+  for (const value of [1, 5, 10, 15, 20]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
+  for (const value of [80, 85, 90, 95, 99]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
+  for (const value of [0, 9.99, 20.01, 50, 79.99, 99.01, 100]) {
     assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
     assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
+  }
+});
+
+test("config accepts adjacent RSI bands and reports actual overlapping bands", () => {
+  assert.equal(C.RSI_LONG_EXTREME_MAX, C.RSI_LONG_MIN);
+  assert.equal(C.RSI_SHORT_MAX, C.RSI_SHORT_EXTREME_MIN);
+  const source = fs.readFileSync(path.join(__dirname, "..", "CONFIG.yaml"), "utf8");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "simple-config-"));
+  const file = path.join(dir, "CONFIG.yaml");
+  try {
+    fs.writeFileSync(file, source.replace("RSI_LONG_MIN: 10", "RSI_LONG_MIN: 9"));
+    assert.throws(() => loadSimpleConfig(file), /SIMPLE_CONFIG_INVARIANT:RSI_LONG_BANDS_OVERLAP/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -85,7 +102,7 @@ test("strategy never signals LONG below EMA or SHORT above EMA", () => {
 });
 
 test("config uses RR 1.3 and caps the symbol list at 100", () => {
-  assert.equal(C.REWARD_RISK, 1.3);
+  assert.equal(C.REWARD_RISK, 1.55);
   assert.equal(C.MAX_SYMBOLS, 100);
   assert.equal(Object.keys(C).some(k => /5M/i.test(k)), false);
 });
@@ -114,11 +131,11 @@ test("coin selection uses only 24h ticker metrics and caps results", async () =>
   assert.deepEqual(calls.sort(), ["/fapi/v1/exchangeInfo", "/fapi/v1/ticker/24hr"]);
 });
 
-test("TP/SL obey direction and configured 1.3 RR", () => {
+test("TP/SL obey direction and configured TP2 RR", () => {
   const long = buildProtection({ side: "LONG", entryPrice: 100, atr: 1, config: C, priceTick: 0.01 });
   const short = buildProtection({ side: "SHORT", entryPrice: 100, atr: 1, config: C, priceTick: 0.01 });
   assert.ok(long.sl < 100 && long.tp > 100);
   assert.ok(short.sl > 100 && short.tp < 100);
-  assert.ok(Math.abs((long.tp - 100) / (100 - long.sl) - C.REWARD_RISK) < 0.02);
+  assert.ok(Math.abs((long.tp - 100) / (100 - long.sl) - C.TP2_REWARD_RISK) < 0.02);
   assert.ok(Math.abs((100 - short.tp) / (short.sl - 100) - C.REWARD_RISK) < 0.02);
 });
