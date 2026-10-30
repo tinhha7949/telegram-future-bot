@@ -33,13 +33,13 @@ test("RSI reaches 100 for monotonic rise and 0 for monotonic fall", () => {
 
 test("ATR is positive for valid candles", () => assert.ok(atr(bars(20, 100, 0.1), 14) > 0));
 
-test("RSI buys at or above 70 in an uptrend and sells at or below 30 in a downtrend", () => {
+test("RSI only triggers at the 70/30 touch zone and rejects overshoots", () => {
   assert.equal(C.RSI_LONG_TRIGGER, 70);
   assert.equal(C.RSI_SHORT_TRIGGER, 30);
-  for (const value of [70, 75, 90, 100]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
-  for (const value of [0, 10, 25, 30]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
-  for (const value of [0, 30, 69.99]) assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
-  for (const value of [30.01, 50, 70, 100]) assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
+  for (const value of [69.99, 70]) assert.equal(isLongRsi(value, C), true, "LONG touch RSI " + value);
+  for (const value of [70.0001, 70.01, 75, 90, 100, 69.98, 0]) assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
+  for (const value of [30, 30.01]) assert.equal(isShortRsi(value, C), true, "SHORT touch RSI " + value);
+  for (const value of [29.9999, 29.99, 25, 10, 0, 30.02, 70]) assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
 });
 
 test("config rejects invalid RSI trigger thresholds", () => {
