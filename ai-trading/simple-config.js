@@ -35,9 +35,9 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   }
   if (out.TREND_TIMEFRAME !== "4h" || out.ENTRY_TIMEFRAME !== "1m" ||
       !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100 ||
-      out.RSI_LONG_EXTREME_MIN >= out.RSI_LONG_EXTREME_MAX || out.RSI_LONG_EXTREME_MAX >= out.RSI_LONG_MIN || out.RSI_LONG_MIN >= out.RSI_LONG_MAX ||
+      out.RSI_LONG_EXTREME_MIN >= out.RSI_LONG_EXTREME_MAX || out.RSI_LONG_EXTREME_MAX > out.RSI_LONG_MIN || out.RSI_LONG_MIN >= out.RSI_LONG_MAX ||
       out.RSI_LONG_MAX >= 50 || out.RSI_SHORT_MIN <= 50 || out.RSI_SHORT_MIN >= out.RSI_SHORT_MAX ||
-      out.RSI_SHORT_MAX >= out.RSI_SHORT_EXTREME_MIN || out.RSI_SHORT_EXTREME_MIN >= out.RSI_SHORT_EXTREME_MAX || out.RSI_SHORT_EXTREME_MAX >= 100 ||
+      out.RSI_SHORT_MAX > out.RSI_SHORT_EXTREME_MIN || out.RSI_SHORT_EXTREME_MIN >= out.RSI_SHORT_EXTREME_MAX || out.RSI_SHORT_EXTREME_MAX >= 100 ||
       out.SL_MIN_PCT > out.SL_MAX_PCT || out.REWARD_RISK < 1 ||
       out.TP1_REWARD_RISK <= 0 || out.TP2_REWARD_RISK <= out.TP1_REWARD_RISK ||
       out.TP1_CLOSE_PERCENT <= 0 || out.TP2_CLOSE_PERCENT <= 0 || out.TP1_CLOSE_PERCENT >= 100 || out.TP2_CLOSE_PERCENT >= 100 ||
