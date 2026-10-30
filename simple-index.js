@@ -4,17 +4,23 @@ const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");
 const { coreLogic } = require("./ai-trading/coreLogic");
 const { getTopSymbol } = require("./ai-trading/getTopSymbol");
-const { buildProtection, placeProtection } = require("./ai-trading/tpsl");
+const { buildProtection, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function floorStep(n, step) { if (!(step > 0)) return n; return Math.floor((n + step*1e-10)/step)*step; }
 function precision(step) { const s=String(step); return s.includes(".") ? s.length-s.indexOf(".")-1 : 0; }
-async function telegram(text) {
-  const token=process.env.BOT_TOKEN, chat=process.env.CHAT_ID;
-  if (!token || !chat) return;
-  try { await fetch("https://api.telegram.org/bot"+token+"/sendMessage",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chat,text,disable_web_page_preview:true}),signal:AbortSignal.timeout(8000)}); } catch(e) { console.error("TELEGRAM_SEND_FAILED",e.message); }
+async function sendTelegram(token,chat,text,label){
+  if(!token||!chat){console.error(label+"_NOT_CONFIGURED");return false;}
+  try{
+    const res=await fetch("https://api.telegram.org/bot"+token+"/sendMessage",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:chat,text,disable_web_page_preview:true}),signal:AbortSignal.timeout(8000)});
+    const data=await res.json();
+    if(!res.ok||!data.ok)throw Error(data.description||("HTTP_"+res.status));
+    return true;
+  }catch(e){console.error(label+"_FAILED",e.message);return false;}
 }
+const telegramEntry=text=>sendTelegram(process.env.BOT_TOKEN,process.env.CHAT_ID,text,"TELE1_ENTRY_NOTIFICATION");
+const telegramResult=text=>sendTelegram(process.env.BOT_TOKEN_2,process.env.AI_CHAT_ID,text,"TELE2_RESULT_NOTIFICATION");
 class Binance {
   constructor() {
     this.key=process.env.BINANCE_KEY; this.secret=process.env.BINANCE_SECRET;
@@ -58,17 +64,34 @@ async function main() {
   let stopped=false, busy=false, symbols=[], lastSymbolRefresh=0;
   async function positions() { return (await binance.signed("GET","/fapi/v2/positionRisk")).filter(p=>Math.abs(Number(p.positionAmt))>0); }
   async function account() { return binance.signed("GET","/fapi/v2/account"); }
+  async function notifyPendingResults() {
+    const pendingResults=await trades.find({resultNotificationPending:true}).toArray();
+    for(const t of pendingResults) {
+      try {
+        const startTime=new Date(t.openedAt).getTime(), endTime=new Date(t.closedAt||Date.now()).getTime();
+        const income=await binance.signed("GET","/fapi/v1/income",{symbol:t.symbol,startTime,endTime,limit:1000});
+        const rows=Array.isArray(income)?income.filter(x=>["REALIZED_PNL","COMMISSION","FUNDING_FEE"].includes(x.incomeType)):[];
+        if(!rows.length) continue;
+        const net=rows.reduce((sum,x)=>sum+Number(x.income||0),0), acct=await account(), wallet=Number(acct.totalWalletBalance);
+        if(!Number.isFinite(net)||!Number.isFinite(wallet)) continue;
+        const sent=await telegramResult((net>=0?"WIN":"LOSS")+" "+t.side+" "+t.symbol+"\nNet PnL: "+net.toFixed(8)+" USDT\nWallet balance: "+wallet.toFixed(8)+" USDT");
+        if(sent) await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{resultNotificationPending:false,resultNotifiedAt:new Date(),realizedNetPnl:net,walletBalanceAtClose:wallet}});
+      } catch(e) { console.error("TRADE_RESULT_NOTIFICATION_FAILED",t.symbol,e.message); }
+    }
+  }
   async function reconcileAndManage() {
     const live=await positions(), liveMap=new Map(live.map(p=>[p.symbol,p]));
+    await notifyPendingResults();
     const pending=await trades.find({status:"ENTRY_PENDING"}).toArray();
     for(const t of pending) {
       const p=liveMap.get(t.symbol);
       if(p) {
         try {
           try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("RECOVERY_ALGO_CANCEL_WARN",t.symbol,e.message); }
-          await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl,tp:t.tp});
+          const recovered=buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atr:Number(t.atr),config:C,priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
+          await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl||recovered.sl,tp1:t.tp1||recovered.tp1,tp2:t.tp2||recovered.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.stepSize||0,minQty:rules.get(t.symbol)?.minQty||0,config:C});
           await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true}});
-          await telegram("RECOVERED POSITION "+t.side+" "+t.symbol+"; exchange protection restored.");
+          
         } catch(e) { console.error("PENDING_POSITION_PROTECTION_RECOVERY_FAILED",t.symbol,e.message); }
       } else if(Date.now()-new Date(t.createdAt||t.openedAt).getTime()>60000) {
         await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"ENTRY_FAILED",closedAt:new Date(),error:"NO_EXCHANGE_POSITION_AFTER_RECOVERY_WINDOW"}});
@@ -80,16 +103,16 @@ async function main() {
       if(!p) {
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("CLOSED_POSITION_ALGO_CLEANUP_WARN",t.symbol,e.message); }
         await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"CLOSED_EXTERNAL_OR_TPSL",closedAt:new Date(),closeReason:"POSITION_NOT_ON_EXCHANGE"}});
-        await telegram("POSITION CLOSED "+t.symbol+"; exchange no longer reports an open position.");
+        await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"CLOSED_EXTERNAL_OR_TPSL",closedAt:new Date(),closeReason:"POSITION_NOT_ON_EXCHANGE",resultNotificationPending:true}});
         continue;
       }
       if(t.protectionError) {
         if(t.closeRequestedAt && Date.now()-new Date(t.closeRequestedAt).getTime()<30000) continue;
         try {
           try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("PROTECTION_RETRY_CANCEL_WARN",t.symbol,e.message); }
-          await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl,tp:t.tp});
+          await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl,tp1:t.tp1,tp2:t.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.stepSize||0,minQty:rules.get(t.symbol)?.minQty||0,config:C});
           await trades.updateOne({_id:t._id,status:"OPEN"},{$unset:{protectionError:"",closeRequestedAt:""},$set:{protectionRestoredAt:new Date()}});
-          await telegram("PROTECTION RESTORED "+t.symbol);
+          
         } catch(e) {
           console.error("PROTECTION_RETRY_FAILED_CLOSE_ATTEMPT",t.symbol,e.message);
           try { await binance.signed("POST","/fapi/v1/order",{symbol:t.symbol,side:Number(p.positionAmt)>0?"SELL":"BUY",type:"MARKET",quantity:Math.abs(Number(p.positionAmt)).toFixed(precision(rules.get(t.symbol)?.stepSize||0.001)),reduceOnly:"true",newOrderRespType:"RESULT"}); } catch(closeError) { console.error("UNPROTECTED_POSITION_CLOSE_FAILED",t.symbol,closeError.message); }
@@ -103,7 +126,7 @@ async function main() {
         await binance.signed("DELETE","/fapi/v1/allOpenOrders",{symbol:t.symbol});
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("ALGO_CANCEL_WARN",t.symbol,e.message); }
         await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{closeRequestedAt:new Date(),closeReason:"MAX_HOLD_24H"}});
-        await telegram("TIME EXIT SENT "+t.symbol+" after "+C.MAX_HOLD_HOURS+"h; verifying exchange closure.");
+        
       }
     }
     const tracked=new Set(open.map(t=>t.symbol));
@@ -136,6 +159,7 @@ async function main() {
     const mark=Number((await binance.get("/fapi/v1/premiumIndex",{symbol})).markPrice);
     if(!(mark>0)) return;
     const protection=buildProtection({side:signal.side,entryPrice:mark,atr:signal.atr,config:C,priceTick:r.tickSize});
+    try { splitQuantity({quantity:floorStep(Math.min(available*C.RISK_PER_TRADE_PCT/protection.stopDistance,wallet*C.MAX_POSITION_BALANCE_PCT*C.LEVERAGE/mark),r.stepSize),stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message); return; }
     const riskBudget=available*C.RISK_PER_TRADE_PCT;
     const maxNotional=wallet*C.MAX_POSITION_BALANCE_PCT*C.LEVERAGE;
     let qty=floorStep(Math.min(riskBudget/protection.stopDistance,maxNotional/mark),r.stepSize);
@@ -143,7 +167,7 @@ async function main() {
     if(!(qty>=r.minQty)||qty*mark<r.minNotional) { console.log("ENTRY_SKIP_MIN_NOTIONAL",symbol,"qty="+qty); return; }
     const margin=qty*mark/C.LEVERAGE;
     if(margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol); return; }
-    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,requestedPrice:mark,sl:protection.sl,tp:protection.tp,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
+    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return; }
     let inserted;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }
@@ -152,9 +176,9 @@ async function main() {
       const order=await binance.signed("POST","/fapi/v1/order",{symbol,side:signal.side==="LONG"?"BUY":"SELL",type:"MARKET",quantity:qty.toFixed(precision(r.stepSize)),newOrderRespType:"RESULT"});
       const filled=Number(order.avgPrice)||mark;
       const actual=buildProtection({side:signal.side,entryPrice:filled,atr:signal.atr,config:C,priceTick:r.tickSize});
-      await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,sl:actual.sl,tp:actual.tp,openedAt:new Date(order.updateTime||Date.now())}});
+      await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,openedAt:new Date(order.updateTime||Date.now())}});
       try {
-        await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol,side:signal.side,sl:actual.sl,tp:actual.tp});
+        await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol,side:signal.side,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,stepSize:r.stepSize,minQty:r.minQty,config:C});
       } catch(e) {
         console.error("TPSL_PLACEMENT_FAILED_FORCE_CLOSE",symbol,e.message);
         let pos=null;
@@ -169,8 +193,8 @@ async function main() {
         else await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",protectionError:e.message,closeRequestedAt:new Date(),error:e.message}});
         throw e;
       }
-      await telegram("ENTRY "+signal.side+" "+symbol+"\nEntry: "+filled+"\nSL: "+actual.sl+"\nTP: "+actual.tp+"\nRSI14: "+signal.rsi.toFixed(2)+"\nTrend 4H: "+signal.trendSide+"\nRR: "+C.REWARD_RISK);
-      console.log("ENTRY_OK",symbol,signal.side,"qty="+qty,"sl="+actual.sl,"tp="+actual.tp);
+      await telegramEntry("ENTRY "+signal.side+" "+symbol+"\nEntry: "+filled+"\nSL: "+actual.sl+"\nTP1: "+actual.tp1+" ("+C.TP1_CLOSE_PERCENT+"% @ "+C.TP1_REWARD_RISK+"R)\nTP2: "+actual.tp2+" ("+C.TP2_CLOSE_PERCENT+"% @ "+C.TP2_REWARD_RISK+"R)\nRSI14: "+signal.rsi.toFixed(2)+"\nTrend 4H: "+signal.trendSide);
+      console.log("ENTRY_OK",symbol,signal.side,"qty="+qty,"sl="+actual.sl,"tp1="+actual.tp1,"tp2="+actual.tp2);
     } catch(e) {
       const current=await trades.findOne({_id:inserted.insertedId});
       if(current?.status==="ENTRY_PENDING") await trades.updateOne({_id:inserted.insertedId},{$set:{lastError:e.message,lastAttemptAt:new Date()}});
@@ -200,27 +224,10 @@ async function main() {
     const live=await positions(), open=await trades.countDocuments({status:"OPEN"});
     return "SIMPLE BOT OK\nTracked open trades: "+open+"\nExchange positions: "+live.length+"\nTop symbols: "+symbols.length+"\nRR: "+C.REWARD_RISK;
   };
-  let offset=0;
-  async function pollTelegram() {
-    if(!process.env.BOT_TOKEN||!process.env.CHAT_ID) return;
-    while(!stopped) {
-      try {
-        const res=await fetch("https://api.telegram.org/bot"+process.env.BOT_TOKEN+"/getUpdates?timeout=20&offset="+offset,{signal:AbortSignal.timeout(25000)});
-        const data=await res.json();
-        if(data.ok) for(const u of data.result) {
-          offset=u.update_id+1;
-          if(String(u.message?.chat?.id)!==String(process.env.CHAT_ID)) continue;
-          if((u.message?.text||"").trim()==="/status") await telegram(await status());
-        }
-      } catch(e) { if(!stopped) console.error("TELEGRAM_POLL_ERROR",e.message); await sleep(3000); }
-    }
-  }
   console.log("SIMPLE EMA100/RSI14 BOT STARTED", "RR="+C.REWARD_RISK, "MAX_SYMBOLS="+C.MAX_SYMBOLS);
-  await telegram("Simple EMA100/RSI14 bot started. /status");
   await cycle();
   const timer=setInterval(()=>void cycle(),C.SCAN_INTERVAL_MS);
-  void pollTelegram();
   const shutdown=async()=>{ if(stopped)return; stopped=true; clearInterval(timer); await mongo.close(); process.exit(0); };
   process.on("SIGINT",shutdown); process.on("SIGTERM",shutdown);
 }
-main().catch(async e=>{ console.error("FATAL",e.stack||e.message); await telegram("SIMPLE BOT FATAL: "+e.message); process.exitCode=1; });
+main().catch(async e=>{ console.error("FATAL",e.stack||e.message);  process.exitCode=1; });
