@@ -33,21 +33,34 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   ].includes(k))) {
     if (!Number.isFinite(out[k]) || out[k] <= 0) throw new Error("SIMPLE_CONFIG_INVALID_" + k);
   }
-  if (out.TREND_TIMEFRAME !== "4h" || out.ENTRY_TIMEFRAME !== "1m" ||
-      !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100 ||
-      out.RSI_LONG_EXTREME_MIN >= out.RSI_LONG_EXTREME_MAX || out.RSI_LONG_EXTREME_MAX > out.RSI_LONG_MIN || out.RSI_LONG_MIN >= out.RSI_LONG_MAX ||
-      out.RSI_LONG_MAX >= 50 || out.RSI_SHORT_MIN <= 50 || out.RSI_SHORT_MIN >= out.RSI_SHORT_MAX ||
-      out.RSI_SHORT_MAX > out.RSI_SHORT_EXTREME_MIN || out.RSI_SHORT_EXTREME_MIN >= out.RSI_SHORT_EXTREME_MAX || out.RSI_SHORT_EXTREME_MAX >= 100 ||
-      out.SL_MIN_PCT > out.SL_MAX_PCT || out.REWARD_RISK < 1 ||
-      out.TP1_REWARD_RISK <= 0 || out.TP2_REWARD_RISK <= out.TP1_REWARD_RISK ||
-      out.TP1_CLOSE_PERCENT <= 0 || out.TP2_CLOSE_PERCENT <= 0 || out.TP1_CLOSE_PERCENT >= 100 || out.TP2_CLOSE_PERCENT >= 100 ||
-      out.TP1_CLOSE_PERCENT + out.TP2_CLOSE_PERCENT !== 100 ||
-      out.RISK_PER_TRADE_PCT >= 1 || out.MAX_POSITION_BALANCE_PCT > 1 ||
-      !Number.isInteger(out.MAX_TRADES_PER_DAY) || !Number.isInteger(out.MAX_OPEN_POSITIONS) ||
-      !Number.isInteger(out.TREND_EMA_PERIOD) || !Number.isInteger(out.RSI_PERIOD) ||
-      !Number.isInteger(out.ATR_PERIOD) || !Number.isInteger(out.LEVERAGE)) {
-    throw new Error("SIMPLE_CONFIG_INVARIANT");
-  }
+  const invalid = [];
+  const check = (name, failed) => { if (failed) invalid.push(name); };
+  check("TREND_TIMEFRAME", out.TREND_TIMEFRAME !== "4h");
+  check("ENTRY_TIMEFRAME", out.ENTRY_TIMEFRAME !== "1m");
+  check("MAX_SYMBOLS", !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100);
+  check("RSI_LONG_EXTREME_RANGE", out.RSI_LONG_EXTREME_MIN >= out.RSI_LONG_EXTREME_MAX);
+  check("RSI_LONG_BANDS_OVERLAP", out.RSI_LONG_EXTREME_MAX > out.RSI_LONG_MIN);
+  check("RSI_LONG_REGULAR_RANGE", out.RSI_LONG_MIN >= out.RSI_LONG_MAX);
+  check("RSI_LONG_UPPER_BOUND", out.RSI_LONG_MAX >= 50);
+  check("RSI_SHORT_LOWER_BOUND", out.RSI_SHORT_MIN <= 50);
+  check("RSI_SHORT_REGULAR_RANGE", out.RSI_SHORT_MIN >= out.RSI_SHORT_MAX);
+  check("RSI_SHORT_BANDS_OVERLAP", out.RSI_SHORT_MAX > out.RSI_SHORT_EXTREME_MIN);
+  check("RSI_SHORT_EXTREME_RANGE", out.RSI_SHORT_EXTREME_MIN >= out.RSI_SHORT_EXTREME_MAX);
+  check("RSI_SHORT_UPPER_BOUND", out.RSI_SHORT_EXTREME_MAX >= 100);
+  check("SL_RANGE", out.SL_MIN_PCT > out.SL_MAX_PCT);
+  check("REWARD_RISK", out.REWARD_RISK < 1);
+  check("TP1_REWARD_RISK", out.TP1_REWARD_RISK <= 0);
+  check("TP2_REWARD_RISK", out.TP2_REWARD_RISK <= out.TP1_REWARD_RISK);
+  check("TP_CLOSE_PERCENT", out.TP1_CLOSE_PERCENT <= 0 || out.TP2_CLOSE_PERCENT <= 0 || out.TP1_CLOSE_PERCENT >= 100 || out.TP2_CLOSE_PERCENT >= 100 || out.TP1_CLOSE_PERCENT + out.TP2_CLOSE_PERCENT !== 100);
+  check("RISK_PER_TRADE_PCT", out.RISK_PER_TRADE_PCT >= 1);
+  check("MAX_POSITION_BALANCE_PCT", out.MAX_POSITION_BALANCE_PCT > 1);
+  check("MAX_TRADES_PER_DAY", !Number.isInteger(out.MAX_TRADES_PER_DAY));
+  check("MAX_OPEN_POSITIONS", !Number.isInteger(out.MAX_OPEN_POSITIONS));
+  check("TREND_EMA_PERIOD", !Number.isInteger(out.TREND_EMA_PERIOD));
+  check("RSI_PERIOD", !Number.isInteger(out.RSI_PERIOD));
+  check("ATR_PERIOD", !Number.isInteger(out.ATR_PERIOD));
+  check("LEVERAGE", !Number.isInteger(out.LEVERAGE));
+  if (invalid.length) throw new Error("SIMPLE_CONFIG_INVARIANT:" + invalid.join(", "));
   return Object.freeze(out);
 }
 
