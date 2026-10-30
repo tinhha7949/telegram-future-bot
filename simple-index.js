@@ -3,7 +3,7 @@ require("dotenv").config();
 const crypto = require("node:crypto");
 const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");
-const { coreLogic, closed } = require("./ai-trading/coreLogic");
+const { coreLogic } = require("./ai-trading/coreLogic");
 const { getTopSymbol } = require("./ai-trading/getTopSymbol");
 const { buildProtection, placeProtection } = require("./ai-trading/tpsl");
 const C = loadSimpleConfig();
@@ -67,6 +67,7 @@ async function main() {
       const p=liveMap.get(t.symbol);
       if(p) {
         try {
+          try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("RECOVERY_ALGO_CANCEL_WARN",t.symbol,e.message); }
           await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl,tp:t.tp});
           await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true}});
           await telegram("RECOVERED POSITION "+t.side+" "+t.symbol+"; exchange protection restored.");
@@ -111,8 +112,8 @@ async function main() {
     if(await trades.findOne({symbol,signalAt})) return;
     const live=await positions();
     if(live.some(p=>p.symbol===symbol)) { console.log("ENTRY_SKIP_EXCHANGE_POSITION",symbol); return; }
-    const algo=await binance.signed("GET","/fapi/v1/openAlgoOrders",{symbol});
-    if(Array.isArray(algo)&&algo.length) { console.log("ENTRY_SKIP_EXISTING_ALGO_ORDER",symbol); return; }
+    const [algo,regularOrders]=await Promise.all([binance.signed("GET","/fapi/v1/openAlgoOrders",{symbol}),binance.signed("GET","/fapi/v1/openOrders",{symbol})]);
+    if((Array.isArray(algo)&&algo.length)||(Array.isArray(regularOrders)&&regularOrders.length)) { console.log("ENTRY_SKIP_EXISTING_EXCHANGE_ORDER",symbol); return; }
     const utcStart=new Date(); utcStart.setUTCHours(0,0,0,0);
     const today=await trades.countDocuments({openedAt:{$gte:utcStart},status:{$nin:["ENTRY_FAILED","DRY_RUN"]}});
     if(today>=C.MAX_TRADES_PER_DAY) return;
