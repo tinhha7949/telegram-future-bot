@@ -46,6 +46,7 @@ async function main() {
   await trades.createIndex({symbol:1,status:1},{name:"simple_active_symbol",partialFilterExpression:{status:"OPEN"}});
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
   await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once",unique:true});
+  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"EMA100_RSI14"}},{upsert:true});
   const info=await binance.get("/fapi/v1/exchangeInfo");
   const rules=new Map();
   for(const s of info.symbols||[]) {
@@ -100,7 +101,7 @@ async function main() {
     const algo=await binance.signed("GET","/fapi/v1/openAlgoOrders",{symbol});
     if(Array.isArray(algo)&&algo.length) { console.log("ENTRY_SKIP_EXISTING_ALGO_ORDER",symbol); return; }
     const utcStart=new Date(); utcStart.setUTCHours(0,0,0,0);
-    const today=await trades.countDocuments({openedAt:{$gte:utcStart},status:{$in:["OPEN","CLOSED","TIME_EXIT_SENT","CLOSED_EXTERNAL_OR_TPSL"]}});
+    const today=await trades.countDocuments({openedAt:{$gte:utcStart},status:{$nin:["ENTRY_FAILED","DRY_RUN"]}});
     if(today>=C.MAX_TRADES_PER_DAY) return;
     if((await trades.countDocuments({status:"OPEN"}))>=C.MAX_OPEN_POSITIONS) return;
     const acct=await account(), wallet=Number(acct.totalWalletBalance), available=Number(acct.availableBalance);
@@ -116,6 +117,7 @@ async function main() {
     const margin=qty*mark/C.LEVERAGE;
     if(margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol); return; }
     const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,requestedPrice:mark,sl:protection.sl,tp:protection.tp,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
+    if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return; }
     let inserted;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }
     try {
