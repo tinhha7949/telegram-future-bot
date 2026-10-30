@@ -1,5 +1,4 @@
 "use strict";
-require("dotenv").config();
 const crypto = require("node:crypto");
 const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");

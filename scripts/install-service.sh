@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
-for file in CONFIG.yaml .env; do
+for file in CONFIG.yaml; do
   [[ -f "$file" ]] || { echo "Missing required $file" >&2; exit 1; }
 done
 command -v systemctl >/dev/null || { echo "systemd is required" >&2; exit 1; }

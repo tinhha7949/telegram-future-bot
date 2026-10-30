@@ -9,8 +9,7 @@
     "install:service": "bash scripts/install-service.sh"
   },
   "dependencies": {
-    "mongodb": "^6.3.0",
-    "dotenv": "^16.4.7"
+    "mongodb": "^6.3.0"
   },
   "engines": {
     "node": ">=22"
