@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { ema, rsi, atr, coreLogic } = require("./coreLogic");
 const { getTopSymbol } = require("./getTopSymbol");
 const { loadSimpleConfig } = require("./simple-config");
-const { buildProtection } = require("./tpsl");
+const { buildProtection, placeProtection } = require("./tpsl");
 const C = loadSimpleConfig();
 
 function bars(n, start, step, now = Date.now()) {
@@ -29,6 +29,27 @@ test("RSI reaches 100 for monotonic rise and 0 for monotonic fall", () => {
 });
 
 test("ATR is positive for valid candles", () => assert.ok(atr(bars(20, 100, 0.1), 14) > 0));
+
+test("Wilder RSI converges when calculated from a long Binance candle history", () => {
+  const closes = Array.from({ length: 1000 }, (_, i) => 100 + Math.sin(i / 7) * 3 + Math.sin(i / 31) * 2 + i * 0.002);
+  const fullHistory = rsi(closes, 14);
+  const warmHistory = rsi(closes.slice(-500), 14);
+  assert.ok(Number.isFinite(fullHistory) && Number.isFinite(warmHistory));
+  assert.ok(Math.abs(fullHistory - warmHistory) < 0.05, "500 closed candles should converge to the long-history Wilder RSI");
+});
+
+test("protection prices round away from entry and Binance algo client IDs stay below 36 chars", async () => {
+  const calls = [];
+  await placeProtection({
+    request: async (method, path, params) => { calls.push(params); return { algoId: calls.length }; },
+    symbol: "1000PEPEUSDT", side: "LONG", sl: 0.0049, tp1: 0.0051, tp2: 0.0052,
+    qty: 10, stepSize: 0.1, minQty: 0.1, config: C
+  });
+  const ids = calls.map(x => x.clientAlgoId);
+  assert.equal(ids.length, 3);
+  assert.equal(new Set(ids).size, 3);
+  assert.ok(ids.every(id => typeof id === "string" && id.length > 0 && id.length < 36));
+});
 
 test("strategy never signals LONG below EMA or SHORT above EMA", () => {
   const now = Date.now();

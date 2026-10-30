@@ -8,6 +8,7 @@ const { buildProtection, splitQuantity, placeProtection } = require("./ai-tradin
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
+const RSI_HISTORY_CANDLES = 1000
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function floorStep(n, step) { if (!(step > 0)) return n; return Math.floor((n + step*1e-10)/step)*step; }
 function precision(step) { const s=String(step); return s.includes(".") ? s.length-s.indexOf(".")-1 : 0; }
@@ -25,19 +26,31 @@ const telegramResult=text=>sendTelegram(process.env.BOT_TOKEN_2,process.env.AI_C
 class Binance {
   constructor() {
     this.key=process.env.BINANCE_KEY; this.secret=process.env.BINANCE_SECRET;
+    this.timeOffsetMs=0;
     if (!this.key || !this.secret) throw new Error("BINANCE_KEY_AND_SECRET_REQUIRED");
   }
-  async request(method,path,params={},signed=false) {
+  async request(method,path,params={},signed=false,retryTimestamp=true) {
     const p={...params};
-    if (signed) { p.timestamp=Date.now(); p.recvWindow=C.BINANCE_RECV_WINDOW_MS; }
+    if (signed) { p.timestamp=Date.now()+this.timeOffsetMs; p.recvWindow=C.BINANCE_RECV_WINDOW_MS; }
     const query=new URLSearchParams(Object.entries(p).filter(([,v])=>v!==undefined&&v!==null).map(([k,v])=>[k,String(v)])).toString();
     const sig=signed?crypto.createHmac("sha256",this.secret).update(query).digest("hex"):"";
     const url=BASE+path+(query?"?"+query+(signed?"&signature="+sig:""):"");
     const res=await fetch(url,{method,headers:{"X-MBX-APIKEY":this.key},signal:AbortSignal.timeout(C.BINANCE_HTTP_TIMEOUT_MS)});
     const body=await res.text(); let data;
     try { data=JSON.parse(body); } catch { throw new Error("BINANCE_BAD_JSON_"+res.status); }
+    if (!res.ok && signed && retryTimestamp && Number(data.code)===-1021) {
+      await this.syncTime();
+      return this.request(method,path,params,true,false);
+    }
     if (!res.ok) throw new Error("BINANCE_"+res.status+"_"+(data.msg||data.code||"REQUEST_FAILED"));
     return data;
+  }
+  async syncTime() {
+    const data=await this.get("/fapi/v1/time");
+    const serverTime=Number(data.serverTime);
+    if(!Number.isFinite(serverTime)||serverTime<=0)throw new Error("BINANCE_SERVER_TIME_INVALID");
+    this.timeOffsetMs=serverTime-Date.now();
+    return this.timeOffsetMs;
   }
   get(path,params={}) { return this.request("GET",path,params,false); }
   signed(method,path,params={}) { return this.request(method,path,params,true); }
@@ -47,6 +60,7 @@ async function main() {
   if (!process.env.MONGO_URI) throw new Error("MONGO_URI_REQUIRED");
   const binance=new Binance(), mongo=new MongoClient(process.env.MONGO_URI,{serverSelectionTimeoutMS:10000,maxPoolSize:5});
   await mongo.connect();
+  await binance.syncTime();
   const db=mongo.db(C.MONGO_DB_NAME), trades=db.collection(C.MONGO_TRADES_COLLECTION), state=db.collection(C.MONGO_STATE_COLLECTION);
   await trades.createIndex({symbol:1,status:1},{name:"simple_active_symbol",partialFilterExpression:{status:"OPEN"}});
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
@@ -61,29 +75,54 @@ async function main() {
       tickSize:Number(f.PRICE_FILTER?.tickSize||0.00000001),stepSize:Number(lot.stepSize||0),
       minQty:Number(lot.minQty||0),minNotional:Number(notionalFilter.minNotional||notionalFilter.notional||5)});
   }
+  const leverageCaps=new Map();
+  try {
+    const brackets=await binance.signed("GET","/fapi/v1/leverageBracket");
+    for(const item of Array.isArray(brackets)?brackets:[]) {
+      const cap=Number(item.brackets?.[0]?.initialLeverage);
+      if(item.symbol&&Number.isFinite(cap)&&cap>0)leverageCaps.set(item.symbol,cap);
+    }
+  } catch(e) { console.error("LEVERAGE_BRACKET_PREFETCH_FAILED",e.message); }
   const mode=await binance.signed("GET","/fapi/v1/positionSide/dual");
   if (mode.dualSidePosition===true) throw new Error("HEDGE_MODE_UNSUPPORTED_SWITCH_TO_ONE_WAY_BEFORE_START");
   let stopped=false, busy=false, symbols=[], lastSymbolRefresh=0;
   async function positions() { return (await binance.signed("GET","/fapi/v2/positionRisk")).filter(p=>Math.abs(Number(p.positionAmt))>0); }
   async function account() { return binance.signed("GET","/fapi/v2/account"); }
   async function notifyPendingResults() {
-    const pendingResults=await trades.find({resultNotificationPending:true}).toArray();
+    const now=new Date();
+    const pendingResults=await trades.find({resultNotificationPending:true,$or:[{resultNotificationNextAttemptAt:{$exists:false}},{resultNotificationNextAttemptAt:{$lte:now}}]}).toArray();
     for(const t of pendingResults) {
       try {
-        const startTime=new Date(t.openedAt).getTime(), endTime=new Date(t.closedAt||Date.now()).getTime();
-        const income=await binance.signed("GET","/fapi/v1/income",{symbol:t.symbol,startTime,endTime,limit:1000});
-        const rows=Array.isArray(income)?income.filter(x=>["REALIZED_PNL","COMMISSION","FUNDING_FEE"].includes(x.incomeType)):[];
-        if(!rows.length) continue;
-        const net=rows.reduce((sum,x)=>sum+Number(x.income||0),0), acct=await account(), wallet=Number(acct.totalWalletBalance);
-        if(!Number.isFinite(net)||!Number.isFinite(wallet)) continue;
-        const sent=await telegramResult((net>=0?"WIN":"LOSS")+" "+t.side+" "+t.symbol+"\nNet PnL: "+net.toFixed(8)+" USDT\nWallet balance: "+wallet.toFixed(8)+" USDT");
-        if(sent) await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{resultNotificationPending:false,resultNotifiedAt:new Date(),realizedNetPnl:net,walletBalanceAtClose:wallet}});
+        await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{resultNotificationLastAttemptAt:new Date(),resultNotificationNextAttemptAt:new Date(Date.now()+60000)},$inc:{resultNotificationAttempts:1}});
+        let net=Number(t.realizedNetPnl), wallet=Number(t.walletBalanceAtClose);
+        if(!Number.isFinite(net)) {
+          const startTime=new Date(t.openedAt).getTime(), endTime=new Date(t.closedAt||Date.now()).getTime();
+          const income=await binance.signed("GET","/fapi/v1/income",{symbol:t.symbol,startTime,endTime,limit:1000});
+          const rows=Array.isArray(income)?income.filter(x=>["REALIZED_PNL","COMMISSION","FUNDING_FEE"].includes(x.incomeType)):[], realized=rows.filter(x=>x.incomeType==="REALIZED_PNL");
+          if(!realized.length) continue;
+          net=rows.reduce((sum,x)=>sum+Number(x.income||0),0);
+          const acct=await account(); wallet=Number(acct.totalWalletBalance);
+          if(!Number.isFinite(net)||!Number.isFinite(wallet)) continue;
+          await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{realizedNetPnl:net,pnl:net,walletBalanceAtClose:wallet,pnlCalculatedAt:new Date()}});
+        }
+        const sent=await telegramResult((net>0?"WIN":net<0?"LOSS":"BREAKEVEN")+" "+t.side+" "+t.symbol+"\nNet PnL: "+net.toFixed(8)+" USDT\nWallet balance: "+(Number.isFinite(wallet)?wallet.toFixed(8):"N/A")+" USDT\nTrade ID: "+String(t._id));
+        if(sent) await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{resultNotificationPending:false,resultNotifiedAt:new Date()},$unset:{resultNotificationNextAttemptAt:""}});
       } catch(e) { console.error("TRADE_RESULT_NOTIFICATION_FAILED",t.symbol,e.message); }
+    }
+  }
+  async function notifyPendingEntries() {
+    const now=new Date(), pending=await trades.find({status:"OPEN",entryNotificationPending:true,$or:[{entryNotificationNextAttemptAt:{$exists:false}},{entryNotificationNextAttemptAt:{$lte:now}}]}).toArray();
+    for(const t of pending) {
+      const msg="ENTRY "+t.side+" "+t.symbol+"\nEntry: "+t.entryPrice+"\nSL: "+t.sl+"\nTP1: "+t.tp1+"\nTP2: "+t.tp2+"\nRSI"+C.RSI_PERIOD+" ("+C.ENTRY_TIMEFRAME+", closed candle "+new Date(t.signalAt).toISOString()+"): "+Number(t.rsi).toFixed(2)+"\nTrend "+C.TREND_TIMEFRAME+": "+t.trendSide+"\nTrade ID: "+String(t._id);
+      await trades.updateOne({_id:t._id,entryNotificationPending:true},{$set:{entryNotificationLastAttemptAt:new Date(),entryNotificationNextAttemptAt:new Date(Date.now()+60000)},$inc:{entryNotificationAttempts:1}});
+      const sent=await telegramEntry(msg);
+      if(sent)await trades.updateOne({_id:t._id,entryNotificationPending:true},{$set:{entryNotificationPending:false,entryNotifiedAt:new Date()},$unset:{entryNotificationNextAttemptAt:""}});
     }
   }
   async function reconcileAndManage() {
     const live=await positions(), liveMap=new Map(live.map(p=>[p.symbol,p]));
     await notifyPendingResults();
+    await notifyPendingEntries();
     const pending=await trades.find({status:"ENTRY_PENDING"}).toArray();
     for(const t of pending) {
       const p=liveMap.get(t.symbol);
@@ -92,7 +131,7 @@ async function main() {
           try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("RECOVERY_ALGO_CANCEL_WARN",t.symbol,e.message); }
           const recovered=buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atr:Number(t.atr),config:C,priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
           await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl||recovered.sl,tp1:t.tp1||recovered.tp1,tp2:t.tp2||recovered.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.stepSize||0,minQty:rules.get(t.symbol)?.minQty||0,config:C});
-          await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true}});
+          await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true,entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0)}});
           
         } catch(e) { console.error("PENDING_POSITION_PROTECTION_RECOVERY_FAILED",t.symbol,e.message); }
       } else if(Date.now()-new Date(t.createdAt||t.openedAt).getTime()>60000) {
@@ -104,8 +143,7 @@ async function main() {
       const p=liveMap.get(t.symbol);
       if(!p) {
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("CLOSED_POSITION_ALGO_CLEANUP_WARN",t.symbol,e.message); }
-        await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"CLOSED_EXTERNAL_OR_TPSL",closedAt:new Date(),closeReason:"POSITION_NOT_ON_EXCHANGE"}});
-        await trades.updateOne({_id:t._id,status:"CLOSED_EXTERNAL_OR_TPSL"},{$set:{resultNotificationPending:true}});
+        await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"CLOSED_EXTERNAL_OR_TPSL",closedAt:new Date(),closeReason:"POSITION_NOT_ON_EXCHANGE",resultNotificationPending:true,resultNotificationNextAttemptAt:new Date(0)}});
         continue;
       }
       if(t.protectionError) {
@@ -138,10 +176,10 @@ async function main() {
     const r=rules.get(symbol);
     if(!r||r.status!=="TRADING"||r.contractType!=="PERPETUAL"||r.quoteAsset!==C.QUOTE_ASSET) return;
     const [trendRaw,entryRaw]=await Promise.all([
-      binance.get("/fapi/v1/klines",{symbol,interval:"4h",limit:C.TREND_EMA_PERIOD+3}),
-      binance.get("/fapi/v1/klines",{symbol,interval:"1m",limit:Math.max(C.RSI_PERIOD,C.ATR_PERIOD)+5})
+      binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:C.TREND_EMA_PERIOD+3}),
+      binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD*10,C.ATR_PERIOD+1)})
     ]);
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),config:C});
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),config:C,now:Date.now()+binance.timeOffsetMs});
     if(!signal.side) return;
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
@@ -160,8 +198,18 @@ async function main() {
     if(!(wallet>0&&available>0)) { console.log("ENTRY_SKIP_NO_BALANCE",symbol); return; }
     const mark=Number((await binance.get("/fapi/v1/premiumIndex",{symbol})).markPrice);
     if(!(mark>0)) return;
+    let symbolMaxLeverage=leverageCaps.get(symbol);
+    if(!symbolMaxLeverage) {
+      try {
+        const rows=await binance.signed("GET","/fapi/v1/leverageBracket",{symbol});
+        const item=Array.isArray(rows)?rows[0]:rows, cap=Number(item?.brackets?.[0]?.initialLeverage);
+        if(!(Number.isFinite(cap)&&cap>0))throw new Error("LEVERAGE_BRACKET_MISSING");
+        symbolMaxLeverage=cap; leverageCaps.set(symbol,cap);
+      } catch(e) { console.error("LEVERAGE_CAP_UNAVAILABLE",symbol,e.message); return; }
+    }
+    const symbolLeverage=Math.min(C.LEVERAGE,symbolMaxLeverage), sizingConfig={...C,LEVERAGE:symbolLeverage};
     const protection=buildProtection({side:signal.side,entryPrice:mark,atr:signal.atr,config:C,priceTick:r.tickSize});
-    const sizing=calculateOrderSizing({wallet,available,mark,stopDistance:protection.stopDistance,rules:r,config:C});
+    const sizing=calculateOrderSizing({wallet,available,mark,stopDistance:protection.stopDistance,rules:r,config:sizingConfig});
     if(!sizing.ok) {
       console.log("ENTRY_SKIP_"+sizing.reason,symbol,"qty="+sizing.qty,"notional="+sizing.notional,"minNotional="+r.minNotional,"maxNotional="+sizing.maxNotional);
       return;
@@ -174,7 +222,7 @@ async function main() {
     let inserted;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }
     try {
-      await binance.signed("POST","/fapi/v1/leverage",{symbol,leverage:C.LEVERAGE});
+      await binance.signed("POST","/fapi/v1/leverage",{symbol,leverage:symbolLeverage});
       const order=await binance.signed("POST","/fapi/v1/order",{symbol,side:signal.side==="LONG"?"BUY":"SELL",type:"MARKET",quantity:qty.toFixed(precision(r.stepSize)),newOrderRespType:"RESULT"});
       const filled=Number(order.avgPrice)||mark;
       const actual=buildProtection({side:signal.side,entryPrice:filled,atr:signal.atr,config:C,priceTick:r.tickSize});
@@ -191,11 +239,12 @@ async function main() {
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol}); } catch(cancelError) { console.error("TPSL_CLEANUP_WARN",symbol,cancelError.message); }
         let after=null, verified=false;
         try { after=(await positions()).find(p=>p.symbol===symbol)||null; verified=true; } catch(positionError) { console.error("TPSL_FAILURE_VERIFY_CLOSE",symbol,positionError.message); }
-        if(verified&&!after) await trades.updateOne({_id:inserted.insertedId},{$set:{status:"PROTECTION_FAILED_CLOSED",closedAt:new Date(),error:e.message}});
+        if(verified&&!after) await trades.updateOne({_id:inserted.insertedId},{$set:{status:"PROTECTION_FAILED_CLOSED",closedAt:new Date(),closeReason:"PROTECTION_FAILED_FORCE_CLOSE",resultNotificationPending:true,resultNotificationNextAttemptAt:new Date(0),error:e.message}});
         else await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",protectionError:e.message,closeRequestedAt:new Date(),error:e.message}});
         throw e;
       }
-      await telegramEntry("ENTRY "+signal.side+" "+symbol+"\nEntry: "+filled+"\nSL: "+actual.sl+"\nTP1: "+actual.tp1+" ("+C.TP1_CLOSE_PERCENT+"% @ "+C.TP1_REWARD_RISK+"R)\nTP2: "+actual.tp2+" ("+C.TP2_CLOSE_PERCENT+"% @ "+C.TP2_REWARD_RISK+"R)\nRSI14: "+signal.rsi.toFixed(2)+"\nTrend 4H: "+signal.trendSide);
+      await trades.updateOne({_id:inserted.insertedId,status:"OPEN"},{$set:{entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0),entryNotificationAttempts:0}});
+      await notifyPendingEntries();
       console.log("ENTRY_OK",symbol,signal.side,"qty="+qty,"sl="+actual.sl,"tp1="+actual.tp1,"tp2="+actual.tp2);
     } catch(e) {
       const current=await trades.findOne({_id:inserted.insertedId});
