@@ -9,7 +9,6 @@ const { buildProtection, placeProtection } = require("./ai-trading/tpsl");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-function fmt(n, places=8) { return Number(Number(n).toFixed(places)); }
 function floorStep(n, step) { if (!(step > 0)) return n; return Math.floor((n + step*1e-10)/step)*step; }
 function precision(step) { const s=String(step); return s.includes(".") ? s.length-s.indexOf(".")-1 : 0; }
 async function telegram(text) {
@@ -37,7 +36,7 @@ class Binance {
   get(path,params={}) { return this.request("GET",path,params,false); }
   signed(method,path,params={}) { return this.request(method,path,params,true); }
 }
-function toCandles(raw) { return raw.map(k=>({openTime:+k[0],high:+k[2],low:+k[3],close:+k[4],volume:+k[5],closeTime:+k[6],quoteVolume:+k[7]})); }
+function toCandles(raw) { return raw.map(k=>({high:+k[2],low:+k[3],close:+k[4],closeTime:+k[6]})); }
 async function main() {
   if (!process.env.MONGO_URI) throw new Error("MONGO_URI_REQUIRED");
   const binance=new Binance(), mongo=new MongoClient(process.env.MONGO_URI,{serverSelectionTimeoutMS:10000,maxPoolSize:5});
