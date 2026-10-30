@@ -56,11 +56,10 @@ async function main() {
   const rules=new Map();
   for(const s of info.symbols||[]) {
     const f=Object.fromEntries((s.filters||[]).map(x=>[x.filterType,x]));
-    const lot=f.LOT_SIZE||{}, marketLot=f.MARKET_LOT_SIZE||lot, notionalFilter=f.NOTIONAL||f.MIN_NOTIONAL||{};
+    const lot=f.LOT_SIZE||{}, notionalFilter=f.NOTIONAL||f.MIN_NOTIONAL||{};
     rules.set(s.symbol,{status:s.status,contractType:s.contractType,quoteAsset:s.quoteAsset,
       tickSize:Number(f.PRICE_FILTER?.tickSize||0.00000001),stepSize:Number(lot.stepSize||0),
-      minQty:Number(lot.minQty||0),marketStepSize:Number(marketLot.stepSize||0),
-      marketMinQty:Number(marketLot.minQty||0),minNotional:Number(notionalFilter.minNotional||notionalFilter.notional||5)});
+      minQty:Number(lot.minQty||0),minNotional:Number(notionalFilter.minNotional||notionalFilter.notional||5)});
   }
   const mode=await binance.signed("GET","/fapi/v1/positionSide/dual");
   if (mode.dualSidePosition===true) throw new Error("HEDGE_MODE_UNSUPPORTED_SWITCH_TO_ONE_WAY_BEFORE_START");
