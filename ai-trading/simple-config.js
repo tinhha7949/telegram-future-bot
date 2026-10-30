@@ -18,7 +18,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
     out[key] = v;
   }
   const required = [
-    "QUOTE_ASSET","MAX_SYMBOLS","MIN_5M_QUOTE_VOLUME_USDT","MIN_24H_QUOTE_VOLUME_USDT","MIN_24H_RANGE_PCT",
+    "QUOTE_ASSET","MAX_SYMBOLS","MAX_5M_VOLUME_CHECKS","SYMBOL_VOLUME_CHECK_BATCH_SIZE","MIN_5M_QUOTE_VOLUME_USDT","MIN_24H_QUOTE_VOLUME_USDT","MIN_24H_RANGE_PCT",
     "TREND_TIMEFRAME","TREND_EMA_PERIOD","ENTRY_TIMEFRAME","RSI_PERIOD","RSI_LONG_MAX","RSI_SHORT_MIN",
     "ATR_PERIOD","SL_ATR_MULTIPLIER","SL_MIN_PCT","SL_MAX_PCT","REWARD_RISK","MAX_HOLD_HOURS",
     "MAX_OPEN_POSITIONS","MAX_TRADES_PER_DAY","RISK_PER_TRADE_PCT","MAX_POSITION_BALANCE_PCT","LEVERAGE",
@@ -30,7 +30,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
     if (!Number.isFinite(out[k]) || out[k] <= 0) throw new Error("SIMPLE_CONFIG_INVALID_" + k);
   }
   if (out.TREND_TIMEFRAME !== "4h" || out.ENTRY_TIMEFRAME !== "1m" ||
-      !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100 ||
+      !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100 || !Number.isInteger(out.MAX_5M_VOLUME_CHECKS) || !Number.isInteger(out.SYMBOL_VOLUME_CHECK_BATCH_SIZE) || out.SYMBOL_VOLUME_CHECK_BATCH_SIZE > out.MAX_5M_VOLUME_CHECKS ||
       out.RSI_LONG_MAX >= out.RSI_SHORT_MIN || out.RSI_LONG_MAX >= 50 || out.RSI_SHORT_MIN <= 50 ||
       out.SL_MIN_PCT > out.SL_MAX_PCT || out.REWARD_RISK < 1 ||
       out.RISK_PER_TRADE_PCT >= 1 || out.MAX_POSITION_BALANCE_PCT > 1 ||
