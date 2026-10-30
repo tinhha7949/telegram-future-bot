@@ -13,7 +13,7 @@ test("uses one floored quantity for notional and margin checks",()=>{
  assert.equal(r.ok,true);assert.equal(r.qty,4);assert.equal(r.notional,40);assert.equal(r.margin,2); 
 });
 test("rejects minimum notional when risk or position cap cannot reach it",()=>{
- const r=calculateOrderSizing({wallet:8,available:8,mark:10,stopDistance:20,rules,config});
+ const r=calculateOrderSizing({wallet:8,available:8,mark:10,stopDistance:1.6326530612244898,rules,config});
  assert.equal(r.ok,false);assert.equal(r.reason,"MIN_NOTIONAL");
 });
 test("rejects invalid or missing sizing inputs",()=>{
