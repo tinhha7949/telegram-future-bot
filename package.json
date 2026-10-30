@@ -1,19 +1,19 @@
 {
   "name": "future-scanner-bot",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "simple-index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js",
-    "test": "node scripts/check-syntax.cjs && node --test",
+    "start": "node simple-index.js",
+    "test": "node scripts/check-syntax.cjs && node --test ai-trading/simple-*.test.js",
     "install:service": "bash scripts/install-service.sh"
   },
   "dependencies": {
     "mongodb": "^6.3.0",
-    "ws": "^8.18.0",
     "dotenv": "^16.4.7"
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "description": "Simple Binance USDT futures bot using 4h EMA100 trend and 1m RSI14 entries"
 }
