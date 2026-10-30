@@ -1,7 +1,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-function loadSimpleConfig(file = path.join(__dirname, "..", "SIMPLE_CONFIG.yaml")) {
+function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   const out = {};
   const text = fs.readFileSync(file, "utf8");
   for (const [i, line0] of text.split(/\r?\n/).entries()) {
