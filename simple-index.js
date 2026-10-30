@@ -103,7 +103,7 @@ async function main() {
       if(!p) {
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("CLOSED_POSITION_ALGO_CLEANUP_WARN",t.symbol,e.message); }
         await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"CLOSED_EXTERNAL_OR_TPSL",closedAt:new Date(),closeReason:"POSITION_NOT_ON_EXCHANGE"}});
-        await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"CLOSED_EXTERNAL_OR_TPSL",closedAt:new Date(),closeReason:"POSITION_NOT_ON_EXCHANGE",resultNotificationPending:true}});
+        await trades.updateOne({_id:t._id,status:"CLOSED_EXTERNAL_OR_TPSL"},{$set:{resultNotificationPending:true}});
         continue;
       }
       if(t.protectionError) {
