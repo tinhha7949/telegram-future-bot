@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { ema, rsi, atr, coreLogic } = require("./coreLogic");
+const { ema, rsi, atr, isLongRsi, isShortRsi, coreLogic } = require("./coreLogic");
 const { getTopSymbol } = require("./getTopSymbol");
 const { loadSimpleConfig } = require("./simple-config");
 const { buildProtection, placeProtection } = require("./tpsl");
@@ -29,6 +29,15 @@ test("RSI reaches 100 for monotonic rise and 0 for monotonic fall", () => {
 });
 
 test("ATR is positive for valid candles", () => assert.ok(atr(bars(20, 100, 0.1), 14) > 0));
+
+test("RSI entry bands include configured LONG and SHORT ranges only", () => {
+  for (const value of [1, 5, 10, 20, 22.5, 25]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
+  for (const value of [75, 78, 80, 90, 95, 99]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
+  for (const value of [0, 10.01, 19.99, 25.01, 50, 74.99, 80.01, 89.99, 99.01, 100]) {
+    assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
+    assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
+  }
+});
 
 test("Wilder RSI converges when calculated from a long Binance candle history", () => {
   const closes = Array.from({ length: 1000 }, (_, i) => 100 + Math.sin(i / 7) * 3 + Math.sin(i / 31) * 2 + i * 0.002);
