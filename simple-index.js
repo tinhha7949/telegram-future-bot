@@ -5,6 +5,7 @@ const { loadSimpleConfig } = require("./ai-trading/simple-config");
 const { coreLogic } = require("./ai-trading/coreLogic");
 const { getTopSymbol } = require("./ai-trading/getTopSymbol");
 const { buildProtection, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
+const { sizePosition } = require("./ai-trading/simple-sizing");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -55,9 +56,13 @@ async function main() {
   const rules=new Map();
   for(const s of info.symbols||[]) {
     const f=Object.fromEntries((s.filters||[]).map(x=>[x.filterType,x]));
+    const minFilter=f.NOTIONAL||f.MIN_NOTIONAL;
+    const minNotional=minFilter
+      ? Number(f.NOTIONAL ? (minFilter.applyMinToMarket===false?0:minFilter.minNotional) : (minFilter.applyToMarket===false?0:minFilter.notional))
+      : 0;
     rules.set(s.symbol,{status:s.status,contractType:s.contractType,quoteAsset:s.quoteAsset,
       tickSize:Number(f.PRICE_FILTER?.tickSize||0.00000001),stepSize:Number(f.LOT_SIZE?.stepSize||0),
-      minQty:Number(f.LOT_SIZE?.minQty||0),minNotional:Number(f.MIN_NOTIONAL?.notional||f.NOTIONAL?.minNotional||5)});
+      minQty:Number(f.LOT_SIZE?.minQty||0),minNotional:Number.isFinite(minNotional)&&minNotional>0?minNotional:0});
   }
   const mode=await binance.signed("GET","/fapi/v1/positionSide/dual");
   if (mode.dualSidePosition===true) throw new Error("HEDGE_MODE_UNSUPPORTED_SWITCH_TO_ONE_WAY_BEFORE_START");
@@ -159,14 +164,22 @@ async function main() {
     const mark=Number((await binance.get("/fapi/v1/premiumIndex",{symbol})).markPrice);
     if(!(mark>0)) return;
     const protection=buildProtection({side:signal.side,entryPrice:mark,atr:signal.atr,config:C,priceTick:r.tickSize});
-    try { splitQuantity({quantity:floorStep(Math.min(available*C.RISK_PER_TRADE_PCT/protection.stopDistance,wallet*C.MAX_POSITION_BALANCE_PCT*C.LEVERAGE/mark),r.stepSize),stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message); return; }
     const riskBudget=available*C.RISK_PER_TRADE_PCT;
     const maxNotional=wallet*C.MAX_POSITION_BALANCE_PCT*C.LEVERAGE;
-    let qty=floorStep(Math.min(riskBudget/protection.stopDistance,maxNotional/mark),r.stepSize);
-    qty=Number(qty.toFixed(precision(r.stepSize)));
-    if(!(qty>=r.minQty)||qty*mark<r.minNotional) { console.log("ENTRY_SKIP_MIN_NOTIONAL",symbol,"qty="+qty); return; }
+    const sizing=sizePosition({riskBudget,stopDistance:protection.stopDistance,maxNotional,price:mark,stepSize:r.stepSize,minQty:r.minQty,minNotional:r.minNotional});
+    if(!sizing.ok) {
+      console.log("ENTRY_SKIP_MIN_NOTIONAL",symbol,
+        "reason="+sizing.reason,"qty="+sizing.qty,"mark="+mark,
+        "notional="+sizing.notional,"minNotional="+r.minNotional,
+        "maxNotional="+maxNotional,"riskQtyMax="+sizing.riskQtyMax,
+        "stepSize="+r.stepSize,"minQty="+r.minQty);
+      return;
+    }
+    const qty=Number(sizing.qty.toFixed(precision(r.stepSize)));
+    try { splitQuantity({quantity:qty,stepSize:r.stepSize,minQty:r.minQty,config:C}); }
+    catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,"qty="+qty,e.message); return; }
     const margin=qty*mark/C.LEVERAGE;
-    if(margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol); return; }
+    if(margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol,"margin="+margin,"available="+available); return; }
     const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return; }
     let inserted;
