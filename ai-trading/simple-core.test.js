@@ -3,6 +3,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const {ema,rsi,atr,coreLogic}=require("./coreLogic");
 const {loadSimpleConfig}=require("./simple-config");
+const {buildProtection}=require("./tpsl");
 const C=loadSimpleConfig();
 function bars(n,start,step,now=Date.now()) {
   return Array.from({length:n},(_,i)=>({openTime:now-n*60000+i*60000,high:start+i*step+1,low:start+i*step-1,close:start+i*step,volume:100,closeTime:now-n*60000+(i+1)*60000-1}));
@@ -30,4 +31,13 @@ test("strategy never signals LONG below EMA or SHORT above EMA",()=>{
 test("config sets RR 1.3 and no more than 100 symbols",()=>{
  assert.equal(C.REWARD_RISK,1.3);
  assert.equal(C.MAX_SYMBOLS,100);
+});
+
+test("TP/SL obey direction and configured 1.3 RR",()=>{
+ const long=buildProtection({side:"LONG",entryPrice:100,atr:1,config:C,priceTick:0.01});
+ const short=buildProtection({side:"SHORT",entryPrice:100,atr:1,config:C,priceTick:0.01});
+ assert.ok(long.sl<100&&long.tp>100);
+ assert.ok(short.sl>100&&short.tp<100);
+ assert.ok(Math.abs((long.tp-100)/(100-long.sl)-C.REWARD_RISK)<0.02);
+ assert.ok(Math.abs((100-short.tp)/(short.sl-100)-C.REWARD_RISK)<0.02);
 });
