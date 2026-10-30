@@ -8,7 +8,7 @@ const { buildProtection, splitQuantity, placeProtection } = require("./ai-tradin
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
-const RSI_HISTORY_CANDLES = 1000
+const RSI_HISTORY_CANDLES = 100
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function floorStep(n, step) { if (!(step > 0)) return n; return Math.floor((n + step*1e-10)/step)*step; }
 function precision(step) { const s=String(step); return s.includes(".") ? s.length-s.indexOf(".")-1 : 0; }
