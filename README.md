@@ -3,8 +3,8 @@
 The live strategy is intentionally small:
 - Closed 4h candle close above EMA100: uptrend; only LONG entries are allowed when closed 1m RSI(14) is at or below 25.
 - Closed 4h candle close below EMA100: downtrend; only SHORT entries are allowed when closed 1m RSI(14) is at or above 75.
+- Coin selection uses only 24h Futures ticker data: USDT perpetual contract, minimum 24h quote volume, and minimum 24h high/low range. It keeps at most 100 symbols and does not request intraday candles to filter the symbol list.
 - SL distance uses 1m ATR(14) multiplied by a configurable factor and bounded by configured percentage limits. TP is derived from the configured reward/risk ratio (default 1.3).
-- The symbol universe filters USDT perpetuals by 5m quote volume, 24h quote volume and 24h range, then keeps up to 100.
 - MongoDB persists each signal/trade. Before an entry, the bot checks live Binance positions and existing conditional orders. Existing exchange positions are never stacked.
 - Positions older than 24 hours are market-closed; the bot retries and reconciles against the exchange until closure is observed.
 - /status reports tracked and exchange positions in Telegram.

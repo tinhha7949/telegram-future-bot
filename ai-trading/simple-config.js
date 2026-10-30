@@ -1,6 +1,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
+
 function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   const out = {};
   const text = fs.readFileSync(file, "utf8");
@@ -18,25 +19,31 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
     out[key] = v;
   }
   const required = [
-    "QUOTE_ASSET","MAX_SYMBOLS","MAX_5M_VOLUME_CHECKS","SYMBOL_VOLUME_CHECK_BATCH_SIZE","MIN_5M_QUOTE_VOLUME_USDT","MIN_24H_QUOTE_VOLUME_USDT","MIN_24H_RANGE_PCT",
-    "TREND_TIMEFRAME","TREND_EMA_PERIOD","ENTRY_TIMEFRAME","RSI_PERIOD","RSI_LONG_MAX","RSI_SHORT_MIN",
-    "ATR_PERIOD","SL_ATR_MULTIPLIER","SL_MIN_PCT","SL_MAX_PCT","REWARD_RISK","MAX_HOLD_HOURS",
-    "MAX_OPEN_POSITIONS","MAX_TRADES_PER_DAY","RISK_PER_TRADE_PCT","MAX_POSITION_BALANCE_PCT","LEVERAGE",
-    "SCAN_INTERVAL_MS","SYMBOL_REFRESH_MS","BINANCE_RECV_WINDOW_MS","BINANCE_HTTP_TIMEOUT_MS",
-    "MONGO_DB_NAME","MONGO_TRADES_COLLECTION","MONGO_STATE_COLLECTION","DRY_RUN"
+    "QUOTE_ASSET", "MAX_SYMBOLS", "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT",
+    "TREND_TIMEFRAME", "TREND_EMA_PERIOD", "ENTRY_TIMEFRAME", "RSI_PERIOD", "RSI_LONG_MAX", "RSI_SHORT_MIN",
+    "ATR_PERIOD", "SL_ATR_MULTIPLIER", "SL_MIN_PCT", "SL_MAX_PCT", "REWARD_RISK", "MAX_HOLD_HOURS",
+    "MAX_OPEN_POSITIONS", "MAX_TRADES_PER_DAY", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT", "LEVERAGE",
+    "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS", "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS",
+    "MONGO_DB_NAME", "MONGO_TRADES_COLLECTION", "MONGO_STATE_COLLECTION", "DRY_RUN"
   ];
   for (const k of required) if (!Object.hasOwn(out, k)) throw new Error("SIMPLE_CONFIG_MISSING_" + k);
-  for (const k of required.filter(k => !["QUOTE_ASSET","TREND_TIMEFRAME","ENTRY_TIMEFRAME","MONGO_DB_NAME","MONGO_TRADES_COLLECTION","MONGO_STATE_COLLECTION","DRY_RUN"].includes(k))) {
+  for (const k of required.filter(k => ![
+    "QUOTE_ASSET", "TREND_TIMEFRAME", "ENTRY_TIMEFRAME", "MONGO_DB_NAME",
+    "MONGO_TRADES_COLLECTION", "MONGO_STATE_COLLECTION", "DRY_RUN"
+  ].includes(k))) {
     if (!Number.isFinite(out[k]) || out[k] <= 0) throw new Error("SIMPLE_CONFIG_INVALID_" + k);
   }
   if (out.TREND_TIMEFRAME !== "4h" || out.ENTRY_TIMEFRAME !== "1m" ||
-      !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100 || !Number.isInteger(out.MAX_5M_VOLUME_CHECKS) || !Number.isInteger(out.SYMBOL_VOLUME_CHECK_BATCH_SIZE) || out.SYMBOL_VOLUME_CHECK_BATCH_SIZE > out.MAX_5M_VOLUME_CHECKS ||
+      !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100 ||
       out.RSI_LONG_MAX >= out.RSI_SHORT_MIN || out.RSI_LONG_MAX >= 50 || out.RSI_SHORT_MIN <= 50 ||
       out.SL_MIN_PCT > out.SL_MAX_PCT || out.REWARD_RISK < 1 ||
       out.RISK_PER_TRADE_PCT >= 1 || out.MAX_POSITION_BALANCE_PCT > 1 ||
       !Number.isInteger(out.MAX_TRADES_PER_DAY) || !Number.isInteger(out.MAX_OPEN_POSITIONS) ||
       !Number.isInteger(out.TREND_EMA_PERIOD) || !Number.isInteger(out.RSI_PERIOD) ||
-      !Number.isInteger(out.ATR_PERIOD) || !Number.isInteger(out.LEVERAGE)) throw new Error("SIMPLE_CONFIG_INVARIANT");
+      !Number.isInteger(out.ATR_PERIOD) || !Number.isInteger(out.LEVERAGE)) {
+    throw new Error("SIMPLE_CONFIG_INVARIANT");
+  }
   return Object.freeze(out);
 }
+
 module.exports = { loadSimpleConfig };
