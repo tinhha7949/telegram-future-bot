@@ -36,7 +36,7 @@ test("ATR is positive for valid candles", () => assert.ok(atr(bars(20, 100, 0.1)
 test("RSI entry bands include configured LONG and SHORT ranges only", () => {
   for (const value of [1, 5, 10, 15, 20]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
   for (const value of [80, 85, 90, 95, 99]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
-  for (const value of [0, 9.99, 20.01, 50, 79.99, 99.01, 100]) {
+  for (const value of [0, 0.99, 20.01, 50, 79.99, 99.01, 100]) {
     assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
     assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
   }
