@@ -27,6 +27,7 @@ class Binance {
   constructor() {
     this.key=process.env.BINANCE_KEY; this.secret=process.env.BINANCE_SECRET;
     this.timeOffsetMs=0;
+    this.rateLimitUntil=0;
     if (!this.key || !this.secret) throw new Error("BINANCE_KEY_AND_SECRET_REQUIRED");
   }
   async request(method,path,params={},signed=false,retryTimestamp=true) {
@@ -38,6 +39,11 @@ class Binance {
     const res=await fetch(url,{method,headers:{"X-MBX-APIKEY":this.key},signal:AbortSignal.timeout(C.BINANCE_HTTP_TIMEOUT_MS)});
     const body=await res.text(); let data;
     try { data=JSON.parse(body); } catch { throw new Error("BINANCE_BAD_JSON_"+res.status); }
+    if (res.status===429 || res.status===418) {
+      const retryAfter=Number(res.headers.get("retry-after"));
+      this.rateLimitUntil=Date.now()+Math.max(60000,Number.isFinite(retryAfter)&&retryAfter>0?retryAfter*1000:0);
+      throw new Error("BINANCE_"+res.status+"_RATE_LIMIT_COOLDOWN");
+    }
     if (!res.ok && signed && retryTimestamp && Number(data.code)===-1021) {
       await this.syncTime();
       return this.request(method,path,params,true,false);
@@ -85,7 +91,7 @@ async function main() {
   } catch(e) { console.error("LEVERAGE_BRACKET_PREFETCH_FAILED",e.message); }
   const mode=await binance.signed("GET","/fapi/v1/positionSide/dual");
   if (mode.dualSidePosition===true) throw new Error("HEDGE_MODE_UNSUPPORTED_SWITCH_TO_ONE_WAY_BEFORE_START");
-  let stopped=false, busy=false, symbols=[], lastSymbolRefresh=0;
+  let stopped=false, busy=false, symbols=[], lastSymbolRefresh=0, rateLimitLoggedUntil=0;
   async function positions() { return (await binance.signed("GET","/fapi/v2/positionRisk")).filter(p=>Math.abs(Number(p.positionAmt))>0); }
   async function account() { return binance.signed("GET","/fapi/v2/account"); }
   async function notifyPendingResults() {
@@ -253,7 +259,16 @@ async function main() {
     }
   }
   async function cycle() {
-    if(busy||stopped) return; busy=true;
+    if(busy||stopped) return;
+    if(binance.rateLimitUntil>Date.now()) {
+      if(rateLimitLoggedUntil!==binance.rateLimitUntil) {
+        rateLimitLoggedUntil=binance.rateLimitUntil;
+        console.error("BINANCE_RATE_LIMIT_COOLDOWN", "until="+new Date(binance.rateLimitUntil).toISOString());
+      }
+      return;
+    }
+    rateLimitLoggedUntil=0;
+    busy=true;
     try {
       await reconcileAndManage();
       if(Date.now()-lastSymbolRefresh>=C.SYMBOL_REFRESH_MS) {
@@ -264,28 +279,41 @@ async function main() {
       const open=await trades.find({status:"OPEN"}).toArray();
       const tracked=new Set(open.map(t=>t.symbol));
       const scanStartedAt=Date.now();
-      let scanned=0, eligible=0, skipped=0, errors=0;
-      console.log("SCAN_CYCLE_START", "symbols="+symbols.length, "live="+liveSet.size, "tracked="+tracked.size);
-      for(let i=0;i<symbols.length;i++) {
-        if(stopped) break;
-        const symbol=symbols[i];
-        scanned++;
-        if(liveSet.has(symbol)||tracked.has(symbol)) {
-          skipped++;
-        } else {
-          eligible++;
-          try { await tryEntry(symbol); }
-          catch(e) { errors++; console.error("SYMBOL_SCAN_ERROR",symbol,e.message); }
+      let scanned=0, eligible=0, skipped=0, errors=0, rateLimited=false;
+      const batchSize=10, batchCount=Math.ceil(symbols.length/batchSize);
+      console.log("SCAN_CYCLE_START", "symbols="+symbols.length, "batchSize="+batchSize, "live="+liveSet.size, "tracked="+tracked.size);
+      for(let batchStart=0;batchStart<symbols.length;batchStart+=batchSize) {
+        if(stopped||rateLimited) break;
+        const batchIndex=Math.floor(batchStart/batchSize)+1;
+        const batchEnd=Math.min(batchStart+batchSize,symbols.length);
+        const batchStartedAt=Date.now();
+        let batchScanned=0, batchEligible=0, batchSkipped=0, batchErrors=0;
+        for(let i=batchStart;i<batchEnd;i++) {
+          if(stopped) break;
+          const symbol=symbols[i];
+          scanned++; batchScanned++;
+          if(liveSet.has(symbol)||tracked.has(symbol)) {
+            skipped++; batchSkipped++;
+          } else {
+            eligible++; batchEligible++;
+            try { await tryEntry(symbol); }
+            catch(e) {
+              errors++; batchErrors++;
+              console.error("SYMBOL_SCAN_ERROR",symbol,e.message);
+              if(/BINANCE_(?:429|418)_/.test(e.message)) { rateLimited=true; break; }
+            }
+          }
         }
-        if(scanned%10===0||scanned===symbols.length) {
-          console.log("SCAN_PROGRESS", scanned+"/"+symbols.length,
-            "eligible="+eligible, "skipped="+skipped, "errors="+errors,
-            "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
-        }
+        console.log("SCAN_BATCH_COMPLETE", "batch="+batchIndex+"/"+batchCount,
+          "scanned="+batchScanned, "range="+(batchStart+1)+"-"+batchEnd,
+          "eligible="+batchEligible, "skipped="+batchSkipped, "errors="+batchErrors,
+          "elapsedSec="+((Date.now()-batchStartedAt)/1000).toFixed(1));
+        if(rateLimited||stopped||batchEnd>=symbols.length) break;
+        await sleep(3000);
       }
       console.log("SCAN_CYCLE_COMPLETE", "scanned="+scanned+"/"+symbols.length,
         "eligible="+eligible, "skipped="+skipped, "errors="+errors,
-        "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
+        "rateLimited="+rateLimited, "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
     } catch(e) { console.error("CYCLE_ERROR",e.stack||e.message); }
     finally { busy=false; }
   }
