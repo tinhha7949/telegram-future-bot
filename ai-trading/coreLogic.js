@@ -51,14 +51,12 @@ function closed(candles, now = Date.now()) {
     .filter(c => [c.high, c.low, c.close, c.closeTime].every(Number.isFinite));
 }
 
-const RSI_TOUCH_TOLERANCE = 0.01;
-
 function isLongRsi(value, config) {
-  return Number.isFinite(value) && value <= config.RSI_LONG_TRIGGER && value >= config.RSI_LONG_TRIGGER - RSI_TOUCH_TOLERANCE;
+  return Number.isFinite(value) && value >= config.RSI_LONG_MIN && value <= config.RSI_LONG_TRIGGER;
 }
 
 function isShortRsi(value, config) {
-  return Number.isFinite(value) && value >= config.RSI_SHORT_TRIGGER && value <= config.RSI_SHORT_TRIGGER + RSI_TOUCH_TOLERANCE;
+  return Number.isFinite(value) && value >= config.RSI_SHORT_TRIGGER && value <= config.RSI_SHORT_MAX;
 }
 
 function coreLogic({ trendCandles, entryCandles, config, now = Date.now() }) {
