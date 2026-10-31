@@ -1,9 +1,9 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { rsi, atr, marketStructure, regularDivergence, marketVeto, coreLogic } = require("./coreLogic");
+const { rsi, atr, marketStructure, regularDivergence, entryRsiTriggered, marketVeto, coreLogic } = require("./coreLogic");
 const { loadSimpleConfig } = require("./simple-config");
-const { buildProtection } = require("./tpsl");
+const { buildProtection, protectionConfigForDivergence } = require("./tpsl");
 const { getTopSymbol } = require("./getTopSymbol");
 const C = loadSimpleConfig();
 const NOW = 2000000000000;
@@ -43,10 +43,20 @@ test("configured timeframes, RSI triggers, divergence lookback and veto threshol
   assert.equal(C.TREND_EMA_PERIOD,20);
   assert.equal(C.ENTRY_TIMEFRAME,"1m");
   assert.equal(C.DIVERGENCE_TIMEFRAME,"5m");
-  assert.equal(C.ENTRY_RSI_LONG_MAX,30);
-  assert.equal(C.ENTRY_RSI_SHORT_MIN,70);
+  assert.equal(C.ENTRY_RSI_LONG_MAX,35);
+  assert.equal(C.ENTRY_RSI_SHORT_MIN,65);
   assert.ok(C.MAX_ABS_FUNDING_RATE>0);
   assert.ok(C.MAX_SPREAD_BPS>0);
+});
+
+test("RSI thresholds are inclusive and configurable",()=>{
+  assert.equal(entryRsiTriggered("LONG",35,C),true);
+  assert.equal(entryRsiTriggered("LONG",35.01,C),false);
+  assert.equal(entryRsiTriggered("SHORT",65,C),true);
+  assert.equal(entryRsiTriggered("SHORT",64.99,C),false);
+  const custom={...C,ENTRY_RSI_LONG_MAX:38,ENTRY_RSI_SHORT_MIN:62};
+  assert.equal(entryRsiTriggered("LONG",38,custom),true);
+  assert.equal(entryRsiTriggered("SHORT",62,custom),true);
 });
 
 test("RSI and ATR return valid closed-candle indicators",()=>{
@@ -79,29 +89,49 @@ test("hidden divergence and incomplete divergence history do not qualify",()=>{
   assert.equal(regularDivergence([],C).bullish,false);
 });
 
-test("funding and spread hard veto fail closed",()=>{
-  assert.equal(marketVeto({fundingRate:0.0006,bidPrice:100,askPrice:100.01,config:C}).reason,"FUNDING_TOO_HOT");
-  assert.equal(marketVeto({fundingRate:0.0001,bidPrice:100,askPrice:100.2,config:C}).reason,"SPREAD_TOO_WIDE");
-  assert.equal(marketVeto({fundingRate:null,bidPrice:100,askPrice:100.01,config:C}).reason,"MARKET_DATA_INVALID");
-  assert.equal(marketVeto({fundingRate:0.0001,bidPrice:100,askPrice:100.01,config:C}).allowed,true);
+test("funding veto blocks only adverse funding for the position direction",()=>{
+  const market={bidPrice:100,askPrice:100.01,config:C};
+  assert.equal(marketVeto({...market,side:"LONG",fundingRate:0.0006}).reason,"FUNDING_TOO_HOT");
+  assert.equal(marketVeto({...market,side:"SHORT",fundingRate:-0.0006}).reason,"FUNDING_TOO_HOT");
+  assert.equal(marketVeto({...market,side:"LONG",fundingRate:-0.0006}).allowed,true);
+  assert.equal(marketVeto({...market,side:"SHORT",fundingRate:0.0006}).allowed,true);
+  assert.equal(marketVeto({...market,side:"LONG",fundingRate:0.0001,askPrice:100.2}).reason,"SPREAD_TOO_WIDE");
+  assert.equal(marketVeto({...market,side:"LONG",fundingRate:null}).reason,"MARKET_DATA_INVALID");
 });
 
-test("LONG requires 1h up structure, 1m RSI <=30 and regular bullish 5m divergence",()=>{
+test("LONG enters with regular bullish divergence as an RR bonus",()=>{
   const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"LONG");
   assert.equal(signal.trendSide,"UP");
-  assert.ok(signal.rsi<=30);
+  assert.ok(signal.rsi<=C.ENTRY_RSI_LONG_MAX);
   assert.equal(signal.divergence,"REGULAR_BULLISH");
   assert.ok(signal.swingStop<entryCandles("LONG").at(-1).close);
 });
 
-test("SHORT requires 1h down structure, 1m RSI >=70 and regular bearish 5m divergence",()=>{
+test("SHORT enters with regular bearish divergence as an RR bonus",()=>{
   const signal=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"SHORT");
   assert.equal(signal.trendSide,"DOWN");
-  assert.ok(signal.rsi>=70);
+  assert.ok(signal.rsi>=C.ENTRY_RSI_SHORT_MIN);
   assert.equal(signal.divergence,"REGULAR_BEARISH");
   assert.ok(signal.swingStop>entryCandles("SHORT").at(-1).close);
+});
+
+test("entries without matching regular divergence are allowed at the wider RR tier",()=>{
+  const cfg={...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50};
+  const noDiv=candlesFromCloses(Array.from({length:100},(_,i)=>100+i*0.01));
+  const long=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:noDiv,config:cfg,now:NOW});
+  const short=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:noDiv,config:cfg,now:NOW});
+  assert.equal(long.side,"LONG");
+  assert.equal(long.divergence,null);
+  assert.equal(short.side,"SHORT");
+  assert.equal(short.divergence,null);
+  const noDivConfig=protectionConfigForDivergence(C,long.divergence);
+  const divConfig=protectionConfigForDivergence(C,"REGULAR_BULLISH");
+  assert.equal(noDivConfig.TP1_REWARD_RISK,1.5);
+  assert.equal(noDivConfig.TP2_REWARD_RISK,1.8);
+  assert.equal(divConfig.TP1_REWARD_RISK,1.2);
+  assert.equal(divConfig.TP2_REWARD_RISK,1.5);
 });
 
 test("counter-bias trades, RSI outside trigger, and range bias are vetoed",()=>{
@@ -113,11 +143,15 @@ test("counter-bias trades, RSI outside trigger, and range bias are vetoed",()=>{
   assert.equal(coreLogic({trendCandles:range,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW}).side,null);
 });
 
-test("SL is placed beyond swing low/high and TP keeps configured RR",()=>{
-  const long=buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:98.5,config:C,priceTick:0.01});
-  const short=buildProtection({side:"SHORT",entryPrice:100,atr:1,stopPrice:101.5,config:C,priceTick:0.01});
-  assert.ok(long.sl<=98.5 && long.tp1>100 && long.tp2>long.tp1);
-  assert.ok(short.sl>=101.5 && short.tp1<100 && short.tp2<short.tp1);
+test("SL stays beyond swing and both divergence RR tiers drive the two TP levels",()=>{
+  const withDiv=buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:98.5,config:protectionConfigForDivergence(C,"REGULAR_BULLISH"),priceTick:0.01});
+  const withoutDiv=buildProtection({side:"SHORT",entryPrice:100,atr:1,stopPrice:101.5,config:protectionConfigForDivergence(C,null),priceTick:0.01});
+  assert.ok(withDiv.sl<=98.5 && withDiv.tp1>100 && withDiv.tp2>withDiv.tp1);
+  assert.equal(withDiv.tp1RewardRisk,1.2);
+  assert.equal(withDiv.tp2RewardRisk,1.5);
+  assert.ok(withoutDiv.sl>=101.5 && withoutDiv.tp1<100 && withoutDiv.tp2<withoutDiv.tp1);
+  assert.equal(withoutDiv.tp1RewardRisk,1.5);
+  assert.equal(withoutDiv.tp2RewardRisk,1.8);
   assert.throws(()=>buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:101,config:C,priceTick:0.01}),/INVALID_SWING_STOP_SIDE/);
 });
 
