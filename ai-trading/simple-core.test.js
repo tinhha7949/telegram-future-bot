@@ -33,17 +33,17 @@ test("RSI reaches 100 for monotonic rise and 0 for monotonic fall", () => {
 
 test("ATR is positive for valid candles", () => assert.ok(atr(bars(20, 100, 0.1), 14) > 0));
 
-test("RSI triggers inclusively in configured LONG 10-20 and SHORT 80-90 ranges", () => {
+test("RSI triggers inclusively in configured LONG 80-90 and SHORT 10-20 ranges", () => {
   assert.equal(C.TREND_TIMEFRAME, "1h");
   assert.equal(C.TREND_EMA_PERIOD, 5);
-  assert.equal(C.RSI_LONG_MIN, 10);
-  assert.equal(C.RSI_LONG_TRIGGER, 20);
-  assert.equal(C.RSI_SHORT_TRIGGER, 80);
-  assert.equal(C.RSI_SHORT_MAX, 90);
-  for (const value of [10, 10.01, 15, 19.99, 20]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
-  for (const value of [0, 9.999, 9, 20.001, 21, 30, 80, 100]) assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
-  for (const value of [80, 80.01, 85, 89.99, 90]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
-  for (const value of [0, 10, 79.999, 79, 90.001, 91, 100]) assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
+  assert.equal(C.RSI_LONG_MIN, 80);
+  assert.equal(C.RSI_LONG_TRIGGER, 90);
+  assert.equal(C.RSI_SHORT_TRIGGER, 10);
+  assert.equal(C.RSI_SHORT_MAX, 20);
+  for (const value of [80, 80.01, 85, 89.99, 90]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
+  for (const value of [0, 10, 20, 79.999, 90.001, 91, 100]) assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
+  for (const value of [10, 10.01, 15, 19.99, 20]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
+  for (const value of [0, 9.999, 21, 79, 80, 100]) assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
 });
 
 test("config rejects invalid RSI trigger thresholds", () => {
@@ -51,7 +51,7 @@ test("config rejects invalid RSI trigger thresholds", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "simple-config-"));
   const file = path.join(dir, "CONFIG.yaml");
   try {
-    fs.writeFileSync(file, source.replace("RSI_LONG_TRIGGER: 20", "RSI_LONG_TRIGGER: 5"));
+    fs.writeFileSync(file, source.replace("RSI_LONG_TRIGGER: 90", "RSI_LONG_TRIGGER: 5"));
     assert.throws(() => loadSimpleConfig(file), /SIMPLE_CONFIG_INVARIANT:RSI_LONG_RANGE/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -79,7 +79,7 @@ test("protection prices round away from entry and Binance algo client IDs stay b
   assert.ok(ids.every(id => typeof id === "string" && id.length > 0 && id.length < 36));
 });
 
-test("LONG requires RSI 10-20 in 1h UP trend; SHORT requires RSI 80-90 in 1h DOWN trend", () => {
+test("LONG requires RSI 80-90 in 1h UP trend; SHORT requires RSI 10-20 in 1h DOWN trend", () => {
   const now = Date.now();
   const makeTrend = (direction) => Array.from({ length: 10 }, (_, i) => {
     const close = direction === "UP" ? 100 + i : 200 - i;
@@ -91,8 +91,8 @@ test("LONG requires RSI 10-20 in 1h UP trend; SHORT requires RSI 80-90 in 1h DOW
       high: value + 1, low: value - 1, close: value, closeTime: now - (15 - i) * 60000
     }));
   };
-  const longEntry = makeEntry([1, ...Array(13).fill(-0.4)]);
-  const shortEntry = makeEntry([...Array(13).fill(1), -(13 / (85 / 15))]);
+  const shortEntry = makeEntry([1, ...Array(13).fill(-0.4)]);
+  const longEntry = makeEntry([...Array(13).fill(1), -(13 / (85 / 15))]);
   const long = coreLogic({ trendCandles: makeTrend("UP"), entryCandles: longEntry, config: C, now });
   assert.equal(long.trendSide, "UP");
   assert.equal(long.side, "LONG");
