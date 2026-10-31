@@ -79,7 +79,7 @@ test("protection prices round away from entry and Binance algo client IDs stay b
   assert.ok(ids.every(id => typeof id === "string" && id.length > 0 && id.length < 36));
 });
 
-test("strategy never signals LONG below EMA or SHORT above EMA", () => {
+test("strategy classifies the 1h EMA trend before applying RSI entry filters", () => {
   const now = Date.now();
   const falling = Array.from({ length: 120 }, (_, i) => ({
     openTime: now - (120 - i) * 14400000,
