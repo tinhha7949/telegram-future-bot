@@ -119,19 +119,19 @@ test("SHORT enters with regular bearish divergence as an RR bonus",()=>{
 
 test("entries without matching regular divergence are allowed at the wider RR tier",()=>{
   const cfg={...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50};
-  const noDiv=candlesFromCloses(Array.from({length:100},(_,i)=>100+Math.sin(i*0.2)*0.1));
+  const noDiv=candlesFromCloses(Array.from({length:100},(_,i)=>100+i*0.01));
   const long=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:noDiv,config:cfg,now:NOW});
   const short=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:noDiv,config:cfg,now:NOW});
   assert.equal(long.side,"LONG");
   assert.equal(long.divergence,null);
   assert.equal(short.side,"SHORT");
   assert.equal(short.divergence,null);
-  const divConfig=protectionConfigForDivergence(C,long.divergence);
-  const noDivConfig=protectionConfigForDivergence(C,"REGULAR_BULLISH");
-  assert.equal(divConfig.TP1_REWARD_RISK,1.5);
-  assert.equal(divConfig.TP2_REWARD_RISK,1.8);
-  assert.equal(noDivConfig.TP1_REWARD_RISK,1.2);
-  assert.equal(noDivConfig.TP2_REWARD_RISK,1.5);
+  const noDivConfig=protectionConfigForDivergence(C,long.divergence);
+  const divConfig=protectionConfigForDivergence(C,"REGULAR_BULLISH");
+  assert.equal(noDivConfig.TP1_REWARD_RISK,1.5);
+  assert.equal(noDivConfig.TP2_REWARD_RISK,1.8);
+  assert.equal(divConfig.TP1_REWARD_RISK,1.2);
+  assert.equal(divConfig.TP2_REWARD_RISK,1.5);
 });
 
 test("counter-bias trades, RSI outside trigger, and range bias are vetoed",()=>{
@@ -143,11 +143,15 @@ test("counter-bias trades, RSI outside trigger, and range bias are vetoed",()=>{
   assert.equal(coreLogic({trendCandles:range,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW}).side,null);
 });
 
-test("SL is placed beyond swing low/high and TP keeps configured RR",()=>{
-  const long=buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:98.5,config:C,priceTick:0.01});
-  const short=buildProtection({side:"SHORT",entryPrice:100,atr:1,stopPrice:101.5,config:C,priceTick:0.01});
-  assert.ok(long.sl<=98.5 && long.tp1>100 && long.tp2>long.tp1);
-  assert.ok(short.sl>=101.5 && short.tp1<100 && short.tp2<short.tp1);
+test("SL stays beyond swing and both divergence RR tiers drive the two TP levels",()=>{
+  const withDiv=buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:98.5,config:protectionConfigForDivergence(C,"REGULAR_BULLISH"),priceTick:0.01});
+  const withoutDiv=buildProtection({side:"SHORT",entryPrice:100,atr:1,stopPrice:101.5,config:protectionConfigForDivergence(C,null),priceTick:0.01});
+  assert.ok(withDiv.sl<=98.5 && withDiv.tp1>100 && withDiv.tp2>withDiv.tp1);
+  assert.equal(withDiv.tp1RewardRisk,1.2);
+  assert.equal(withDiv.tp2RewardRisk,1.5);
+  assert.ok(withoutDiv.sl>=101.5 && withoutDiv.tp1<100 && withoutDiv.tp2<withoutDiv.tp1);
+  assert.equal(withoutDiv.tp1RewardRisk,1.5);
+  assert.equal(withoutDiv.tp2RewardRisk,1.8);
   assert.throws(()=>buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:101,config:C,priceTick:0.01}),/INVALID_SWING_STOP_SIDE/);
 });
 
