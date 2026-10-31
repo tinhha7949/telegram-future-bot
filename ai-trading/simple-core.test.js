@@ -105,11 +105,12 @@ test("SHORT requires 1h down structure, 1m RSI >=70 and regular bearish 5m diver
 });
 
 test("counter-bias trades, RSI outside trigger, and range bias are vetoed",()=>{
+  const cfg={...C,DIVERGENCE_LOOKBACK_CANDLES:60};
   const up=trendCandles("UP"), down=trendCandles("DOWN");
-  assert.equal(coreLogic({trendCandles:up,entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:C,now:NOW}).side,null);
-  assert.equal(coreLogic({trendCandles:down,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:C,now:NOW}).side,null);
+  assert.equal(coreLogic({trendCandles:up,entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:cfg,now:NOW}).side,null);
+  assert.equal(coreLogic({trendCandles:down,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW}).side,null);
   const range=Array.from({length:100},(_,i)=>({high:100+(i%2),low:99-(i%2),close:99.5,closeTime:NOW-(100-i)*3600000}));
-  assert.equal(coreLogic({trendCandles:range,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:C,now:NOW}).side,null);
+  assert.equal(coreLogic({trendCandles:range,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW}).side,null);
 });
 
 test("SL is placed beyond swing low/high and TP keeps configured RR",()=>{
