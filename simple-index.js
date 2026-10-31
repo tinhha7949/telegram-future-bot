@@ -1,4 +1,11 @@
 "use strict";
+const path = require("node:path");
+const envFile = path.join(__dirname, ".env");
+try {
+  process.loadEnvFile(envFile);
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
 const crypto = require("node:crypto");
 const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");
