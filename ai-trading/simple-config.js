@@ -43,7 +43,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   const numericKeys = required.filter(k => !stringKeys.includes(k) && k !== "DRY_RUN");
   const nonNegativeKeys = new Set([
     "MAX_SYMBOLS", "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT",
-    "ENTRY_RSI_LONG_MAX", "SWING_STOP_BUFFER_PCT", "SL_MIN_PCT",
+    "ENTRY_RSI_LONG_MAX", "ENTRY_RSI_SHORT_MIN", "SWING_STOP_BUFFER_PCT", "SL_MIN_PCT",
     "MAX_ABS_FUNDING_RATE", "MAX_SPREAD_BPS", "MAX_OPEN_POSITIONS",
     "MAX_TRADES_PER_DAY", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT"
   ]);
@@ -73,7 +73,6 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   check("TP_CLOSE_PERCENT", out.TP1_CLOSE_PERCENT <= 0 || out.TP2_CLOSE_PERCENT <= 0 || out.TP1_CLOSE_PERCENT >= 100 || out.TP2_CLOSE_PERCENT >= 100 || out.TP1_CLOSE_PERCENT + out.TP2_CLOSE_PERCENT !== 100);
   check("RISK_PER_TRADE_PCT", out.RISK_PER_TRADE_PCT > 1);
   check("MAX_POSITION_BALANCE_PCT", out.MAX_POSITION_BALANCE_PCT > 1);
-  check("MAX_SPREAD_BPS", out.MAX_SPREAD_BPS >= 20000);
   for (const k of ["MAX_TRADES_PER_DAY", "MAX_OPEN_POSITIONS", "MAX_SYMBOLS", "TREND_EMA_PERIOD", "RSI_PERIOD", "ATR_PERIOD", "LEVERAGE", "STRUCTURE_LOOKBACK_CANDLES", "DIVERGENCE_LOOKBACK_CANDLES", "DIVERGENCE_MAX_PIVOT_DISTANCE", "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS", "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS", "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS"])
     check(k, !Number.isInteger(out[k]));
   if (invalid.length) throw new Error("SIMPLE_CONFIG_INVARIANT:" + invalid.join(", "));
