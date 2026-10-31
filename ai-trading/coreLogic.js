@@ -104,7 +104,7 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now 
   const minTrend = Math.max(config.TREND_EMA_PERIOD + 1, config.STRUCTURE_LOOKBACK_CANDLES);
   const minEntry = Math.max(config.RSI_PERIOD + 1, config.ATR_PERIOD + 1);
   const minDivergence = Math.max(config.RSI_PERIOD + config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 2, config.DIVERGENCE_LOOKBACK_CANDLES);
-  if (trend.length < minTrend || entry.length < minEntry || divergence.length < minDivergence)
+  if (trend.length < minTrend || entry.length < minEntry)
     return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
   const trendEma = ema(trend.map(c => c.close), config.TREND_EMA_PERIOD);
   const price = trend.at(-1).close, entryPrice = entry.at(-1).close, valueRsi = rsi(entry.map(c => c.close), config.RSI_PERIOD), valueAtr = atr(entry, config.ATR_PERIOD);
@@ -115,6 +115,10 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now 
     price < trendEma && structure.side === "DOWN" ? "DOWN" : "RANGE";
   if (trendSide === "RANGE")
     return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
+  const triggerReady = trendSide === "UP" ? valueRsi <= config.ENTRY_RSI_LONG_MAX : valueRsi >= config.ENTRY_RSI_SHORT_MIN;
+  if (!triggerReady) return { side: null, reason: "ENTRY_RSI_NOT_TRIGGERED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
+  if (divergence.length < minDivergence)
+    return { side: null, reason: "DIVERGENCE_HISTORY_REQUIRED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
   const div = regularDivergence(divergence.slice(-config.DIVERGENCE_LOOKBACK_CANDLES), config);
   if (trendSide === "UP" && valueRsi <= config.ENTRY_RSI_LONG_MAX && div.bullish && div.swingLow > 0 && div.swingLow < entryPrice)
     return { side: "LONG", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop: div.swingLow - entryPrice * config.SWING_STOP_BUFFER_PCT / 100, signalAt: entry.at(-1).closeTime, divergence: "REGULAR_BULLISH" };
