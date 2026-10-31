@@ -100,8 +100,9 @@ function regularDivergence(candles, config) {
 }
 
 function entryRsiTriggered(side, value, config) {
-  if (side === "LONG") return value <= config.ENTRY_RSI_LONG_MAX;
-  if (side === "SHORT") return value >= config.ENTRY_RSI_SHORT_MIN;
+  if (!Number.isFinite(value)) return false;
+  if (side === "LONG") return value >= config.ENTRY_RSI_LONG_MIN && value <= config.ENTRY_RSI_LONG_MAX;
+  if (side === "SHORT") return value >= config.ENTRY_RSI_SHORT_MIN && value <= config.ENTRY_RSI_SHORT_MAX;
   return false;
 }
 
