@@ -117,9 +117,9 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now 
     return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
   const div = regularDivergence(divergence.slice(-config.DIVERGENCE_LOOKBACK_CANDLES), config);
   if (trendSide === "UP" && valueRsi <= config.ENTRY_RSI_LONG_MAX && div.bullish && div.swingLow > 0 && div.swingLow < entryPrice)
-    return { side: "LONG", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop: div.swingLow - price * config.SWING_STOP_BUFFER_PCT / 100, signalAt: entry.at(-1).closeTime, divergence: "REGULAR_BULLISH" };
+    return { side: "LONG", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop: div.swingLow - entryPrice * config.SWING_STOP_BUFFER_PCT / 100, signalAt: entry.at(-1).closeTime, divergence: "REGULAR_BULLISH" };
   if (trendSide === "DOWN" && valueRsi >= config.ENTRY_RSI_SHORT_MIN && div.bearish && div.swingHigh > entryPrice)
-    return { side: "SHORT", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop: div.swingHigh + price * config.SWING_STOP_BUFFER_PCT / 100, signalAt: entry.at(-1).closeTime, divergence: "REGULAR_BEARISH" };
+    return { side: "SHORT", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop: div.swingHigh + entryPrice * config.SWING_STOP_BUFFER_PCT / 100, signalAt: entry.at(-1).closeTime, divergence: "REGULAR_BEARISH" };
   return { side: null, trendSide, trendEma, rsi: valueRsi, atr: valueAtr, reason: "ENTRY_OR_REGULAR_DIVERGENCE_NOT_CONFIRMED" };
 }
 
