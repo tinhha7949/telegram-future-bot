@@ -1,5 +1,8 @@
 "use strict";
 const test = require("node:test");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const assert = require("node:assert/strict");
 const { rsi, atr, marketStructure, regularDivergence, entryRsiTriggered, marketVeto, coreLogic } = require("./coreLogic");
 const { loadSimpleConfig } = require("./simple-config");
@@ -38,22 +41,51 @@ function entryCandles(direction) {
   return candlesFromCloses(closes,60000);
 }
 
-test("configured timeframes, RSI triggers, divergence lookback and veto thresholds are correct",()=>{
-  assert.equal(C.TREND_TIMEFRAME,"1h");
-  assert.equal(C.TREND_EMA_PERIOD,20);
-  assert.equal(C.ENTRY_TIMEFRAME,"1m");
-  assert.equal(C.DIVERGENCE_TIMEFRAME,"5m");
-  assert.equal(C.ENTRY_RSI_LONG_MAX,35);
-  assert.equal(C.ENTRY_RSI_SHORT_MIN,65);
+test("loaded strategy settings are valid and drive the strategy",()=>{
+  const supported=new Set(["1s","1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"]);
+  assert.ok(supported.has(C.TREND_TIMEFRAME));
+  assert.ok(supported.has(C.ENTRY_TIMEFRAME));
+  assert.ok(supported.has(C.DIVERGENCE_TIMEFRAME));
+  assert.ok(Number.isInteger(C.TREND_EMA_PERIOD) && C.TREND_EMA_PERIOD>0);
+  assert.ok(C.ENTRY_RSI_LONG_MAX>=0 && C.ENTRY_RSI_LONG_MAX<C.ENTRY_RSI_SHORT_MIN);
+  assert.ok(C.ENTRY_RSI_SHORT_MIN<=100);
   assert.ok(C.MAX_ABS_FUNDING_RATE>0);
   assert.ok(C.MAX_SPREAD_BPS>0);
 });
 
+
+test("CONFIG.yaml overrides are accepted without changing tests",()=>{
+  const source=fs.readFileSync(path.join(__dirname,"..","CONFIG.yaml"),"utf8");
+  const customized=source
+    .replace('TREND_TIMEFRAME: "1h"','TREND_TIMEFRAME: "4h"')
+    .replace('ENTRY_TIMEFRAME: "1m"','ENTRY_TIMEFRAME: "3m"')
+    .replace('DIVERGENCE_TIMEFRAME: "5m"','DIVERGENCE_TIMEFRAME: "15m"')
+    .replace("MAX_SYMBOLS: 100","MAX_SYMBOLS: 150")
+    .replace("ENTRY_RSI_LONG_MAX: 30","ENTRY_RSI_LONG_MAX: 42")
+    .replace("ENTRY_RSI_SHORT_MIN: 70","ENTRY_RSI_SHORT_MIN: 58")
+    .replace("TP1_REWARD_RISK: 1.2","TP1_REWARD_RISK: 1.1")
+    .replace("TP2_REWARD_RISK: 1.5","TP2_REWARD_RISK: 1.6");
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"simple-config-"));
+  const file=path.join(dir,"CONFIG.yaml");
+  try {
+    fs.writeFileSync(file,customized);
+    const custom=loadSimpleConfig(file);
+    assert.equal(custom.TREND_TIMEFRAME,"4h");
+    assert.equal(custom.ENTRY_TIMEFRAME,"3m");
+    assert.equal(custom.DIVERGENCE_TIMEFRAME,"15m");
+    assert.equal(custom.MAX_SYMBOLS,150);
+    assert.equal(custom.ENTRY_RSI_LONG_MAX,42);
+    assert.equal(custom.ENTRY_RSI_SHORT_MIN,58);
+    assert.equal(custom.TP1_REWARD_RISK,1.1);
+    assert.equal(custom.TP2_REWARD_RISK,1.6);
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
+
 test("RSI thresholds are inclusive and configurable",()=>{
-  assert.equal(entryRsiTriggered("LONG",35,C),true);
-  assert.equal(entryRsiTriggered("LONG",35.01,C),false);
-  assert.equal(entryRsiTriggered("SHORT",65,C),true);
-  assert.equal(entryRsiTriggered("SHORT",64.99,C),false);
+  assert.equal(entryRsiTriggered("LONG",C.ENTRY_RSI_LONG_MAX,C),true);
+  assert.equal(entryRsiTriggered("LONG",C.ENTRY_RSI_LONG_MAX+0.01,C),false);
+  assert.equal(entryRsiTriggered("SHORT",C.ENTRY_RSI_SHORT_MIN,C),true);
+  assert.equal(entryRsiTriggered("SHORT",C.ENTRY_RSI_SHORT_MIN-0.01,C),false);
   const custom={...C,ENTRY_RSI_LONG_MAX:38,ENTRY_RSI_SHORT_MIN:62};
   assert.equal(entryRsiTriggered("LONG",38,custom),true);
   assert.equal(entryRsiTriggered("SHORT",62,custom),true);
@@ -65,7 +97,7 @@ test("RSI and ATR return valid closed-candle indicators",()=>{
   assert.ok(atr(candlesFromCloses(Array.from({length:30},(_,i)=>100+i)),14)>0);
 });
 
-test("1h structure requires both HH/HL or LH/LL",()=>{
+test("trend structure requires both HH/HL or LH/LL",()=>{
   assert.equal(marketStructure(trendCandles("UP"),C).side,"UP");
   assert.equal(marketStructure(trendCandles("DOWN"),C).side,"DOWN");
   const range=Array.from({length:100},(_,i)=>({high:100+(i%2),low:99-(i%2),close:99.5,closeTime:NOW-(100-i)*3600000}));
@@ -128,10 +160,10 @@ test("entries without matching regular divergence are allowed at the wider RR ti
   assert.equal(short.divergence,null);
   const noDivConfig=protectionConfigForDivergence(C,long.divergence);
   const divConfig=protectionConfigForDivergence(C,"REGULAR_BULLISH");
-  assert.equal(noDivConfig.TP1_REWARD_RISK,1.5);
-  assert.equal(noDivConfig.TP2_REWARD_RISK,1.8);
-  assert.equal(divConfig.TP1_REWARD_RISK,1.2);
-  assert.equal(divConfig.TP2_REWARD_RISK,1.5);
+  assert.equal(noDivConfig.TP1_REWARD_RISK,C.TP1_REWARD_RISK_NO_DIVERGENCE);
+  assert.equal(noDivConfig.TP2_REWARD_RISK,C.TP2_REWARD_RISK_NO_DIVERGENCE);
+  assert.equal(divConfig.TP1_REWARD_RISK,C.TP1_REWARD_RISK);
+  assert.equal(divConfig.TP2_REWARD_RISK,C.TP2_REWARD_RISK);
 });
 
 test("counter-bias trades, RSI outside trigger, and range bias are vetoed",()=>{
@@ -147,11 +179,11 @@ test("SL stays beyond swing and both divergence RR tiers drive the two TP levels
   const withDiv=buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:98.5,config:protectionConfigForDivergence(C,"REGULAR_BULLISH"),priceTick:0.01});
   const withoutDiv=buildProtection({side:"SHORT",entryPrice:100,atr:1,stopPrice:101.5,config:protectionConfigForDivergence(C,null),priceTick:0.01});
   assert.ok(withDiv.sl<=98.5 && withDiv.tp1>100 && withDiv.tp2>withDiv.tp1);
-  assert.equal(withDiv.tp1RewardRisk,1.2);
-  assert.equal(withDiv.tp2RewardRisk,1.5);
+  assert.equal(withDiv.tp1RewardRisk,C.TP1_REWARD_RISK);
+  assert.equal(withDiv.tp2RewardRisk,C.TP2_REWARD_RISK);
   assert.ok(withoutDiv.sl>=101.5 && withoutDiv.tp1<100 && withoutDiv.tp2<withoutDiv.tp1);
-  assert.equal(withoutDiv.tp1RewardRisk,1.5);
-  assert.equal(withoutDiv.tp2RewardRisk,1.8);
+  assert.equal(withoutDiv.tp1RewardRisk,C.TP1_REWARD_RISK_NO_DIVERGENCE);
+  assert.equal(withoutDiv.tp2RewardRisk,C.TP2_REWARD_RISK_NO_DIVERGENCE);
   assert.throws(()=>buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:101,config:C,priceTick:0.01}),/INVALID_SWING_STOP_SIDE/);
 });
 
