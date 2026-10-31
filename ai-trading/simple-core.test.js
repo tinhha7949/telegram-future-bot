@@ -63,11 +63,11 @@ test("1h structure requires both HH/HL or LH/LL",()=>{
 });
 
 test("5m confirms regular bullish and bearish divergence only",()=>{
-  const bull=regularDivergence(bullishDivergenceCandles(),C);
+  const bull=regularDivergence(bullishDivergenceCandles(),{...C,DIVERGENCE_MAX_PIVOT_DISTANCE:50});
   assert.equal(bull.bullish,true);
   assert.equal(bull.bearish,false);
   assert.ok(bull.swingLow>0);
-  const bear=regularDivergence(bearishDivergenceCandles(),C);
+  const bear=regularDivergence(bearishDivergenceCandles(),{...C,DIVERGENCE_MAX_PIVOT_DISTANCE:50});
   assert.equal(bear.bearish,true);
   assert.equal(bear.bullish,false);
   assert.ok(bear.swingHigh>0);
@@ -87,7 +87,7 @@ test("funding and spread hard veto fail closed",()=>{
 });
 
 test("LONG requires 1h up structure, 1m RSI <=30 and regular bullish 5m divergence",()=>{
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"LONG");
   assert.equal(signal.trendSide,"UP");
   assert.ok(signal.rsi<=30);
@@ -105,7 +105,7 @@ test("SHORT requires 1h down structure, 1m RSI >=70 and regular bearish 5m diver
 });
 
 test("counter-bias trades, RSI outside trigger, and range bias are vetoed",()=>{
-  const cfg={...C,DIVERGENCE_LOOKBACK_CANDLES:60};
+  const cfg={...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50};
   const up=trendCandles("UP"), down=trendCandles("DOWN");
   assert.equal(coreLogic({trendCandles:up,entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:cfg,now:NOW}).side,null);
   assert.equal(coreLogic({trendCandles:down,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW}).side,null);
