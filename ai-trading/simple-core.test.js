@@ -40,9 +40,9 @@ test("RSI triggers inclusively in configured LONG 80-90 and SHORT 10-20 ranges",
   assert.equal(C.RSI_LONG_TRIGGER, 90);
   assert.equal(C.RSI_SHORT_TRIGGER, 10);
   assert.equal(C.RSI_SHORT_MAX, 20);
-  for (const value of [10, 10.01, 15, 19.99, 20]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
+  for (const value of [80, 80.01, 85, 89.99, 90]) assert.equal(isLongRsi(value, C), true, "LONG RSI " + value);
   for (const value of [0, 10, 20, 79.999, 90.001, 91, 100]) assert.equal(isLongRsi(value, C), false, "not LONG RSI " + value);
-  for (const value of [80, 80.01, 85, 89.99, 90]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
+  for (const value of [10, 10.01, 15, 19.99, 20]) assert.equal(isShortRsi(value, C), true, "SHORT RSI " + value);
   for (const value of [0, 9.999, 21, 79, 80, 100]) assert.equal(isShortRsi(value, C), false, "not SHORT RSI " + value);
 });
 
