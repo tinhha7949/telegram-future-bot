@@ -49,8 +49,8 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   assert.ok(Number.isInteger(C.TREND_EMA_PERIOD) && C.TREND_EMA_PERIOD>0);
   assert.ok(C.ENTRY_RSI_LONG_MAX>=0 && C.ENTRY_RSI_LONG_MAX<C.ENTRY_RSI_SHORT_MIN);
   assert.ok(C.ENTRY_RSI_SHORT_MIN<=100);
-  assert.ok(C.MAX_ABS_FUNDING_RATE>0);
-  assert.ok(C.MAX_SPREAD_BPS>0);
+  assert.ok(C.MAX_ABS_FUNDING_RATE>=0);
+  assert.ok(C.MAX_SPREAD_BPS>=0);
 });
 
 
@@ -64,7 +64,9 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     .replace("ENTRY_RSI_LONG_MAX: 30","ENTRY_RSI_LONG_MAX: 42")
     .replace("ENTRY_RSI_SHORT_MIN: 70","ENTRY_RSI_SHORT_MIN: 58")
     .replace("TP1_REWARD_RISK: 1.2","TP1_REWARD_RISK: 1.1")
-    .replace("TP2_REWARD_RISK: 1.5","TP2_REWARD_RISK: 1.6");
+    .replace("TP2_REWARD_RISK: 1.5","TP2_REWARD_RISK: 1.6")
+    .replace("MAX_ABS_FUNDING_RATE: 0.0005","MAX_ABS_FUNDING_RATE: 0.001")
+    .replace("MAX_SPREAD_BPS: 10","MAX_SPREAD_BPS: 25");
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"simple-config-"));
   const file=path.join(dir,"CONFIG.yaml");
   try {
@@ -78,6 +80,8 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     assert.equal(custom.ENTRY_RSI_SHORT_MIN,58);
     assert.equal(custom.TP1_REWARD_RISK,1.1);
     assert.equal(custom.TP2_REWARD_RISK,1.6);
+    assert.equal(custom.MAX_ABS_FUNDING_RATE,0.001);
+    assert.equal(custom.MAX_SPREAD_BPS,25);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
 
@@ -121,13 +125,16 @@ test("hidden divergence and incomplete divergence history do not qualify",()=>{
   assert.equal(regularDivergence([],C).bullish,false);
 });
 
-test("funding veto blocks only adverse funding for the position direction",()=>{
-  const market={bidPrice:100,askPrice:100.01,config:C};
-  assert.equal(marketVeto({...market,side:"LONG",fundingRate:0.0006}).reason,"FUNDING_TOO_HOT");
-  assert.equal(marketVeto({...market,side:"SHORT",fundingRate:-0.0006}).reason,"FUNDING_TOO_HOT");
-  assert.equal(marketVeto({...market,side:"LONG",fundingRate:-0.0006}).allowed,true);
-  assert.equal(marketVeto({...market,side:"SHORT",fundingRate:0.0006}).allowed,true);
-  assert.equal(marketVeto({...market,side:"LONG",fundingRate:0.0001,askPrice:100.2}).reason,"SPREAD_TOO_WIDE");
+test("funding and spread vetoes follow CONFIG.yaml thresholds",()=>{
+  const market={bidPrice:100,askPrice:100,config:C};
+  const hotFunding=C.MAX_ABS_FUNDING_RATE+Math.max(1e-8,C.MAX_ABS_FUNDING_RATE*0.1);
+  const wideSpread=C.MAX_SPREAD_BPS+Math.max(1,C.MAX_SPREAD_BPS*0.1);
+  const wideAsk=100*(20000+wideSpread)/(20000-wideSpread);
+  assert.equal(marketVeto({...market,side:"LONG",fundingRate:hotFunding}).reason,"FUNDING_TOO_HOT");
+  assert.equal(marketVeto({...market,side:"SHORT",fundingRate:-hotFunding}).reason,"FUNDING_TOO_HOT");
+  assert.equal(marketVeto({...market,side:"LONG",fundingRate:-hotFunding}).allowed,true);
+  assert.equal(marketVeto({...market,side:"SHORT",fundingRate:hotFunding}).allowed,true);
+  assert.equal(marketVeto({...market,side:"LONG",fundingRate:0,askPrice:wideAsk}).reason,"SPREAD_TOO_WIDE");
   assert.equal(marketVeto({...market,side:"LONG",fundingRate:null}).reason,"MARKET_DATA_INVALID");
 });
 
