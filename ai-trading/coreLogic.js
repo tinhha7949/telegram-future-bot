@@ -129,7 +129,7 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now 
 
 function marketVeto({ fundingRate, bidPrice, askPrice, config }) {
   const funding = Number(fundingRate), bid = Number(bidPrice), ask = Number(askPrice);
-  if (!(Number.isFinite(funding) && bid > 0 && ask >= bid && ask > 0)) return { allowed: false, reason: "MARKET_DATA_INVALID" };
+  if (fundingRate === null || fundingRate === undefined || bidPrice === null || bidPrice === undefined || askPrice === null || askPrice === undefined || !(Number.isFinite(funding) && bid > 0 && ask >= bid && ask > 0)) return { allowed: false, reason: "MARKET_DATA_INVALID" };
   const spreadBps = (ask - bid) / ((ask + bid) / 2) * 10000;
   if (Math.abs(funding) > config.MAX_ABS_FUNDING_RATE) return { allowed: false, reason: "FUNDING_TOO_HOT", fundingRate: funding, spreadBps };
   if (!Number.isFinite(spreadBps) || spreadBps > config.MAX_SPREAD_BPS) return { allowed: false, reason: "SPREAD_TOO_WIDE", fundingRate: funding, spreadBps };
