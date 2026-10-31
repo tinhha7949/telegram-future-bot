@@ -11,7 +11,7 @@ const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");
 const { coreLogic, marketVeto } = require("./ai-trading/coreLogic");
 const { getTopSymbol } = require("./ai-trading/getTopSymbol");
-const { buildProtection, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
+const { buildProtection, protectionConfigForDivergence, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
@@ -78,7 +78,7 @@ async function main() {
   await trades.createIndex({symbol:1,status:1},{name:"simple_active_symbol",partialFilterExpression:{status:"OPEN"}});
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
   await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once",unique:true});
-  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"1H_STRUCTURE_5M_REGULAR_DIVERGENCE_1M_RSI"}},{upsert:true});
+  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"1H_STRUCTURE_5M_DIVERGENCE_BONUS_1M_RSI"}},{upsert:true});
   const info=await binance.get("/fapi/v1/exchangeInfo");
   const rules=new Map();
   for(const s of info.symbols||[]) {
@@ -142,7 +142,7 @@ async function main() {
       if(p) {
         try {
           try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("RECOVERY_ALGO_CANCEL_WARN",t.symbol,e.message); }
-          const recovered=buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atr:Number(t.atr),config:C,priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
+          const recovered=buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atr:Number(t.atr),config:protectionConfigForDivergence(C,t.divergence),priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
           await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl||recovered.sl,tp1:t.tp1||recovered.tp1,tp2:t.tp2||recovered.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.stepSize||0,minQty:rules.get(t.symbol)?.minQty||0,config:C});
           await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true,entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0)}});
           
@@ -218,7 +218,7 @@ async function main() {
       binance.get("/fapi/v1/ticker/bookTicker",{symbol})
     ]);
     const mark=Number(premium.markPrice);
-    const veto=marketVeto({fundingRate:premium.lastFundingRate,bidPrice:book.bidPrice,askPrice:book.askPrice,config:C});
+    const veto=marketVeto({side:signal.side,fundingRate:premium.lastFundingRate,bidPrice:book.bidPrice,askPrice:book.askPrice,config:C});
     if(!(mark>0)||!veto.allowed) {
       console.log("ENTRY_VETO_"+(veto.reason==="OK"?"MARKET_DATA_INVALID":veto.reason),symbol);
       return;
@@ -234,7 +234,7 @@ async function main() {
       } catch(e) { console.error("LEVERAGE_CAP_UNAVAILABLE",symbol,e.message); return; }
     }
     const symbolLeverage=Math.min(C.LEVERAGE,symbolMaxLeverage), sizingConfig={...C,LEVERAGE:symbolLeverage};
-    const protection=buildProtection({side:signal.side,entryPrice:mark,atr:signal.atr,stopPrice:signal.swingStop,config:C,priceTick:r.tickSize});
+    const protection=buildProtection({side:signal.side,entryPrice:mark,atr:signal.atr,stopPrice:signal.swingStop,config:protectionConfigForDivergence(C,signal.divergence),priceTick:r.tickSize});
     const sizing=calculateOrderSizing({wallet,available,mark,stopDistance:protection.stopDistance,rules:r,config:sizingConfig});
     if(!sizing.ok) {
       console.log("ENTRY_SKIP_"+sizing.reason,symbol,"qty="+sizing.qty,"notional="+sizing.notional,"minNotional="+r.minNotional,"maxNotional="+sizing.maxNotional);
@@ -243,7 +243,7 @@ async function main() {
     const qty=sizing.qty;
     try { splitQuantity({quantity:qty,stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message,"qty="+qty); return; }
     if(sizing.margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol,"required="+sizing.margin,"available="+available); return; }
-    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,swingStop:signal.swingStop,divergence:signal.divergence,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
+    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,swingStop:signal.swingStop,divergence:signal.divergence,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return; }
     let inserted;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }
@@ -251,7 +251,7 @@ async function main() {
       await binance.signed("POST","/fapi/v1/leverage",{symbol,leverage:symbolLeverage});
       const order=await binance.signed("POST","/fapi/v1/order",{symbol,side:signal.side==="LONG"?"BUY":"SELL",type:"MARKET",quantity:qty.toFixed(precision(r.stepSize)),newOrderRespType:"RESULT"});
       const filled=Number(order.avgPrice)||mark;
-      const actual=buildProtection({side:signal.side,entryPrice:filled,atr:signal.atr,stopPrice:signal.swingStop,config:C,priceTick:r.tickSize});
+      const actual=buildProtection({side:signal.side,entryPrice:filled,atr:signal.atr,stopPrice:signal.swingStop,config:protectionConfigForDivergence(C,signal.divergence),priceTick:r.tickSize});
       await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,openedAt:new Date(order.updateTime||Date.now())}});
       try {
         await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol,side:signal.side,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,stepSize:r.stepSize,minQty:r.minQty,config:C});
