@@ -47,8 +47,8 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   assert.ok(supported.has(C.ENTRY_TIMEFRAME));
   assert.ok(supported.has(C.DIVERGENCE_TIMEFRAME));
   assert.ok(Number.isInteger(C.TREND_EMA_PERIOD) && C.TREND_EMA_PERIOD>0);
-  assert.ok(C.ENTRY_RSI_LONG_MAX>=0 && C.ENTRY_RSI_LONG_MAX<C.ENTRY_RSI_SHORT_MIN);
-  assert.ok(C.ENTRY_RSI_SHORT_MIN<=100);
+  assert.ok(C.ENTRY_RSI_LONG_MIN>=0 && C.ENTRY_RSI_LONG_MIN<=C.ENTRY_RSI_LONG_MAX && C.ENTRY_RSI_LONG_MAX<=100);
+  assert.ok(C.ENTRY_RSI_SHORT_MIN>=0 && C.ENTRY_RSI_SHORT_MIN<=C.ENTRY_RSI_SHORT_MAX && C.ENTRY_RSI_SHORT_MAX<=100);
   assert.ok(C.MAX_ABS_FUNDING_RATE>=0);
   assert.ok(C.MAX_SPREAD_BPS>=0);
 });
@@ -61,8 +61,10 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     .replace('ENTRY_TIMEFRAME: "1m"','ENTRY_TIMEFRAME: "3m"')
     .replace('DIVERGENCE_TIMEFRAME: "5m"','DIVERGENCE_TIMEFRAME: "15m"')
     .replace("MAX_SYMBOLS: 100","MAX_SYMBOLS: 150")
-    .replace("ENTRY_RSI_LONG_MAX: 30","ENTRY_RSI_LONG_MAX: 42")
-    .replace("ENTRY_RSI_SHORT_MIN: 70","ENTRY_RSI_SHORT_MIN: 58")
+    .replace("ENTRY_RSI_LONG_MIN: 30","ENTRY_RSI_LONG_MIN: 28")
+    .replace("ENTRY_RSI_LONG_MAX: 35","ENTRY_RSI_LONG_MAX: 42")
+    .replace("ENTRY_RSI_SHORT_MIN: 65","ENTRY_RSI_SHORT_MIN: 58")
+    .replace("ENTRY_RSI_SHORT_MAX: 70","ENTRY_RSI_SHORT_MAX: 72")
     .replace("TP1_REWARD_RISK: 1.2","TP1_REWARD_RISK: 1.1")
     .replace("TP2_REWARD_RISK: 1.5","TP2_REWARD_RISK: 1.6")
     .replace("MAX_ABS_FUNDING_RATE: 0.0005","MAX_ABS_FUNDING_RATE: 0.001")
@@ -76,8 +78,10 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     assert.equal(custom.ENTRY_TIMEFRAME,"3m");
     assert.equal(custom.DIVERGENCE_TIMEFRAME,"15m");
     assert.equal(custom.MAX_SYMBOLS,150);
+    assert.equal(custom.ENTRY_RSI_LONG_MIN,28);
     assert.equal(custom.ENTRY_RSI_LONG_MAX,42);
     assert.equal(custom.ENTRY_RSI_SHORT_MIN,58);
+    assert.equal(custom.ENTRY_RSI_SHORT_MAX,72);
     assert.equal(custom.TP1_REWARD_RISK,1.1);
     assert.equal(custom.TP2_REWARD_RISK,1.6);
     assert.equal(custom.MAX_ABS_FUNDING_RATE,0.001);
@@ -85,14 +89,20 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
 
-test("RSI thresholds are inclusive and configurable",()=>{
-  assert.equal(entryRsiTriggered("LONG",C.ENTRY_RSI_LONG_MAX,C),true);
-  assert.equal(entryRsiTriggered("LONG",C.ENTRY_RSI_LONG_MAX+0.01,C),false);
-  assert.equal(entryRsiTriggered("SHORT",C.ENTRY_RSI_SHORT_MIN,C),true);
-  assert.equal(entryRsiTriggered("SHORT",C.ENTRY_RSI_SHORT_MIN-0.01,C),false);
-  const custom={...C,ENTRY_RSI_LONG_MAX:38,ENTRY_RSI_SHORT_MIN:62};
-  assert.equal(entryRsiTriggered("LONG",38,custom),true);
-  assert.equal(entryRsiTriggered("SHORT",62,custom),true);
+test("RSI bands are inclusive, bounded, and configurable",()=>{
+  assert.equal(C.ENTRY_RSI_LONG_MIN,30);
+  assert.equal(C.ENTRY_RSI_LONG_MAX,35);
+  assert.equal(C.ENTRY_RSI_SHORT_MIN,65);
+  assert.equal(C.ENTRY_RSI_SHORT_MAX,70);
+  for(const value of [30,32,35]) assert.equal(entryRsiTriggered("LONG",value,C),true);
+  for(const value of [29.99,35.01,65,70,NaN]) assert.equal(entryRsiTriggered("LONG",value,C),false);
+  for(const value of [65,67,70]) assert.equal(entryRsiTriggered("SHORT",value,C),true);
+  for(const value of [64.99,70.01,30,35,NaN]) assert.equal(entryRsiTriggered("SHORT",value,C),false);
+  const custom={...C,ENTRY_RSI_LONG_MIN:25,ENTRY_RSI_LONG_MAX:40,ENTRY_RSI_SHORT_MIN:60,ENTRY_RSI_SHORT_MAX:75};
+  assert.equal(entryRsiTriggered("LONG",25,custom),true);
+  assert.equal(entryRsiTriggered("LONG",40,custom),true);
+  assert.equal(entryRsiTriggered("SHORT",60,custom),true);
+  assert.equal(entryRsiTriggered("SHORT",75,custom),true);
 });
 
 test("RSI and ATR return valid closed-candle indicators",()=>{
@@ -141,25 +151,25 @@ test("funding and spread vetoes follow CONFIG.yaml thresholds",()=>{
 });
 
 test("LONG enters with regular bullish divergence as an RR bonus",()=>{
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:{...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:0,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"LONG");
   assert.equal(signal.trendSide,"UP");
-  assert.ok(signal.rsi<=C.ENTRY_RSI_LONG_MAX);
+  assert.ok(signal.rsi>=0 && signal.rsi<=0);
   assert.equal(signal.divergence,"REGULAR_BULLISH");
   assert.ok(signal.swingStop<entryCandles("LONG").at(-1).close);
 });
 
 test("SHORT enters with regular bearish divergence as an RR bonus",()=>{
-  const signal=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:{...C,ENTRY_RSI_SHORT_MIN:100,ENTRY_RSI_SHORT_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"SHORT");
   assert.equal(signal.trendSide,"DOWN");
-  assert.ok(signal.rsi>=C.ENTRY_RSI_SHORT_MIN);
+  assert.ok(signal.rsi>=100 && signal.rsi<=100);
   assert.equal(signal.divergence,"REGULAR_BEARISH");
   assert.ok(signal.swingStop>entryCandles("SHORT").at(-1).close);
 });
 
 test("entries without matching regular divergence are allowed at the wider RR tier",()=>{
-  const cfg={...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50};
+  const cfg={...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:0,ENTRY_RSI_SHORT_MIN:100,ENTRY_RSI_SHORT_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50};
   const noDiv=candlesFromCloses(Array.from({length:100},(_,i)=>100+i*0.01));
   const long=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:noDiv,config:cfg,now:NOW});
   const short=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:noDiv,config:cfg,now:NOW});
@@ -176,7 +186,7 @@ test("entries without matching regular divergence are allowed at the wider RR ti
 });
 
 test("counter-bias trades, RSI outside trigger, and range bias are vetoed",()=>{
-  const cfg={...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50};
+  const cfg={...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:0,ENTRY_RSI_SHORT_MIN:100,ENTRY_RSI_SHORT_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50};
   const up=trendCandles("UP"), down=trendCandles("DOWN");
   assert.equal(coreLogic({trendCandles:up,entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:cfg,now:NOW}).side,null);
   assert.equal(coreLogic({trendCandles:down,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW}).side,null);
