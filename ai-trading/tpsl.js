@@ -8,11 +8,13 @@ function splitQuantity({quantity,stepSize,minQty,config}){
  if(!(total>0)||tp1<minQty||tp2<minQty||Math.abs(tp1+tp2-total)>Math.max(1e-12,stepSize*1e-8))throw Error("TP_SPLIT_BELOW_BINANCE_MIN_QTY");
  return{total,tp1,tp2};
 }
-function buildProtection({side,entryPrice,atr,config,priceTick}){
+function buildProtection({side,entryPrice,atr,config,priceTick,stopPrice}){
  if(!["LONG","SHORT"].includes(side)||!Number.isFinite(entryPrice)||!(entryPrice>0)||!Number.isFinite(atr)||!(atr>0)||!Number.isFinite(priceTick)||!(priceTick>0))throw Error("INVALID_PROTECTION_INPUT");
- const distance=Math.min(entryPrice*config.SL_MAX_PCT/100,Math.max(entryPrice*config.SL_MIN_PCT/100,atr*config.SL_ATR_MULTIPLIER));
+ const hasSwingStop=Number.isFinite(stopPrice)&&stopPrice>0;
+ if(hasSwingStop&&(side==="LONG"?stopPrice>=entryPrice:stopPrice<=entryPrice))throw Error("INVALID_SWING_STOP_SIDE");
+ const distance=hasSwingStop?Math.abs(entryPrice-stopPrice):Math.min(entryPrice*config.SL_MAX_PCT/100,Math.max(entryPrice*config.SL_MIN_PCT/100,atr*config.SL_ATR_MULTIPLIER));
  const d=precision(priceTick),down=x=>Number((Math.floor(x/priceTick+1e-10)*priceTick).toFixed(d)),up=x=>Number((Math.ceil(x/priceTick-1e-10)*priceTick).toFixed(d));
- let sl=side==="LONG"?down(entryPrice-distance):up(entryPrice+distance);
+ let sl=hasSwingStop?(side==="LONG"?down(stopPrice):up(stopPrice)):(side==="LONG"?down(entryPrice-distance):up(entryPrice+distance));
  let tp1=side==="LONG"?up(entryPrice+distance*config.TP1_REWARD_RISK):down(entryPrice-distance*config.TP1_REWARD_RISK);
  let tp2=side==="LONG"?up(entryPrice+distance*config.TP2_REWARD_RISK):down(entryPrice-distance*config.TP2_REWARD_RISK);
  if(side==="LONG"&&tp2<=tp1)tp2=Number((tp1+priceTick).toFixed(d));
