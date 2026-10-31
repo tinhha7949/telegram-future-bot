@@ -128,13 +128,15 @@ test("hidden divergence and incomplete divergence history do not qualify",()=>{
 test("funding and spread vetoes follow CONFIG.yaml thresholds",()=>{
   const market={bidPrice:100,askPrice:100,config:C};
   const hotFunding=C.MAX_ABS_FUNDING_RATE+Math.max(1e-8,C.MAX_ABS_FUNDING_RATE*0.1);
-  const wideSpread=C.MAX_SPREAD_BPS+Math.max(1,C.MAX_SPREAD_BPS*0.1);
-  const wideAsk=100*(20000+wideSpread)/(20000-wideSpread);
   assert.equal(marketVeto({...market,side:"LONG",fundingRate:hotFunding}).reason,"FUNDING_TOO_HOT");
   assert.equal(marketVeto({...market,side:"SHORT",fundingRate:-hotFunding}).reason,"FUNDING_TOO_HOT");
   assert.equal(marketVeto({...market,side:"LONG",fundingRate:-hotFunding}).allowed,true);
   assert.equal(marketVeto({...market,side:"SHORT",fundingRate:hotFunding}).allowed,true);
-  assert.equal(marketVeto({...market,side:"LONG",fundingRate:0,askPrice:wideAsk}).reason,"SPREAD_TOO_WIDE");
+  if(C.MAX_SPREAD_BPS<19999) {
+    const wideSpread=C.MAX_SPREAD_BPS+Math.max(1,(19999-C.MAX_SPREAD_BPS)/2);
+    const wideAsk=100*(20000+wideSpread)/(20000-wideSpread);
+    assert.equal(marketVeto({...market,side:"LONG",fundingRate:0,askPrice:wideAsk}).reason,"SPREAD_TOO_WIDE");
+  } else assert.equal(marketVeto({...market,side:"LONG",fundingRate:0,askPrice:1000000}).allowed,true);
   assert.equal(marketVeto({...market,side:"LONG",fundingRate:null}).reason,"MARKET_DATA_INVALID");
 });
 
