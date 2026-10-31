@@ -96,7 +96,7 @@ test("LONG requires 1h up structure, 1m RSI <=30 and regular bullish 5m divergen
 });
 
 test("SHORT requires 1h down structure, 1m RSI >=70 and regular bearish 5m divergence",()=>{
-  const signal=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"SHORT");
   assert.equal(signal.trendSide,"DOWN");
   assert.ok(signal.rsi>=70);
