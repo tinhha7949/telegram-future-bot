@@ -40,6 +40,12 @@ function entryCandles(direction) {
   const closes=Array.from({length:40},(_,i)=>direction==="LONG"?140-i:60+i);
   return candlesFromCloses(closes,60000);
 }
+function setConfigValue(source,key,value) {
+  const pattern=new RegExp("^"+key+":.*$","m");
+  assert.match(source,pattern,"CONFIG.yaml must define "+key);
+  const rendered=typeof value==="string"?JSON.stringify(value):String(value);
+  return source.replace(pattern,key+": "+rendered);
+}
 
 test("loaded strategy settings are valid and drive the strategy",()=>{
   const supported=new Set(["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"]);
@@ -56,19 +62,12 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
 
 test("CONFIG.yaml overrides are accepted without changing tests",()=>{
   const source=fs.readFileSync(path.join(__dirname,"..","CONFIG.yaml"),"utf8");
-  const customized=source
-    .replace('TREND_TIMEFRAME: "1h"','TREND_TIMEFRAME: "4h"')
-    .replace('ENTRY_TIMEFRAME: "1m"','ENTRY_TIMEFRAME: "3m"')
-    .replace('DIVERGENCE_TIMEFRAME: "5m"','DIVERGENCE_TIMEFRAME: "15m"')
-    .replace("MAX_SYMBOLS: 100","MAX_SYMBOLS: 150")
-    .replace("ENTRY_RSI_LONG_MIN: 30","ENTRY_RSI_LONG_MIN: 28")
-    .replace("ENTRY_RSI_LONG_MAX: 35","ENTRY_RSI_LONG_MAX: 42")
-    .replace("ENTRY_RSI_SHORT_MIN: 65","ENTRY_RSI_SHORT_MIN: 58")
-    .replace("ENTRY_RSI_SHORT_MAX: 70","ENTRY_RSI_SHORT_MAX: 72")
-    .replace("TP1_REWARD_RISK: 1.2","TP1_REWARD_RISK: 1.1")
-    .replace("TP2_REWARD_RISK: 1.5","TP2_REWARD_RISK: 1.6")
-    .replace("MAX_ABS_FUNDING_RATE: 0.0005","MAX_ABS_FUNDING_RATE: 0.001")
-    .replace("MAX_SPREAD_BPS: 10","MAX_SPREAD_BPS: 25");
+  const overrides={
+    TREND_TIMEFRAME:"4h",ENTRY_TIMEFRAME:"3m",DIVERGENCE_TIMEFRAME:"15m",MAX_SYMBOLS:150,
+    ENTRY_RSI_LONG_MIN:28,ENTRY_RSI_LONG_MAX:42,ENTRY_RSI_SHORT_MIN:58,ENTRY_RSI_SHORT_MAX:72,
+    TP1_REWARD_RISK:1.1,TP2_REWARD_RISK:1.6,MAX_ABS_FUNDING_RATE:0.001,MAX_SPREAD_BPS:25
+  };
+  const customized=Object.entries(overrides).reduce((text,[key,value])=>setConfigValue(text,key,value),source);
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"simple-config-"));
   const file=path.join(dir,"CONFIG.yaml");
   try {
@@ -89,20 +88,27 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
 
-test("RSI bands are inclusive, bounded, and configurable",()=>{
-  assert.equal(C.ENTRY_RSI_LONG_MIN,30);
-  assert.equal(C.ENTRY_RSI_LONG_MAX,35);
-  assert.equal(C.ENTRY_RSI_SHORT_MIN,65);
-  assert.equal(C.ENTRY_RSI_SHORT_MAX,70);
-  for(const value of [30,32,35]) assert.equal(entryRsiTriggered("LONG",value,C),true);
-  for(const value of [29.99,35.01,65,70,NaN]) assert.equal(entryRsiTriggered("LONG",value,C),false);
-  for(const value of [65,67,70]) assert.equal(entryRsiTriggered("SHORT",value,C),true);
-  for(const value of [64.99,70.01,30,35,NaN]) assert.equal(entryRsiTriggered("SHORT",value,C),false);
-  const custom={...C,ENTRY_RSI_LONG_MIN:25,ENTRY_RSI_LONG_MAX:40,ENTRY_RSI_SHORT_MIN:60,ENTRY_RSI_SHORT_MAX:75};
-  assert.equal(entryRsiTriggered("LONG",25,custom),true);
-  assert.equal(entryRsiTriggered("LONG",40,custom),true);
-  assert.equal(entryRsiTriggered("SHORT",60,custom),true);
-  assert.equal(entryRsiTriggered("SHORT",75,custom),true);
+test("RSI bands loaded from CONFIG.yaml are inclusive and use their configured boundaries",()=>{
+  for(const [side,min,max] of [
+    ["LONG",C.ENTRY_RSI_LONG_MIN,C.ENTRY_RSI_LONG_MAX],
+    ["SHORT",C.ENTRY_RSI_SHORT_MIN,C.ENTRY_RSI_SHORT_MAX]
+  ]) {
+    assert.equal(entryRsiTriggered(side,min,C),true);
+    assert.equal(entryRsiTriggered(side,max,C),true);
+    assert.equal(entryRsiTriggered(side,(min+max)/2,C),true);
+    assert.equal(entryRsiTriggered(side,min-0.01,C),false);
+    assert.equal(entryRsiTriggered(side,max+0.01,C),false);
+    assert.equal(entryRsiTriggered(side,NaN,C),false);
+  }
+  const custom={...C,ENTRY_RSI_LONG_MIN:21,ENTRY_RSI_LONG_MAX:39,ENTRY_RSI_SHORT_MIN:61,ENTRY_RSI_SHORT_MAX:79};
+  assert.equal(entryRsiTriggered("LONG",21,custom),true);
+  assert.equal(entryRsiTriggered("LONG",39,custom),true);
+  assert.equal(entryRsiTriggered("LONG",20.99,custom),false);
+  assert.equal(entryRsiTriggered("LONG",39.01,custom),false);
+  assert.equal(entryRsiTriggered("SHORT",61,custom),true);
+  assert.equal(entryRsiTriggered("SHORT",79,custom),true);
+  assert.equal(entryRsiTriggered("SHORT",60.99,custom),false);
+  assert.equal(entryRsiTriggered("SHORT",79.01,custom),false);
 });
 
 test("RSI and ATR return valid closed-candle indicators",()=>{
