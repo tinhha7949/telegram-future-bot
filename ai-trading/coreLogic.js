@@ -73,10 +73,10 @@ function coreLogic({ trendCandles, entryCandles, config, now = Date.now() }) {
     return { side: null, reason: "INVALID_INDICATORS" };
   }
   const trendSide = price > trendEma ? "UP" : price < trendEma ? "DOWN" : "NEUTRAL";
-  if (trendSide === "UP" && isLongRsi(valueRsi, config)) {
+  if (trendSide === "DOWN" && isLongRsi(valueRsi, config)) {
     return { side: "LONG", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, signalAt: entry.at(-1).closeTime };
   }
-  if (trendSide === "DOWN" && isShortRsi(valueRsi, config)) {
+  if (trendSide === "UP" && isShortRsi(valueRsi, config)) {
     return { side: "SHORT", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, signalAt: entry.at(-1).closeTime };
   }
   return {
