@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { rsi, atr, marketStructure, regularDivergence, coreLogic } = require("./coreLogic");
+const { rsi, atr, marketStructure, regularDivergence, marketVeto, coreLogic } = require("./coreLogic");
 const { loadSimpleConfig } = require("./simple-config");
 const { buildProtection } = require("./tpsl");
 const { getTopSymbol } = require("./getTopSymbol");
@@ -77,6 +77,13 @@ test("hidden divergence and incomplete divergence history do not qualify",()=>{
   const hiddenBull=regularDivergence(candlesFromCloses([...Array.from({length:20},(_,i)=>120-i),...Array.from({length:10},(_,i)=>101+i),...Array.from({length:21},(_,i)=>111-i*0.4),...Array.from({length:8},(_,i)=>103+i)]),C);
   assert.equal(hiddenBull.bullish,false);
   assert.equal(regularDivergence([],C).bullish,false);
+});
+
+test("funding and spread hard veto fail closed",()=>{
+  assert.equal(marketVeto({fundingRate:0.0006,bidPrice:100,askPrice:100.01,config:C}).reason,"FUNDING_TOO_HOT");
+  assert.equal(marketVeto({fundingRate:0.0001,bidPrice:100,askPrice:100.2,config:C}).reason,"SPREAD_TOO_WIDE");
+  assert.equal(marketVeto({fundingRate:null,bidPrice:100,askPrice:100.01,config:C}).reason,"MARKET_DATA_INVALID");
+  assert.equal(marketVeto({fundingRate:0.0001,bidPrice:100,askPrice:100.01,config:C}).allowed,true);
 });
 
 test("LONG requires 1h up structure, 1m RSI <=30 and regular bullish 5m divergence",()=>{
