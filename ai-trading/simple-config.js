@@ -35,12 +35,12 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   }
   const invalid = [];
   const check = (name, failed) => { if (failed) invalid.push(name); };
-  check("TREND_TIMEFRAME", out.TREND_TIMEFRAME !== "4h");
+  check("TREND_TIMEFRAME", out.TREND_TIMEFRAME !== "1h");
   check("ENTRY_TIMEFRAME", out.ENTRY_TIMEFRAME !== "1m");
   check("MAX_SYMBOLS", !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100);
   check("RSI_LONG_RANGE", out.RSI_LONG_MIN <= 0 || out.RSI_LONG_MIN >= out.RSI_LONG_TRIGGER || out.RSI_LONG_TRIGGER >= 100);
   check("RSI_SHORT_RANGE", out.RSI_SHORT_TRIGGER <= 0 || out.RSI_SHORT_TRIGGER >= out.RSI_SHORT_MAX || out.RSI_SHORT_MAX >= 100);
-  check("RSI_RANGE_ORDER", out.RSI_SHORT_MAX >= out.RSI_LONG_MIN);
+  check("RSI_RANGES_OVERLAP", out.RSI_LONG_MIN <= out.RSI_SHORT_MAX && out.RSI_SHORT_TRIGGER <= out.RSI_LONG_TRIGGER);
   check("SL_RANGE", out.SL_MIN_PCT > out.SL_MAX_PCT);
   check("REWARD_RISK", out.REWARD_RISK < 1);
   check("TP1_REWARD_RISK", out.TP1_REWARD_RISK <= 0);
