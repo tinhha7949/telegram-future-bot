@@ -79,28 +79,30 @@ test("protection prices round away from entry and Binance algo client IDs stay b
   assert.ok(ids.every(id => typeof id === "string" && id.length > 0 && id.length < 36));
 });
 
-test("strategy classifies the 1h EMA trend before applying RSI entry filters", () => {
+test("LONG requires RSI 10-20 in 1h UP trend; SHORT requires RSI 80-90 in 1h DOWN trend", () => {
   const now = Date.now();
-  const falling = Array.from({ length: 120 }, (_, i) => ({
-    openTime: now - (120 - i) * 14400000,
-    high: 200 - i,
-    low: 198 - i,
-    close: 199 - i,
-    closeTime: now - (120 - i) * 14400000 + 14399999
-  }));
-  const entryUp = Array.from({ length: 30 }, (_, i) => ({
-    openTime: now - (30 - i) * 60000,
-    high: 100 + i,
-    low: 98 + i,
-    close: 99 + i,
-    closeTime: now - (30 - i) * 60000 + 59999
-  }));
-  const down = coreLogic({ trendCandles: falling, entryCandles: entryUp, config: C, now });
-  assert.notEqual(down.side, "LONG");
-  const rising = falling.map((x, i) => ({ ...x, high: 100 + i, low: 98 + i, close: 99 + i }));
-  const entryDown = entryUp.map((x, i) => ({ ...x, high: 130 - i, low: 128 - i, close: 129 - i }));
-  const up = coreLogic({ trendCandles: rising, entryCandles: entryDown, config: C, now });
-  assert.notEqual(up.side, "SHORT");
+  const makeTrend = (direction) => Array.from({ length: 10 }, (_, i) => {
+    const close = direction === "UP" ? 100 + i : 200 - i;
+    return { high: close + 1, low: close - 1, close, closeTime: now - (10 - i) * 3600000 };
+  });
+  const makeEntry = (changes) => {
+    let close = 100;
+    return [close, ...changes.map(change => (close += change))].map((value, i) => ({
+      high: value + 1, low: value - 1, close: value, closeTime: now - (15 - i) * 60000
+    }));
+  };
+  const longEntry = makeEntry([1, ...Array(13).fill(-0.4)]);
+  const shortEntry = makeEntry([...Array(13).fill(1), -(13 / (85 / 15))]);
+  const long = coreLogic({ trendCandles: makeTrend("UP"), entryCandles: longEntry, config: C, now });
+  assert.equal(long.trendSide, "UP");
+  assert.equal(long.side, "LONG");
+  assert.ok(long.rsi >= C.RSI_LONG_MIN && long.rsi <= C.RSI_LONG_TRIGGER);
+  const short = coreLogic({ trendCandles: makeTrend("DOWN"), entryCandles: shortEntry, config: C, now });
+  assert.equal(short.trendSide, "DOWN");
+  assert.equal(short.side, "SHORT");
+  assert.ok(short.rsi >= C.RSI_SHORT_TRIGGER && short.rsi <= C.RSI_SHORT_MAX);
+  assert.equal(coreLogic({ trendCandles: makeTrend("DOWN"), entryCandles: longEntry, config: C, now }).side, null);
+  assert.equal(coreLogic({ trendCandles: makeTrend("UP"), entryCandles: shortEntry, config: C, now }).side, null);
 });
 
 test("config uses configured RR and caps the symbol list at 100", () => {
