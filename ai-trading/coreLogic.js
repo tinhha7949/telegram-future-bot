@@ -123,4 +123,13 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now 
   return { side: null, trendSide, trendEma, rsi: valueRsi, atr: valueAtr, reason: "ENTRY_OR_REGULAR_DIVERGENCE_NOT_CONFIRMED" };
 }
 
-module.exports = { ema, rsi, rsiSeries, atr, closed, pivots, marketStructure, regularDivergence, coreLogic };
+function marketVeto({ fundingRate, bidPrice, askPrice, config }) {
+  const funding = Number(fundingRate), bid = Number(bidPrice), ask = Number(askPrice);
+  if (!(Number.isFinite(funding) && bid > 0 && ask >= bid && ask > 0)) return { allowed: false, reason: "MARKET_DATA_INVALID" };
+  const spreadBps = (ask - bid) / ((ask + bid) / 2) * 10000;
+  if (Math.abs(funding) > config.MAX_ABS_FUNDING_RATE) return { allowed: false, reason: "FUNDING_TOO_HOT", fundingRate: funding, spreadBps };
+  if (!Number.isFinite(spreadBps) || spreadBps > config.MAX_SPREAD_BPS) return { allowed: false, reason: "SPREAD_TOO_WIDE", fundingRate: funding, spreadBps };
+  return { allowed: true, reason: "OK", fundingRate: funding, spreadBps };
+}
+
+module.exports = { ema, rsi, rsiSeries, atr, closed, pivots, marketStructure, regularDivergence, marketVeto, coreLogic };
