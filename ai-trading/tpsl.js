@@ -8,6 +8,14 @@ function splitQuantity({quantity,stepSize,minQty,config}){
  if(!(total>0)||tp1<minQty||tp2<minQty||Math.abs(tp1+tp2-total)>Math.max(1e-12,stepSize*1e-8))throw Error("TP_SPLIT_BELOW_BINANCE_MIN_QTY");
  return{total,tp1,tp2};
 }
+function protectionConfigForDivergence(config, divergence) {
+ const hasDivergence = divergence === "REGULAR_BULLISH" || divergence === "REGULAR_BEARISH";
+ return {
+  ...config,
+  TP1_REWARD_RISK: hasDivergence ? config.TP1_REWARD_RISK : config.TP1_REWARD_RISK_NO_DIVERGENCE,
+  TP2_REWARD_RISK: hasDivergence ? config.TP2_REWARD_RISK : config.TP2_REWARD_RISK_NO_DIVERGENCE
+ };
+}
 function buildProtection({side,entryPrice,atr,config,priceTick,stopPrice}){
  if(!["LONG","SHORT"].includes(side)||!Number.isFinite(entryPrice)||!(entryPrice>0)||!Number.isFinite(atr)||!(atr>0)||!Number.isFinite(priceTick)||!(priceTick>0))throw Error("INVALID_PROTECTION_INPUT");
  const hasSwingStop=Number.isFinite(stopPrice)&&stopPrice>0;
@@ -34,4 +42,4 @@ async function placeProtection({request,symbol,side,sl,tp1,tp2,qty,stepSize,minQ
  const second=await request("POST","/fapi/v1/algoOrder",{...base,type:"TAKE_PROFIT_MARKET",triggerPrice:String(tp2),quantity:split.tp2.toFixed(precision(stepSize)),reduceOnly:"true",clientAlgoId:clientAlgoId("2")});
  return{stop,tp1:first,tp2:second,quantities:split};
 }
-module.exports={buildProtection,splitQuantity,placeProtection};
+module.exports={buildProtection,protectionConfigForDivergence,splitQuantity,placeProtection};
