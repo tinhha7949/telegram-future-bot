@@ -9,7 +9,7 @@ try {
 const crypto = require("node:crypto");
 const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");
-const { coreLogic } = require("./ai-trading/coreLogic");
+const { coreLogic, marketVeto } = require("./ai-trading/coreLogic");
 const { getTopSymbol } = require("./ai-trading/getTopSymbol");
 const { buildProtection, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
@@ -214,12 +214,13 @@ async function main() {
       binance.get("/fapi/v1/premiumIndex",{symbol}),
       binance.get("/fapi/v1/ticker/bookTicker",{symbol})
     ]);
-    const mark=Number(premium.markPrice), funding=Number(premium.lastFundingRate);
-    const bid=Number(book.bidPrice), ask=Number(book.askPrice);
-    if(!(mark>0&&Number.isFinite(funding)&&bid>0&&ask>=bid)) { console.log("ENTRY_VETO_MARKET_DATA_INVALID",symbol); return; }
-    const spreadBps=(ask-bid)/((ask+bid)/2)*10000;
-    if(Math.abs(funding)>C.MAX_ABS_FUNDING_RATE) { console.log("ENTRY_VETO_FUNDING",symbol,"rate="+funding); return; }
-    if(!Number.isFinite(spreadBps)||spreadBps>C.MAX_SPREAD_BPS) { console.log("ENTRY_VETO_SPREAD",symbol,"bps="+spreadBps); return; }
+    const mark=Number(premium.markPrice);
+    const veto=marketVeto({fundingRate:premium.lastFundingRate,bidPrice:book.bidPrice,askPrice:book.askPrice,config:C});
+    if(!(mark>0)||!veto.allowed) {
+      console.log("ENTRY_VETO_"+(veto.reason==="OK"?"MARKET_DATA_INVALID":veto.reason),symbol);
+      return;
+    }
+    const funding=veto.fundingRate, spreadBps=veto.spreadBps;
     let symbolMaxLeverage=leverageCaps.get(symbol);
     if(!symbolMaxLeverage) {
       try {
