@@ -188,12 +188,15 @@ async function main() {
   async function tryEntry(symbol) {
     const r=rules.get(symbol);
     if(!r||r.status!=="TRADING"||r.contractType!=="PERPETUAL"||r.quoteAsset!==C.QUOTE_ASSET) return;
-    const [trendRaw,entryRaw,divergenceRaw]=await Promise.all([
-      binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES+ C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS,C.TREND_EMA_PERIOD+1)}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD*10,C.ATR_PERIOD+1)}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.DIVERGENCE_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.DIVERGENCE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS)})
+    const [trendRaw,entryRaw]=await Promise.all([
+      binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS,C.TREND_EMA_PERIOD+1)}),
+      binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD*10,C.ATR_PERIOD+1)})
     ]);
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),divergenceCandles:toCandles(divergenceRaw),config:C,now:Date.now()+binance.timeOffsetMs});
+    const now=Date.now()+binance.timeOffsetMs;
+    const baseSignal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),config:C,now});
+    if(baseSignal.reason!=="DIVERGENCE_HISTORY_REQUIRED") return;
+    const divergenceRaw=await binance.get("/fapi/v1/klines",{symbol,interval:C.DIVERGENCE_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.DIVERGENCE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS)});
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),divergenceCandles:toCandles(divergenceRaw),config:C,now});
     if(!signal.side) return;
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
