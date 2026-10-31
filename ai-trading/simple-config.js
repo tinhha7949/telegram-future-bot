@@ -31,35 +31,49 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
     "MONGO_STATE_COLLECTION", "DRY_RUN"
   ];
   for (const k of required) if (!Object.hasOwn(out, k)) throw new Error("SIMPLE_CONFIG_MISSING_" + k);
-  for (const k of required.filter(k => ![
+  const stringKeys = [
     "QUOTE_ASSET", "TREND_TIMEFRAME", "ENTRY_TIMEFRAME", "DIVERGENCE_TIMEFRAME",
-    "MONGO_DB_NAME", "MONGO_TRADES_COLLECTION", "MONGO_STATE_COLLECTION", "DRY_RUN"
-  ].includes(k))) {
-    if (!Number.isFinite(out[k]) || out[k] <= 0) throw new Error("SIMPLE_CONFIG_INVALID_" + k);
+    "MONGO_DB_NAME", "MONGO_TRADES_COLLECTION", "MONGO_STATE_COLLECTION"
+  ];
+  for (const k of stringKeys) {
+    if (typeof out[k] !== "string" || !out[k].trim()) throw new Error("SIMPLE_CONFIG_INVALID_" + k);
   }
+  if (typeof out.DRY_RUN !== "boolean") throw new Error("SIMPLE_CONFIG_INVALID_DRY_RUN");
+
+  const numericKeys = required.filter(k => !stringKeys.includes(k) && k !== "DRY_RUN");
+  const nonNegativeKeys = new Set([
+    "MAX_SYMBOLS", "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT",
+    "ENTRY_RSI_LONG_MAX", "SWING_STOP_BUFFER_PCT", "SL_MIN_PCT",
+    "MAX_ABS_FUNDING_RATE", "MAX_SPREAD_BPS", "MAX_OPEN_POSITIONS",
+    "MAX_TRADES_PER_DAY", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT"
+  ]);
+  for (const k of numericKeys) {
+    if (!Number.isFinite(out[k]) || (nonNegativeKeys.has(k) ? out[k] < 0 : out[k] <= 0))
+      throw new Error("SIMPLE_CONFIG_INVALID_" + k);
+  }
+
   const invalid = [];
   const check = (name, failed) => { if (failed) invalid.push(name); };
-  check("TREND_TIMEFRAME", out.TREND_TIMEFRAME !== "1h");
-  check("ENTRY_TIMEFRAME", out.ENTRY_TIMEFRAME !== "1m");
-  check("DIVERGENCE_TIMEFRAME", out.DIVERGENCE_TIMEFRAME !== "5m");
-  check("MAX_SYMBOLS", !Number.isInteger(out.MAX_SYMBOLS) || out.MAX_SYMBOLS > 100);
-  check("ENTRY_RSI_THRESHOLDS", out.ENTRY_RSI_LONG_MAX >= 50 || out.ENTRY_RSI_SHORT_MIN <= 50 || out.ENTRY_RSI_LONG_MAX >= out.ENTRY_RSI_SHORT_MIN);
-  check("STRUCTURE_LOOKBACK_CANDLES", !Number.isInteger(out.STRUCTURE_LOOKBACK_CANDLES) || out.STRUCTURE_LOOKBACK_CANDLES < 20);
+  const supportedIntervals = new Set(["1s","1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"]);
+  check("TREND_TIMEFRAME", !supportedIntervals.has(out.TREND_TIMEFRAME));
+  check("ENTRY_TIMEFRAME", !supportedIntervals.has(out.ENTRY_TIMEFRAME));
+  check("DIVERGENCE_TIMEFRAME", !supportedIntervals.has(out.DIVERGENCE_TIMEFRAME));
+  check("MAX_SYMBOLS", !Number.isInteger(out.MAX_SYMBOLS));
+  check("ENTRY_RSI_THRESHOLDS", out.ENTRY_RSI_LONG_MAX > 100 || out.ENTRY_RSI_SHORT_MIN > 100 || out.ENTRY_RSI_LONG_MAX >= out.ENTRY_RSI_SHORT_MIN);
+  check("STRUCTURE_LOOKBACK_CANDLES", !Number.isInteger(out.STRUCTURE_LOOKBACK_CANDLES) || out.STRUCTURE_LOOKBACK_CANDLES < out.PIVOT_LEFT_BARS + out.PIVOT_RIGHT_BARS + 3);
   check("DIVERGENCE_LOOKBACK_CANDLES", !Number.isInteger(out.DIVERGENCE_LOOKBACK_CANDLES) || out.DIVERGENCE_LOOKBACK_CANDLES < out.RSI_PERIOD + out.PIVOT_LEFT_BARS + out.PIVOT_RIGHT_BARS + 2);
   check("DIVERGENCE_MAX_PIVOT_DISTANCE", !Number.isInteger(out.DIVERGENCE_MAX_PIVOT_DISTANCE) || out.DIVERGENCE_MAX_PIVOT_DISTANCE < 2 || out.DIVERGENCE_MAX_PIVOT_DISTANCE >= out.DIVERGENCE_LOOKBACK_CANDLES);
   check("PIVOT_BARS", !Number.isInteger(out.PIVOT_LEFT_BARS) || !Number.isInteger(out.PIVOT_RIGHT_BARS));
-  check("SWING_STOP_BUFFER_PCT", out.SWING_STOP_BUFFER_PCT >= 5);
-  check("MAX_ABS_FUNDING_RATE", out.MAX_ABS_FUNDING_RATE >= 0.1);
   check("SL_RANGE", out.SL_MIN_PCT > out.SL_MAX_PCT);
-  check("REWARD_RISK", out.REWARD_RISK < 1);
+  check("REWARD_RISK", out.REWARD_RISK <= 0);
   check("TP1_REWARD_RISK", out.TP1_REWARD_RISK <= 0);
   check("TP2_REWARD_RISK", out.TP2_REWARD_RISK <= out.TP1_REWARD_RISK);
   check("TP1_REWARD_RISK_NO_DIVERGENCE", out.TP1_REWARD_RISK_NO_DIVERGENCE <= 0);
   check("TP2_REWARD_RISK_NO_DIVERGENCE", out.TP2_REWARD_RISK_NO_DIVERGENCE <= out.TP1_REWARD_RISK_NO_DIVERGENCE);
   check("TP_CLOSE_PERCENT", out.TP1_CLOSE_PERCENT <= 0 || out.TP2_CLOSE_PERCENT <= 0 || out.TP1_CLOSE_PERCENT >= 100 || out.TP2_CLOSE_PERCENT >= 100 || out.TP1_CLOSE_PERCENT + out.TP2_CLOSE_PERCENT !== 100);
-  check("RISK_PER_TRADE_PCT", out.RISK_PER_TRADE_PCT >= 1);
+  check("RISK_PER_TRADE_PCT", out.RISK_PER_TRADE_PCT > 1);
   check("MAX_POSITION_BALANCE_PCT", out.MAX_POSITION_BALANCE_PCT > 1);
-  for (const k of ["MAX_TRADES_PER_DAY", "MAX_OPEN_POSITIONS", "TREND_EMA_PERIOD", "RSI_PERIOD", "ATR_PERIOD", "LEVERAGE"])
+  for (const k of ["MAX_TRADES_PER_DAY", "MAX_OPEN_POSITIONS", "MAX_SYMBOLS", "TREND_EMA_PERIOD", "RSI_PERIOD", "ATR_PERIOD", "LEVERAGE", "STRUCTURE_LOOKBACK_CANDLES", "DIVERGENCE_LOOKBACK_CANDLES", "DIVERGENCE_MAX_PIVOT_DISTANCE", "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS", "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS", "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS"])
     check(k, !Number.isInteger(out[k]));
   if (invalid.length) throw new Error("SIMPLE_CONFIG_INVARIANT:" + invalid.join(", "));
   return Object.freeze(out);
