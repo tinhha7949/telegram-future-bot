@@ -54,7 +54,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
 
   const invalid = [];
   const check = (name, failed) => { if (failed) invalid.push(name); };
-  const supportedIntervals = new Set(["1s","1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"]);
+  const supportedIntervals = new Set(["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"]);
   check("TREND_TIMEFRAME", !supportedIntervals.has(out.TREND_TIMEFRAME));
   check("ENTRY_TIMEFRAME", !supportedIntervals.has(out.ENTRY_TIMEFRAME));
   check("DIVERGENCE_TIMEFRAME", !supportedIntervals.has(out.DIVERGENCE_TIMEFRAME));
@@ -73,6 +73,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   check("TP_CLOSE_PERCENT", out.TP1_CLOSE_PERCENT <= 0 || out.TP2_CLOSE_PERCENT <= 0 || out.TP1_CLOSE_PERCENT >= 100 || out.TP2_CLOSE_PERCENT >= 100 || out.TP1_CLOSE_PERCENT + out.TP2_CLOSE_PERCENT !== 100);
   check("RISK_PER_TRADE_PCT", out.RISK_PER_TRADE_PCT > 1);
   check("MAX_POSITION_BALANCE_PCT", out.MAX_POSITION_BALANCE_PCT > 1);
+  check("MAX_SPREAD_BPS", out.MAX_SPREAD_BPS >= 20000);
   for (const k of ["MAX_TRADES_PER_DAY", "MAX_OPEN_POSITIONS", "MAX_SYMBOLS", "TREND_EMA_PERIOD", "RSI_PERIOD", "ATR_PERIOD", "LEVERAGE", "STRUCTURE_LOOKBACK_CANDLES", "DIVERGENCE_LOOKBACK_CANDLES", "DIVERGENCE_MAX_PIVOT_DISTANCE", "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS", "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS", "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS"])
     check(k, !Number.isInteger(out[k]));
   if (invalid.length) throw new Error("SIMPLE_CONFIG_INVARIANT:" + invalid.join(", "));
