@@ -107,7 +107,7 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now 
   if (trend.length < minTrend || entry.length < minEntry || divergence.length < minDivergence)
     return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
   const trendEma = ema(trend.map(c => c.close), config.TREND_EMA_PERIOD);
-  const price = trend.at(-1).close, valueRsi = rsi(entry.map(c => c.close), config.RSI_PERIOD), valueAtr = atr(entry, config.ATR_PERIOD);
+  const price = trend.at(-1).close, entryPrice = entry.at(-1).close, valueRsi = rsi(entry.map(c => c.close), config.RSI_PERIOD), valueAtr = atr(entry, config.ATR_PERIOD);
   if (!(trendEma > 0 && price > 0 && valueRsi != null && valueAtr > 0))
     return { side: null, reason: "INVALID_INDICATORS" };
   const structure = marketStructure(trend.slice(-config.STRUCTURE_LOOKBACK_CANDLES), config);
@@ -116,9 +116,9 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now 
   if (trendSide === "RANGE")
     return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
   const div = regularDivergence(divergence.slice(-config.DIVERGENCE_LOOKBACK_CANDLES), config);
-  if (trendSide === "UP" && valueRsi <= config.ENTRY_RSI_LONG_MAX && div.bullish && div.swingLow > 0 && div.swingLow < price)
+  if (trendSide === "UP" && valueRsi <= config.ENTRY_RSI_LONG_MAX && div.bullish && div.swingLow > 0 && div.swingLow < entryPrice)
     return { side: "LONG", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop: div.swingLow - price * config.SWING_STOP_BUFFER_PCT / 100, signalAt: entry.at(-1).closeTime, divergence: "REGULAR_BULLISH" };
-  if (trendSide === "DOWN" && valueRsi >= config.ENTRY_RSI_SHORT_MIN && div.bearish && div.swingHigh > price)
+  if (trendSide === "DOWN" && valueRsi >= config.ENTRY_RSI_SHORT_MIN && div.bearish && div.swingHigh > entryPrice)
     return { side: "SHORT", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop: div.swingHigh + price * config.SWING_STOP_BUFFER_PCT / 100, signalAt: entry.at(-1).closeTime, divergence: "REGULAR_BEARISH" };
   return { side: null, trendSide, trendEma, rsi: valueRsi, atr: valueAtr, reason: "ENTRY_OR_REGULAR_DIVERGENCE_NOT_CONFIRMED" };
 }
