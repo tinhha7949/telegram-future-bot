@@ -9,7 +9,7 @@ try {
 const crypto = require("node:crypto");
 const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");
-const { coreLogic } = require("./ai-trading/coreLogic");
+const { coreLogic, marketVeto } = require("./ai-trading/coreLogic");
 const { getTopSymbol } = require("./ai-trading/getTopSymbol");
 const { buildProtection, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
@@ -68,7 +68,7 @@ class Binance {
   get(path,params={}) { return this.request("GET",path,params,false); }
   signed(method,path,params={}) { return this.request(method,path,params,true); }
 }
-function toCandles(raw) { return raw.map(k=>({high:+k[2],low:+k[3],close:+k[4],closeTime:+k[6]})); }
+function toCandles(raw) { return raw.map(k=>({open:+k[1],high:+k[2],low:+k[3],close:+k[4],closeTime:+k[6]})); }
 async function main() {
   if (!process.env.MONGO_URI) throw new Error("MONGO_URI_REQUIRED");
   const binance=new Binance(), mongo=new MongoClient(process.env.MONGO_URI,{serverSelectionTimeoutMS:10000,maxPoolSize:5});
@@ -78,7 +78,7 @@ async function main() {
   await trades.createIndex({symbol:1,status:1},{name:"simple_active_symbol",partialFilterExpression:{status:"OPEN"}});
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
   await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once",unique:true});
-  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"EMA100_RSI14"}},{upsert:true});
+  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"1H_STRUCTURE_5M_REGULAR_DIVERGENCE_1M_RSI"}},{upsert:true});
   const info=await binance.get("/fapi/v1/exchangeInfo");
   const rules=new Map();
   for(const s of info.symbols||[]) {
@@ -189,10 +189,14 @@ async function main() {
     const r=rules.get(symbol);
     if(!r||r.status!=="TRADING"||r.contractType!=="PERPETUAL"||r.quoteAsset!==C.QUOTE_ASSET) return;
     const [trendRaw,entryRaw]=await Promise.all([
-      binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:C.TREND_EMA_PERIOD+3}),
+      binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS,C.TREND_EMA_PERIOD+1)}),
       binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD*10,C.ATR_PERIOD+1)})
     ]);
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),config:C,now:Date.now()+binance.timeOffsetMs});
+    const now=Date.now()+binance.timeOffsetMs;
+    const baseSignal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),config:C,now});
+    if(baseSignal.reason!=="DIVERGENCE_HISTORY_REQUIRED") return;
+    const divergenceRaw=await binance.get("/fapi/v1/klines",{symbol,interval:C.DIVERGENCE_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.DIVERGENCE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS)});
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),divergenceCandles:toCandles(divergenceRaw),config:C,now});
     if(!signal.side) return;
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
@@ -209,8 +213,17 @@ async function main() {
     if((await trades.countDocuments({status:"OPEN"}))>=C.MAX_OPEN_POSITIONS) return;
     const acct=await account(), wallet=Number(acct.totalWalletBalance), available=Number(acct.availableBalance);
     if(!(wallet>0&&available>0)) { console.log("ENTRY_SKIP_NO_BALANCE",symbol); return; }
-    const mark=Number((await binance.get("/fapi/v1/premiumIndex",{symbol})).markPrice);
-    if(!(mark>0)) return;
+    const [premium,book]=await Promise.all([
+      binance.get("/fapi/v1/premiumIndex",{symbol}),
+      binance.get("/fapi/v1/ticker/bookTicker",{symbol})
+    ]);
+    const mark=Number(premium.markPrice);
+    const veto=marketVeto({fundingRate:premium.lastFundingRate,bidPrice:book.bidPrice,askPrice:book.askPrice,config:C});
+    if(!(mark>0)||!veto.allowed) {
+      console.log("ENTRY_VETO_"+(veto.reason==="OK"?"MARKET_DATA_INVALID":veto.reason),symbol);
+      return;
+    }
+    const funding=veto.fundingRate, spreadBps=veto.spreadBps;
     let symbolMaxLeverage=leverageCaps.get(symbol);
     if(!symbolMaxLeverage) {
       try {
@@ -221,7 +234,7 @@ async function main() {
       } catch(e) { console.error("LEVERAGE_CAP_UNAVAILABLE",symbol,e.message); return; }
     }
     const symbolLeverage=Math.min(C.LEVERAGE,symbolMaxLeverage), sizingConfig={...C,LEVERAGE:symbolLeverage};
-    const protection=buildProtection({side:signal.side,entryPrice:mark,atr:signal.atr,config:C,priceTick:r.tickSize});
+    const protection=buildProtection({side:signal.side,entryPrice:mark,atr:signal.atr,stopPrice:signal.swingStop,config:C,priceTick:r.tickSize});
     const sizing=calculateOrderSizing({wallet,available,mark,stopDistance:protection.stopDistance,rules:r,config:sizingConfig});
     if(!sizing.ok) {
       console.log("ENTRY_SKIP_"+sizing.reason,symbol,"qty="+sizing.qty,"notional="+sizing.notional,"minNotional="+r.minNotional,"maxNotional="+sizing.maxNotional);
@@ -230,7 +243,7 @@ async function main() {
     const qty=sizing.qty;
     try { splitQuantity({quantity:qty,stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message,"qty="+qty); return; }
     if(sizing.margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol,"required="+sizing.margin,"available="+available); return; }
-    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
+    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,swingStop:signal.swingStop,divergence:signal.divergence,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return; }
     let inserted;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }
@@ -238,7 +251,7 @@ async function main() {
       await binance.signed("POST","/fapi/v1/leverage",{symbol,leverage:symbolLeverage});
       const order=await binance.signed("POST","/fapi/v1/order",{symbol,side:signal.side==="LONG"?"BUY":"SELL",type:"MARKET",quantity:qty.toFixed(precision(r.stepSize)),newOrderRespType:"RESULT"});
       const filled=Number(order.avgPrice)||mark;
-      const actual=buildProtection({side:signal.side,entryPrice:filled,atr:signal.atr,config:C,priceTick:r.tickSize});
+      const actual=buildProtection({side:signal.side,entryPrice:filled,atr:signal.atr,stopPrice:signal.swingStop,config:C,priceTick:r.tickSize});
       await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,openedAt:new Date(order.updateTime||Date.now())}});
       try {
         await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol,side:signal.side,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,stepSize:r.stepSize,minQty:r.minQty,config:C});
@@ -328,7 +341,7 @@ async function main() {
     const live=await positions(), open=await trades.countDocuments({status:"OPEN"});
     return "SIMPLE BOT OK\nTracked open trades: "+open+"\nExchange positions: "+live.length+"\nTop symbols: "+symbols.length+"\nRR: "+C.REWARD_RISK;
   };
-  console.log("SIMPLE EMA100/RSI14 BOT STARTED", "RR="+C.REWARD_RISK, "MAX_SYMBOLS="+C.MAX_SYMBOLS);
+  console.log("MULTI-TIMEFRAME DIVERGENCE BOT STARTED", "RR="+C.REWARD_RISK, "MAX_SYMBOLS="+C.MAX_SYMBOLS);
   await cycle();
   const timer=setInterval(()=>void cycle(),C.SCAN_INTERVAL_MS);
   const shutdown=async()=>{ if(stopped)return; stopped=true; clearInterval(timer); await mongo.close(); process.exit(0); };
