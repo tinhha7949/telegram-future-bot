@@ -99,6 +99,12 @@ function regularDivergence(candles, config) {
   };
 }
 
+function entryRsiTriggered(side, value, config) {
+  if (side === "LONG") return value <= config.ENTRY_RSI_LONG_MAX;
+  if (side === "SHORT") return value >= config.ENTRY_RSI_SHORT_MIN;
+  return false;
+}
+
 function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now = Date.now() }) {
   const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now);
   const minTrend = Math.max(config.TREND_EMA_PERIOD + 1, config.STRUCTURE_LOOKBACK_CANDLES);
@@ -115,25 +121,33 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now 
     price < trendEma && structure.side === "DOWN" ? "DOWN" : "RANGE";
   if (trendSide === "RANGE")
     return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
-  const triggerReady = trendSide === "UP" ? valueRsi <= config.ENTRY_RSI_LONG_MAX : valueRsi >= config.ENTRY_RSI_SHORT_MIN;
-  if (!triggerReady) return { side: null, reason: "ENTRY_RSI_NOT_TRIGGERED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
+  const side = trendSide === "UP" ? "LONG" : "SHORT";
+  if (!entryRsiTriggered(side, valueRsi, config)) return { side: null, reason: "ENTRY_RSI_NOT_TRIGGERED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
   if (divergence.length < minDivergence)
     return { side: null, reason: "DIVERGENCE_HISTORY_REQUIRED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
   const div = regularDivergence(divergence.slice(-config.DIVERGENCE_LOOKBACK_CANDLES), config);
-  if (trendSide === "UP" && valueRsi <= config.ENTRY_RSI_LONG_MAX && div.bullish && div.swingLow > 0 && div.swingLow < entryPrice)
-    return { side: "LONG", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop: div.swingLow - entryPrice * config.SWING_STOP_BUFFER_PCT / 100, signalAt: entry.at(-1).closeTime, divergence: "REGULAR_BULLISH" };
-  if (trendSide === "DOWN" && valueRsi >= config.ENTRY_RSI_SHORT_MIN && div.bearish && div.swingHigh > entryPrice)
-    return { side: "SHORT", trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop: div.swingHigh + entryPrice * config.SWING_STOP_BUFFER_PCT / 100, signalAt: entry.at(-1).closeTime, divergence: "REGULAR_BEARISH" };
-  return { side: null, trendSide, trendEma, rsi: valueRsi, atr: valueAtr, reason: "ENTRY_OR_REGULAR_DIVERGENCE_NOT_CONFIRMED" };
+  const bullishBonus = trendSide === "UP" && div.bullish && div.swingLow > 0 && div.swingLow < entryPrice;
+  const bearishBonus = trendSide === "DOWN" && div.bearish && div.swingHigh > entryPrice;
+  const swingLow = div.swingLow > 0 && div.swingLow < entryPrice ? div.swingLow : null;
+  const swingHigh = div.swingHigh > entryPrice ? div.swingHigh : null;
+  const swingStop = side === "LONG"
+    ? (swingLow ? swingLow - entryPrice * config.SWING_STOP_BUFFER_PCT / 100 : null)
+    : (swingHigh ? swingHigh + entryPrice * config.SWING_STOP_BUFFER_PCT / 100 : null);
+  return {
+    side, trendSide, trendEma, rsi: valueRsi, atr: valueAtr, swingStop,
+    signalAt: entry.at(-1).closeTime,
+    divergence: bullishBonus ? "REGULAR_BULLISH" : bearishBonus ? "REGULAR_BEARISH" : null
+  };
 }
 
-function marketVeto({ fundingRate, bidPrice, askPrice, config }) {
+function marketVeto({ side, fundingRate, bidPrice, askPrice, config }) {
   const funding = Number(fundingRate), bid = Number(bidPrice), ask = Number(askPrice);
-  if (fundingRate === null || fundingRate === undefined || bidPrice === null || bidPrice === undefined || askPrice === null || askPrice === undefined || !(Number.isFinite(funding) && bid > 0 && ask >= bid && ask > 0)) return { allowed: false, reason: "MARKET_DATA_INVALID" };
+  if (!["LONG", "SHORT"].includes(side) || fundingRate === null || fundingRate === undefined || bidPrice === null || bidPrice === undefined || askPrice === null || askPrice === undefined || !(Number.isFinite(funding) && bid > 0 && ask >= bid && ask > 0)) return { allowed: false, reason: "MARKET_DATA_INVALID" };
   const spreadBps = (ask - bid) / ((ask + bid) / 2) * 10000;
-  if (Math.abs(funding) > config.MAX_ABS_FUNDING_RATE) return { allowed: false, reason: "FUNDING_TOO_HOT", fundingRate: funding, spreadBps };
+  const adverseFunding = side === "LONG" ? funding > config.MAX_ABS_FUNDING_RATE : funding < -config.MAX_ABS_FUNDING_RATE;
+  if (adverseFunding) return { allowed: false, reason: "FUNDING_TOO_HOT", fundingRate: funding, spreadBps };
   if (!Number.isFinite(spreadBps) || spreadBps > config.MAX_SPREAD_BPS) return { allowed: false, reason: "SPREAD_TOO_WIDE", fundingRate: funding, spreadBps };
   return { allowed: true, reason: "OK", fundingRate: funding, spreadBps };
 }
 
-module.exports = { ema, rsi, rsiSeries, atr, closed, pivots, marketStructure, regularDivergence, marketVeto, coreLogic };
+module.exports = { ema, rsi, rsiSeries, atr, closed, pivots, marketStructure, regularDivergence, entryRsiTriggered, marketVeto, coreLogic };
