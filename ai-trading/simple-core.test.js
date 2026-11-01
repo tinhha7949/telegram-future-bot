@@ -74,7 +74,7 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     fs.writeFileSync(file,customized);
     const custom=loadSimpleConfig(file);
     assert.equal(custom.TREND_TIMEFRAME,"4h");
-    assert.equal(custom.ENTRY_TIMEFRAME,"3m");
+    assert.equal(custom.ENTRY_TIMEFRAME,"15m");
     assert.equal(custom.DIVERGENCE_TIMEFRAME,"30m");
     assert.equal(custom.MAX_SYMBOLS,150);
     assert.equal(custom.ENTRY_RSI_LONG_MIN,28);
