@@ -86,7 +86,7 @@ async function main() {
     const f=Object.fromEntries((s.filters||[]).map(x=>[x.filterType,x]));
     const lot=f.LOT_SIZE||{}, notionalFilter=f.NOTIONAL||f.MIN_NOTIONAL||{};
     rules.set(s.symbol,{status:s.status,contractType:s.contractType,quoteAsset:s.quoteAsset,
-      tickSize:Number(f.PRICE_FILTER?.tickSize||0.00000001),stepSize:Number(lot.stepSize||0),
+      tickSize:Number(f.PRICE_FILTER?.tickSize||0.00000001),tickSizeText:f.PRICE_FILTER?.tickSize,stepSize:Number(lot.stepSize||0),
       minQty:Number(lot.minQty||0),minNotional:Number(notionalFilter.minNotional||notionalFilter.notional||5)});
   }
   const leverageCaps=new Map();
@@ -177,10 +177,10 @@ async function main() {
       if(!t.breakEvenActivatedAt) {
         const entryPrice=Number(t.entryPrice)||Number(p.entryPrice), markPrice=Number(p.markPrice), tp1=Number(t.tp1);
         try {
-          const moved=await moveStopToBreakeven({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,entryPrice,markPrice,tp1,progressPct:C.BE_TRIGGER_TP1_PROGRESS_PCT});
+          const moved=await moveStopToBreakeven({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,entryPrice,markPrice,tp1,progressPct:C.BE_TRIGGER_TP1_PROGRESS_PCT,priceTick:rules.get(t.symbol)?.tickSizeText});
           if(moved.complete) {
-            await trades.updateOne({_id:t._id,status:"OPEN",breakEvenActivatedAt:{$exists:false}},{$set:{sl:entryPrice,breakEvenActivatedAt:new Date(),breakEvenAlgoId:moved.algoId,breakEvenTriggerProgressPct:C.BE_TRIGGER_TP1_PROGRESS_PCT}});
-            console.log("BREAK_EVEN_SL_MOVED",t.symbol,"entry="+entryPrice,"tp1ProgressPct="+C.BE_TRIGGER_TP1_PROGRESS_PCT);
+            await trades.updateOne({_id:t._id,status:"OPEN",breakEvenActivatedAt:{$exists:false}},{$set:{sl:moved.stopPrice,breakEvenActivatedAt:new Date(),breakEvenAlgoId:moved.algoId,breakEvenTriggerProgressPct:C.BE_TRIGGER_TP1_PROGRESS_PCT}});
+            console.log("BREAK_EVEN_SL_MOVED",t.symbol,"entry="+entryPrice,"exchangeStop="+moved.stopPriceText,"tp1ProgressPct="+C.BE_TRIGGER_TP1_PROGRESS_PCT);
           }
         } catch(e) { console.error("BREAK_EVEN_MOVE_FAILED",t.symbol,e.message); }
       }
