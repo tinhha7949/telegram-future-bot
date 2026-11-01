@@ -65,7 +65,7 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
   const overrides={
     TREND_TIMEFRAME:"4h",ENTRY_TIMEFRAME:"15m",DIVERGENCE_TIMEFRAME:"30m",MAX_SYMBOLS:150,
     ENTRY_RSI_LONG_MIN:28,ENTRY_RSI_LONG_MAX:42,ENTRY_RSI_SHORT_MIN:58,ENTRY_RSI_SHORT_MAX:72,
-    TP1_REWARD_RISK:1.1,TP2_REWARD_RISK:1.6,MAX_ABS_FUNDING_RATE:0.001,MAX_SPREAD_BPS:25
+    TP1_REWARD_RISK:1.1,TP2_REWARD_RISK:1.6,BE_TRIGGER_TP1_PROGRESS_PCT:65,MAX_ABS_FUNDING_RATE:0.001,MAX_SPREAD_BPS:25
   };
   const customized=Object.entries(overrides).reduce((text,[key,value])=>setConfigValue(text,key,value),source);
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),"simple-config-"));
@@ -83,6 +83,7 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     assert.equal(custom.ENTRY_RSI_SHORT_MAX,72);
     assert.equal(custom.TP1_REWARD_RISK,1.1);
     assert.equal(custom.TP2_REWARD_RISK,1.6);
+    assert.equal(custom.BE_TRIGGER_TP1_PROGRESS_PCT,65);
     assert.equal(custom.MAX_ABS_FUNDING_RATE,0.001);
     assert.equal(custom.MAX_SPREAD_BPS,25);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
