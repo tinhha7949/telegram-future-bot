@@ -87,6 +87,10 @@ async function moveStopToBreakeven({request,symbol,side,entryPrice,markPrice,tp1
       throw error;
     }
   }
+  for (const old of stops) {
+    if (String(old.algoId)===String(be.algoId)) continue;
+    await request("DELETE","/fapi/v1/algoOrder",{symbol,algoId:old.algoId});
+  }
   const remaining=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
   if (!Array.isArray(remaining)) throw Error("BREAK_EVEN_FINAL_VERIFY_ORDERS_INVALID");
   const remainingStops=remaining.filter(o=>isClosePositionStop(o,closeSide));
