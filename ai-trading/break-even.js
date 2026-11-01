@@ -16,12 +16,8 @@ function isClosePositionStop(order,closeSide) {
     String(order.closePosition).toLowerCase()==="true" &&
     order.side===closeSide && order.algoId!==undefined && order.algoId!==null;
 }
-function samePrice(a,b) {
-  const x=Number(a),y=Number(b);
-  return Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)<=Math.max(1e-12,Math.abs(y)*1e-10);
-}
 function formatBreakevenStopPrice({entryPrice,side,priceTick}) {
-  if (!["LONG","SHORT"].includes(side) || !Number.isFinite(entryPrice) || !(entryPrice>0) || typeof priceTick!=="string" || !/^\\d+(?:\\.\\d+)?$/.test(priceTick) || !(Number(priceTick)>0)) throw Error("BREAK_EVEN_PRICE_FILTER_INVALID");
+  if (!["LONG","SHORT"].includes(side) || !Number.isFinite(entryPrice) || !(entryPrice>0) || typeof priceTick!=="string" || !/^\d+(?:\.\d+)?$/.test(priceTick) || !(Number(priceTick)>0)) throw Error("BREAK_EVEN_PRICE_FILTER_INVALID");
   const decimals=(priceTick.split(".")[1]||"").length;
   const scale=10n**BigInt(decimals+8);
   const tick=BigInt(Number(priceTick).toFixed(decimals+8).replace(".",""));
@@ -30,7 +26,7 @@ function formatBreakevenStopPrice({entryPrice,side,priceTick}) {
   const units=side==="LONG" ? entry/tick : (entry+tick-1n)/tick;
   const value=units*tick;
   const whole=value/scale, fraction=(value%scale).toString().padStart(decimals+8,"0").slice(0,decimals+8);
-  const raw=decimals ? (whole.toString()+"."+fraction.slice(0,decimals)).replace(/\\.?0+$/,"") : whole.toString();
+  const raw=decimals ? (whole.toString()+"."+fraction.slice(0,decimals)).replace(/\.?0+$/,"") : whole.toString();
   const price=Number(raw);
   if (!(Number.isFinite(price)&&price>0)) throw Error("BREAK_EVEN_ROUNDED_STOP_INVALID");
   return raw;
@@ -41,7 +37,8 @@ function clientAlgoId() {
 async function moveStopToBreakeven({request,symbol,side,entryPrice,markPrice,tp1,progressPct,priceTick}) {
   const triggered=hasReachedBreakEvenTrigger({side,markPrice,entryPrice,tp1,progressPct});
   if (!triggered) return {triggered:false,complete:false,algoId:null};
-  const closeSide=side==="LONG"?"SELL":"BUY";\n  const stopPrice=formatBreakevenStopPrice({entryPrice,side,priceTick});
+  const closeSide=side==="LONG"?"SELL":"BUY";
+  const stopPrice=formatBreakevenStopPrice({entryPrice,side,priceTick});
   let orders=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
   if (!Array.isArray(orders)) throw Error("BREAK_EVEN_OPEN_ALGO_ORDERS_INVALID");
   let stops=orders.filter(o=>isClosePositionStop(o,closeSide));
