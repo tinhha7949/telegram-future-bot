@@ -1,8 +1,15 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {breakEvenTriggerPrice,hasReachedBreakEvenTrigger,moveStopToBreakeven}=require("./break-even");
+const {breakEvenTriggerPrice,hasReachedBreakEvenTrigger,formatBreakevenStopPrice,moveStopToBreakeven}=require("./break-even");
 
+test("breakeven stop price follows symbol tickSize without precision errors",()=>{
+ assert.equal(formatBreakevenStopPrice({side:"LONG",entryPrice:0.12345678,priceTick:"0.0001"}),"0.1234");
+ assert.equal(formatBreakevenStopPrice({side:"SHORT",entryPrice:0.12345678,priceTick:"0.0001"}),"0.1235");
+ assert.equal(formatBreakevenStopPrice({side:"LONG",entryPrice:1.23456789,priceTick:"0.01000000"}),"1.23");
+ assert.equal(formatBreakevenStopPrice({side:"SHORT",entryPrice:1.23456789,priceTick:"0.01000000"}),"1.24");
+ assert.throws(()=>formatBreakevenStopPrice({side:"LONG",entryPrice:1,priceTick:"0"}),/BREAK_EVEN_PRICE_FILTER_INVALID/);
+});
 test("80% trigger is calculated correctly for LONG and SHORT",()=>{
  assert.equal(breakEvenTriggerPrice({side:"LONG",entryPrice:100,tp1:110,progressPct:80}),108);
  assert.equal(breakEvenTriggerPrice({side:"SHORT",entryPrice:100,tp1:90,progressPct:80}),92);
@@ -29,7 +36,7 @@ test("new entry stop is verified before old stop is cancelled and TP orders are 
   if(method==="DELETE"){orders=orders.filter(o=>String(o.algoId)!==String(params.algoId));return{algoId:params.algoId};}
   throw Error("unexpected request");
  };
- const result=await moveStopToBreakeven({request,symbol:"BTCUSDT",side:"LONG",entryPrice:100,markPrice:108,tp1:110,progressPct:80});
+ const result=await moveStopToBreakeven({request,symbol:"BTCUSDT",side:"LONG",entryPrice:100,markPrice:108,tp1:110,progressPct:80,priceTick:"0.1"});
  assert.equal(result.complete,true);
  assert.equal(result.algoId,3);
  assert.ok(calls.findIndex(c=>c.method==="POST")<calls.findIndex(c=>c.method==="DELETE"));
@@ -47,7 +54,7 @@ test("restart retry reuses an existing entry stop and only removes the old stop"
   if(method==="POST"){creates++;throw Error("must not create duplicate");}
   if(method==="DELETE"){orders=orders.filter(o=>o.algoId!==params.algoId);return{};}
  };
- const result=await moveStopToBreakeven({request,symbol:"ETHUSDT",side:"SHORT",entryPrice:100,markPrice:92,tp1:90,progressPct:80});
+ const result=await moveStopToBreakeven({request,symbol:"ETHUSDT",side:"SHORT",entryPrice:100,markPrice:92,tp1:90,progressPct:80,priceTick:"0.1"});
  assert.equal(result.complete,true);
  assert.equal(creates,0);
  assert.deepEqual(orders.map(o=>o.algoId),[2]);
