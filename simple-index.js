@@ -12,6 +12,7 @@ const { loadSimpleConfig } = require("./ai-trading/simple-config");
 const { coreLogic, marketVeto } = require("./ai-trading/coreLogic");
 const { getTopSymbol } = require("./ai-trading/getTopSymbol");
 const { buildProtection, protectionConfigForDivergence, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
+const { moveStopToBreakeven } = require("./ai-trading/break-even");
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
@@ -172,6 +173,16 @@ async function main() {
           await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{closeRequestedAt:new Date(),protectionError:e.message}});
           continue;
         }
+      }
+      if(!t.breakEvenActivatedAt) {
+        const entryPrice=Number(t.entryPrice)||Number(p.entryPrice), markPrice=Number(p.markPrice), tp1=Number(t.tp1);
+        try {
+          const moved=await moveStopToBreakeven({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,entryPrice,markPrice,tp1,progressPct:C.BE_TRIGGER_TP1_PROGRESS_PCT});
+          if(moved.complete) {
+            await trades.updateOne({_id:t._id,status:"OPEN",breakEvenActivatedAt:{$exists:false}},{$set:{sl:entryPrice,breakEvenActivatedAt:new Date(),breakEvenAlgoId:moved.algoId,breakEvenTriggerProgressPct:C.BE_TRIGGER_TP1_PROGRESS_PCT}});
+            console.log("BREAK_EVEN_SL_MOVED",t.symbol,"entry="+entryPrice,"tp1ProgressPct="+C.BE_TRIGGER_TP1_PROGRESS_PCT);
+          }
+        } catch(e) { console.error("BREAK_EVEN_MOVE_FAILED",t.symbol,e.message); }
       }
       if(Date.now()-new Date(t.openedAt).getTime()>=C.MAX_HOLD_HOURS*3600000 && (!t.closeRequestedAt || Date.now()-new Date(t.closeRequestedAt).getTime()>=30000)) {
         const amt=Number(p.positionAmt), side=amt>0?"SELL":"BUY", qty=Math.abs(amt);
