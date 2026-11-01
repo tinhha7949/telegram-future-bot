@@ -48,17 +48,44 @@ async function moveStopToBreakeven({request,symbol,side,entryPrice,markPrice,tp1
   let stops=orders.filter(o=>isClosePositionStop(o,closeSide));
   let be=stops.find(o=>samePrice(o.triggerPrice,stopPrice));
   if (!be) {
-    const created=await request("POST","/fapi/v1/algoOrder",{
-      symbol,side:closeSide,type:"STOP_MARKET",algoType:"CONDITIONAL",
-      workingType:"MARK_PRICE",triggerPrice:stopPrice,closePosition:"true",
-      clientAlgoId:clientAlgoId()
-    });
-    if (created?.algoId===undefined||created?.algoId===null) throw Error("BREAK_EVEN_STOP_CREATE_UNCONFIRMED");
-    orders=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
-    if (!Array.isArray(orders)) throw Error("BREAK_EVEN_VERIFY_ORDERS_INVALID");
-    be=orders.find(o=>String(o.algoId)===String(created.algoId)&&isClosePositionStop(o,closeSide)&&samePrice(o.triggerPrice,stopPrice));
-    if (!be) throw Error("BREAK_EVEN_STOP_VERIFY_FAILED");
-    stops=orders.filter(o=>isClosePositionStop(o,closeSide));
+    // Binance rejects two same-direction closePosition conditional orders.
+    // Swap the existing closePosition SL, then restore it if the BE order cannot be confirmed.
+    const previousStops=stops.slice();
+    for (const old of previousStops) {
+      await request("DELETE","/fapi/v1/algoOrder",{symbol,algoId:old.algoId});
+    }
+    let created;
+    try {
+      created=await request("POST","/fapi/v1/algoOrder",{
+        symbol,side:closeSide,type:"STOP_MARKET",algoType:"CONDITIONAL",
+        workingType:"MARK_PRICE",triggerPrice:stopPrice,closePosition:"true",
+        clientAlgoId:clientAlgoId()
+      });
+      if (created?.algoId===undefined||created?.algoId===null) throw Error("BREAK_EVEN_STOP_CREATE_UNCONFIRMED");
+      orders=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
+      if (!Array.isArray(orders)) throw Error("BREAK_EVEN_VERIFY_ORDERS_INVALID");
+      be=orders.find(o=>String(o.algoId)===String(created.algoId)&&isClosePositionStop(o,closeSide)&&samePrice(o.triggerPrice,stopPrice));
+      if (!be) throw Error("BREAK_EVEN_STOP_VERIFY_FAILED");
+      stops=orders.filter(o=>isClosePositionStop(o,closeSide));
+    } catch(error) {
+      // Roll back to the original protective stop if the BE replacement failed.
+      if (previousStops.length) {
+        const restore=previousStops[0];
+        try {
+          const restored=await request("POST","/fapi/v1/algoOrder",{
+            symbol,side:closeSide,type:"STOP_MARKET",algoType:"CONDITIONAL",
+            workingType:restore.workingType||"MARK_PRICE",triggerPrice:String(restore.triggerPrice),
+            closePosition:"true",clientAlgoId:clientAlgoId()
+          });
+          if (restored?.algoId===undefined||restored?.algoId===null) throw Error("RESTORE_STOP_CREATE_UNCONFIRMED");
+          const restoredOrders=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
+          if (!Array.isArray(restoredOrders)||!restoredOrders.some(o=>String(o.algoId)===String(restored.algoId)&&isClosePositionStop(o,closeSide)&&samePrice(o.triggerPrice,restore.triggerPrice))) throw Error("RESTORE_STOP_VERIFY_FAILED");
+        } catch(restoreError) {
+          throw Error("BREAK_EVEN_REPLACE_FAILED_ORIGINAL_STOP_RESTORE_FAILED:"+error.message+";"+restoreError.message);
+        }
+      }
+      throw error;
+    }
   }
   for (const old of stops) {
     if (String(old.algoId)===String(be.algoId)) continue;
