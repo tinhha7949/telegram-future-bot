@@ -30,7 +30,7 @@ function formatBreakevenStopPrice({entryPrice,side,priceTick}) {
   const units=side==="LONG" ? entry/tick : (entry+tick-1n)/tick;
   const value=units*tick;
   const whole=value/scale, fraction=(value%scale).toString().padStart(decimals+8,"0").slice(0,decimals+8);
-  const raw=decimals ? whole.toString()+"."+fraction.slice(0,decimals) : whole.toString();
+  const raw=decimals ? (whole.toString()+"."+fraction.slice(0,decimals)).replace(/\\.?0+$/,"") : whole.toString();
   const price=Number(raw);
   if (!(Number.isFinite(price)&&price>0)) throw Error("BREAK_EVEN_ROUNDED_STOP_INVALID");
   return raw;
