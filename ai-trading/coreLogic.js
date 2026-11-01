@@ -106,15 +106,15 @@ function entryRsiTriggered(side, value, config) {
   return false;
 }
 
-function coreLogic({ trendCandles, entryCandles, divergenceCandles, config, now = Date.now() }) {
-  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now);
+function coreLogic({ trendCandles, entryCandles, rsiCandles = entryCandles, divergenceCandles, config, now = Date.now() }) {
+  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), rsiInput = closed(rsiCandles, now), divergence = closed(divergenceCandles, now);
   const minTrend = Math.max(config.TREND_EMA_PERIOD + 1, config.STRUCTURE_LOOKBACK_CANDLES);
   const minEntry = Math.max(config.RSI_PERIOD + 1, config.ATR_PERIOD + 1);
   const minDivergence = Math.max(config.RSI_PERIOD + config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 2, config.DIVERGENCE_LOOKBACK_CANDLES);
-  if (trend.length < minTrend || entry.length < minEntry)
+  if (trend.length < minTrend || entry.length < minEntry || rsiInput.length < config.RSI_PERIOD + 1)
     return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
   const trendEma = ema(trend.map(c => c.close), config.TREND_EMA_PERIOD);
-  const price = trend.at(-1).close, entryPrice = entry.at(-1).close, valueRsi = rsi(entry.map(c => c.close), config.RSI_PERIOD), valueAtr = atr(entry, config.ATR_PERIOD);
+  const price = trend.at(-1).close, entryPrice = entry.at(-1).close, valueRsi = rsi(rsiInput.map(c => c.close), config.RSI_PERIOD), valueAtr = atr(entry, config.ATR_PERIOD);
   if (!(trendEma > 0 && price > 0 && valueRsi != null && valueAtr > 0))
     return { side: null, reason: "INVALID_INDICATORS" };
   const structure = marketStructure(trend.slice(-config.STRUCTURE_LOOKBACK_CANDLES), config);
