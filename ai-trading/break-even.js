@@ -1,0 +1,57 @@
+"use strict";
+const crypto = require("node:crypto");
+
+function breakEvenTriggerPrice({side,entryPrice,tp1,progressPct}) {
+  if (!["LONG","SHORT"].includes(side) || !Number.isFinite(entryPrice) || !(entryPrice>0) || !Number.isFinite(tp1) || !(tp1>0) || !Number.isFinite(progressPct) || !(progressPct>0&&progressPct<=100)) throw Error("INVALID_BREAK_EVEN_INPUT");
+  if (side==="LONG" ? !(tp1>entryPrice) : !(tp1<entryPrice)) throw Error("INVALID_BREAK_EVEN_TP1_SIDE");
+  return entryPrice+(tp1-entryPrice)*progressPct/100;
+}
+function hasReachedBreakEvenTrigger({side,markPrice,entryPrice,tp1,progressPct}) {
+  if (!Number.isFinite(markPrice) || !(markPrice>0)) return false;
+  const trigger=breakEvenTriggerPrice({side,entryPrice,tp1,progressPct});
+  return side==="LONG" ? markPrice>=trigger : markPrice<=trigger;
+}
+function isClosePositionStop(order,closeSide) {
+  return (order.orderType||order.type)==="STOP_MARKET" &&
+    String(order.closePosition).toLowerCase()==="true" &&
+    order.side===closeSide && order.algoId!==undefined && order.algoId!==null;
+}
+function samePrice(a,b) {
+  const x=Number(a),y=Number(b);
+  return Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)<=Math.max(1e-12,Math.abs(y)*1e-10);
+}
+function clientAlgoId() {
+  return "sbe"+Date.now().toString(36)+crypto.randomBytes(5).toString("hex");
+}
+async function moveStopToBreakeven({request,symbol,side,entryPrice,markPrice,tp1,progressPct}) {
+  const triggered=hasReachedBreakEvenTrigger({side,markPrice,entryPrice,tp1,progressPct});
+  if (!triggered) return {triggered:false,complete:false,algoId:null};
+  const closeSide=side==="LONG"?"SELL":"BUY";
+  let orders=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
+  if (!Array.isArray(orders)) throw Error("BREAK_EVEN_OPEN_ALGO_ORDERS_INVALID");
+  let stops=orders.filter(o=>isClosePositionStop(o,closeSide));
+  let be=stops.find(o=>samePrice(o.triggerPrice,entryPrice));
+  if (!be) {
+    const created=await request("POST","/fapi/v1/algoOrder",{
+      symbol,side:closeSide,type:"STOP_MARKET",algoType:"CONDITIONAL",
+      workingType:"MARK_PRICE",triggerPrice:String(entryPrice),closePosition:"true",
+      clientAlgoId:clientAlgoId()
+    });
+    if (created?.algoId===undefined||created?.algoId===null) throw Error("BREAK_EVEN_STOP_CREATE_UNCONFIRMED");
+    orders=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
+    if (!Array.isArray(orders)) throw Error("BREAK_EVEN_VERIFY_ORDERS_INVALID");
+    be=orders.find(o=>String(o.algoId)===String(created.algoId)&&isClosePositionStop(o,closeSide)&&samePrice(o.triggerPrice,entryPrice));
+    if (!be) throw Error("BREAK_EVEN_STOP_VERIFY_FAILED");
+    stops=orders.filter(o=>isClosePositionStop(o,closeSide));
+  }
+  for (const old of stops) {
+    if (String(old.algoId)===String(be.algoId)) continue;
+    await request("DELETE","/fapi/v1/algoOrder",{symbol,algoId:old.algoId});
+  }
+  const remaining=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
+  if (!Array.isArray(remaining)) throw Error("BREAK_EVEN_FINAL_VERIFY_ORDERS_INVALID");
+  const remainingStops=remaining.filter(o=>isClosePositionStop(o,closeSide));
+  const complete=remainingStops.length===1&&String(remainingStops[0].algoId)===String(be.algoId)&&samePrice(remainingStops[0].triggerPrice,entryPrice);
+  return {triggered:true,complete,algoId:be.algoId,entryPrice};
+}
+module.exports={breakEvenTriggerPrice,hasReachedBreakEvenTrigger,moveStopToBreakeven};
