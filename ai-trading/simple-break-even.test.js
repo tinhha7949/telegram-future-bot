@@ -23,7 +23,7 @@ test("invalid direction and progress are rejected",()=>{
  assert.throws(()=>breakEvenTriggerPrice({side:"LONG",entryPrice:100,tp1:110,progressPct:0}),/INVALID_BREAK_EVEN_INPUT/);
  assert.throws(()=>breakEvenTriggerPrice({side:"LONG",entryPrice:100,tp1:110,progressPct:101}),/INVALID_BREAK_EVEN_INPUT/);
 });
-test("new entry stop is verified before old stop is cancelled and TP orders are untouched",async()=>{
+test("existing closePosition SL is swapped for breakeven and TP orders are untouched",async()=>{
  let orders=[
   {algoId:1,orderType:"STOP_MARKET",side:"SELL",closePosition:true,triggerPrice:"95"},
   {algoId:2,orderType:"TAKE_PROFIT_MARKET",side:"SELL",closePosition:false,triggerPrice:"110"}
@@ -39,7 +39,7 @@ test("new entry stop is verified before old stop is cancelled and TP orders are 
  const result=await moveStopToBreakeven({request,symbol:"BTCUSDT",side:"LONG",entryPrice:100,markPrice:108,tp1:110,progressPct:80,priceTick:"0.1"});
  assert.equal(result.complete,true);
  assert.equal(result.algoId,3);
- assert.ok(calls.findIndex(c=>c.method==="POST")<calls.findIndex(c=>c.method==="DELETE"));
+ assert.ok(calls.findIndex(c=>c.method==="DELETE")<calls.findIndex(c=>c.method==="POST"));
  assert.deepEqual(orders.filter(o=>o.orderType==="STOP_MARKET").map(o=>o.triggerPrice),["100"]);
  assert.equal(orders.some(o=>o.orderType==="TAKE_PROFIT_MARKET"),true);
 });
@@ -64,4 +64,21 @@ test("price before trigger does not touch exchange orders",async()=>{
  const result=await moveStopToBreakeven({request:async()=>{calls++;},symbol:"BTCUSDT",side:"LONG",entryPrice:100,markPrice:107,tp1:110,progressPct:80});
  assert.equal(result.triggered,false);
  assert.equal(calls,0);
+});
+
+test("restores original closePosition SL if breakeven replacement fails",async()=>{
+ let orders=[{algoId:11,orderType:"STOP_MARKET",side:"SELL",closePosition:true,triggerPrice:"95",workingType:"MARK_PRICE"}];
+ const request=async(method,path,params)=>{
+  if(method==="GET")return orders.slice();
+  if(method==="DELETE"){orders=orders.filter(o=>String(o.algoId)!==String(params.algoId));return{};}
+  if(method==="POST"){
+   if(params.triggerPrice==="100")throw Error("BINANCE_400_GTE_CLOSEPOSITION_EXISTS");
+   orders.push({algoId:12,orderType:"STOP_MARKET",side:params.side,closePosition:true,triggerPrice:params.triggerPrice,workingType:params.workingType});
+   return{algoId:12};
+  }
+  throw Error("unexpected request");
+ };
+ await assert.rejects(()=>moveStopToBreakeven({request,symbol:"VVVUSDT",side:"LONG",entryPrice:100,markPrice:108,tp1:110,progressPct:80,priceTick:"0.1"}),/BINANCE_400_GTE_CLOSEPOSITION_EXISTS/);
+ assert.equal(orders.length,1);
+ assert.equal(orders[0].triggerPrice,"95");
 });
