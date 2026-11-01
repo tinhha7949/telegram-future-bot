@@ -51,6 +51,7 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   const supported=new Set(["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"]);
   assert.ok(supported.has(C.TREND_TIMEFRAME));
   assert.ok(supported.has(C.ENTRY_TIMEFRAME));
+  assert.ok(supported.has(C.RSI_TIMEFRAME));
   assert.ok(supported.has(C.DIVERGENCE_TIMEFRAME));
   assert.ok(Number.isInteger(C.TREND_EMA_PERIOD) && C.TREND_EMA_PERIOD>0);
   assert.ok(C.ENTRY_RSI_LONG_MIN>=0 && C.ENTRY_RSI_LONG_MIN<=C.ENTRY_RSI_LONG_MAX && C.ENTRY_RSI_LONG_MAX<=100);
@@ -63,7 +64,7 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
 test("CONFIG.yaml overrides are accepted without changing tests",()=>{
   const source=fs.readFileSync(path.join(__dirname,"..","CONFIG.yaml"),"utf8");
   const overrides={
-    TREND_TIMEFRAME:"4h",ENTRY_TIMEFRAME:"3m",DIVERGENCE_TIMEFRAME:"15m",MAX_SYMBOLS:150,
+    TREND_TIMEFRAME:"4h",ENTRY_TIMEFRAME:"3m",RSI_TIMEFRAME:"15m",DIVERGENCE_TIMEFRAME:"30m",MAX_SYMBOLS:150,
     ENTRY_RSI_LONG_MIN:28,ENTRY_RSI_LONG_MAX:42,ENTRY_RSI_SHORT_MIN:58,ENTRY_RSI_SHORT_MAX:72,
     TP1_REWARD_RISK:1.1,TP2_REWARD_RISK:1.6,MAX_ABS_FUNDING_RATE:0.001,MAX_SPREAD_BPS:25
   };
@@ -75,7 +76,8 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     const custom=loadSimpleConfig(file);
     assert.equal(custom.TREND_TIMEFRAME,"4h");
     assert.equal(custom.ENTRY_TIMEFRAME,"3m");
-    assert.equal(custom.DIVERGENCE_TIMEFRAME,"15m");
+    assert.equal(custom.RSI_TIMEFRAME,"15m");
+    assert.equal(custom.DIVERGENCE_TIMEFRAME,"30m");
     assert.equal(custom.MAX_SYMBOLS,150);
     assert.equal(custom.ENTRY_RSI_LONG_MIN,28);
     assert.equal(custom.ENTRY_RSI_LONG_MAX,42);
@@ -115,6 +117,13 @@ test("RSI and ATR return valid closed-candle indicators",()=>{
   assert.equal(rsi(Array.from({length:15},(_,i)=>i+1),14),100);
   assert.equal(rsi(Array.from({length:15},(_,i)=>15-i),14),0);
   assert.ok(atr(candlesFromCloses(Array.from({length:30},(_,i)=>100+i)),14)>0);
+});
+
+
+test("coreLogic calculates entry RSI from independently configured RSI candles",()=>{
+  const rsiCandles=candlesFromCloses(Array.from({length:40},(_,i)=>200-i*0.5),300000);
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),rsiCandles,divergenceCandles:bullishDivergenceCandles(),config:{...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
+  assert.equal(signal.rsi,rsi(rsiCandles.map(c=>c.close),C.RSI_PERIOD));
 });
 
 test("trend structure requires both HH/HL or LH/LL",()=>{

@@ -78,7 +78,7 @@ async function main() {
   await trades.createIndex({symbol:1,status:1},{name:"simple_active_symbol",partialFilterExpression:{status:"OPEN"}});
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
   await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once",unique:true});
-  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"1H_STRUCTURE_5M_DIVERGENCE_BONUS_1M_RSI"}},{upsert:true});
+  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"1H_STRUCTURE_"+C.DIVERGENCE_TIMEFRAME+"_DIVERGENCE_BONUS_"+C.RSI_TIMEFRAME+"_RSI"}},{upsert:true});
   const info=await binance.get("/fapi/v1/exchangeInfo");
   const rules=new Map();
   for(const s of info.symbols||[]) {
@@ -188,15 +188,16 @@ async function main() {
   async function tryEntry(symbol) {
     const r=rules.get(symbol);
     if(!r||r.status!=="TRADING"||r.contractType!=="PERPETUAL"||r.quoteAsset!==C.QUOTE_ASSET) return;
-    const [trendRaw,entryRaw]=await Promise.all([
+    const [trendRaw,entryRaw,rsiRaw]=await Promise.all([
       binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS,C.TREND_EMA_PERIOD+1)}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD*10,C.ATR_PERIOD+1)})
+      binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.ATR_PERIOD+1)}),
+      binance.get("/fapi/v1/klines",{symbol,interval:C.RSI_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD+1)})
     ]);
     const now=Date.now()+binance.timeOffsetMs;
-    const baseSignal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),config:C,now});
+    const baseSignal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),rsiCandles:toCandles(rsiRaw),config:C,now});
     if(baseSignal.reason!=="DIVERGENCE_HISTORY_REQUIRED") return;
     const divergenceRaw=await binance.get("/fapi/v1/klines",{symbol,interval:C.DIVERGENCE_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.DIVERGENCE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS)});
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),divergenceCandles:toCandles(divergenceRaw),config:C,now});
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),rsiCandles:toCandles(rsiRaw),divergenceCandles:toCandles(divergenceRaw),config:C,now});
     if(!signal.side) return;
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;

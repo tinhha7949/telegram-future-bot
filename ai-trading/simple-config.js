@@ -20,7 +20,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   }
   const required = [
     "QUOTE_ASSET", "MAX_SYMBOLS", "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT",
-    "TREND_TIMEFRAME", "TREND_EMA_PERIOD", "STRUCTURE_LOOKBACK_CANDLES", "ENTRY_TIMEFRAME", "DIVERGENCE_TIMEFRAME",
+    "TREND_TIMEFRAME", "TREND_EMA_PERIOD", "STRUCTURE_LOOKBACK_CANDLES", "ENTRY_TIMEFRAME", "RSI_TIMEFRAME", "DIVERGENCE_TIMEFRAME",
     "RSI_PERIOD", "ENTRY_RSI_LONG_MIN", "ENTRY_RSI_LONG_MAX", "ENTRY_RSI_SHORT_MIN", "ENTRY_RSI_SHORT_MAX", "DIVERGENCE_LOOKBACK_CANDLES",
     "DIVERGENCE_MAX_PIVOT_DISTANCE", "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS", "ATR_PERIOD",
     "SWING_STOP_BUFFER_PCT", "SL_ATR_MULTIPLIER", "SL_MIN_PCT", "SL_MAX_PCT",
@@ -32,7 +32,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   ];
   for (const k of required) if (!Object.hasOwn(out, k)) throw new Error("SIMPLE_CONFIG_MISSING_" + k);
   const stringKeys = [
-    "QUOTE_ASSET", "TREND_TIMEFRAME", "ENTRY_TIMEFRAME", "DIVERGENCE_TIMEFRAME",
+    "QUOTE_ASSET", "TREND_TIMEFRAME", "ENTRY_TIMEFRAME", "RSI_TIMEFRAME", "DIVERGENCE_TIMEFRAME",
     "MONGO_DB_NAME", "MONGO_TRADES_COLLECTION", "MONGO_STATE_COLLECTION"
   ];
   for (const k of stringKeys) {
@@ -57,6 +57,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   const supportedIntervals = new Set(["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"]);
   check("TREND_TIMEFRAME", !supportedIntervals.has(out.TREND_TIMEFRAME));
   check("ENTRY_TIMEFRAME", !supportedIntervals.has(out.ENTRY_TIMEFRAME));
+  check("RSI_TIMEFRAME", !supportedIntervals.has(out.RSI_TIMEFRAME));
   check("DIVERGENCE_TIMEFRAME", !supportedIntervals.has(out.DIVERGENCE_TIMEFRAME));
   check("MAX_SYMBOLS", !Number.isInteger(out.MAX_SYMBOLS));
   check("ENTRY_RSI_BANDS", out.ENTRY_RSI_LONG_MIN > 100 || out.ENTRY_RSI_LONG_MAX > 100 || out.ENTRY_RSI_SHORT_MIN > 100 || out.ENTRY_RSI_SHORT_MAX > 100 || out.ENTRY_RSI_LONG_MIN > out.ENTRY_RSI_LONG_MAX || out.ENTRY_RSI_SHORT_MIN > out.ENTRY_RSI_SHORT_MAX);
