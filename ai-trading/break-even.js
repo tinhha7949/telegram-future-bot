@@ -16,6 +16,10 @@ function isClosePositionStop(order,closeSide) {
     String(order.closePosition).toLowerCase()==="true" &&
     order.side===closeSide && order.algoId!==undefined && order.algoId!==null;
 }
+function samePrice(a,b) {
+  const x=Number(a),y=Number(b);
+  return Number.isFinite(x)&&Number.isFinite(y)&&Math.abs(x-y)<=Math.max(1e-12,Math.abs(y)*1e-10);
+}
 function formatBreakevenStopPrice({entryPrice,side,priceTick}) {
   if (!["LONG","SHORT"].includes(side) || !Number.isFinite(entryPrice) || !(entryPrice>0) || typeof priceTick!=="string" || !/^\d+(?:\.\d+)?$/.test(priceTick) || !(Number(priceTick)>0)) throw Error("BREAK_EVEN_PRICE_FILTER_INVALID");
   const decimals=(priceTick.split(".")[1]||"").length;
@@ -42,7 +46,7 @@ async function moveStopToBreakeven({request,symbol,side,entryPrice,markPrice,tp1
   let orders=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
   if (!Array.isArray(orders)) throw Error("BREAK_EVEN_OPEN_ALGO_ORDERS_INVALID");
   let stops=orders.filter(o=>isClosePositionStop(o,closeSide));
-  let be=stops.find(o=>String(o.triggerPrice)===stopPrice);
+  let be=stops.find(o=>samePrice(o.triggerPrice,stopPrice));
   if (!be) {
     const created=await request("POST","/fapi/v1/algoOrder",{
       symbol,side:closeSide,type:"STOP_MARKET",algoType:"CONDITIONAL",
@@ -52,7 +56,7 @@ async function moveStopToBreakeven({request,symbol,side,entryPrice,markPrice,tp1
     if (created?.algoId===undefined||created?.algoId===null) throw Error("BREAK_EVEN_STOP_CREATE_UNCONFIRMED");
     orders=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
     if (!Array.isArray(orders)) throw Error("BREAK_EVEN_VERIFY_ORDERS_INVALID");
-    be=orders.find(o=>String(o.algoId)===String(created.algoId)&&isClosePositionStop(o,closeSide)&&String(o.triggerPrice)===stopPrice);
+    be=orders.find(o=>String(o.algoId)===String(created.algoId)&&isClosePositionStop(o,closeSide)&&samePrice(o.triggerPrice,stopPrice));
     if (!be) throw Error("BREAK_EVEN_STOP_VERIFY_FAILED");
     stops=orders.filter(o=>isClosePositionStop(o,closeSide));
   }
@@ -63,7 +67,7 @@ async function moveStopToBreakeven({request,symbol,side,entryPrice,markPrice,tp1
   const remaining=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
   if (!Array.isArray(remaining)) throw Error("BREAK_EVEN_FINAL_VERIFY_ORDERS_INVALID");
   const remainingStops=remaining.filter(o=>isClosePositionStop(o,closeSide));
-  const complete=remainingStops.length===1&&String(remainingStops[0].algoId)===String(be.algoId)&&String(remainingStops[0].triggerPrice)===stopPrice;
+  const complete=remainingStops.length===1&&String(remainingStops[0].algoId)===String(be.algoId)&&samePrice(remainingStops[0].triggerPrice,stopPrice);
   return {triggered:true,complete,algoId:be.algoId,entryPrice,stopPrice:Number(stopPrice),stopPriceText:stopPrice};
 }
 module.exports={breakEvenTriggerPrice,hasReachedBreakEvenTrigger,formatBreakevenStopPrice,moveStopToBreakeven};
