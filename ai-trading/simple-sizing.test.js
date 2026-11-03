@@ -43,7 +43,7 @@ test("checks actual margin after step-size rounding, not the unrounded target",(
  });
  assert.equal(r.targetMargin,0.8);
  assert.equal(r.qty,17);
- assert.equal(r.margin,0.7565);
+ assert.ok(Math.abs(r.margin-0.7565)<1e-12);
  assert.equal(r.ok,true);
  assert.equal(r.reason,"OK");
 });
