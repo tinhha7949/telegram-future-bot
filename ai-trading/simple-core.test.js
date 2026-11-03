@@ -53,6 +53,7 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   assert.ok(supported.has(C.ENTRY_TIMEFRAME));
   assert.ok(supported.has(C.DIVERGENCE_TIMEFRAME));
   assert.ok(Number.isInteger(C.TREND_EMA_PERIOD) && C.TREND_EMA_PERIOD>0);
+  assert.equal(C.CONFIRMATION_HISTORY_CANDLES,100);
   assert.ok(C.ENTRY_RSI_LONG_MIN>=0 && C.ENTRY_RSI_LONG_MIN<=C.ENTRY_RSI_LONG_MAX && C.ENTRY_RSI_LONG_MAX<=100);
   assert.ok(C.ENTRY_RSI_SHORT_MIN>=0 && C.ENTRY_RSI_SHORT_MIN<=C.ENTRY_RSI_SHORT_MAX && C.ENTRY_RSI_SHORT_MAX<=100);
   assert.ok(C.MAX_ABS_FUNDING_RATE>=0);
@@ -123,6 +124,13 @@ test("coreLogic calculates entry RSI from the configured entry candle stream",()
   const entry=entryCandles("LONG");
   const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,divergenceCandles:bullishDivergenceCandles(),config:{...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.rsi,rsi(entry.map(c=>c.close),C.RSI_PERIOD));
+});
+
+test("15m confirmation requires 100 closed candles for EMA50",()=>{
+  const confirmation=candlesFromCloses(Array.from({length:99},(_,i)=>100+i*0.1),900000);
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,divergenceCandles:bullishDivergenceCandles(),config:{...C,CONFIRMATION_HISTORY_CANDLES:100,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100},now:NOW});
+  assert.equal(signal.side,null);
+  assert.equal(signal.reason,"INSUFFICIENT_CLOSED_CANDLES");
 });
 
 test("trend structure requires both HH/HL or LH/LL",()=>{
