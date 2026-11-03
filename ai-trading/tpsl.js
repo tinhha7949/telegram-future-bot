@@ -16,19 +16,35 @@ function protectionConfigForDivergence(config, divergence) {
   TP2_REWARD_RISK: hasDivergence ? config.TP2_REWARD_RISK : config.TP2_REWARD_RISK_NO_DIVERGENCE
  };
 }
-function buildProtection({side,entryPrice,atr,config,priceTick,stopPrice}){
- if(!["LONG","SHORT"].includes(side)||!Number.isFinite(entryPrice)||!(entryPrice>0)||!Number.isFinite(atr)||!(atr>0)||!Number.isFinite(priceTick)||!(priceTick>0))throw Error("INVALID_PROTECTION_INPUT");
- const hasSwingStop=Number.isFinite(stopPrice)&&stopPrice>0;
- if(hasSwingStop&&(side==="LONG"?stopPrice>=entryPrice:stopPrice<=entryPrice))throw Error("INVALID_SWING_STOP_SIDE");
- const distance=hasSwingStop?Math.abs(entryPrice-stopPrice):Math.min(entryPrice*config.SL_MAX_PCT/100,Math.max(entryPrice*config.SL_MIN_PCT/100,atr*config.SL_ATR_MULTIPLIER));
+function buildProtection({side,entryPrice,atr15,config,priceTick,pivotPrice,divergence}){
+ if(!["LONG","SHORT"].includes(side)||!Number.isFinite(entryPrice)||!(entryPrice>0)||!Number.isFinite(atr15)||!(atr15>0)||!Number.isFinite(priceTick)||!(priceTick>0))throw Error("INVALID_PROTECTION_INPUT");
+ const hasPivot=Number.isFinite(pivotPrice)&&pivotPrice>0;
+ if(hasPivot&&(side==="LONG"?pivotPrice>=entryPrice:pivotPrice<=entryPrice))throw Error("INVALID_SWING_PIVOT_SIDE");
  const d=precision(priceTick),down=x=>Number((Math.floor(x/priceTick+1e-10)*priceTick).toFixed(d)),up=x=>Number((Math.ceil(x/priceTick-1e-10)*priceTick).toFixed(d));
- let sl=hasSwingStop?(side==="LONG"?down(stopPrice):up(stopPrice)):(side==="LONG"?down(entryPrice-distance):up(entryPrice+distance));
+ let sl,buffer=0,riskUnit=null,stopMethod;
+ if(hasPivot){
+  riskUnit=Math.abs(entryPrice-pivotPrice);
+  const aligned=side==="LONG"?divergence==="REGULAR_BULLISH":divergence==="REGULAR_BEARISH";
+  const multiplier=aligned?config.SL_PIVOT_BUFFER_ATR_WITH_DIVERGENCE:config.SL_PIVOT_BUFFER_ATR;
+  buffer=Math.max(entryPrice*config.SL_PIVOT_BUFFER_MIN_PCT/100,atr15*multiplier);
+  sl=side==="LONG"?down(pivotPrice-buffer):up(pivotPrice+buffer);
+  const finalDistance=Math.abs(entryPrice-sl);
+  const minDistance=riskUnit*config.SL_MIN_R_MULTIPLE;
+  const maxDistance=riskUnit*config.SL_MAX_R_MULTIPLE;
+  if(finalDistance<minDistance-1e-10||finalDistance>maxDistance+1e-10)throw Error("SL_PIVOT_R_MULTIPLE_OUT_OF_RANGE");
+  stopMethod="15M_PIVOT";
+ }else{
+  const distance=Math.min(entryPrice*config.SL_FALLBACK_MAX_PCT/100,Math.max(entryPrice*config.SL_FALLBACK_MIN_PCT/100,atr15*config.SL_FALLBACK_ATR_MULTIPLIER));
+  sl=side==="LONG"?down(entryPrice-distance):up(entryPrice+distance);
+  stopMethod="15M_ATR_FALLBACK";
+ }
+ const distance=Math.abs(entryPrice-sl);
  let tp1=side==="LONG"?up(entryPrice+distance*config.TP1_REWARD_RISK):down(entryPrice-distance*config.TP1_REWARD_RISK);
  let tp2=side==="LONG"?up(entryPrice+distance*config.TP2_REWARD_RISK):down(entryPrice-distance*config.TP2_REWARD_RISK);
  if(side==="LONG"&&tp2<=tp1)tp2=Number((tp1+priceTick).toFixed(d));
  if(side==="SHORT"&&tp2>=tp1)tp2=Number((tp1-priceTick).toFixed(d));
  if(!(sl>0&&tp1>0&&tp2>0)||(side==="LONG"?!(sl<entryPrice&&tp1>entryPrice&&tp2>tp1):!(sl>entryPrice&&tp1<entryPrice&&tp2<tp1)))throw Error("INVALID_PROTECTION_LEVELS");
- return{sl,tp1,tp2,tp:tp2,stopDistance:Math.abs(entryPrice-sl),tp1RewardRisk:config.TP1_REWARD_RISK,tp2RewardRisk:config.TP2_REWARD_RISK,rewardRisk:config.TP2_REWARD_RISK};
+ return{sl,tp1,tp2,tp:tp2,stopDistance:distance,stopMethod,pivotPrice:hasPivot?pivotPrice:null,riskUnit,buffer,tp1RewardRisk:config.TP1_REWARD_RISK,tp2RewardRisk:config.TP2_REWARD_RISK,rewardRisk:config.TP2_REWARD_RISK};
 }
 function clientAlgoId(kind){
  const id="s"+kind+Date.now().toString(36)+crypto.randomBytes(5).toString("hex");
