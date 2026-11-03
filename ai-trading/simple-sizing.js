@@ -22,7 +22,7 @@ function calculateOrderSizing({wallet,available,mark,rules,config}) {
   const qty=floorStep(targetQty,rules.stepSize);
   const notional=qty*mark,margin=notional/config.LEVERAGE;
   const result={qty,notional,maxNotional,margin,targetMargin,targetQty};
-  if(targetMargin>available*0.95+1e-10)
+  if(margin>available*0.95+1e-10)
     return {ok:false,reason:"MARGIN",...result};
   if(!(qty>=rules.minQty))
     return {ok:false,reason:"MIN_QTY",...result};
