@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { cooldownUntilForTrade, isCoolingDown } = require("./coin-cooldown");
+const { cooldownUntilForTrade, cooldownRecordForClose, isCoolingDown } = require("./coin-cooldown");
 
 test("cooldown expires the configured number of minutes after close", () => {
   const closedAt = new Date("2026-11-03T00:00:00.000Z");
@@ -22,4 +22,13 @@ test("symbol stays locked until expiry and is available at expiry", () => {
 test("missing or malformed cooldown data does not block a symbol", () => {
   assert.equal(isCoolingDown(null), false);
   assert.equal(isCoolingDown({ until: "invalid" }), false);
+});
+
+test("close detection creates a pending cooldown before WIN/LOSS is known", () => {
+  const closedAt = new Date("2026-11-03T00:00:00.000Z");
+  assert.deepEqual(cooldownRecordForClose(closedAt, 30), {
+    until: new Date("2026-11-03T00:30:00.000Z"),
+    closedAt,
+    result: "PENDING"
+  });
 });
