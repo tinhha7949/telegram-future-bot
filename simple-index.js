@@ -14,6 +14,7 @@ const { getTopSymbol } = require("./ai-trading/getTopSymbol");
 const { buildProtection, protectionConfigForDivergence, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const { moveStopToBreakeven } = require("./ai-trading/break-even");
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
+const { cooldownUntilForTrade, isCoolingDown } = require("./ai-trading/coin-cooldown");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
 const RSI_HISTORY_CANDLES = 100
@@ -119,6 +120,12 @@ async function main() {
           if(!Number.isFinite(net)||!Number.isFinite(wallet)) continue;
           await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{realizedNetPnl:net,pnl:net,walletBalanceAtClose:wallet,pnlCalculatedAt:new Date()}});
         }
+        const cooldownUntil=cooldownUntilForTrade(t.closedAt,C.COIN_COOLDOWN_MINUTES);
+        if(net!==0 && cooldownUntil) {
+          await state.updateOne({_id:"runtime"},{$set:{
+            ["coinCooldowns."+t.symbol]:{until:cooldownUntil,closedAt:new Date(t.closedAt),result:net>0?"WIN":"LOSS"}
+          }});
+        }
         const sent=await telegramResult((net>0?"WIN":net<0?"LOSS":"BREAKEVEN")+" "+t.side+" "+t.symbol+"\nNet PnL: "+net.toFixed(8)+" USDT\nWallet balance: "+(Number.isFinite(wallet)?wallet.toFixed(8):"N/A")+" USDT\nTrade ID: "+String(t._id));
         if(sent) await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{resultNotificationPending:false,resultNotifiedAt:new Date()},$unset:{resultNotificationNextAttemptAt:""}});
       } catch(e) { console.error("TRADE_RESULT_NOTIFICATION_FAILED",t.symbol,e.message); }
@@ -199,6 +206,14 @@ async function main() {
   async function tryEntry(symbol) {
     const r=rules.get(symbol);
     if(!r||r.status!=="TRADING"||r.contractType!=="PERPETUAL"||r.quoteAsset!==C.QUOTE_ASSET) return;
+    if(C.COIN_COOLDOWN_MINUTES>0) {
+      const cooldownState=await state.findOne({_id:"runtime"},{projection:{coinCooldowns:1}});
+      const cooldown=cooldownState?.coinCooldowns?.[symbol];
+      if(isCoolingDown(cooldown)) {
+        console.log("ENTRY_SKIP_COIN_COOLDOWN",symbol,"until="+new Date(cooldown.until).toISOString());
+        return;
+      }
+    }
     const [trendRaw,entryRaw]=await Promise.all([
       binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS,C.TREND_EMA_PERIOD+1)}),
       binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD+1,C.ATR_PERIOD+1)})
