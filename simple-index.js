@@ -14,7 +14,7 @@ const { getTopSymbol } = require("./ai-trading/getTopSymbol");
 const { buildProtection, protectionConfigForDivergence, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const { moveStopToBreakeven } = require("./ai-trading/break-even");
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
-const { cooldownUntilForTrade, isCoolingDown } = require("./ai-trading/coin-cooldown");
+const { cooldownRecordForClose, isCoolingDown } = require("./ai-trading/coin-cooldown");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
 const RSI_HISTORY_CANDLES = 100
@@ -81,6 +81,12 @@ async function main() {
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
   await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once",unique:true});
   await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"1H_STRUCTURE_"+C.DIVERGENCE_TIMEFRAME+"_DIVERGENCE_BONUS_"+C.ENTRY_TIMEFRAME+"_RSI_ENTRY"}},{upsert:true});
+  async function startCoinCooldown(symbol, closedAt, result="PENDING") {
+    const cooldown=cooldownRecordForClose(closedAt,C.COIN_COOLDOWN_MINUTES,result);
+    if(!cooldown) return;
+    await state.updateOne({_id:"runtime"},{$set:{["coinCooldowns."+symbol]:cooldown}},{upsert:true});
+    console.log("COIN_COOLDOWN_STARTED",symbol,"until="+cooldown.until.toISOString(),"result="+result);
+  }
   const info=await binance.get("/fapi/v1/exchangeInfo");
   const rules=new Map();
   for(const s of info.symbols||[]) {
@@ -120,12 +126,7 @@ async function main() {
           if(!Number.isFinite(net)||!Number.isFinite(wallet)) continue;
           await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{realizedNetPnl:net,pnl:net,walletBalanceAtClose:wallet,pnlCalculatedAt:new Date()}});
         }
-        const cooldownUntil=cooldownUntilForTrade(t.closedAt,C.COIN_COOLDOWN_MINUTES);
-        if(net!==0 && cooldownUntil) {
-          await state.updateOne({_id:"runtime"},{$set:{
-            ["coinCooldowns."+t.symbol]:{until:cooldownUntil,closedAt:new Date(t.closedAt),result:net>0?"WIN":"LOSS"}
-          }});
-        }
+        if(net!==0) await startCoinCooldown(t.symbol,t.closedAt,net>0?"WIN":"LOSS");
         const sent=await telegramResult((net>0?"WIN":net<0?"LOSS":"BREAKEVEN")+" "+t.side+" "+t.symbol+"\nNet PnL: "+net.toFixed(8)+" USDT\nWallet balance: "+(Number.isFinite(wallet)?wallet.toFixed(8):"N/A")+" USDT\nTrade ID: "+String(t._id));
         if(sent) await trades.updateOne({_id:t._id,resultNotificationPending:true},{$set:{resultNotificationPending:false,resultNotifiedAt:new Date()},$unset:{resultNotificationNextAttemptAt:""}});
       } catch(e) { console.error("TRADE_RESULT_NOTIFICATION_FAILED",t.symbol,e.message); }
@@ -164,7 +165,9 @@ async function main() {
       const p=liveMap.get(t.symbol);
       if(!p) {
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("CLOSED_POSITION_ALGO_CLEANUP_WARN",t.symbol,e.message); }
-        await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"CLOSED_EXTERNAL_OR_TPSL",closedAt:new Date(),closeReason:"POSITION_NOT_ON_EXCHANGE",resultNotificationPending:true,resultNotificationNextAttemptAt:new Date(0)}});
+        const closedAt=new Date();
+        await startCoinCooldown(t.symbol,closedAt,"PENDING");
+        await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{status:"CLOSED_EXTERNAL_OR_TPSL",closedAt,closeReason:"POSITION_NOT_ON_EXCHANGE",resultNotificationPending:true,resultNotificationNextAttemptAt:new Date(0)}});
         continue;
       }
       if(t.protectionError) {
@@ -291,8 +294,11 @@ async function main() {
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol}); } catch(cancelError) { console.error("TPSL_CLEANUP_WARN",symbol,cancelError.message); }
         let after=null, verified=false;
         try { after=(await positions()).find(p=>p.symbol===symbol)||null; verified=true; } catch(positionError) { console.error("TPSL_FAILURE_VERIFY_CLOSE",symbol,positionError.message); }
-        if(verified&&!after) await trades.updateOne({_id:inserted.insertedId},{$set:{status:"PROTECTION_FAILED_CLOSED",closedAt:new Date(),closeReason:"PROTECTION_FAILED_FORCE_CLOSE",resultNotificationPending:true,resultNotificationNextAttemptAt:new Date(0),error:e.message}});
-        else await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",protectionError:e.message,closeRequestedAt:new Date(),error:e.message}});
+        if(verified&&!after) {
+          const closedAt=new Date();
+          await startCoinCooldown(symbol,closedAt,"PENDING");
+          await trades.updateOne({_id:inserted.insertedId},{$set:{status:"PROTECTION_FAILED_CLOSED",closedAt,closeReason:"PROTECTION_FAILED_FORCE_CLOSE",resultNotificationPending:true,resultNotificationNextAttemptAt:new Date(0),error:e.message}});
+        } else await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",protectionError:e.message,closeRequestedAt:new Date(),error:e.message}});
         throw e;
       }
       await trades.updateOne({_id:inserted.insertedId,status:"OPEN"},{$set:{entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0),entryNotificationAttempts:0}});
