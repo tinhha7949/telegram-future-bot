@@ -40,6 +40,10 @@ function entryCandles(direction) {
   const closes=Array.from({length:40},(_,i)=>direction==="LONG"?140-i:60+i);
   return candlesFromCloses(closes,300000);
 }
+function slCandles() {
+  const closes=Array.from({length:100},(_,i)=>100+Math.sin(i*0.35)*0.5);
+  return candlesFromCloses(closes,900000);
+}
 function setConfigValue(source,key,value) {
   const pattern=new RegExp("^"+key+":.*$","m");
   assert.match(source,pattern,"CONFIG.yaml must define "+key);
@@ -52,6 +56,8 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   assert.ok(supported.has(C.TREND_TIMEFRAME));
   assert.ok(supported.has(C.ENTRY_TIMEFRAME));
   assert.ok(supported.has(C.DIVERGENCE_TIMEFRAME));
+  assert.equal(C.SL_TIMEFRAME,"15m");
+  assert.equal(C.SL_ATR_PERIOD,14);
   assert.ok(Number.isInteger(C.TREND_EMA_PERIOD) && C.TREND_EMA_PERIOD>0);
   assert.equal(C.CONFIRMATION_HISTORY_CANDLES,100);
   assert.ok(C.ENTRY_RSI_LONG_MIN>=0 && C.ENTRY_RSI_LONG_MIN<=C.ENTRY_RSI_LONG_MAX && C.ENTRY_RSI_LONG_MAX<=100);
@@ -122,7 +128,7 @@ test("RSI and ATR return valid closed-candle indicators",()=>{
 
 test("coreLogic calculates entry RSI from the configured entry candle stream",()=>{
   const entry=entryCandles("LONG");
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,divergenceCandles:bullishDivergenceCandles(),config:{...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,slCandles:slCandles(),divergenceCandles:bullishDivergenceCandles(),config:{...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.rsi,rsi(entry.map(c=>c.close),C.RSI_PERIOD));
 });
 
@@ -173,28 +179,30 @@ test("funding and spread vetoes follow CONFIG.yaml thresholds",()=>{
 });
 
 test("LONG enters with regular bullish divergence as an RR bonus",()=>{
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:{...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:0,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),slCandles:slCandles(),divergenceCandles:bullishDivergenceCandles(),config:{...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:0,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"LONG");
   assert.equal(signal.trendSide,"UP");
   assert.ok(signal.rsi>=0 && signal.rsi<=0);
   assert.equal(signal.divergence,"REGULAR_BULLISH");
-  assert.ok(signal.swingStop<entryCandles("LONG").at(-1).close);
+  assert.ok(signal.pivotPrice<entryCandles("LONG").at(-1).close);
+  assert.ok(signal.slAtr15>0);
 });
 
 test("SHORT enters with regular bearish divergence as an RR bonus",()=>{
-  const signal=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:bearishDivergenceCandles(),config:{...C,ENTRY_RSI_SHORT_MIN:100,ENTRY_RSI_SHORT_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),slCandles:slCandles(),divergenceCandles:bearishDivergenceCandles(),config:{...C,ENTRY_RSI_SHORT_MIN:100,ENTRY_RSI_SHORT_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"SHORT");
   assert.equal(signal.trendSide,"DOWN");
   assert.ok(signal.rsi>=100 && signal.rsi<=100);
   assert.equal(signal.divergence,"REGULAR_BEARISH");
-  assert.ok(signal.swingStop>entryCandles("SHORT").at(-1).close);
+  assert.ok(signal.pivotPrice>entryCandles("SHORT").at(-1).close);
+  assert.ok(signal.slAtr15>0);
 });
 
 test("entries without matching regular divergence are allowed at the wider RR tier",()=>{
   const cfg={...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:0,ENTRY_RSI_SHORT_MIN:100,ENTRY_RSI_SHORT_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50};
   const noDiv=candlesFromCloses(Array.from({length:100},(_,i)=>100+i*0.01));
-  const long=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),divergenceCandles:noDiv,config:cfg,now:NOW});
-  const short=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),divergenceCandles:noDiv,config:cfg,now:NOW});
+  const long=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),slCandles:slCandles(),divergenceCandles:noDiv,config:cfg,now:NOW});
+  const short=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),slCandles:slCandles(),divergenceCandles:noDiv,config:cfg,now:NOW});
   assert.equal(long.side,"LONG");
   assert.equal(long.divergence,null);
   assert.equal(short.side,"SHORT");
@@ -216,16 +224,28 @@ test("counter-bias trades, RSI outside trigger, and range bias are vetoed",()=>{
   assert.equal(coreLogic({trendCandles:range,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW}).side,null);
 });
 
-test("SL stays beyond swing and both divergence RR tiers drive the two TP levels",()=>{
-  const withDiv=buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:98.5,config:protectionConfigForDivergence(C,"REGULAR_BULLISH"),priceTick:0.01});
-  const withoutDiv=buildProtection({side:"SHORT",entryPrice:100,atr:1,stopPrice:101.5,config:protectionConfigForDivergence(C,null),priceTick:0.01});
-  assert.ok(withDiv.sl<=98.5 && withDiv.tp1>100 && withDiv.tp2>withDiv.tp1);
+test("15m pivot SL uses ATR buffer, independent pivot R clamp, and divergence tightening",()=>{
+  const withDiv=buildProtection({side:"LONG",entryPrice:100,atr15:1,pivotPrice:98.5,divergence:"REGULAR_BULLISH",config:protectionConfigForDivergence(C,"REGULAR_BULLISH"),priceTick:0.01});
+  const withoutDiv=buildProtection({side:"SHORT",entryPrice:100,atr15:1,pivotPrice:101.5,divergence:null,config:protectionConfigForDivergence(C,null),priceTick:0.01});
+  assert.ok(withDiv.sl<98.5 && withDiv.tp1>100 && withDiv.tp2>withDiv.tp1);
+  assert.equal(withDiv.buffer,0.25);
+  assert.equal(withDiv.riskUnit,1.5);
+  assert.equal(withDiv.stopMethod,"15M_PIVOT");
   assert.equal(withDiv.tp1RewardRisk,C.TP1_REWARD_RISK);
   assert.equal(withDiv.tp2RewardRisk,C.TP2_REWARD_RISK);
-  assert.ok(withoutDiv.sl>=101.5 && withoutDiv.tp1<100 && withoutDiv.tp2<withoutDiv.tp1);
+  assert.ok(withoutDiv.sl>101.5 && withoutDiv.tp1<100 && withoutDiv.tp2<withoutDiv.tp1);
+  assert.equal(withoutDiv.buffer,0.35);
   assert.equal(withoutDiv.tp1RewardRisk,C.TP1_REWARD_RISK_NO_DIVERGENCE);
   assert.equal(withoutDiv.tp2RewardRisk,C.TP2_REWARD_RISK_NO_DIVERGENCE);
-  assert.throws(()=>buildProtection({side:"LONG",entryPrice:100,atr:1,stopPrice:101,config:C,priceTick:0.01}),/INVALID_SWING_STOP_SIDE/);
+  assert.throws(()=>buildProtection({side:"LONG",entryPrice:100,atr15:1,pivotPrice:101,config:C,priceTick:0.01}),/INVALID_SWING_PIVOT_SIDE/);
+  assert.throws(()=>buildProtection({side:"LONG",entryPrice:100,atr15:10,pivotPrice:99.9,config:C,priceTick:0.01}),/SL_PIVOT_R_MULTIPLE_OUT_OF_RANGE/);
+});
+
+test("missing 15m pivot uses exact ATR fallback without applying pivot R clamp",()=>{
+  const fallback=buildProtection({side:"LONG",entryPrice:100,atr15:1,pivotPrice:null,config:C,priceTick:0.01});
+  assert.equal(fallback.stopMethod,"15M_ATR_FALLBACK");
+  assert.equal(fallback.sl,98.5);
+  assert.equal(fallback.stopDistance,1.5);
 });
 
 test("coin selection keeps existing liquidity and symbol filters",async()=>{
