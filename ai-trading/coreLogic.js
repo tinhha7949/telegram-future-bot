@@ -107,12 +107,13 @@ function entryRsiTriggered(side, value, config) {
 }
 
 function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmationCandles, config, now = Date.now() }) {
-  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now);
+  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-(config.CONFIRMATION_HISTORY_CANDLES || 100));
   const minTrend = Math.max(config.TREND_EMA_PERIOD + 1, config.STRUCTURE_LOOKBACK_CANDLES);
   const minEntry = Math.max(config.RSI_PERIOD + 1, config.ATR_PERIOD + 1);
   const confirmationPeriod = config.CONFIRMATION_EMA_PERIOD || 50;
+  const minConfirmation = config.CONFIRMATION_HISTORY_CANDLES || 100;
   const minDivergence = Math.max(config.RSI_PERIOD + config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 2, config.DIVERGENCE_LOOKBACK_CANDLES);
-  if (trend.length < minTrend || entry.length < minEntry || (confirmation && confirmation.length < confirmationPeriod))
+  if (trend.length < minTrend || entry.length < minEntry || (confirmation && confirmation.length < minConfirmation))
     return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
   const trendEma = ema(trend.map(c => c.close), config.TREND_EMA_PERIOD);
   const price = trend.at(-1).close, entryPrice = entry.at(-1).close, valueRsi = rsi(entry.map(c => c.close), config.RSI_PERIOD), valueAtr = atr(entry, config.ATR_PERIOD);
