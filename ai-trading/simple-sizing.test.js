@@ -59,7 +59,7 @@ test("floors to exchange step size without exceeding target margin",()=>{
 
 test("rejects minimum notional when the configured margin cannot reach it",()=>{
  const fineRules={stepSize:0.0001,minQty:0.0001,minNotional:5};
- const r=calculateOrderSizing({wallet:10,available:10,mark:100,rules:fineRules,config});
+ const r=calculateOrderSizing({wallet:10,available:10,mark:100,rules:fineRules,config:{...config,POSITION_MARGIN_PCT:0.01}});
  assert.equal(r.ok,false);
  assert.equal(r.reason,"MIN_NOTIONAL");
 });
