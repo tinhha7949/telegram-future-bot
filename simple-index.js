@@ -151,7 +151,7 @@ async function main() {
       if(p) {
         try {
           try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("RECOVERY_ALGO_CANCEL_WARN",t.symbol,e.message); }
-          const recovered=buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atr:Number(t.atr),config:protectionConfigForDivergence(C,t.divergence),priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
+          const recovered=(t.sl&&t.tp1&&t.tp2)?null:buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atr15:Number(t.slAtr15),pivotPrice:Number(t.pivotPrice)||null,divergence:t.divergence,config:protectionConfigForDivergence(C,t.divergence),priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
           await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl||recovered.sl,tp1:t.tp1||recovered.tp1,tp2:t.tp2||recovered.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.stepSize||0,minQty:rules.get(t.symbol)?.minQty||0,config:C});
           await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true,entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0)}});
           
@@ -217,17 +217,19 @@ async function main() {
         return;
       }
     }
-    const [trendRaw,entryRaw,confirmationRaw]=await Promise.all([
+    const [trendRaw,entryRaw,confirmationRaw,slRaw]=await Promise.all([
       binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS,C.TREND_EMA_PERIOD+1)}),
       binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD+1,C.ATR_PERIOD+1)}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.CONFIRMATION_TIMEFRAME,limit:Math.max(C.CONFIRMATION_HISTORY_CANDLES+1,C.CONFIRMATION_EMA_PERIOD+1)})
+      binance.get("/fapi/v1/klines",{symbol,interval:C.CONFIRMATION_TIMEFRAME,limit:Math.max(C.CONFIRMATION_HISTORY_CANDLES+1,C.CONFIRMATION_EMA_PERIOD+1)}),
+      binance.get("/fapi/v1/klines",{symbol,interval:C.SL_TIMEFRAME,limit:Math.max(C.CONFIRMATION_HISTORY_CANDLES+1,C.SL_ATR_PERIOD+1,C.SL_PIVOT_MAX_DISTANCE+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS+1)})
     ]);
     const now=Date.now()+binance.timeOffsetMs;
     const confirmationCandles=toCandles(confirmationRaw);
-    const baseSignal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,config:C,now});
+    const slCandles=toCandles(slRaw);
+    const baseSignal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,config:C,now});
     if(baseSignal.reason!=="DIVERGENCE_HISTORY_REQUIRED") return;
     const divergenceRaw=await binance.get("/fapi/v1/klines",{symbol,interval:C.DIVERGENCE_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.DIVERGENCE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS)});
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,divergenceCandles:toCandles(divergenceRaw),config:C,now});
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,divergenceCandles:toCandles(divergenceRaw),config:C,now});
     if(!signal.side) return;
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
@@ -265,7 +267,7 @@ async function main() {
       } catch(e) { console.error("LEVERAGE_CAP_UNAVAILABLE",symbol,e.message); return; }
     }
     const symbolLeverage=Math.min(C.LEVERAGE,symbolMaxLeverage), sizingConfig={...C,LEVERAGE:symbolLeverage};
-    const protection=buildProtection({side:signal.side,entryPrice:mark,atr:signal.atr,stopPrice:signal.swingStop,config:protectionConfigForDivergence(C,signal.divergence),priceTick:r.tickSize});
+    const protection=buildProtection({side:signal.side,entryPrice:mark,atr15:signal.slAtr15,pivotPrice:signal.pivotPrice,divergence:signal.divergence,config:protectionConfigForDivergence(C,signal.divergence),priceTick:r.tickSize});
     const sizing=calculateOrderSizing({wallet,available,mark,stopDistance:protection.stopDistance,rules:r,config:sizingConfig});
     if(!sizing.ok) {
       console.log("ENTRY_SKIP_"+sizing.reason,symbol,"qty="+sizing.qty,"notional="+sizing.notional,"minNotional="+r.minNotional,"maxNotional="+sizing.maxNotional);
@@ -274,7 +276,7 @@ async function main() {
     const qty=sizing.qty;
     try { splitQuantity({quantity:qty,stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message,"qty="+qty); return; }
     if(sizing.margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol,"required="+sizing.margin,"available="+available); return; }
-    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,swingStop:signal.swingStop,divergence:signal.divergence,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
+    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,trendEma:signal.trendEma,rsi:signal.rsi,atr:signal.atr,slAtr15:signal.slAtr15,pivotPrice:signal.pivotPrice,slTimeframe:C.SL_TIMEFRAME,divergence:signal.divergence,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return; }
     let inserted;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }
@@ -282,9 +284,10 @@ async function main() {
       await binance.signed("POST","/fapi/v1/leverage",{symbol,leverage:symbolLeverage});
       const order=await binance.signed("POST","/fapi/v1/order",{symbol,side:signal.side==="LONG"?"BUY":"SELL",type:"MARKET",quantity:qty.toFixed(precision(r.stepSize)),newOrderRespType:"RESULT"});
       const filled=Number(order.avgPrice)||mark;
-      const actual=buildProtection({side:signal.side,entryPrice:filled,atr:signal.atr,stopPrice:signal.swingStop,config:protectionConfigForDivergence(C,signal.divergence),priceTick:r.tickSize});
-      await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,openedAt:new Date(order.updateTime||Date.now())}});
+      let actual;
       try {
+        actual=buildProtection({side:signal.side,entryPrice:filled,atr15:signal.slAtr15,pivotPrice:signal.pivotPrice,divergence:signal.divergence,config:protectionConfigForDivergence(C,signal.divergence),priceTick:r.tickSize});
+        await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,openedAt:new Date(order.updateTime||Date.now())}});
         await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol,side:signal.side,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,stepSize:r.stepSize,minQty:r.minQty,config:C});
       } catch(e) {
         console.error("TPSL_PLACEMENT_FAILED_FORCE_CLOSE",symbol,e.message);
