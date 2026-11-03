@@ -33,6 +33,21 @@ test("recalculates the same percentage from the updated total wallet balance",()
  assert.equal(r.margin,2);
 });
 
+test("checks actual margin after step-size rounding, not the unrounded target",()=>{
+ const r=calculateOrderSizing({
+  wallet:10,
+  available:0.8,
+  mark:0.89,
+  rules:{stepSize:1,minQty:1,minNotional:5},
+  config:{...config,POSITION_MARGIN_PCT:0.08}
+ });
+ assert.equal(r.targetMargin,0.8);
+ assert.equal(r.qty,17);
+ assert.equal(r.margin,0.7565);
+ assert.equal(r.ok,true);
+ assert.equal(r.reason,"OK");
+});
+
 test("does not reduce order size when available balance cannot fund the full target margin",()=>{
  const r=calculateOrderSizing({wallet:10,available:0.8,mark:1,rules,config});
  assert.equal(r.ok,false);
