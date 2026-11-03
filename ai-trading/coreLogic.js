@@ -107,7 +107,7 @@ function entryRsiTriggered(side, value, config) {
 }
 
 function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmationCandles, slCandles, config, now = Date.now() }) {
-  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-(config.CONFIRMATION_HISTORY_CANDLES || 100)), stopCandles = closed(slCandles ?? confirmationCandles, now);
+  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-(config.CONFIRMATION_HISTORY_CANDLES || 100)), stopCandles = closed(slCandles, now);
   const minTrend = Math.max(config.TREND_EMA_PERIOD + 1, config.STRUCTURE_LOOKBACK_CANDLES);
   const minEntry = Math.max(config.RSI_PERIOD + 1, config.ATR_PERIOD + 1);
   const confirmationPeriod = config.CONFIRMATION_EMA_PERIOD || 50;
@@ -139,13 +139,16 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmation
   const div = regularDivergence(divergence.slice(-config.DIVERGENCE_LOOKBACK_CANDLES), config);
   const bullishBonus = trendSide === "UP" && div.bullish && div.swingLow > 0 && div.swingLow < entryPrice;
   const bearishBonus = trendSide === "DOWN" && div.bearish && div.swingHigh > entryPrice;
+  if (stopCandles.length < config.SL_ATR_PERIOD + 1)
+    return { side: null, reason: "SL_15M_HISTORY_REQUIRED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
   const stopAtr = atr(stopCandles, config.SL_ATR_PERIOD);
+  if (!(stopAtr > 0))
+    return { side: null, reason: "SL_ATR15_UNAVAILABLE", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
   const stopSwings = pivots(stopCandles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
-  const recentPivot = (side === "LONG" ? stopSwings.lows : stopSwings.highs)
+  const validPivots = (side === "LONG" ? stopSwings.lows : stopSwings.highs)
     .filter(p => stopCandles.length - 1 - p.index <= config.SL_PIVOT_MAX_DISTANCE)
-    .at(-1);
-  const pivotPrice = recentPivot && (side === "LONG" ? recentPivot.price < entryPrice : recentPivot.price > entryPrice)
-    ? recentPivot.price : null;
+    .filter(p => side === "LONG" ? p.price < entryPrice : p.price > entryPrice);
+  const pivotPrice = validPivots.at(-1)?.price ?? null;
   return {
     side, trendSide, trendEma, rsi: valueRsi, atr: valueAtr,
     pivotPrice, slAtr15: stopAtr,
