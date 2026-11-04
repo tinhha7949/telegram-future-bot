@@ -270,10 +270,10 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmation
   const lastEntryLow = entrySwings.lows.at(-1), priorEntryLow = entrySwings.lows.at(-2);
   const longStructure = !!(priorEntryLow && lastEntryHigh && lastEntryLow &&
     priorEntryLow.index < lastEntryHigh.index && lastEntryHigh.index < lastEntryLow.index &&
-    lastEntryLow.price > priorEntryLow.price && entryPrice > lastEntryHigh.price);
+    lastEntryLow.price > priorEntryLow.price && entryWindow.at(-2).close <= lastEntryHigh.price && entryPrice > lastEntryHigh.price);
   const shortStructure = !!(priorEntryHigh && lastEntryLow && lastEntryHigh &&
     priorEntryHigh.index < lastEntryLow.index && lastEntryLow.index < lastEntryHigh.index &&
-    lastEntryHigh.price < priorEntryHigh.price && entryPrice < lastEntryLow.price);
+    lastEntryHigh.price < priorEntryHigh.price && entryWindow.at(-2).close >= lastEntryLow.price && entryPrice < lastEntryLow.price);
   const side = trendSide === "UP" ? "LONG" : "SHORT";
   if (side === "LONG" && !longStructure) return { side: null, reason: "ENTRY_STRUCTURE_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_HL_AND_BOS" };
   if (side === "SHORT" && !shortStructure) return { side: null, reason: "ENTRY_STRUCTURE_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_LH_AND_BOS" };
