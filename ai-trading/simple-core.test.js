@@ -44,7 +44,7 @@ function entryCandles(direction) {
 }
 function slCandles() {
   const closes=Array.from({length:100},(_,i)=>100+Math.sin(i*0.35)*0.5);
-  return candlesFromCloses(closes,900000);
+  return candlesFromCloses(closes,300000);
 }
 function setConfigValue(source,key,value) {
   const pattern=new RegExp("^"+key+":.*$","m");
@@ -251,7 +251,7 @@ test("counter-bias trades and range bias are vetoed without any RSI entry gate",
   assert.equal(coreLogic({trendCandles:range,entryCandles:entryCandles("LONG"),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW}).side,null);
 });
 
-test("15m pivot SL uses ATR buffer, independent pivot R clamp, and divergence tightening",()=>{
+test("5m pivot SL uses ATR buffer, independent pivot R clamp, and divergence tightening",()=>{
   const withDiv=buildProtection({side:"LONG",entryPrice:100,atr15:1,pivotPrice:98.5,divergence:"REGULAR_BULLISH",config:protectionConfigForDivergence(C,"REGULAR_BULLISH"),priceTick:0.01});
   const withoutDiv=buildProtection({side:"SHORT",entryPrice:100,atr15:1,pivotPrice:101.5,divergence:null,config:protectionConfigForDivergence(C,null),priceTick:0.01});
   assert.ok(withDiv.sl<98.5 && withDiv.tp1>100 && withDiv.tp2>withDiv.tp1);
@@ -268,7 +268,7 @@ test("15m pivot SL uses ATR buffer, independent pivot R clamp, and divergence ti
   assert.throws(()=>buildProtection({side:"LONG",entryPrice:100,atr15:10,pivotPrice:99.9,config:C,priceTick:0.01}),/SL_PIVOT_R_MULTIPLE_OUT_OF_RANGE/);
 });
 
-test("missing 15m pivot uses exact ATR fallback without applying pivot R clamp",()=>{
+test("missing 5m pivot uses exact ATR fallback without applying pivot R clamp",()=>{
   const fallback=buildProtection({side:"LONG",entryPrice:100,atr15:1,pivotPrice:null,config:C,priceTick:0.01});
   assert.equal(fallback.stopMethod,"5M_ATR_FALLBACK");
   const fallbackDistance=Math.min(100*C.SL_FALLBACK_MAX_PCT/100,Math.max(100*C.SL_FALLBACK_MIN_PCT/100,C.SL_FALLBACK_ATR_MULTIPLIER));
