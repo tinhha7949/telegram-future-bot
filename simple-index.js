@@ -17,7 +17,7 @@ const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
 const { cooldownRecordForClose, isCoolingDown } = require("./ai-trading/coin-cooldown");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
-const RSI_HISTORY_CANDLES = 100
+const DIVERGENCE_HISTORY_CANDLES = 100
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function floorStep(n, step) { if (!(step > 0)) return n; return Math.floor((n + step*1e-10)/step)*step; }
 function precision(step) { const s=String(step); return s.includes(".") ? s.length-s.indexOf(".")-1 : 0; }
@@ -228,7 +228,7 @@ async function main() {
     const slCandles=toCandles(slRaw);
     const baseSignal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,config:C,now});
     if(baseSignal.reason!=="DIVERGENCE_HISTORY_REQUIRED") return;
-    const divergenceRaw=await binance.get("/fapi/v1/klines",{symbol,interval:C.DIVERGENCE_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.DIVERGENCE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS)});
+    const divergenceRaw=await binance.get("/fapi/v1/klines",{symbol,interval:C.DIVERGENCE_TIMEFRAME,limit:Math.max(DIVERGENCE_HISTORY_CANDLES,C.DIVERGENCE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS)});
     const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,divergenceCandles:toCandles(divergenceRaw),config:C,now});
     if(!signal.side) return;
     const signalAt=new Date(signal.signalAt);
