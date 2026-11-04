@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const assert = require("node:assert/strict");
-const { rsi, atr, marketStructure, regularDivergence, entryRsiTriggered, marketVeto, coreLogic } = require("./coreLogic");
+const { rsi, atr, marketStructure, assessConfirmation, regularDivergence, entryRsiTriggered, marketVeto, coreLogic } = require("./coreLogic");
 const { loadSimpleConfig } = require("./simple-config");
 const { buildProtection, protectionConfigForDivergence } = require("./tpsl");
 const { getTopSymbol } = require("./getTopSymbol");
@@ -147,6 +147,18 @@ test("1h confirmation requires the configured history count",()=>{
   const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,divergenceCandles:bullishDivergenceCandles(),config:{...C,CONFIRMATION_HISTORY_CANDLES:300,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100},now:NOW});
   assert.equal(signal.side,null);
   assert.equal(signal.reason,"INSUFFICIENT_CLOSED_CANDLES");
+});
+
+test("1h confirmation uses major swings for continuation and reversal classification",()=>{
+  const aligned=assessConfirmation(trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES), "UP", C);
+  assert.equal(aligned.major.side,"UP");
+  assert.equal(aligned.state,"CONTINUATION");
+  const reversal=assessConfirmation(trendCandles("DOWN",C.CONFIRMATION_HISTORY_CANDLES), "UP", C);
+  assert.equal(reversal.major.side,"DOWN");
+  assert.equal(reversal.state,"REVERSAL");
+  assert.equal(reversal.event,"CHoCH");
+  assert.equal(aligned.major.kind,"major");
+  assert.equal(aligned.minor.kind,"minor");
 });
 
 test("major trend structure requires both HH/HL or LH/LL",()=>{
