@@ -1,26 +1,5 @@
 "use strict";
 
-function rsi(closes, period = 14) {
-  if (!Array.isArray(closes) || closes.length < period + 1) return null;
-  let gains = 0, losses = 0;
-  for (let i = 1; i <= period; i++) {
-    const d = Number(closes[i]) - Number(closes[i - 1]);
-    if (d > 0) gains += d; else losses -= d;
-  }
-  let avgGain = gains / period, avgLoss = losses / period;
-  for (let i = period + 1; i < closes.length; i++) {
-    const d = Number(closes[i]) - Number(closes[i - 1]);
-    avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period;
-  }
-  if (avgLoss === 0) return avgGain === 0 ? 50 : 100;
-  return 100 - 100 / (1 + avgGain / avgLoss);
-}
-
-function rsiSeries(closes, period = 14) {
-  return closes.map((_, i) => i < period ? null : rsi(closes.slice(0, i + 1), period));
-}
-
 function atr(candles, period = 14) {
   if (!Array.isArray(candles) || candles.length < period + 1) return null;
   const tr = [];
@@ -216,34 +195,11 @@ function assessConfirmation(candles, bias, config) {
   return { state, event: major.event, side: major.side, major, minor: null };
 }
 
-function regularDivergence(candles, config) {
-  const { highs, lows } = pivots(candles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
-  const values = rsiSeries(candles.map(c => c.close), config.RSI_PERIOD);
-  const within = p => candles.length - 1 - p.index <= config.DIVERGENCE_MAX_PIVOT_DISTANCE;
-  const lowPairs = lows.filter(within).slice(-2);
-  const highPairs = highs.filter(within).slice(-2);
-  let bullish = false, bearish = false;
-  if (lowPairs.length === 2) {
-    const [a, b] = lowPairs, ra = values[a.index], rb = values[b.index];
-    bullish = Number.isFinite(ra) && Number.isFinite(rb) && b.price < a.price && rb > ra;
-  }
-  if (highPairs.length === 2) {
-    const [a, b] = highPairs, ra = values[a.index], rb = values[b.index];
-    bearish = Number.isFinite(ra) && Number.isFinite(rb) && b.price > a.price && rb < ra;
-  }
-  return {
-    bullish, bearish,
-    swingLow: lows.filter(within).at(-1)?.price ?? null,
-    swingHigh: highs.filter(within).at(-1)?.price ?? null
-  };
-}
-
-function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmationCandles, slCandles, config, now = Date.now() }) {
-  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-config.CONFIRMATION_HISTORY_CANDLES), stopCandles = closed(slCandles, now);
+function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles, config, now = Date.now() }) {
+  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-config.CONFIRMATION_HISTORY_CANDLES), stopCandles = closed(slCandles, now);
   const minTrend = Math.max(config.STRUCTURE_LOOKBACK_CANDLES, config.TREND_HISTORY_CANDLES || 0);
   const minEntry = Math.max(config.ENTRY_STRUCTURE_LOOKBACK_CANDLES, config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 5);
   const minConfirmation = config.CONFIRMATION_HISTORY_CANDLES;
-  const minDivergence = Math.max(config.RSI_PERIOD + config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 2, config.DIVERGENCE_LOOKBACK_CANDLES);
   if (trend.length < minTrend || entry.length < minEntry || (confirmation && confirmation.length < minConfirmation))
     return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
   const price = trend.at(-1).close, entryPrice = entry.at(-1).close;
@@ -277,11 +233,6 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmation
   const side = trendSide === "UP" ? "LONG" : "SHORT";
   if (side === "LONG" && !longStructure) return { side: null, reason: "ENTRY_STRUCTURE_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_HL_AND_BOS" };
   if (side === "SHORT" && !shortStructure) return { side: null, reason: "ENTRY_STRUCTURE_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_LH_AND_BOS" };
-  if (divergence.length < minDivergence)
-    return { side: null, reason: "DIVERGENCE_HISTORY_REQUIRED", trendSide, entryStructure: side === "LONG" ? "HL_BOS" : "LH_BOS" };
-  const div = regularDivergence(divergence.slice(-config.DIVERGENCE_LOOKBACK_CANDLES), config);
-  const bullishBonus = trendSide === "UP" && div.bullish && div.swingLow > 0 && div.swingLow < entryPrice;
-  const bearishBonus = trendSide === "DOWN" && div.bearish && div.swingHigh > entryPrice;
   if (stopCandles.length < config.SL_ATR_PERIOD + 1)
     return { side: null, reason: "SL_CANDLE_HISTORY_REQUIRED", trendSide };
   const stopAtr = atr(stopCandles, config.SL_ATR_PERIOD);
@@ -298,8 +249,7 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmation
     entrySwingLevel: side === "LONG" ? lastEntryHigh.price : lastEntryLow.price,
     pullbackPivotPrice: side === "LONG" ? lastEntryLow.price : lastEntryHigh.price,
     pivotPrice, slAtr15: stopAtr,
-    signalAt: entry.at(-1).closeTime,
-    divergence: bullishBonus ? "REGULAR_BULLISH" : bearishBonus ? "REGULAR_BEARISH" : null
+    signalAt: entry.at(-1).closeTime
   };
 }
 
@@ -313,4 +263,4 @@ function marketVeto({ side, fundingRate, bidPrice, askPrice, config }) {
   return { allowed: true, reason: "OK", fundingRate: funding, spreadBps };
 }
 
-module.exports = { rsi, rsiSeries, atr, closed, pivots, marketStructure, analyzeMajorStructure, assessConfirmation, regularDivergence, marketVeto, coreLogic };
+module.exports = { atr, closed, pivots, marketStructure, analyzeMajorStructure, assessConfirmation, marketVeto, coreLogic };
