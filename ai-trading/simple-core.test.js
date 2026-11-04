@@ -56,17 +56,8 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   assert.ok(supported.has(C.TREND_TIMEFRAME));
   assert.ok(supported.has(C.ENTRY_TIMEFRAME));
   assert.ok(supported.has(C.DIVERGENCE_TIMEFRAME));
-  assert.equal(C.SL_TIMEFRAME,"15m");
-  assert.equal(C.SL_ATR_PERIOD,14);
-  assert.equal(C.TREND_TIMEFRAME,"4h");
-  assert.equal(C.TREND_HISTORY_CANDLES,250);
-  assert.equal(C.CONFIRMATION_TIMEFRAME,"1h");
-  assert.equal(C.CONFIRMATION_HISTORY_CANDLES,300);
+  assert.ok(supported.has(C.SL_TIMEFRAME));
   assert.ok(C.MAJOR_PIVOT_LEFT_BARS>0 && C.MAJOR_PIVOT_RIGHT_BARS>0);
-  assert.equal(C.MAJOR_PIVOT_LEFT_BARS,4);
-  assert.equal(C.MAJOR_PIVOT_RIGHT_BARS,4);
-  assert.equal(C.CONFIRMATION_PIVOT_LEFT_BARS,2);
-  assert.equal(C.CONFIRMATION_PIVOT_RIGHT_BARS,2);
   assert.ok(C.ENTRY_RSI_LONG_MIN>=0 && C.ENTRY_RSI_LONG_MIN<=C.ENTRY_RSI_LONG_MAX && C.ENTRY_RSI_LONG_MAX<=100);
   assert.ok(C.ENTRY_RSI_SHORT_MIN>=0 && C.ENTRY_RSI_SHORT_MIN<=C.ENTRY_RSI_SHORT_MAX && C.ENTRY_RSI_SHORT_MAX<=100);
   assert.ok(C.MAX_ABS_FUNDING_RATE>=0);
@@ -77,7 +68,7 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
 test("CONFIG.yaml overrides are accepted without changing tests",()=>{
   const source=fs.readFileSync(path.join(__dirname,"..","CONFIG.yaml"),"utf8");
   const overrides={
-    TREND_TIMEFRAME:"4h",TREND_HISTORY_CANDLES:280,CONFIRMATION_TIMEFRAME:"1h",CONFIRMATION_HISTORY_CANDLES:320,MAJOR_PIVOT_LEFT_BARS:5,MAJOR_PIVOT_RIGHT_BARS:5,CONFIRMATION_PIVOT_LEFT_BARS:1,CONFIRMATION_PIVOT_RIGHT_BARS:1,ENTRY_TIMEFRAME:"15m",DIVERGENCE_TIMEFRAME:"30m",MAX_SYMBOLS:150,
+    TREND_TIMEFRAME:"4h",TREND_HISTORY_CANDLES:280,CONFIRMATION_TIMEFRAME:"1h",CONFIRMATION_HISTORY_CANDLES:320,MAJOR_PIVOT_LEFT_BARS:5,MAJOR_PIVOT_RIGHT_BARS:5,CONFIRMATION_PIVOT_LEFT_BARS:1,CONFIRMATION_PIVOT_RIGHT_BARS:1,ENTRY_TIMEFRAME:"15m",DIVERGENCE_TIMEFRAME:"30m",SL_TIMEFRAME:"30m",MAX_SYMBOLS:150,
     ENTRY_RSI_LONG_MIN:28,ENTRY_RSI_LONG_MAX:42,ENTRY_RSI_SHORT_MIN:58,ENTRY_RSI_SHORT_MAX:72,
     TP1_REWARD_RISK:1.1,TP2_REWARD_RISK:1.6,BE_TRIGGER_TP1_PROGRESS_PCT:65,MAX_ABS_FUNDING_RATE:0.001,MAX_SPREAD_BPS:25
   };
@@ -95,6 +86,7 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     assert.equal(custom.CONFIRMATION_PIVOT_LEFT_BARS,1);
     assert.equal(custom.ENTRY_TIMEFRAME,"15m");
     assert.equal(custom.DIVERGENCE_TIMEFRAME,"30m");
+    assert.equal(custom.SL_TIMEFRAME,"30m");
     assert.equal(custom.MAX_SYMBOLS,150);
     assert.equal(custom.ENTRY_RSI_LONG_MIN,28);
     assert.equal(custom.ENTRY_RSI_LONG_MAX,42);
@@ -132,9 +124,9 @@ test("RSI bands loaded from CONFIG.yaml are inclusive and use their configured b
 });
 
 test("RSI and ATR return valid closed-candle indicators",()=>{
-  assert.equal(rsi(Array.from({length:15},(_,i)=>i+1),14),100);
-  assert.equal(rsi(Array.from({length:15},(_,i)=>15-i),14),0);
-  assert.ok(atr(candlesFromCloses(Array.from({length:30},(_,i)=>100+i)),14)>0);
+  assert.equal(rsi(Array.from({length:C.RSI_PERIOD+1},(_,i)=>i+1),C.RSI_PERIOD),100);
+  assert.equal(rsi(Array.from({length:C.RSI_PERIOD+1},(_,i)=>C.RSI_PERIOD+1-i),C.RSI_PERIOD),0);
+  assert.ok(atr(candlesFromCloses(Array.from({length:C.ATR_PERIOD+1},(_,i)=>100+i)),C.ATR_PERIOD)>0);
 });
 
 
@@ -145,7 +137,7 @@ test("coreLogic calculates entry RSI from the configured entry candle stream",()
 });
 
 test("1h confirmation requires the configured history count",()=>{
-  const confirmation=candlesFromCloses(Array.from({length:99},(_,i)=>100+i*0.1),900000);
+  const confirmation=candlesFromCloses(Array.from({length:C.CONFIRMATION_HISTORY_CANDLES-1},(_,i)=>100+i*0.1),900000);
   const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,divergenceCandles:bullishDivergenceCandles(),config:{...C,CONFIRMATION_HISTORY_CANDLES:300,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100},now:NOW});
   assert.equal(signal.side,null);
   assert.equal(signal.reason,"INSUFFICIENT_CLOSED_CANDLES");
@@ -164,8 +156,8 @@ test("1h confirmation uses its own 2/2 major swings and blocks transitions/rever
 
 test("4h and 1h use independent pivot widths",()=>{
   const up=trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES);
-  const fourHour=marketStructure(up,{...C,MAJOR_PIVOT_LEFT_BARS:4,MAJOR_PIVOT_RIGHT_BARS:4});
-  const oneHour=assessConfirmation(up,"UP",{...C,CONFIRMATION_PIVOT_LEFT_BARS:2,CONFIRMATION_PIVOT_RIGHT_BARS:2});
+  const fourHour=marketStructure(up,C);
+  const oneHour=assessConfirmation(up,"UP",C);
   assert.equal(fourHour.kind,"major");
   assert.equal(oneHour.major.kind,"major");
 });
@@ -291,13 +283,13 @@ test("15m pivot SL uses ATR buffer, independent pivot R clamp, and divergence ti
   const withDiv=buildProtection({side:"LONG",entryPrice:100,atr15:1,pivotPrice:98.5,divergence:"REGULAR_BULLISH",config:protectionConfigForDivergence(C,"REGULAR_BULLISH"),priceTick:0.01});
   const withoutDiv=buildProtection({side:"SHORT",entryPrice:100,atr15:1,pivotPrice:101.5,divergence:null,config:protectionConfigForDivergence(C,null),priceTick:0.01});
   assert.ok(withDiv.sl<98.5 && withDiv.tp1>100 && withDiv.tp2>withDiv.tp1);
-  assert.equal(withDiv.buffer,0.25);
-  assert.equal(withDiv.riskUnit,1.5);
+  assert.equal(withDiv.buffer,Math.max(100*C.SL_PIVOT_BUFFER_MIN_PCT/100,C.SL_PIVOT_BUFFER_ATR_WITH_DIVERGENCE));
+  assert.equal(withDiv.riskUnit,Math.abs(100-98.5));
   assert.equal(withDiv.stopMethod,"15M_PIVOT");
   assert.equal(withDiv.tp1RewardRisk,C.TP1_REWARD_RISK);
   assert.equal(withDiv.tp2RewardRisk,C.TP2_REWARD_RISK);
   assert.ok(withoutDiv.sl>101.5 && withoutDiv.tp1<100 && withoutDiv.tp2<withoutDiv.tp1);
-  assert.equal(withoutDiv.buffer,0.35);
+  assert.equal(withoutDiv.buffer,Math.max(100*C.SL_PIVOT_BUFFER_MIN_PCT/100,C.SL_PIVOT_BUFFER_ATR));
   assert.equal(withoutDiv.tp1RewardRisk,C.TP1_REWARD_RISK_NO_DIVERGENCE);
   assert.equal(withoutDiv.tp2RewardRisk,C.TP2_REWARD_RISK_NO_DIVERGENCE);
   assert.throws(()=>buildProtection({side:"LONG",entryPrice:100,atr15:1,pivotPrice:101,config:C,priceTick:0.01}),/INVALID_SWING_PIVOT_SIDE/);
@@ -307,8 +299,9 @@ test("15m pivot SL uses ATR buffer, independent pivot R clamp, and divergence ti
 test("missing 15m pivot uses exact ATR fallback without applying pivot R clamp",()=>{
   const fallback=buildProtection({side:"LONG",entryPrice:100,atr15:1,pivotPrice:null,config:C,priceTick:0.01});
   assert.equal(fallback.stopMethod,"15M_ATR_FALLBACK");
-  assert.equal(fallback.sl,98.5);
-  assert.equal(fallback.stopDistance,1.5);
+  const fallbackDistance=Math.min(100*C.SL_FALLBACK_MAX_PCT/100,Math.max(100*C.SL_FALLBACK_MIN_PCT/100,C.SL_FALLBACK_ATR_MULTIPLIER));
+  assert.equal(fallback.sl,100-fallbackDistance);
+  assert.equal(fallback.stopDistance,fallbackDistance);
 });
 
 test("coin selection keeps existing liquidity and symbol filters",async()=>{
