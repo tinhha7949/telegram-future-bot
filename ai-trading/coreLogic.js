@@ -270,6 +270,7 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmation
     if (confirmationState.state !== "CONTINUATION")
       return { side: null, reason: confirmationState.state === "TRANSITION" ? "1H_STRUCTURE_TRANSITION" : confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, trendEvent: trendStructure.event, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side, rsi: valueRsi, atr: valueAtr };
   }
+  // Option A: BOS is a structure event, never a mandatory entry trigger. Once 4H bias and 1H continuation are valid, RSI/divergence may trigger a pullback entry without a fresh BOS.
   const side = trendSide === "UP" ? "LONG" : "SHORT";
   if (!entryRsiTriggered(side, valueRsi, config)) return { side: null, reason: "ENTRY_RSI_NOT_TRIGGERED", trendSide, rsi: valueRsi, atr: valueAtr };
   if (divergence.length < minDivergence)
