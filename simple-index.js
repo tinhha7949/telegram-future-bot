@@ -218,9 +218,9 @@ async function main() {
       }
     }
     const [trendRaw,entryRaw,confirmationRaw,slRaw]=await Promise.all([
-      binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS,C.TREND_EMA_PERIOD+1)}),
+      binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:C.TREND_HISTORY_CANDLES}),
       binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(RSI_HISTORY_CANDLES,C.RSI_PERIOD+1,C.ATR_PERIOD+1)}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.CONFIRMATION_TIMEFRAME,limit:Math.max(C.CONFIRMATION_HISTORY_CANDLES+1,C.CONFIRMATION_EMA_PERIOD+1)}),
+      binance.get("/fapi/v1/klines",{symbol,interval:C.CONFIRMATION_TIMEFRAME,limit:C.CONFIRMATION_HISTORY_CANDLES}),
       binance.get("/fapi/v1/klines",{symbol,interval:C.SL_TIMEFRAME,limit:Math.max(C.CONFIRMATION_HISTORY_CANDLES+1,C.SL_ATR_PERIOD+1,C.SL_PIVOT_MAX_DISTANCE+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS+1)})
     ]);
     const now=Date.now()+binance.timeOffsetMs;
