@@ -8,25 +8,15 @@ function splitQuantity({quantity,stepSize,minQty,config}){
  if(!(total>0)||tp1<minQty||tp2<minQty||Math.abs(tp1+tp2-total)>Math.max(1e-12,stepSize*1e-8))throw Error("TP_SPLIT_BELOW_BINANCE_MIN_QTY");
  return{total,tp1,tp2};
 }
-function protectionConfigForDivergence(config, divergence) {
- const hasDivergence = divergence === "REGULAR_BULLISH" || divergence === "REGULAR_BEARISH";
- return {
-  ...config,
-  TP1_REWARD_RISK: hasDivergence ? config.TP1_REWARD_RISK : config.TP1_REWARD_RISK_NO_DIVERGENCE,
-  TP2_REWARD_RISK: hasDivergence ? config.TP2_REWARD_RISK : config.TP2_REWARD_RISK_NO_DIVERGENCE
- };
-}
-function buildProtection({side,entryPrice,atr15,config,priceTick,pivotPrice,divergence}){
- if(!["LONG","SHORT"].includes(side)||!Number.isFinite(entryPrice)||!(entryPrice>0)||!Number.isFinite(atr15)||!(atr15>0)||!Number.isFinite(priceTick)||!(priceTick>0))throw Error("INVALID_PROTECTION_INPUT");
+function buildProtection({side,entryPrice,atrValue,config,priceTick,pivotPrice}){
+ if(!["LONG","SHORT"].includes(side)||!Number.isFinite(entryPrice)||!(entryPrice>0)||!Number.isFinite(atrValue)||!(atrValue>0)||!Number.isFinite(priceTick)||!(priceTick>0))throw Error("INVALID_PROTECTION_INPUT");
  const hasPivot=Number.isFinite(pivotPrice)&&pivotPrice>0;
  if(hasPivot&&(side==="LONG"?pivotPrice>=entryPrice:pivotPrice<=entryPrice))throw Error("INVALID_SWING_PIVOT_SIDE");
  const d=precision(priceTick),down=x=>Number((Math.floor(x/priceTick+1e-10)*priceTick).toFixed(d)),up=x=>Number((Math.ceil(x/priceTick-1e-10)*priceTick).toFixed(d));
  let sl,buffer=0,riskUnit=null,stopMethod;
  if(hasPivot){
   riskUnit=Math.abs(entryPrice-pivotPrice);
-  const aligned=side==="LONG"?divergence==="REGULAR_BULLISH":divergence==="REGULAR_BEARISH";
-  const multiplier=aligned?config.SL_PIVOT_BUFFER_ATR_WITH_DIVERGENCE:config.SL_PIVOT_BUFFER_ATR;
-  buffer=Math.max(entryPrice*config.SL_PIVOT_BUFFER_MIN_PCT/100,atr15*multiplier);
+  buffer=Math.max(entryPrice*config.SL_PIVOT_BUFFER_MIN_PCT/100,atrValue*config.SL_PIVOT_BUFFER_ATR);
   sl=side==="LONG"?down(pivotPrice-buffer):up(pivotPrice+buffer);
   const finalDistance=Math.abs(entryPrice-sl);
   const minDistance=riskUnit*config.SL_MIN_R_MULTIPLE;
@@ -34,7 +24,7 @@ function buildProtection({side,entryPrice,atr15,config,priceTick,pivotPrice,dive
   if(finalDistance<minDistance-1e-10||finalDistance>maxDistance+1e-10)throw Error("SL_PIVOT_R_MULTIPLE_OUT_OF_RANGE");
   stopMethod=String(config.SL_TIMEFRAME||"unknown").toUpperCase()+"_PIVOT";
  }else{
-  const distance=Math.min(entryPrice*config.SL_FALLBACK_MAX_PCT/100,Math.max(entryPrice*config.SL_FALLBACK_MIN_PCT/100,atr15*config.SL_FALLBACK_ATR_MULTIPLIER));
+  const distance=Math.min(entryPrice*config.SL_FALLBACK_MAX_PCT/100,Math.max(entryPrice*config.SL_FALLBACK_MIN_PCT/100,atrValue*config.SL_FALLBACK_ATR_MULTIPLIER));
   sl=side==="LONG"?down(entryPrice-distance):up(entryPrice+distance);
   stopMethod=String(config.SL_TIMEFRAME||"unknown").toUpperCase()+"_ATR_FALLBACK";
  }
@@ -58,4 +48,4 @@ async function placeProtection({request,symbol,side,sl,tp1,tp2,qty,stepSize,minQ
  const second=await request("POST","/fapi/v1/algoOrder",{...base,type:"TAKE_PROFIT_MARKET",triggerPrice:String(tp2),quantity:split.tp2.toFixed(precision(stepSize)),reduceOnly:"true",clientAlgoId:clientAlgoId("2")});
  return{stop,tp1:first,tp2:second,quantities:split};
 }
-module.exports={buildProtection,protectionConfigForDivergence,splitQuantity,placeProtection};
+module.exports={buildProtection,splitQuantity,placeProtection};
