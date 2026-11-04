@@ -30,8 +30,15 @@ function trendCandles(direction = "UP", n = Math.max(C.TREND_HISTORY_CANDLES,C.S
 function entryCandles(direction) {
   const n=C.ENTRY_STRUCTURE_LOOKBACK_CANDLES, closes=Array(n).fill(direction==="LONG"?102:98);
   const low1=Math.floor(n*0.25), high=Math.floor(n*0.5), low2=Math.min(Math.floor(n*0.75),n-C.PIVOT_RIGHT_BARS-2), last=n-1;
-  if(direction==="LONG") { closes[low1]=98; closes[high]=105; closes[low2]=101; closes[last]=106; }
-  else { closes[low1]=105; closes[high]=95; closes[low2]=99; closes[last]=94; }
+  if(direction==="LONG") {
+    closes[low1]=98; closes[high]=105; closes[low2]=101;
+    closes[n-13]=104.5; closes[n-12]=105.4;
+    closes[n-5]=105.3; closes[last]=106;
+  } else {
+    closes[low1]=105; closes[high]=95; closes[low2]=99;
+    closes[n-13]=95.5; closes[n-12]=94.6;
+    closes[n-5]=94.7; closes[last]=94;
+  }
   return candlesFromCloses(closes,timeframeMs(C.ENTRY_TIMEFRAME));
 }
 function slCandles() {
@@ -103,16 +110,16 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
   const entry=entryCandles("LONG");
   const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,slCandles:slCandles(),config:cfg,now:NOW});
   assert.equal(signal.side,"LONG");
-  assert.equal(signal.entryStructure,"HL_BOS");
+  assert.equal(signal.entryStructure,"HL_BOS_RETEST");
   assert.equal(signal.entrySwingLevel,105.2);
   const noBreak=entryCandles("LONG"); noBreak.at(-1).close=104; noBreak.at(-1).open=104;
   const rejected=coreLogic({trendCandles:trendCandles("UP"),entryCandles:noBreak,slCandles:slCandles(),config:cfg,now:NOW});
   assert.equal(rejected.side,null);
-  assert.equal(rejected.reason,"ENTRY_STRUCTURE_NOT_CONFIRMED");
-  const alreadyAbove=entryCandles("LONG"); alreadyAbove[alreadyAbove.length-2].close=106; alreadyAbove[alreadyAbove.length-2].open=106;
+  assert.equal(rejected.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
+  const alreadyAbove=entryCandles("LONG"); alreadyAbove[alreadyAbove.length-1].close=105.4; alreadyAbove[alreadyAbove.length-1].open=105.4;
   const noFreshBreak=coreLogic({trendCandles:trendCandles("UP"),entryCandles:alreadyAbove,slCandles:slCandles(),config:cfg,now:NOW});
   assert.equal(noFreshBreak.side,null);
-  assert.equal(noFreshBreak.reason,"ENTRY_STRUCTURE_NOT_CONFIRMED");
+  assert.equal(noFreshBreak.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
 });
 
 test("1h confirmation requires the configured history count",()=>{
@@ -146,7 +153,7 @@ test("major structure analyzer exposes only confirmed close-based events",()=>{
   const source=trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES,C.CONFIRMATION_TIMEFRAME);
   const analyzed=analyzeMajorStructure(source,C.CONFIRMATION_PIVOT_LEFT_BARS,C.CONFIRMATION_PIVOT_RIGHT_BARS);
   assert.ok(["UP","DOWN","RANGE"].includes(analyzed.side));
-  assert.ok(["NORMAL","TRANSITION"].includes(analyzed.state));
+  assert.ok(["NORMAL","UNCLEAR"].includes(analyzed.state));
   assert.ok(["NONE","BOS","CHoCH"].includes(analyzed.event));
 });
 test("entry waits for a confirmed pullback and a close-only BOS",()=>{
@@ -154,11 +161,11 @@ test("entry waits for a confirmed pullback and a close-only BOS",()=>{
   const entry=entryCandles("LONG");
   const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,slCandles:slCandles(),config:cfg,now:NOW});
   assert.equal(signal.side,"LONG");
-  assert.equal(signal.entryStructure,"HL_BOS");
+  assert.equal(signal.entryStructure,"HL_BOS_RETEST");
   const noHigherLow=entryCandles("LONG"); noHigherLow[Math.min(Math.floor(noHigherLow.length*0.75),noHigherLow.length-C.PIVOT_RIGHT_BARS-2)].close=97; noHigherLow[Math.min(Math.floor(noHigherLow.length*0.75),noHigherLow.length-C.PIVOT_RIGHT_BARS-2)].low=96.8;
   const rejected=coreLogic({trendCandles:trendCandles("UP"),entryCandles:noHigherLow,slCandles:slCandles(),config:cfg,now:NOW});
   assert.equal(rejected.side,null);
-  assert.equal(rejected.reason,"ENTRY_STRUCTURE_NOT_CONFIRMED");
+  assert.equal(rejected.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
 });
 test("major trend structure requires both HH/HL or LH/LL",()=>{
   assert.equal(marketStructure(trendCandles("UP"),C).side,"UP");
