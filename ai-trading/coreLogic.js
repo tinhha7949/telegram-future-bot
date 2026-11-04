@@ -69,129 +69,17 @@ function marketStructure(candles, config, kind = "major") {
 // Replays confirmed pivots candle-by-candle. A pivot becomes usable only after
 // its right-hand confirmation bars have closed; all breaks are close-only.
 function analyzeMajorStructure(candles, left, right) {
-  const detected = pivots(candles, left, right);
-  const highConfirmations = new Map(), lowConfirmations = new Map();
-  for (const p of detected.highs) {
-    const at = p.index + right;
-    if (!highConfirmations.has(at)) highConfirmations.set(at, []);
-    highConfirmations.get(at).push(p);
-  }
-  for (const p of detected.lows) {
-    const at = p.index + right;
-    if (!lowConfirmations.has(at)) lowConfirmations.set(at, []);
-    lowConfirmations.get(at).push(p);
-  }
-
-  const highs = [], lows = [];
-  let side = null, phase = "NORMAL", transitionFrom = null, transitionAt = -1;
-  let event = "NONE", eventAt = null, consumedHigh = -1, consumedLow = -1;
-  let transitionLevel = null;
-
-  for (let i = 0; i < candles.length; i++) {
-    for (const p of highConfirmations.get(i) || []) highs.push(p);
-    for (const p of lowConfirmations.get(i) || []) lows.push(p);
-    const close = candles[i].close;
-    const inferred = classifyStructure(highs, lows);
-    if (!side && inferred !== "RANGE") side = inferred;
-
-    if (phase === "TRANSITION") {
-      if (transitionFrom === "UP") {
-        const lowerHigh = highs.find((p, index) => {
-          if (p.index <= transitionAt) return false;
-          const previous = highs.slice(0, index).at(-1);
-          return previous && p.price < previous.price;
-        });
-        if (lowerHigh) {
-          const postLowerHighLow = lows.find(p => p.index > lowerHigh.index && p.index + right <= i);
-          if (postLowerHighLow && close < postLowerHighLow.price) {
-            side = "DOWN";
-            phase = "NORMAL";
-            transitionFrom = null;
-            transitionLevel = null;
-            consumedLow = postLowerHighLow.index;
-            event = "BOS";
-            eventAt = i;
-            continue;
-          }
-        }
-      } else if (transitionFrom === "DOWN") {
-        const higherLow = lows.find((p, index) => {
-          if (p.index <= transitionAt) return false;
-          const previous = lows.slice(0, index).at(-1);
-          return previous && p.price > previous.price;
-        });
-        if (higherLow) {
-          const postHigherLowHigh = highs.find(p => p.index > higherLow.index && p.index + right <= i);
-          if (postHigherLowHigh && close > postHigherLowHigh.price) {
-            side = "UP";
-            phase = "NORMAL";
-            transitionFrom = null;
-            transitionLevel = null;
-            consumedHigh = postHigherLowHigh.index;
-            event = "BOS";
-            eventAt = i;
-            continue;
-          }
-        }
-      }
-      continue;
-    }
-
-    if (side === "UP") {
-      const lastLow = lows.at(-1), priorLow = lows.at(-2), lastHigh = highs.at(-1);
-      const protectedLow = lastLow && priorLow && lastLow.price > priorLow.price ? lastLow : null;
-      if (protectedLow && close < protectedLow.price) {
-        phase = "TRANSITION";
-        transitionFrom = "UP";
-        transitionAt = i;
-        transitionLevel = protectedLow.price;
-        event = "CHoCH";
-        eventAt = i;
-      } else if (lastHigh && close > lastHigh.price && consumedHigh !== lastHigh.index) {
-        consumedHigh = lastHigh.index;
-        event = "BOS";
-        eventAt = i;
-      }
-    } else if (side === "DOWN") {
-      const lastHigh = highs.at(-1), priorHigh = highs.at(-2), lastLow = lows.at(-1);
-      const protectedHigh = lastHigh && priorHigh && lastHigh.price < priorHigh.price ? lastHigh : null;
-      if (protectedHigh && close > protectedHigh.price) {
-        phase = "TRANSITION";
-        transitionFrom = "DOWN";
-        transitionAt = i;
-        transitionLevel = protectedHigh.price;
-        event = "CHoCH";
-        eventAt = i;
-      } else if (lastLow && close < lastLow.price && consumedLow !== lastLow.index) {
-        consumedLow = lastLow.index;
-        event = "BOS";
-        eventAt = i;
-      }
-    }
-  }
-
-  return {
-    side: phase === "TRANSITION" ? transitionFrom : side || "RANGE",
-    state: phase,
-    event: eventAt === candles.length - 1 ? event : "NONE",
-    lastEvent: event,
-    eventAt,
-    transitionFrom,
-    transitionLevel,
-    highs,
-    lows,
-    kind: "major"
-  };
+  // Re-evaluate direction from the latest confirmed major pivots every scan.
+  const { highs, lows } = pivots(candles, left, right);
+  const side = classifyStructure(highs, lows);
+  return { side, state: side === "RANGE" ? "UNCLEAR" : "NORMAL", event: "NONE", lastEvent: "NONE", eventAt: null, transitionFrom: null, transitionLevel: null, highs, lows, kind: "major" };
 }
 
 function assessConfirmation(candles, bias, config) {
-  const left = config.CONFIRMATION_PIVOT_LEFT_BARS;
-  const right = config.CONFIRMATION_PIVOT_RIGHT_BARS;
-  const major = analyzeMajorStructure(candles, left, right);
+  const major = analyzeMajorStructure(candles, config.CONFIRMATION_PIVOT_LEFT_BARS, config.CONFIRMATION_PIVOT_RIGHT_BARS);
   let state = "WEAKENING";
-  if (major.state === "TRANSITION") state = "TRANSITION";
-  else if (major.side === bias) state = "CONTINUATION";
-  else if (major.side === (bias === "UP" ? "DOWN" : "UP")) state = "REVERSAL";
+  if (major.side === bias) state = "CONTINUATION";
+  else if (major.side !== "RANGE") state = "REVERSAL";
   return { state, event: major.event, side: major.side, major, minor: null };
 }
 
@@ -219,20 +107,59 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles,
     if (confirmationState.state !== "CONTINUATION")
       return { side: null, reason: confirmationState.state === "TRANSITION" ? "1H_STRUCTURE_TRANSITION" : confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, trendEvent: trendStructure.event, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side };
   }
-  // Entry is entirely price-structure based: a confirmed HL/LH pullback followed by a close-only break of the prior swing.
+  // Require a confirmed pullback, a close-only BOS, a later level retest,
+  // and a prompt continuation. A breakout candle cannot double as retest.
   const entryWindow = entry.slice(-config.ENTRY_STRUCTURE_LOOKBACK_CANDLES);
   const entrySwings = pivots(entryWindow, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
-  const lastEntryHigh = entrySwings.highs.at(-1), priorEntryHigh = entrySwings.highs.at(-2);
-  const lastEntryLow = entrySwings.lows.at(-1), priorEntryLow = entrySwings.lows.at(-2);
-  const longStructure = !!(priorEntryLow && lastEntryHigh && lastEntryLow &&
-    priorEntryLow.index < lastEntryHigh.index && lastEntryHigh.index < lastEntryLow.index &&
-    lastEntryLow.price > priorEntryLow.price && entryWindow.at(-2).close <= lastEntryHigh.price && entryPrice > lastEntryHigh.price);
-  const shortStructure = !!(priorEntryHigh && lastEntryLow && lastEntryHigh &&
-    priorEntryHigh.index < lastEntryLow.index && lastEntryLow.index < lastEntryHigh.index &&
-    lastEntryHigh.price < priorEntryHigh.price && entryWindow.at(-2).close >= lastEntryLow.price && entryPrice < lastEntryLow.price);
   const side = trendSide === "UP" ? "LONG" : "SHORT";
-  if (side === "LONG" && !longStructure) return { side: null, reason: "ENTRY_STRUCTURE_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_HL_AND_BOS" };
-  if (side === "SHORT" && !shortStructure) return { side: null, reason: "ENTRY_STRUCTURE_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_LH_AND_BOS" };
+  const entryAtr = atr(entryWindow, config.ENTRY_ATR_PERIOD);
+  if (!(entryAtr > 0)) return { side: null, reason: "ENTRY_ATR_UNAVAILABLE", trendSide };
+  let setup = null;
+  if (side === "LONG") {
+    for (let li = entrySwings.lows.length - 1; li >= 1 && !setup; li--) {
+      const priorLow = entrySwings.lows[li - 1], pullbackLow = entrySwings.lows[li];
+      if (!(pullbackLow.price > priorLow.price)) continue;
+      const swingHigh = entrySwings.highs.filter(p => p.index > priorLow.index && p.index < pullbackLow.index).at(-1);
+      if (!swingHigh) continue;
+      let bosIndex = -1;
+      for (let i = pullbackLow.index + 1; i < entryWindow.length; i++)
+        if (entryWindow[i - 1].close <= swingHigh.price && entryWindow[i].close > swingHigh.price) { bosIndex = i; break; }
+      if (bosIndex < 0) continue;
+      for (let i = bosIndex + 1; i <= Math.min(entryWindow.length - 2, bosIndex + config.ENTRY_RETEST_MAX_BARS); i++) {
+        const c = entryWindow[i];
+        if (c.low <= swingHigh.price + entryAtr * config.ENTRY_RETEST_TOLERANCE_ATR &&
+            c.close >= swingHigh.price &&
+            entryWindow.length - 1 - i <= config.ENTRY_CONTINUATION_MAX_BARS &&
+            entryWindow.at(-1).close > c.high) {
+          setup = { level: swingHigh.price, pullback: pullbackLow.price, retestIndex: i }; break;
+        }
+      }
+    }
+  } else {
+    for (let hi = entrySwings.highs.length - 1; hi >= 1 && !setup; hi--) {
+      const priorHigh = entrySwings.highs[hi - 1], pullbackHigh = entrySwings.highs[hi];
+      if (!(pullbackHigh.price < priorHigh.price)) continue;
+      const swingLow = entrySwings.lows.filter(p => p.index > priorHigh.index && p.index < pullbackHigh.index).at(-1);
+      if (!swingLow) continue;
+      let bosIndex = -1;
+      for (let i = pullbackHigh.index + 1; i < entryWindow.length; i++)
+        if (entryWindow[i - 1].close >= swingLow.price && entryWindow[i].close < swingLow.price) { bosIndex = i; break; }
+      if (bosIndex < 0) continue;
+      for (let i = bosIndex + 1; i <= Math.min(entryWindow.length - 2, bosIndex + config.ENTRY_RETEST_MAX_BARS); i++) {
+        const c = entryWindow[i];
+        if (c.high >= swingLow.price - entryAtr * config.ENTRY_RETEST_TOLERANCE_ATR &&
+            c.close <= swingLow.price &&
+            entryWindow.length - 1 - i <= config.ENTRY_CONTINUATION_MAX_BARS &&
+            entryWindow.at(-1).close < c.low) {
+          setup = { level: swingLow.price, pullback: pullbackHigh.price, retestIndex: i }; break;
+        }
+      }
+    }
+  }
+  if (!setup) return { side: null, reason: "ENTRY_BOS_RETEST_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_BOS_RETEST_CONTINUATION" };
+  const extension = side === "LONG" ? entryPrice - setup.level : setup.level - entryPrice;
+  if (extension < 0 || extension > entryAtr * config.ENTRY_MAX_EXTENSION_ATR)
+    return { side: null, reason: "ENTRY_TOO_EXTENDED_FROM_RETEST", trendSide, entryLevel: setup.level, extensionAtr: extension / entryAtr };
   if (stopCandles.length < config.SL_ATR_PERIOD + 1)
     return { side: null, reason: "SL_CANDLE_HISTORY_REQUIRED", trendSide };
   const stopAtr = atr(stopCandles, config.SL_ATR_PERIOD);
@@ -245,9 +172,10 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles,
   const pivotPrice = validPivots.at(-1)?.price ?? null;
   return {
     side, trendSide,
-    entryStructure: side === "LONG" ? "HL_BOS" : "LH_BOS",
-    entrySwingLevel: side === "LONG" ? lastEntryHigh.price : lastEntryLow.price,
-    pullbackPivotPrice: side === "LONG" ? lastEntryLow.price : lastEntryHigh.price,
+    entryStructure: side === "LONG" ? "HL_BOS_RETEST" : "LH_BOS_RETEST",
+    entrySwingLevel: setup.level,
+    pullbackPivotPrice: setup.pullback,
+    entryRetestIndex: setup.retestIndex,
     pivotPrice, slAtr: stopAtr,
     signalAt: entry.at(-1).closeTime
   };

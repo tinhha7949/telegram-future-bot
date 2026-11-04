@@ -103,16 +103,16 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
   const entry=entryCandles("LONG");
   const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,slCandles:slCandles(),config:cfg,now:NOW});
   assert.equal(signal.side,"LONG");
-  assert.equal(signal.entryStructure,"HL_BOS");
+  assert.equal(signal.entryStructure,"HL_BOS_RETEST");
   assert.equal(signal.entrySwingLevel,105.2);
   const noBreak=entryCandles("LONG"); noBreak.at(-1).close=104; noBreak.at(-1).open=104;
   const rejected=coreLogic({trendCandles:trendCandles("UP"),entryCandles:noBreak,slCandles:slCandles(),config:cfg,now:NOW});
   assert.equal(rejected.side,null);
-  assert.equal(rejected.reason,"ENTRY_STRUCTURE_NOT_CONFIRMED");
+  assert.equal(rejected.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
   const alreadyAbove=entryCandles("LONG"); alreadyAbove[alreadyAbove.length-2].close=106; alreadyAbove[alreadyAbove.length-2].open=106;
   const noFreshBreak=coreLogic({trendCandles:trendCandles("UP"),entryCandles:alreadyAbove,slCandles:slCandles(),config:cfg,now:NOW});
   assert.equal(noFreshBreak.side,null);
-  assert.equal(noFreshBreak.reason,"ENTRY_STRUCTURE_NOT_CONFIRMED");
+  assert.equal(noFreshBreak.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
 });
 
 test("1h confirmation requires the configured history count",()=>{
@@ -146,7 +146,7 @@ test("major structure analyzer exposes only confirmed close-based events",()=>{
   const source=trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES,C.CONFIRMATION_TIMEFRAME);
   const analyzed=analyzeMajorStructure(source,C.CONFIRMATION_PIVOT_LEFT_BARS,C.CONFIRMATION_PIVOT_RIGHT_BARS);
   assert.ok(["UP","DOWN","RANGE"].includes(analyzed.side));
-  assert.ok(["NORMAL","TRANSITION"].includes(analyzed.state));
+  assert.ok(["NORMAL","UNCLEAR"].includes(analyzed.state));
   assert.ok(["NONE","BOS","CHoCH"].includes(analyzed.event));
 });
 test("entry waits for a confirmed pullback and a close-only BOS",()=>{
