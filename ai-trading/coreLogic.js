@@ -93,10 +93,15 @@ function assessConfirmation(candles, bias, config) {
   const lastHigh = major.highs?.at(-1), lastLow = major.lows?.at(-1);
   let state = "WEAKENING", event = "NONE";
   if (major.side === bias) {
-    state = "CONTINUATION";
     const priorHigh = major.highs.at(-2), priorLow = major.lows.at(-2);
-    if (bias === "UP" && last.close > priorHigh.price) event = "BOS";
-    if (bias === "DOWN" && last.close < priorLow.price) event = "BOS";
+    if (minor.side !== "RANGE" && minor.side !== bias) {
+      state = "WEAKENING";
+      event = "MINOR_COUNTER_STRUCTURE";
+    } else {
+      state = "CONTINUATION";
+      if (bias === "UP" && last.close > priorHigh.price) event = "BOS";
+      if (bias === "DOWN" && last.close < priorLow.price) event = "BOS";
+    }
   } else if (major.side === (bias === "UP" ? "DOWN" : "UP")) {
     state = "REVERSAL";
     event = "CHoCH";
