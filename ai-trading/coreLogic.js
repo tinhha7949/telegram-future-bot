@@ -248,7 +248,7 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles,
     entryStructure: side === "LONG" ? "HL_BOS" : "LH_BOS",
     entrySwingLevel: side === "LONG" ? lastEntryHigh.price : lastEntryLow.price,
     pullbackPivotPrice: side === "LONG" ? lastEntryLow.price : lastEntryHigh.price,
-    pivotPrice, slAtr15: stopAtr,
+    pivotPrice, slAtr: stopAtr,
     signalAt: entry.at(-1).closeTime
   };
 }
