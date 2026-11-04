@@ -13,7 +13,7 @@ const NOW = 2000000000000;
 
 function timeframeMs(timeframe) {
   if(timeframe==="1M") return 30*24*60*60*1000;
-  const match=/^(\\d+)([mhdw])$/.exec(timeframe);
+  const match=/^(\d+)([mhdw])$/.exec(timeframe);
   if(!match) throw new Error("UNSUPPORTED_TEST_TIMEFRAME_"+timeframe);
   return Number(match[1])*({m:60000,h:3600000,d:86400000,w:604800000}[match[2]]);
 }
