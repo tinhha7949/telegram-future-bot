@@ -37,9 +37,9 @@ function bearishDivergenceCandles() {
   return candlesFromCloses(closes);
 }
 function entryCandles(direction) {
-  const closes=Array(40).fill(direction==="LONG"?102:98);
-  if(direction==="LONG") { closes[10]=98; closes[20]=105; closes[30]=101; closes[39]=106; }
-  else { closes[10]=105; closes[20]=95; closes[30]=99; closes[39]=94; }
+  const closes=Array(100).fill(direction==="LONG"?102:98);
+  if(direction==="LONG") { closes[70]=98; closes[80]=105; closes[90]=101; closes[99]=106; }
+  else { closes[70]=105; closes[80]=95; closes[90]=99; closes[99]=94; }
   return candlesFromCloses(closes,300000);
 }
 function slCandles() {
