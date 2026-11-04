@@ -238,58 +238,65 @@ function regularDivergence(candles, config) {
   };
 }
 
-function entryRsiTriggered(side, value, config) {
-  if (!Number.isFinite(value)) return false;
-  if (side === "LONG") return value >= config.ENTRY_RSI_LONG_MIN && value <= config.ENTRY_RSI_LONG_MAX;
-  if (side === "SHORT") return value >= config.ENTRY_RSI_SHORT_MIN && value <= config.ENTRY_RSI_SHORT_MAX;
-  return false;
-}
-
 function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmationCandles, slCandles, config, now = Date.now() }) {
   const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-config.CONFIRMATION_HISTORY_CANDLES), stopCandles = closed(slCandles, now);
   const minTrend = Math.max(config.STRUCTURE_LOOKBACK_CANDLES, config.TREND_HISTORY_CANDLES || 0);
-  const minEntry = Math.max(config.RSI_PERIOD + 1, config.ATR_PERIOD + 1);
+  const minEntry = Math.max(config.ENTRY_STRUCTURE_LOOKBACK_CANDLES, config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 5);
   const minConfirmation = config.CONFIRMATION_HISTORY_CANDLES;
   const minDivergence = Math.max(config.RSI_PERIOD + config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 2, config.DIVERGENCE_LOOKBACK_CANDLES);
   if (trend.length < minTrend || entry.length < minEntry || (confirmation && confirmation.length < minConfirmation))
     return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
-  const price = trend.at(-1).close, entryPrice = entry.at(-1).close, valueRsi = rsi(entry.map(c => c.close), config.RSI_PERIOD), valueAtr = atr(entry, config.ATR_PERIOD);
-  if (!(price > 0 && valueRsi != null && valueAtr > 0))
-    return { side: null, reason: "INVALID_INDICATORS" };
+  const price = trend.at(-1).close, entryPrice = entry.at(-1).close;
+  if (!(price > 0 && entryPrice > 0))
+    return { side: null, reason: "INVALID_PRICE_DATA" };
   const trendWindow = trend.slice(-config.STRUCTURE_LOOKBACK_CANDLES);
   const trendStructure = analyzeMajorStructure(trendWindow, config.MAJOR_PIVOT_LEFT_BARS, config.MAJOR_PIVOT_RIGHT_BARS);
   const structure = marketStructure(trendWindow, config);
   const trendSide = trendStructure.side;
   if (trendStructure.state === "TRANSITION")
-    return { side: null, reason: "4H_STRUCTURE_TRANSITION", trendSide, trendEvent: trendStructure.event, transitionFrom: trendStructure.transitionFrom, transitionLevel: trendStructure.transitionLevel, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "4H_STRUCTURE_TRANSITION", trendSide, trendEvent: trendStructure.event, transitionFrom: trendStructure.transitionFrom, transitionLevel: trendStructure.transitionLevel };
   if (trendSide === "RANGE")
-    return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEvent: trendStructure.event, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEvent: trendStructure.event };
   let confirmationState = null;
   if (confirmation) {
     confirmationState = assessConfirmation(confirmation, trendSide, config);
     if (confirmationState.state !== "CONTINUATION")
-      return { side: null, reason: confirmationState.state === "TRANSITION" ? "1H_STRUCTURE_TRANSITION" : confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, trendEvent: trendStructure.event, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side, rsi: valueRsi, atr: valueAtr };
+      return { side: null, reason: confirmationState.state === "TRANSITION" ? "1H_STRUCTURE_TRANSITION" : confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, trendEvent: trendStructure.event, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side };
   }
-  // Option A: BOS is a structure event, never a mandatory entry trigger. Once 4H bias and 1H continuation are valid, RSI/divergence may trigger a pullback entry without a fresh BOS.
+  // Entry is entirely price-structure based: a confirmed HL/LH pullback followed by a close-only break of the prior swing.
+  const entryWindow = entry.slice(-config.ENTRY_STRUCTURE_LOOKBACK_CANDLES);
+  const entrySwings = pivots(entryWindow, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
+  const lastEntryHigh = entrySwings.highs.at(-1), priorEntryHigh = entrySwings.highs.at(-2);
+  const lastEntryLow = entrySwings.lows.at(-1), priorEntryLow = entrySwings.lows.at(-2);
+  const longStructure = !!(priorEntryLow && lastEntryHigh && lastEntryLow &&
+    priorEntryLow.index < lastEntryHigh.index && lastEntryHigh.index < lastEntryLow.index &&
+    lastEntryLow.price > priorEntryLow.price && entryPrice > lastEntryHigh.price);
+  const shortStructure = !!(priorEntryHigh && lastEntryLow && lastEntryHigh &&
+    priorEntryHigh.index < lastEntryLow.index && lastEntryLow.index < lastEntryHigh.index &&
+    lastEntryHigh.price < priorEntryHigh.price && entryPrice < lastEntryLow.price);
   const side = trendSide === "UP" ? "LONG" : "SHORT";
-  if (!entryRsiTriggered(side, valueRsi, config)) return { side: null, reason: "ENTRY_RSI_NOT_TRIGGERED", trendSide, rsi: valueRsi, atr: valueAtr };
+  if (side === "LONG" && !longStructure) return { side: null, reason: "ENTRY_STRUCTURE_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_HL_AND_BOS" };
+  if (side === "SHORT" && !shortStructure) return { side: null, reason: "ENTRY_STRUCTURE_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_LH_AND_BOS" };
   if (divergence.length < minDivergence)
-    return { side: null, reason: "DIVERGENCE_HISTORY_REQUIRED", trendSide, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "DIVERGENCE_HISTORY_REQUIRED", trendSide, entryStructure: side === "LONG" ? "HL_BOS" : "LH_BOS" };
   const div = regularDivergence(divergence.slice(-config.DIVERGENCE_LOOKBACK_CANDLES), config);
   const bullishBonus = trendSide === "UP" && div.bullish && div.swingLow > 0 && div.swingLow < entryPrice;
   const bearishBonus = trendSide === "DOWN" && div.bearish && div.swingHigh > entryPrice;
   if (stopCandles.length < config.SL_ATR_PERIOD + 1)
-    return { side: null, reason: "SL_15M_HISTORY_REQUIRED", trendSide, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "SL_CANDLE_HISTORY_REQUIRED", trendSide };
   const stopAtr = atr(stopCandles, config.SL_ATR_PERIOD);
   if (!(stopAtr > 0))
-    return { side: null, reason: "SL_ATR15_UNAVAILABLE", trendSide, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "SL_ATR_UNAVAILABLE", trendSide };
   const stopSwings = pivots(stopCandles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
   const validPivots = (side === "LONG" ? stopSwings.lows : stopSwings.highs)
     .filter(p => stopCandles.length - 1 - p.index <= config.SL_PIVOT_MAX_DISTANCE)
     .filter(p => side === "LONG" ? p.price < entryPrice : p.price > entryPrice);
   const pivotPrice = validPivots.at(-1)?.price ?? null;
   return {
-    side, trendSide, rsi: valueRsi, atr: valueAtr,
+    side, trendSide,
+    entryStructure: side === "LONG" ? "HL_BOS" : "LH_BOS",
+    entrySwingLevel: side === "LONG" ? lastEntryHigh.price : lastEntryLow.price,
+    pullbackPivotPrice: side === "LONG" ? lastEntryLow.price : lastEntryHigh.price,
     pivotPrice, slAtr15: stopAtr,
     signalAt: entry.at(-1).closeTime,
     divergence: bullishBonus ? "REGULAR_BULLISH" : bearishBonus ? "REGULAR_BEARISH" : null
@@ -306,4 +313,4 @@ function marketVeto({ side, fundingRate, bidPrice, askPrice, config }) {
   return { allowed: true, reason: "OK", fundingRate: funding, spreadBps };
 }
 
-module.exports = { rsi, rsiSeries, atr, closed, pivots, marketStructure, analyzeMajorStructure, assessConfirmation, regularDivergence, entryRsiTriggered, marketVeto, coreLogic };
+module.exports = { rsi, rsiSeries, atr, closed, pivots, marketStructure, analyzeMajorStructure, assessConfirmation, regularDivergence, marketVeto, coreLogic };
