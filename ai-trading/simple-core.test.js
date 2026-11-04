@@ -58,7 +58,6 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   assert.ok(supported.has(C.DIVERGENCE_TIMEFRAME));
   assert.equal(C.SL_TIMEFRAME,"15m");
   assert.equal(C.SL_ATR_PERIOD,14);
-  assert.ok(Number.isInteger(C.TREND_EMA_PERIOD) && C.TREND_EMA_PERIOD>0);
   assert.equal(C.TREND_TIMEFRAME,"4h");
   assert.equal(C.TREND_HISTORY_CANDLES,250);
   assert.equal(C.CONFIRMATION_TIMEFRAME,"1h");

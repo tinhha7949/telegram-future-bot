@@ -1,11 +1,10 @@
-# Multi-timeframe trend, pullback, and regular-divergence strategy.
+# Multi-timeframe market-structure, pullback, and regular-divergence strategy.
 QUOTE_ASSET: "USDT"
 MAX_SYMBOLS: 100
 MIN_24H_QUOTE_VOLUME_USDT: 5000000
 MIN_24H_RANGE_PCT: 2.0
 TREND_TIMEFRAME: "4h"
 TREND_HISTORY_CANDLES: 250
-TREND_EMA_PERIOD: 20
 CONFIRMATION_TIMEFRAME: "1h"
 CONFIRMATION_HISTORY_CANDLES: 300
 STRUCTURE_LOOKBACK_CANDLES: 250

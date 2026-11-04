@@ -1,13 +1,5 @@
 "use strict";
 
-function ema(values, period) {
-  if (!Array.isArray(values) || values.length < period) return null;
-  const k = 2 / (period + 1);
-  let value = values.slice(0, period).reduce((a, b) => a + Number(b), 0) / period;
-  for (let i = period; i < values.length; i++) value = Number(values[i]) * k + value * (1 - k);
-  return Number.isFinite(value) ? value : null;
-}
-
 function rsi(closes, period = 14) {
   if (!Array.isArray(closes) || closes.length < period + 1) return null;
   let gains = 0, losses = 0;
@@ -145,46 +137,44 @@ function entryRsiTriggered(side, value, config) {
 
 function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmationCandles, slCandles, config, now = Date.now() }) {
   const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-config.CONFIRMATION_HISTORY_CANDLES), stopCandles = closed(slCandles, now);
-  const minTrend = Math.max(config.TREND_EMA_PERIOD + 1, config.STRUCTURE_LOOKBACK_CANDLES, config.TREND_HISTORY_CANDLES || 0);
+  const minTrend = Math.max(config.STRUCTURE_LOOKBACK_CANDLES, config.TREND_HISTORY_CANDLES || 0);
   const minEntry = Math.max(config.RSI_PERIOD + 1, config.ATR_PERIOD + 1);
   const minConfirmation = config.CONFIRMATION_HISTORY_CANDLES;
   const minDivergence = Math.max(config.RSI_PERIOD + config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 2, config.DIVERGENCE_LOOKBACK_CANDLES);
   if (trend.length < minTrend || entry.length < minEntry || (confirmation && confirmation.length < minConfirmation))
     return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
-  const trendEma = ema(trend.map(c => c.close), config.TREND_EMA_PERIOD);
   const price = trend.at(-1).close, entryPrice = entry.at(-1).close, valueRsi = rsi(entry.map(c => c.close), config.RSI_PERIOD), valueAtr = atr(entry, config.ATR_PERIOD);
-  if (!(trendEma > 0 && price > 0 && valueRsi != null && valueAtr > 0))
+  if (!(price > 0 && valueRsi != null && valueAtr > 0))
     return { side: null, reason: "INVALID_INDICATORS" };
   const structure = marketStructure(trend.slice(-config.STRUCTURE_LOOKBACK_CANDLES), config);
-  const trendSide = price > trendEma && structure.side === "UP" ? "UP" :
-    price < trendEma && structure.side === "DOWN" ? "DOWN" : "RANGE";
+  const trendSide = structure.side;
   if (trendSide === "RANGE")
-    return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, rsi: valueRsi, atr: valueAtr };
   let confirmationState = null;
   if (confirmation) {
     confirmationState = assessConfirmation(confirmation, trendSide, config);
     if (confirmationState.state !== "CONTINUATION")
-      return { side: null, reason: confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side, trendEma, rsi: valueRsi, atr: valueAtr };
+      return { side: null, reason: confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side, rsi: valueRsi, atr: valueAtr };
   }
   const side = trendSide === "UP" ? "LONG" : "SHORT";
-  if (!entryRsiTriggered(side, valueRsi, config)) return { side: null, reason: "ENTRY_RSI_NOT_TRIGGERED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
+  if (!entryRsiTriggered(side, valueRsi, config)) return { side: null, reason: "ENTRY_RSI_NOT_TRIGGERED", trendSide, rsi: valueRsi, atr: valueAtr };
   if (divergence.length < minDivergence)
-    return { side: null, reason: "DIVERGENCE_HISTORY_REQUIRED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "DIVERGENCE_HISTORY_REQUIRED", trendSide, rsi: valueRsi, atr: valueAtr };
   const div = regularDivergence(divergence.slice(-config.DIVERGENCE_LOOKBACK_CANDLES), config);
   const bullishBonus = trendSide === "UP" && div.bullish && div.swingLow > 0 && div.swingLow < entryPrice;
   const bearishBonus = trendSide === "DOWN" && div.bearish && div.swingHigh > entryPrice;
   if (stopCandles.length < config.SL_ATR_PERIOD + 1)
-    return { side: null, reason: "SL_15M_HISTORY_REQUIRED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "SL_15M_HISTORY_REQUIRED", trendSide, rsi: valueRsi, atr: valueAtr };
   const stopAtr = atr(stopCandles, config.SL_ATR_PERIOD);
   if (!(stopAtr > 0))
-    return { side: null, reason: "SL_ATR15_UNAVAILABLE", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "SL_ATR15_UNAVAILABLE", trendSide, rsi: valueRsi, atr: valueAtr };
   const stopSwings = pivots(stopCandles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
   const validPivots = (side === "LONG" ? stopSwings.lows : stopSwings.highs)
     .filter(p => stopCandles.length - 1 - p.index <= config.SL_PIVOT_MAX_DISTANCE)
     .filter(p => side === "LONG" ? p.price < entryPrice : p.price > entryPrice);
   const pivotPrice = validPivots.at(-1)?.price ?? null;
   return {
-    side, trendSide, trendEma, rsi: valueRsi, atr: valueAtr,
+    side, trendSide, rsi: valueRsi, atr: valueAtr,
     pivotPrice, slAtr15: stopAtr,
     signalAt: entry.at(-1).closeTime,
     divergence: bullishBonus ? "REGULAR_BULLISH" : bearishBonus ? "REGULAR_BEARISH" : null
@@ -201,4 +191,4 @@ function marketVeto({ side, fundingRate, bidPrice, askPrice, config }) {
   return { allowed: true, reason: "OK", fundingRate: funding, spreadBps };
 }
 
-module.exports = { ema, rsi, rsiSeries, atr, closed, pivots, marketStructure, assessConfirmation, regularDivergence, entryRsiTriggered, marketVeto, coreLogic };
+module.exports = { rsi, rsiSeries, atr, closed, pivots, marketStructure, assessConfirmation, regularDivergence, entryRsiTriggered, marketVeto, coreLogic };
