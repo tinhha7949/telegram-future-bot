@@ -122,6 +122,10 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
   const rejected=coreLogic({trendCandles:trendCandles("UP"),entryCandles:noBreak,slCandles:slCandles(),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW});
   assert.equal(rejected.side,null);
   assert.equal(rejected.reason,"ENTRY_STRUCTURE_NOT_CONFIRMED");
+  const alreadyAbove=entryCandles("LONG"); alreadyAbove[98].close=106; alreadyAbove[98].open=106;
+  const noFreshBreak=coreLogic({trendCandles:trendCandles("UP"),entryCandles:alreadyAbove,slCandles:slCandles(),divergenceCandles:bullishDivergenceCandles(),config:cfg,now:NOW});
+  assert.equal(noFreshBreak.side,null);
+  assert.equal(noFreshBreak.reason,"ENTRY_STRUCTURE_NOT_CONFIRMED");
 });
 
 test("1h confirmation requires the configured history count",()=>{
