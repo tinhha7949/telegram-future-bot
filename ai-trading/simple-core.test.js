@@ -20,7 +20,7 @@ function timeframeMs(timeframe) {
 function candlesFromCloses(closes, stepMs = timeframeMs(C.ENTRY_TIMEFRAME), start = NOW - closes.length * stepMs) {
   return closes.map((close, i) => ({open:close,high:close+0.2,low:close-0.2,close,closeTime:start+(i+1)*stepMs-1}));
 }
-function trendCandles(direction = "UP", n = C.TREND_HISTORY_CANDLES, timeframe = C.TREND_TIMEFRAME) {
+function trendCandles(direction = "UP", n = Math.max(C.TREND_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES), timeframe = C.TREND_TIMEFRAME) {
   const stepMs=timeframeMs(timeframe);
   return Array.from({length:n},(_,i)=>{
     const close=(direction==="UP"?100+i*0.18:200-i*0.18)+Math.sin(i*Math.PI/4)*2;
@@ -28,9 +28,10 @@ function trendCandles(direction = "UP", n = C.TREND_HISTORY_CANDLES, timeframe =
   });
 }
 function entryCandles(direction) {
-  const closes=Array(100).fill(direction==="LONG"?102:98);
-  if(direction==="LONG") { closes[70]=98; closes[80]=105; closes[90]=101; closes[99]=106; }
-  else { closes[70]=105; closes[80]=95; closes[90]=99; closes[99]=94; }
+  const n=C.ENTRY_STRUCTURE_LOOKBACK_CANDLES, closes=Array(n).fill(direction==="LONG"?102:98);
+  const low1=Math.floor(n*0.7), high=Math.floor(n*0.8), low2=Math.floor(n*0.9), last=n-1;
+  if(direction==="LONG") { closes[low1]=98; closes[high]=105; closes[low2]=101; closes[last]=106; }
+  else { closes[low1]=105; closes[high]=95; closes[low2]=99; closes[last]=94; }
   return candlesFromCloses(closes,timeframeMs(C.ENTRY_TIMEFRAME));
 }
 function slCandles() {
@@ -116,7 +117,7 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
 
 test("1h confirmation requires the configured history count",()=>{
   const confirmation=candlesFromCloses(Array.from({length:C.CONFIRMATION_HISTORY_CANDLES-1},(_,i)=>100+i*0.1),timeframeMs(C.CONFIRMATION_TIMEFRAME));
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,config:{...C,CONFIRMATION_HISTORY_CANDLES:300},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,config:C,now:NOW});
   assert.equal(signal.side,null);
   assert.equal(signal.reason,"INSUFFICIENT_CLOSED_CANDLES");
 });
@@ -133,9 +134,10 @@ test("1h confirmation uses its own 2/2 major swings and blocks transitions/rever
 });
 
 test("4h and 1h use independent pivot widths",()=>{
-  const up=trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES,C.CONFIRMATION_TIMEFRAME);
+  const up=trendCandles("UP");
+  const confirmation=trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES,C.CONFIRMATION_TIMEFRAME);
   const fourHour=marketStructure(up,C);
-  const oneHour=assessConfirmation(up,"UP",C);
+  const oneHour=assessConfirmation(confirmation,"UP",C);
   assert.equal(fourHour.kind,"major");
   assert.equal(oneHour.major.kind,"major");
 });
@@ -161,7 +163,7 @@ test("entry waits for a confirmed pullback and a close-only BOS",()=>{
 test("major trend structure requires both HH/HL or LH/LL",()=>{
   assert.equal(marketStructure(trendCandles("UP"),C).side,"UP");
   assert.equal(marketStructure(trendCandles("DOWN"),C).side,"DOWN");
-  const range=Array.from({length:100},(_,i)=>({high:100+(i%2),low:99-(i%2),close:99.5,closeTime:NOW-(100-i)*3600000}));
+  const range=Array.from({length:Math.max(C.TREND_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES)},(_,i)=>({high:100+(i%2),low:99-(i%2),close:99.5,closeTime:NOW-(Math.max(C.TREND_HISTORY_CANDLES,C.STRUCTURE_LOOKBACK_CANDLES)-i)*timeframeMs(C.TREND_TIMEFRAME)}));
   assert.equal(marketStructure(range,C).side,"RANGE");
 });
 
@@ -195,7 +197,7 @@ test("pivot SL uses configured ATR buffer and independent pivot R clamp",()=>{
   assert.ok(longProtection.sl<98.5 && longProtection.tp1>100 && longProtection.tp2>longProtection.tp1);
   assert.equal(longProtection.buffer,Math.max(100*C.SL_PIVOT_BUFFER_MIN_PCT/100,C.SL_PIVOT_BUFFER_ATR));
   assert.equal(longProtection.riskUnit,Math.abs(100-98.5));
-  assert.equal(longProtection.stopMethod,"5M_PIVOT");
+  assert.equal(longProtection.stopMethod,C.SL_TIMEFRAME.toUpperCase()+"_PIVOT");
   assert.equal(longProtection.tp1RewardRisk,C.TP1_REWARD_RISK);
   assert.equal(longProtection.tp2RewardRisk,C.TP2_REWARD_RISK);
   assert.ok(shortProtection.sl>101.5 && shortProtection.tp1<100 && shortProtection.tp2<shortProtection.tp1);
