@@ -16,7 +16,7 @@ function candlesFromCloses(closes, stepMs = 300000, start = NOW - closes.length 
 }
 function trendCandles(direction = "UP", n = C.TREND_HISTORY_CANDLES) {
   return Array.from({length:n},(_,i)=>{
-    const close=(direction==="UP"?100+i*0.15:200-i*0.15)+Math.sin(i*Math.PI/4)*2;
+    const close=(direction==="UP"?100+i*0.18:200-i*0.18)+Math.sin(i*Math.PI/4)*2;
     return {open:close,high:close+0.2,low:close-0.2,close,closeTime:NOW-(n-i)*3600000};
   });
 }
