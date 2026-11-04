@@ -60,7 +60,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   check("CONFIRMATION_TIMEFRAME", !supportedIntervals.has(out.CONFIRMATION_TIMEFRAME));
   check("ENTRY_TIMEFRAME", !supportedIntervals.has(out.ENTRY_TIMEFRAME));
   check("DIVERGENCE_TIMEFRAME", !supportedIntervals.has(out.DIVERGENCE_TIMEFRAME));
-  check("SL_TIMEFRAME", out.SL_TIMEFRAME !== "15m");
+  check("SL_TIMEFRAME", !supportedIntervals.has(out.SL_TIMEFRAME));
   check("MAX_SYMBOLS", !Number.isInteger(out.MAX_SYMBOLS));
   check("ENTRY_RSI_BANDS", out.ENTRY_RSI_LONG_MIN > 100 || out.ENTRY_RSI_LONG_MAX > 100 || out.ENTRY_RSI_SHORT_MIN > 100 || out.ENTRY_RSI_SHORT_MAX > 100 || out.ENTRY_RSI_LONG_MIN > out.ENTRY_RSI_LONG_MAX || out.ENTRY_RSI_SHORT_MIN > out.ENTRY_RSI_SHORT_MAX);
   check("STRUCTURE_LOOKBACK_CANDLES", !Number.isInteger(out.STRUCTURE_LOOKBACK_CANDLES) || out.STRUCTURE_LOOKBACK_CANDLES < out.MAJOR_PIVOT_LEFT_BARS + out.MAJOR_PIVOT_RIGHT_BARS + 5);
