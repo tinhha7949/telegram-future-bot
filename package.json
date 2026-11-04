@@ -14,5 +14,5 @@
   "engines": {
     "node": ">=22"
   },
-  "description": "Simple Binance USDT futures bot using 4h EMA100 trend and 1m RSI14 entries"
+  "description": "Simple Binance USDT futures bot using market-structure trend and RSI entries"
 }
