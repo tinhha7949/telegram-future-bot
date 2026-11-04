@@ -14,7 +14,7 @@ const NOW = 2000000000000;
 function candlesFromCloses(closes, stepMs = 300000, start = NOW - closes.length * stepMs) {
   return closes.map((close, i) => ({open:close,high:close+0.2,low:close-0.2,close,closeTime:start+(i+1)*stepMs-1}));
 }
-function trendCandles(direction = "UP", n = 100) {
+function trendCandles(direction = "UP", n = C.TREND_HISTORY_CANDLES) {
   return Array.from({length:n},(_,i)=>{
     const close=(direction==="UP"?100+i*0.15:200-i*0.15)+Math.sin(i*Math.PI/4)*2;
     return {open:close,high:close+0.2,low:close-0.2,close,closeTime:NOW-(n-i)*3600000};
@@ -59,7 +59,12 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   assert.equal(C.SL_TIMEFRAME,"15m");
   assert.equal(C.SL_ATR_PERIOD,14);
   assert.ok(Number.isInteger(C.TREND_EMA_PERIOD) && C.TREND_EMA_PERIOD>0);
-  assert.equal(C.CONFIRMATION_HISTORY_CANDLES,100);
+  assert.equal(C.TREND_TIMEFRAME,"4h");
+  assert.equal(C.TREND_HISTORY_CANDLES,250);
+  assert.equal(C.CONFIRMATION_TIMEFRAME,"1h");
+  assert.equal(C.CONFIRMATION_HISTORY_CANDLES,300);
+  assert.ok(C.MAJOR_PIVOT_LEFT_BARS>0 && C.MAJOR_PIVOT_RIGHT_BARS>0);
+  assert.ok(C.MINOR_PIVOT_LEFT_BARS>0 && C.MINOR_PIVOT_RIGHT_BARS>0);
   assert.ok(C.ENTRY_RSI_LONG_MIN>=0 && C.ENTRY_RSI_LONG_MIN<=C.ENTRY_RSI_LONG_MAX && C.ENTRY_RSI_LONG_MAX<=100);
   assert.ok(C.ENTRY_RSI_SHORT_MIN>=0 && C.ENTRY_RSI_SHORT_MIN<=C.ENTRY_RSI_SHORT_MAX && C.ENTRY_RSI_SHORT_MAX<=100);
   assert.ok(C.MAX_ABS_FUNDING_RATE>=0);
@@ -70,7 +75,7 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
 test("CONFIG.yaml overrides are accepted without changing tests",()=>{
   const source=fs.readFileSync(path.join(__dirname,"..","CONFIG.yaml"),"utf8");
   const overrides={
-    TREND_TIMEFRAME:"4h",ENTRY_TIMEFRAME:"15m",DIVERGENCE_TIMEFRAME:"30m",MAX_SYMBOLS:150,
+    TREND_TIMEFRAME:"4h",TREND_HISTORY_CANDLES:280,CONFIRMATION_TIMEFRAME:"1h",CONFIRMATION_HISTORY_CANDLES:320,MAJOR_PIVOT_LEFT_BARS:5,MAJOR_PIVOT_RIGHT_BARS:5,MINOR_PIVOT_LEFT_BARS:1,MINOR_PIVOT_RIGHT_BARS:1,ENTRY_TIMEFRAME:"15m",DIVERGENCE_TIMEFRAME:"30m",MAX_SYMBOLS:150,
     ENTRY_RSI_LONG_MIN:28,ENTRY_RSI_LONG_MAX:42,ENTRY_RSI_SHORT_MIN:58,ENTRY_RSI_SHORT_MAX:72,
     TP1_REWARD_RISK:1.1,TP2_REWARD_RISK:1.6,BE_TRIGGER_TP1_PROGRESS_PCT:65,MAX_ABS_FUNDING_RATE:0.001,MAX_SPREAD_BPS:25
   };
@@ -81,6 +86,11 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     fs.writeFileSync(file,customized);
     const custom=loadSimpleConfig(file);
     assert.equal(custom.TREND_TIMEFRAME,"4h");
+    assert.equal(custom.TREND_HISTORY_CANDLES,280);
+    assert.equal(custom.CONFIRMATION_TIMEFRAME,"1h");
+    assert.equal(custom.CONFIRMATION_HISTORY_CANDLES,320);
+    assert.equal(custom.MAJOR_PIVOT_LEFT_BARS,5);
+    assert.equal(custom.MINOR_PIVOT_LEFT_BARS,1);
     assert.equal(custom.ENTRY_TIMEFRAME,"15m");
     assert.equal(custom.DIVERGENCE_TIMEFRAME,"30m");
     assert.equal(custom.MAX_SYMBOLS,150);
@@ -132,14 +142,14 @@ test("coreLogic calculates entry RSI from the configured entry candle stream",()
   assert.equal(signal.rsi,rsi(entry.map(c=>c.close),C.RSI_PERIOD));
 });
 
-test("15m confirmation requires 100 closed candles for EMA50",()=>{
+test("1h confirmation requires the configured history count",()=>{
   const confirmation=candlesFromCloses(Array.from({length:99},(_,i)=>100+i*0.1),900000);
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,divergenceCandles:bullishDivergenceCandles(),config:{...C,CONFIRMATION_HISTORY_CANDLES:100,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,divergenceCandles:bullishDivergenceCandles(),config:{...C,CONFIRMATION_HISTORY_CANDLES:300,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100},now:NOW});
   assert.equal(signal.side,null);
   assert.equal(signal.reason,"INSUFFICIENT_CLOSED_CANDLES");
 });
 
-test("trend structure requires both HH/HL or LH/LL",()=>{
+test("major trend structure requires both HH/HL or LH/LL",()=>{
   assert.equal(marketStructure(trendCandles("UP"),C).side,"UP");
   assert.equal(marketStructure(trendCandles("DOWN"),C).side,"DOWN");
   const range=Array.from({length:100},(_,i)=>({high:100+(i%2),low:99-(i%2),close:99.5,closeTime:NOW-(100-i)*3600000}));
