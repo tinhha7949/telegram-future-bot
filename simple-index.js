@@ -11,13 +11,12 @@ const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");
 const { coreLogic, marketVeto } = require("./ai-trading/coreLogic");
 const { getTopSymbol } = require("./ai-trading/getTopSymbol");
-const { buildProtection, protectionConfigForDivergence, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
+const { buildProtection, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const { moveStopToBreakeven } = require("./ai-trading/break-even");
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
 const { cooldownRecordForClose, isCoolingDown } = require("./ai-trading/coin-cooldown");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
-const DIVERGENCE_HISTORY_CANDLES = 100
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function floorStep(n, step) { if (!(step > 0)) return n; return Math.floor((n + step*1e-10)/step)*step; }
 function precision(step) { const s=String(step); return s.includes(".") ? s.length-s.indexOf(".")-1 : 0; }
@@ -135,7 +134,7 @@ async function main() {
   async function notifyPendingEntries() {
     const now=new Date(), pending=await trades.find({status:"OPEN",entryNotificationPending:true,$or:[{entryNotificationNextAttemptAt:{$exists:false}},{entryNotificationNextAttemptAt:{$lte:now}}]}).toArray();
     for(const t of pending) {
-      const msg="ENTRY "+t.side+" "+t.symbol+"\nEntry: "+t.entryPrice+"\nSL: "+t.sl+"\nTP1: "+t.tp1+"\nTP2: "+t.tp2+"\nRSI: "+Number(t.rsi).toFixed(2)+"\nTrend "+C.TREND_TIMEFRAME+": "+t.trendSide+"\nTrade ID: "+String(t._id);
+      const msg="ENTRY "+t.side+" "+t.symbol+"\nEntry: "+t.entryPrice+"\nSL: "+t.sl+"\nTP1: "+t.tp1+"\nTP2: "+t.tp2+"\nTrend "+C.TREND_TIMEFRAME+": "+t.trendSide+"\nTrade ID: "+String(t._id);
       await trades.updateOne({_id:t._id,entryNotificationPending:true},{$set:{entryNotificationLastAttemptAt:new Date(),entryNotificationNextAttemptAt:new Date(Date.now()+60000)},$inc:{entryNotificationAttempts:1}});
       const sent=await telegramEntry(msg);
       if(sent)await trades.updateOne({_id:t._id,entryNotificationPending:true},{$set:{entryNotificationPending:false,entryNotifiedAt:new Date()},$unset:{entryNotificationNextAttemptAt:""}});
@@ -151,7 +150,7 @@ async function main() {
       if(p) {
         try {
           try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("RECOVERY_ALGO_CANCEL_WARN",t.symbol,e.message); }
-          const recovered=(t.sl&&t.tp1&&t.tp2)?null:buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atr15:Number(t.slAtr15),pivotPrice:Number(t.pivotPrice)||null,divergence:t.divergence,config:protectionConfigForDivergence(C,t.divergence),priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
+          const recovered=(t.sl&&t.tp1&&t.tp2)?null:buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atrValue:Number(t.slAtr ?? t.slAtr15),pivotPrice:Number(t.pivotPrice)||null,config:C,priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
           await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl||recovered.sl,tp1:t.tp1||recovered.tp1,tp2:t.tp2||recovered.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.stepSize||0,minQty:rules.get(t.symbol)?.minQty||0,config:C});
           await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true,entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0)}});
           
@@ -226,10 +225,7 @@ async function main() {
     const now=Date.now()+binance.timeOffsetMs;
     const confirmationCandles=toCandles(confirmationRaw);
     const slCandles=toCandles(slRaw);
-    const baseSignal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,config:C,now});
-    if(baseSignal.reason!=="DIVERGENCE_HISTORY_REQUIRED") return;
-    const divergenceRaw=await binance.get("/fapi/v1/klines",{symbol,interval:C.DIVERGENCE_TIMEFRAME,limit:Math.max(DIVERGENCE_HISTORY_CANDLES,C.DIVERGENCE_LOOKBACK_CANDLES+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS)});
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,divergenceCandles:toCandles(divergenceRaw),config:C,now});
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,config:C,now});
     if(!signal.side) return;
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
@@ -267,7 +263,7 @@ async function main() {
       } catch(e) { console.error("LEVERAGE_CAP_UNAVAILABLE",symbol,e.message); return; }
     }
     const symbolLeverage=Math.min(C.LEVERAGE,symbolMaxLeverage), sizingConfig={...C,LEVERAGE:symbolLeverage};
-    const protection=buildProtection({side:signal.side,entryPrice:mark,atr15:signal.slAtr15,pivotPrice:signal.pivotPrice,divergence:signal.divergence,config:protectionConfigForDivergence(C,signal.divergence),priceTick:r.tickSize});
+    const protection=buildProtection({side:signal.side,entryPrice:mark,atrValue:signal.slAtr,pivotPrice:signal.pivotPrice,config:C,priceTick:r.tickSize});
     const sizing=calculateOrderSizing({wallet,available,mark,stopDistance:protection.stopDistance,rules:r,config:sizingConfig});
     if(!sizing.ok) {
       console.log("ENTRY_SKIP_"+sizing.reason,symbol,"qty="+sizing.qty,"notional="+sizing.notional,"minNotional="+r.minNotional,"maxNotional="+sizing.maxNotional);
@@ -276,7 +272,7 @@ async function main() {
     const qty=sizing.qty;
     try { splitQuantity({quantity:qty,stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message,"qty="+qty); return; }
     if(sizing.margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol,"required="+sizing.margin,"available="+available); return; }
-    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,entryStructure:signal.entryStructure,entrySwingLevel:signal.entrySwingLevel,pullbackPivotPrice:signal.pullbackPivotPrice,slAtr15:signal.slAtr15,pivotPrice:signal.pivotPrice,slTimeframe:C.SL_TIMEFRAME,divergence:signal.divergence,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
+    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,entryStructure:signal.entryStructure,entrySwingLevel:signal.entrySwingLevel,pullbackPivotPrice:signal.pullbackPivotPrice,slAtr:signal.slAtr,pivotPrice:signal.pivotPrice,slTimeframe:C.SL_TIMEFRAME,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return; }
     let inserted;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }
@@ -286,7 +282,7 @@ async function main() {
       const filled=Number(order.avgPrice)||mark;
       let actual;
       try {
-        actual=buildProtection({side:signal.side,entryPrice:filled,atr15:signal.slAtr15,pivotPrice:signal.pivotPrice,divergence:signal.divergence,config:protectionConfigForDivergence(C,signal.divergence),priceTick:r.tickSize});
+        actual=buildProtection({side:signal.side,entryPrice:filled,atrValue:signal.slAtr,pivotPrice:signal.pivotPrice,config:C,priceTick:r.tickSize});
         await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,openedAt:new Date(order.updateTime||Date.now())}});
         await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol,side:signal.side,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,stepSize:r.stepSize,minQty:r.minQty,config:C});
       } catch(e) {
@@ -378,7 +374,7 @@ async function main() {
     const live=await positions(), open=await trades.countDocuments({status:"OPEN"});
     return "SIMPLE BOT OK\nTracked open trades: "+open+"\nExchange positions: "+live.length+"\nTop symbols: "+symbols.length+"\nRR: "+C.REWARD_RISK;
   };
-  console.log("MULTI-TIMEFRAME DIVERGENCE BOT STARTED", "RR="+C.REWARD_RISK, "MAX_SYMBOLS="+C.MAX_SYMBOLS);
+  console.log("MULTI-TIMEFRAME STRUCTURE BOT STARTED", "RR="+C.REWARD_RISK, "MAX_SYMBOLS="+C.MAX_SYMBOLS);
   await cycle();
   const timer=setInterval(()=>void cycle(),C.SCAN_INTERVAL_MS);
   const shutdown=async()=>{ if(stopped)return; stopped=true; clearInterval(timer); await mongo.close(); process.exit(0); };
