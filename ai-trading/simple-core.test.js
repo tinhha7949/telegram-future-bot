@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const assert = require("node:assert/strict");
-const { rsi, atr, marketStructure, assessConfirmation, regularDivergence, entryRsiTriggered, marketVeto, coreLogic } = require("./coreLogic");
+const { rsi, atr, marketStructure, analyzeMajorStructure, assessConfirmation, regularDivergence, entryRsiTriggered, marketVeto, coreLogic } = require("./coreLogic");
 const { loadSimpleConfig } = require("./simple-config");
 const { buildProtection, protectionConfigForDivergence } = require("./tpsl");
 const { getTopSymbol } = require("./getTopSymbol");
@@ -63,7 +63,10 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   assert.equal(C.CONFIRMATION_TIMEFRAME,"1h");
   assert.equal(C.CONFIRMATION_HISTORY_CANDLES,300);
   assert.ok(C.MAJOR_PIVOT_LEFT_BARS>0 && C.MAJOR_PIVOT_RIGHT_BARS>0);
-  assert.ok(C.MINOR_PIVOT_LEFT_BARS>0 && C.MINOR_PIVOT_RIGHT_BARS>0);
+  assert.equal(C.MAJOR_PIVOT_LEFT_BARS,4);
+  assert.equal(C.MAJOR_PIVOT_RIGHT_BARS,4);
+  assert.equal(C.CONFIRMATION_PIVOT_LEFT_BARS,2);
+  assert.equal(C.CONFIRMATION_PIVOT_RIGHT_BARS,2);
   assert.ok(C.ENTRY_RSI_LONG_MIN>=0 && C.ENTRY_RSI_LONG_MIN<=C.ENTRY_RSI_LONG_MAX && C.ENTRY_RSI_LONG_MAX<=100);
   assert.ok(C.ENTRY_RSI_SHORT_MIN>=0 && C.ENTRY_RSI_SHORT_MIN<=C.ENTRY_RSI_SHORT_MAX && C.ENTRY_RSI_SHORT_MAX<=100);
   assert.ok(C.MAX_ABS_FUNDING_RATE>=0);
@@ -74,7 +77,7 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
 test("CONFIG.yaml overrides are accepted without changing tests",()=>{
   const source=fs.readFileSync(path.join(__dirname,"..","CONFIG.yaml"),"utf8");
   const overrides={
-    TREND_TIMEFRAME:"4h",TREND_HISTORY_CANDLES:280,CONFIRMATION_TIMEFRAME:"1h",CONFIRMATION_HISTORY_CANDLES:320,MAJOR_PIVOT_LEFT_BARS:5,MAJOR_PIVOT_RIGHT_BARS:5,MINOR_PIVOT_LEFT_BARS:1,MINOR_PIVOT_RIGHT_BARS:1,ENTRY_TIMEFRAME:"15m",DIVERGENCE_TIMEFRAME:"30m",MAX_SYMBOLS:150,
+    TREND_TIMEFRAME:"4h",TREND_HISTORY_CANDLES:280,CONFIRMATION_TIMEFRAME:"1h",CONFIRMATION_HISTORY_CANDLES:320,MAJOR_PIVOT_LEFT_BARS:5,MAJOR_PIVOT_RIGHT_BARS:5,CONFIRMATION_PIVOT_LEFT_BARS:1,CONFIRMATION_PIVOT_RIGHT_BARS:1,ENTRY_TIMEFRAME:"15m",DIVERGENCE_TIMEFRAME:"30m",MAX_SYMBOLS:150,
     ENTRY_RSI_LONG_MIN:28,ENTRY_RSI_LONG_MAX:42,ENTRY_RSI_SHORT_MIN:58,ENTRY_RSI_SHORT_MAX:72,
     TP1_REWARD_RISK:1.1,TP2_REWARD_RISK:1.6,BE_TRIGGER_TP1_PROGRESS_PCT:65,MAX_ABS_FUNDING_RATE:0.001,MAX_SPREAD_BPS:25
   };
@@ -89,7 +92,7 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     assert.equal(custom.CONFIRMATION_TIMEFRAME,"1h");
     assert.equal(custom.CONFIRMATION_HISTORY_CANDLES,320);
     assert.equal(custom.MAJOR_PIVOT_LEFT_BARS,5);
-    assert.equal(custom.MINOR_PIVOT_LEFT_BARS,1);
+    assert.equal(custom.CONFIRMATION_PIVOT_LEFT_BARS,1);
     assert.equal(custom.ENTRY_TIMEFRAME,"15m");
     assert.equal(custom.DIVERGENCE_TIMEFRAME,"30m");
     assert.equal(custom.MAX_SYMBOLS,150);
@@ -148,18 +151,32 @@ test("1h confirmation requires the configured history count",()=>{
   assert.equal(signal.reason,"INSUFFICIENT_CLOSED_CANDLES");
 });
 
-test("1h confirmation uses major swings for continuation and reversal classification",()=>{
+test("1h confirmation uses its own 2/2 major swings and blocks transitions/reversals",()=>{
   const aligned=assessConfirmation(trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES), "UP", C);
   assert.equal(aligned.major.side,"UP");
   assert.equal(aligned.state,"CONTINUATION");
   const reversal=assessConfirmation(trendCandles("DOWN",C.CONFIRMATION_HISTORY_CANDLES), "UP", C);
   assert.equal(reversal.major.side,"DOWN");
   assert.equal(reversal.state,"REVERSAL");
-  assert.equal(reversal.event,"CHoCH");
   assert.equal(aligned.major.kind,"major");
-  assert.equal(aligned.minor.kind,"minor");
+  assert.equal(aligned.minor,null);
 });
 
+test("4h and 1h use independent pivot widths",()=>{
+  const up=trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES);
+  const fourHour=marketStructure(up,{...C,MAJOR_PIVOT_LEFT_BARS:4,MAJOR_PIVOT_RIGHT_BARS:4});
+  const oneHour=assessConfirmation(up,"UP",{...C,CONFIRMATION_PIVOT_LEFT_BARS:2,CONFIRMATION_PIVOT_RIGHT_BARS:2});
+  assert.equal(fourHour.kind,"major");
+  assert.equal(oneHour.major.kind,"major");
+});
+
+test("major structure analyzer exposes only confirmed close-based events",()=>{
+  const source=trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES);
+  const analyzed=analyzeMajorStructure(source,C.CONFIRMATION_PIVOT_LEFT_BARS,C.CONFIRMATION_PIVOT_RIGHT_BARS);
+  assert.ok(["UP","DOWN","RANGE"].includes(analyzed.side));
+  assert.ok(["NORMAL","TRANSITION"].includes(analyzed.state));
+  assert.ok(["NONE","BOS","CHoCH"].includes(analyzed.event));
+});
 test("major trend structure requires both HH/HL or LH/LL",()=>{
   assert.equal(marketStructure(trendCandles("UP"),C).side,"UP");
   assert.equal(marketStructure(trendCandles("DOWN"),C).side,"DOWN");
