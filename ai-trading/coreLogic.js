@@ -67,43 +67,153 @@ function swingConfig(config, kind = "major") {
   };
 }
 
+function classifyStructure(highs, lows) {
+  if (highs.length < 2 || lows.length < 2) return "RANGE";
+  const h1 = highs.at(-2).price, h2 = highs.at(-1).price;
+  const l1 = lows.at(-2).price, l2 = lows.at(-1).price;
+  if (h2 > h1 && l2 > l1) return "UP";
+  if (h2 < h1 && l2 < l1) return "DOWN";
+  return "RANGE";
+}
+
 function marketStructure(candles, config, kind = "major") {
   const { left, right } = swingConfig(config, kind);
   const { highs, lows } = pivots(candles, left, right);
-  if (highs.length < 2 || lows.length < 2) return { side: "RANGE", highs, lows, reason: "INSUFFICIENT_SWING_STRUCTURE", kind };
-  const h1 = highs.at(-2).price, h2 = highs.at(-1).price;
-  const l1 = lows.at(-2).price, l2 = lows.at(-1).price;
-  if (h2 > h1 && l2 > l1) return { side: "UP", highs, lows, kind };
-  if (h2 < h1 && l2 < l1) return { side: "DOWN", highs, lows, kind };
-  return { side: "RANGE", highs, lows, reason: "NO_CLEAR_HH_HL_OR_LH_LL", kind };
+  const side = classifyStructure(highs, lows);
+  return {
+    side, highs, lows,
+    ...(side === "RANGE" ? { reason: highs.length < 2 || lows.length < 2 ? "INSUFFICIENT_SWING_STRUCTURE" : "NO_CLEAR_HH_HL_OR_LH_LL" } : {}),
+    kind
+  };
+}
+
+// Replays confirmed pivots candle-by-candle. A pivot becomes usable only after
+// its right-hand confirmation bars have closed; all breaks are close-only.
+function analyzeMajorStructure(candles, left, right) {
+  const detected = pivots(candles, left, right);
+  const highConfirmations = new Map(), lowConfirmations = new Map();
+  for (const p of detected.highs) {
+    const at = p.index + right;
+    if (!highConfirmations.has(at)) highConfirmations.set(at, []);
+    highConfirmations.get(at).push(p);
+  }
+  for (const p of detected.lows) {
+    const at = p.index + right;
+    if (!lowConfirmations.has(at)) lowConfirmations.set(at, []);
+    lowConfirmations.get(at).push(p);
+  }
+
+  const highs = [], lows = [];
+  let side = null, phase = "NORMAL", transitionFrom = null, transitionAt = -1;
+  let event = "NONE", eventAt = null, consumedHigh = -1, consumedLow = -1;
+  let transitionLevel = null;
+
+  for (let i = 0; i < candles.length; i++) {
+    for (const p of highConfirmations.get(i) || []) highs.push(p);
+    for (const p of lowConfirmations.get(i) || []) lows.push(p);
+    const close = candles[i].close;
+    const inferred = classifyStructure(highs, lows);
+    if (!side && inferred !== "RANGE") side = inferred;
+
+    if (phase === "TRANSITION") {
+      if (transitionFrom === "UP") {
+        const lowerHigh = highs.find((p, index) => {
+          if (p.index <= transitionAt) return false;
+          const previous = highs.slice(0, index).at(-1);
+          return previous && p.price < previous.price;
+        });
+        if (lowerHigh) {
+          const postLowerHighLow = lows.find(p => p.index > lowerHigh.index && p.index + right <= i);
+          if (postLowerHighLow && close < postLowerHighLow.price) {
+            side = "DOWN";
+            phase = "NORMAL";
+            transitionFrom = null;
+            transitionLevel = null;
+            consumedLow = postLowerHighLow.index;
+            event = "BOS";
+            eventAt = i;
+            continue;
+          }
+        }
+      } else if (transitionFrom === "DOWN") {
+        const higherLow = lows.find((p, index) => {
+          if (p.index <= transitionAt) return false;
+          const previous = lows.slice(0, index).at(-1);
+          return previous && p.price > previous.price;
+        });
+        if (higherLow) {
+          const postHigherLowHigh = highs.find(p => p.index > higherLow.index && p.index + right <= i);
+          if (postHigherLowHigh && close > postHigherLowHigh.price) {
+            side = "UP";
+            phase = "NORMAL";
+            transitionFrom = null;
+            transitionLevel = null;
+            consumedHigh = postHigherLowHigh.index;
+            event = "BOS";
+            eventAt = i;
+            continue;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (side === "UP") {
+      const lastLow = lows.at(-1), priorLow = lows.at(-2), lastHigh = highs.at(-1);
+      const protectedLow = lastLow && priorLow && lastLow.price > priorLow.price ? lastLow : null;
+      if (protectedLow && close < protectedLow.price) {
+        phase = "TRANSITION";
+        transitionFrom = "UP";
+        transitionAt = i;
+        transitionLevel = protectedLow.price;
+        event = "CHoCH";
+        eventAt = i;
+      } else if (lastHigh && close > lastHigh.price && consumedHigh !== lastHigh.index) {
+        consumedHigh = lastHigh.index;
+        event = "BOS";
+        eventAt = i;
+      }
+    } else if (side === "DOWN") {
+      const lastHigh = highs.at(-1), priorHigh = highs.at(-2), lastLow = lows.at(-1);
+      const protectedHigh = lastHigh && priorHigh && lastHigh.price < priorHigh.price ? lastHigh : null;
+      if (protectedHigh && close > protectedHigh.price) {
+        phase = "TRANSITION";
+        transitionFrom = "DOWN";
+        transitionAt = i;
+        transitionLevel = protectedHigh.price;
+        event = "CHoCH";
+        eventAt = i;
+      } else if (lastLow && close < lastLow.price && consumedLow !== lastLow.index) {
+        consumedLow = lastLow.index;
+        event = "BOS";
+        eventAt = i;
+      }
+    }
+  }
+
+  return {
+    side: phase === "TRANSITION" ? transitionFrom : side || "RANGE",
+    state: phase,
+    event: eventAt === candles.length - 1 ? event : "NONE",
+    lastEvent: event,
+    eventAt,
+    transitionFrom,
+    transitionLevel,
+    highs,
+    lows,
+    kind: "major"
+  };
 }
 
 function assessConfirmation(candles, bias, config) {
-  const major = marketStructure(candles, config, "major");
-  const minor = marketStructure(candles, config, "minor");
-  const last = candles.at(-1);
-  const lastHigh = major.highs?.at(-1), lastLow = major.lows?.at(-1);
-  let state = "WEAKENING", event = "NONE";
-  if (major.side === bias) {
-    const priorHigh = major.highs.at(-2), priorLow = major.lows.at(-2);
-    if (minor.side !== "RANGE" && minor.side !== bias) {
-      state = "WEAKENING";
-      event = "MINOR_COUNTER_STRUCTURE";
-    } else {
-      state = "CONTINUATION";
-      if (bias === "UP" && last.close > priorHigh.price) event = "BOS";
-      if (bias === "DOWN" && last.close < priorLow.price) event = "BOS";
-    }
-  } else if (major.side === (bias === "UP" ? "DOWN" : "UP")) {
-    state = "REVERSAL";
-    event = "CHoCH";
-    if (bias === "UP" && last.close < lastLow.price) event = "BOS";
-    if (bias === "DOWN" && last.close > lastHigh.price) event = "BOS";
-  } else if (minor.side !== "RANGE" && minor.side !== bias) {
-    state = "WEAKENING";
-    event = "MINOR_COUNTER_STRUCTURE";
-  }
-  return { state, event, side: major.side, major, minor };
+  const left = config.CONFIRMATION_PIVOT_LEFT_BARS;
+  const right = config.CONFIRMATION_PIVOT_RIGHT_BARS;
+  const major = analyzeMajorStructure(candles, left, right);
+  let state = "WEAKENING";
+  if (major.state === "TRANSITION") state = "TRANSITION";
+  else if (major.side === bias) state = "CONTINUATION";
+  else if (major.side === (bias === "UP" ? "DOWN" : "UP")) state = "REVERSAL";
+  return { state, event: major.event, side: major.side, major, minor: null };
 }
 
 function regularDivergence(candles, config) {
@@ -146,15 +256,19 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmation
   const price = trend.at(-1).close, entryPrice = entry.at(-1).close, valueRsi = rsi(entry.map(c => c.close), config.RSI_PERIOD), valueAtr = atr(entry, config.ATR_PERIOD);
   if (!(price > 0 && valueRsi != null && valueAtr > 0))
     return { side: null, reason: "INVALID_INDICATORS" };
-  const structure = marketStructure(trend.slice(-config.STRUCTURE_LOOKBACK_CANDLES), config);
-  const trendSide = structure.side;
+  const trendWindow = trend.slice(-config.STRUCTURE_LOOKBACK_CANDLES);
+  const trendStructure = analyzeMajorStructure(trendWindow, config.MAJOR_PIVOT_LEFT_BARS, config.MAJOR_PIVOT_RIGHT_BARS);
+  const structure = marketStructure(trendWindow, config);
+  const trendSide = trendStructure.side;
+  if (trendStructure.state === "TRANSITION")
+    return { side: null, reason: "4H_STRUCTURE_TRANSITION", trendSide, trendEvent: trendStructure.event, transitionFrom: trendStructure.transitionFrom, transitionLevel: trendStructure.transitionLevel, rsi: valueRsi, atr: valueAtr };
   if (trendSide === "RANGE")
-    return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, rsi: valueRsi, atr: valueAtr };
+    return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEvent: trendStructure.event, rsi: valueRsi, atr: valueAtr };
   let confirmationState = null;
   if (confirmation) {
     confirmationState = assessConfirmation(confirmation, trendSide, config);
     if (confirmationState.state !== "CONTINUATION")
-      return { side: null, reason: confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side, rsi: valueRsi, atr: valueAtr };
+      return { side: null, reason: confirmationState.state === "TRANSITION" ? "1H_STRUCTURE_TRANSITION" : confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, trendEvent: trendStructure.event, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side, rsi: valueRsi, atr: valueAtr };
   }
   const side = trendSide === "UP" ? "LONG" : "SHORT";
   if (!entryRsiTriggered(side, valueRsi, config)) return { side: null, reason: "ENTRY_RSI_NOT_TRIGGERED", trendSide, rsi: valueRsi, atr: valueAtr };
@@ -191,4 +305,4 @@ function marketVeto({ side, fundingRate, bidPrice, askPrice, config }) {
   return { allowed: true, reason: "OK", fundingRate: funding, spreadBps };
 }
 
-module.exports = { rsi, rsiSeries, atr, closed, pivots, marketStructure, assessConfirmation, regularDivergence, entryRsiTriggered, marketVeto, coreLogic };
+module.exports = { rsi, rsiSeries, atr, closed, pivots, marketStructure, analyzeMajorStructure, assessConfirmation, regularDivergence, entryRsiTriggered, marketVeto, coreLogic };
