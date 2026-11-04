@@ -67,14 +67,46 @@ function pivots(candles, left, right) {
   return { highs, lows };
 }
 
-function marketStructure(candles, config) {
-  const { highs, lows } = pivots(candles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
-  if (highs.length < 2 || lows.length < 2) return { side: "RANGE", reason: "INSUFFICIENT_SWING_STRUCTURE" };
+function swingConfig(config, kind = "major") {
+  const major = kind === "major";
+  return {
+    left: config[major ? "MAJOR_PIVOT_LEFT_BARS" : "MINOR_PIVOT_LEFT_BARS"] ?? config.PIVOT_LEFT_BARS,
+    right: config[major ? "MAJOR_PIVOT_RIGHT_BARS" : "MINOR_PIVOT_RIGHT_BARS"] ?? config.PIVOT_RIGHT_BARS
+  };
+}
+
+function marketStructure(candles, config, kind = "major") {
+  const { left, right } = swingConfig(config, kind);
+  const { highs, lows } = pivots(candles, left, right);
+  if (highs.length < 2 || lows.length < 2) return { side: "RANGE", highs, lows, reason: "INSUFFICIENT_SWING_STRUCTURE", kind };
   const h1 = highs.at(-2).price, h2 = highs.at(-1).price;
   const l1 = lows.at(-2).price, l2 = lows.at(-1).price;
-  if (h2 > h1 && l2 > l1) return { side: "UP", highs, lows };
-  if (h2 < h1 && l2 < l1) return { side: "DOWN", highs, lows };
-  return { side: "RANGE", highs, lows, reason: "NO_CLEAR_HH_HL_OR_LH_LL" };
+  if (h2 > h1 && l2 > l1) return { side: "UP", highs, lows, kind };
+  if (h2 < h1 && l2 < l1) return { side: "DOWN", highs, lows, kind };
+  return { side: "RANGE", highs, lows, reason: "NO_CLEAR_HH_HL_OR_LH_LL", kind };
+}
+
+function assessConfirmation(candles, bias, config) {
+  const major = marketStructure(candles, config, "major");
+  const minor = marketStructure(candles, config, "minor");
+  const last = candles.at(-1);
+  const lastHigh = major.highs?.at(-1), lastLow = major.lows?.at(-1);
+  let state = "WEAKENING", event = "NONE";
+  if (major.side === bias) {
+    state = "CONTINUATION";
+    const priorHigh = major.highs.at(-2), priorLow = major.lows.at(-2);
+    if (bias === "UP" && last.close > priorHigh.price) event = "BOS";
+    if (bias === "DOWN" && last.close < priorLow.price) event = "BOS";
+  } else if (major.side === (bias === "UP" ? "DOWN" : "UP")) {
+    state = "REVERSAL";
+    event = "CHoCH";
+    if (bias === "UP" && last.close < lastLow.price) event = "BOS";
+    if (bias === "DOWN" && last.close > lastHigh.price) event = "BOS";
+  } else if (minor.side !== "RANGE" && minor.side !== bias) {
+    state = "WEAKENING";
+    event = "MINOR_COUNTER_STRUCTURE";
+  }
+  return { state, event, side: major.side, major, minor };
 }
 
 function regularDivergence(candles, config) {
@@ -107,11 +139,10 @@ function entryRsiTriggered(side, value, config) {
 }
 
 function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmationCandles, slCandles, config, now = Date.now() }) {
-  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-(config.CONFIRMATION_HISTORY_CANDLES || 100)), stopCandles = closed(slCandles, now);
-  const minTrend = Math.max(config.TREND_EMA_PERIOD + 1, config.STRUCTURE_LOOKBACK_CANDLES);
+  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), divergence = closed(divergenceCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-config.CONFIRMATION_HISTORY_CANDLES), stopCandles = closed(slCandles, now);
+  const minTrend = Math.max(config.TREND_EMA_PERIOD + 1, config.STRUCTURE_LOOKBACK_CANDLES, config.TREND_HISTORY_CANDLES || 0);
   const minEntry = Math.max(config.RSI_PERIOD + 1, config.ATR_PERIOD + 1);
-  const confirmationPeriod = config.CONFIRMATION_EMA_PERIOD || 50;
-  const minConfirmation = config.CONFIRMATION_HISTORY_CANDLES || 100;
+  const minConfirmation = config.CONFIRMATION_HISTORY_CANDLES;
   const minDivergence = Math.max(config.RSI_PERIOD + config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 2, config.DIVERGENCE_LOOKBACK_CANDLES);
   if (trend.length < minTrend || entry.length < minEntry || (confirmation && confirmation.length < minConfirmation))
     return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
@@ -124,13 +155,11 @@ function coreLogic({ trendCandles, entryCandles, divergenceCandles, confirmation
     price < trendEma && structure.side === "DOWN" ? "DOWN" : "RANGE";
   if (trendSide === "RANGE")
     return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
+  let confirmationState = null;
   if (confirmation) {
-    const confirmationEma = ema(confirmation.map(c => c.close), confirmationPeriod);
-    const confirmationPrice = confirmation.at(-1)?.close;
-    const confirmationSide = confirmationEma > 0 && confirmationPrice > confirmationEma ? "UP" :
-      confirmationEma > 0 && confirmationPrice < confirmationEma ? "DOWN" : "RANGE";
-    if (confirmationSide !== trendSide)
-      return { side: null, reason: "15M_EMA50_CONFIRMATION_MISMATCH", trendSide, confirmationSide, confirmationEma, trendEma, rsi: valueRsi, atr: valueAtr };
+    confirmationState = assessConfirmation(confirmation, trendSide, config);
+    if (confirmationState.state !== "CONTINUATION")
+      return { side: null, reason: confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side, trendEma, rsi: valueRsi, atr: valueAtr };
   }
   const side = trendSide === "UP" ? "LONG" : "SHORT";
   if (!entryRsiTriggered(side, valueRsi, config)) return { side: null, reason: "ENTRY_RSI_NOT_TRIGGERED", trendSide, trendEma, rsi: valueRsi, atr: valueAtr };
@@ -167,4 +196,4 @@ function marketVeto({ side, fundingRate, bidPrice, askPrice, config }) {
   return { allowed: true, reason: "OK", fundingRate: funding, spreadBps };
 }
 
-module.exports = { ema, rsi, rsiSeries, atr, closed, pivots, marketStructure, regularDivergence, entryRsiTriggered, marketVeto, coreLogic };
+module.exports = { ema, rsi, rsiSeries, atr, closed, pivots, marketStructure, assessConfirmation, regularDivergence, entryRsiTriggered, marketVeto, coreLogic };
