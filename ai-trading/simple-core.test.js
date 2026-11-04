@@ -94,7 +94,7 @@ test("entry structure lookback is configurable",()=>{
   assert.equal(custom.ENTRY_STRUCTURE_LOOKBACK_CANDLES,120);
 });
 test("ATR returns valid closed-candle indicators",()=>{
-  assert.ok(atr(candlesFromCloses(Array.from({length:C.ATR_PERIOD+1},(_,i)=>100+i)),C.ATR_PERIOD)>0);
+  assert.ok(atr(candlesFromCloses(Array.from({length:C.SL_ATR_PERIOD+1},(_,i)=>100+i)),C.ATR_PERIOD)>0);
 });
 
 
