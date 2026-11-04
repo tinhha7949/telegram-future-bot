@@ -80,7 +80,7 @@ async function main() {
   await trades.createIndex({symbol:1,status:1},{name:"simple_active_symbol",partialFilterExpression:{status:"OPEN"}});
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
   await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once",unique:true});
-  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"1H_STRUCTURE_"+C.DIVERGENCE_TIMEFRAME+"_DIVERGENCE_BONUS_"+C.ENTRY_TIMEFRAME+"_RSI_ENTRY"}},{upsert:true});
+  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"4H_MAJOR_1H_CONFIRM_"+C.ENTRY_TIMEFRAME+"_HL_LH_BOS_ENTRY"}},{upsert:true});
   async function startCoinCooldown(symbol, closedAt, result="PENDING") {
     const cooldown=cooldownRecordForClose(closedAt,C.COIN_COOLDOWN_MINUTES,result);
     if(!cooldown) return;
