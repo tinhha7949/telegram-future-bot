@@ -177,6 +177,31 @@ test("major structure analyzer exposes only confirmed close-based events",()=>{
   assert.ok(["NORMAL","TRANSITION"].includes(analyzed.state));
   assert.ok(["NONE","BOS","CHoCH"].includes(analyzed.event));
 });
+test("Option A allows pullback entries without a fresh BOS on the signal candle",()=>{
+  const trend=trendCandles("UP");
+  const before=analyzeMajorStructure(trend,C.MAJOR_PIVOT_LEFT_BARS,C.MAJOR_PIVOT_RIGHT_BARS);
+  const last=trend.at(-1);
+  const noBosClose=(before.highs.at(-1).price+before.lows.at(-1).price)/2;
+  last.close=noBosClose;
+  last.open=noBosClose;
+  last.low=Math.min(last.low,noBosClose-0.1);
+  const structure=analyzeMajorStructure(trend,C.MAJOR_PIVOT_LEFT_BARS,C.MAJOR_PIVOT_RIGHT_BARS);
+  assert.equal(structure.side,"UP");
+  assert.equal(structure.state,"NORMAL");
+  assert.equal(structure.event,"NONE");
+
+  const signal=coreLogic({
+    trendCandles:trend,
+    entryCandles:entryCandles("LONG"),
+    slCandles:slCandles(),
+    divergenceCandles:bullishDivergenceCandles(),
+    config:{...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:0,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},
+    now:NOW
+  });
+  assert.equal(signal.side,"LONG");
+  assert.equal(signal.trendSide,"UP");
+});
+
 test("major trend structure requires both HH/HL or LH/LL",()=>{
   assert.equal(marketStructure(trendCandles("UP"),C).side,"UP");
   assert.equal(marketStructure(trendCandles("DOWN"),C).side,"DOWN");
