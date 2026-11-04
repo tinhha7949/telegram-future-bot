@@ -126,7 +126,7 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
 
 test("1h confirmation requires the configured history count",()=>{
   const confirmation=candlesFromCloses(Array.from({length:C.CONFIRMATION_HISTORY_CANDLES-1},(_,i)=>100+i*0.1),900000);
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,divergenceCandles:bullishDivergenceCandles(),config:{...C,CONFIRMATION_HISTORY_CANDLES:300,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:100},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,divergenceCandles:bullishDivergenceCandles(),config:{...C,CONFIRMATION_HISTORY_CANDLES:300},now:NOW});
   assert.equal(signal.side,null);
   assert.equal(signal.reason,"INSUFFICIENT_CLOSED_CANDLES");
 });
@@ -208,7 +208,7 @@ test("funding and spread vetoes follow CONFIG.yaml thresholds",()=>{
 });
 
 test("LONG enters with regular bullish divergence as an RR bonus",()=>{
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),slCandles:slCandles(),divergenceCandles:bullishDivergenceCandles(),config:{...C,ENTRY_RSI_LONG_MIN:0,ENTRY_RSI_LONG_MAX:0,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),slCandles:slCandles(),divergenceCandles:bullishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"LONG");
   assert.equal(signal.trendSide,"UP");
   assert.equal(signal.divergence,"REGULAR_BULLISH");
@@ -217,7 +217,7 @@ test("LONG enters with regular bullish divergence as an RR bonus",()=>{
 });
 
 test("SHORT enters with regular bearish divergence as an RR bonus",()=>{
-  const signal=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),slCandles:slCandles(),divergenceCandles:bearishDivergenceCandles(),config:{...C,ENTRY_RSI_SHORT_MIN:100,ENTRY_RSI_SHORT_MAX:100,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("DOWN"),entryCandles:entryCandles("SHORT"),slCandles:slCandles(),divergenceCandles:bearishDivergenceCandles(),config:{...C,DIVERGENCE_LOOKBACK_CANDLES:60,DIVERGENCE_MAX_PIVOT_DISTANCE:50},now:NOW});
   assert.equal(signal.side,"SHORT");
   assert.equal(signal.trendSide,"DOWN");
   assert.equal(signal.divergence,"REGULAR_BEARISH");
