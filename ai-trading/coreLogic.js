@@ -136,7 +136,7 @@ function postBreakBos(bars, highs, lows, breakEvent, direction, right) {
   return null;
 }
 
-function analyzeMajorStructure(candles, left, right) {
+function analyzeMajorStructure(candles, left, right, previousState = null) {
   const bars = Array.isArray(candles) ? candles : [];
   if (!Number.isInteger(left) || !Number.isInteger(right) || left < 1 || right < 1) {
     return { side: "RANGE", state: "UNCLEAR", event: "NONE", lastEvent: "NONE", eventAt: null, transitionFrom: null, transitionLevel: null, highs: [], lows: [], kind: "major" };
@@ -149,7 +149,24 @@ function analyzeMajorStructure(candles, left, right) {
     return { side: "RANGE", state: "UNCLEAR", event: "NONE", lastEvent: "NONE", eventAt: null, transitionFrom: null, transitionLevel: null, highs, lows, kind: "major" };
   }
 
-  const broken = latestProtectedBreak(bars, highs, lows, right);
+  const detectedBreak = latestProtectedBreak(bars, highs, lows, right);
+  let broken = detectedBreak;
+  if (previousState?.state === "TRANSITION" &&
+      ["UP", "DOWN"].includes(previousState.from) &&
+      Number.isFinite(Number(previousState.eventAt)) &&
+      Number.isFinite(Number(previousState.level))) {
+    const previousIndex = bars.findIndex(b => Number(b.closeTime ?? b.time) >= Number(previousState.eventAt));
+    const persistedBreak = {
+      from: previousState.from,
+      to: previousState.from === "UP" ? "DOWN" : "UP",
+      index: previousIndex,
+      eventAt: Number(previousState.eventAt),
+      level: Number(previousState.level),
+      pivotIndex: -1
+    };
+    if (!broken || persistedBreak.eventAt > broken.eventAt) broken = persistedBreak;
+  }
+
   if (!broken) {
     return {
       side: rawSide, state: rawSide === "RANGE" ? "UNCLEAR" : "NORMAL",
@@ -182,8 +199,8 @@ function analyzeMajorStructure(candles, left, right) {
     transitionLevel: broken.level, highs, lows, kind: "major"
   };
 }
-function assessConfirmation(candles, bias, config) {
-  const major = analyzeMajorStructure(candles, config.CONFIRMATION_PIVOT_LEFT_BARS, config.CONFIRMATION_PIVOT_RIGHT_BARS);
+function assessConfirmation(candles, bias, config, previousState = null) {
+  const major = analyzeMajorStructure(candles, config.CONFIRMATION_PIVOT_LEFT_BARS, config.CONFIRMATION_PIVOT_RIGHT_BARS, previousState);
   let state = "WEAKENING";
   if (major.state === "TRANSITION") state = "TRANSITION";
   else if (major.side === bias) state = "CONTINUATION";
@@ -191,37 +208,44 @@ function assessConfirmation(candles, bias, config) {
   return { state, event: major.event, side: major.side, major, minor: null };
 }
 
-function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles, config, now = Date.now() }) {
+function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles, config, structureState = null, now = Date.now() }) {
   const trend = closed(trendCandles, now), entry = closed(entryCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-config.CONFIRMATION_HISTORY_CANDLES), stopCandles = closed(slCandles, now);
   const minTrend = Math.max(config.STRUCTURE_LOOKBACK_CANDLES, config.TREND_HISTORY_CANDLES || 0);
   const minEntry = Math.max(config.ENTRY_STRUCTURE_LOOKBACK_CANDLES, config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 5);
   const minConfirmation = config.CONFIRMATION_HISTORY_CANDLES;
   if (trend.length < minTrend || entry.length < minEntry || (confirmation && confirmation.length < minConfirmation))
-    return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
+    return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES", structureState };
   const price = trend.at(-1).close, entryPrice = entry.at(-1).close;
   if (!(price > 0 && entryPrice > 0))
-    return { side: null, reason: "INVALID_PRICE_DATA" };
+    return { side: null, reason: "INVALID_PRICE_DATA", structureState };
   const trendWindow = trend.slice(-config.STRUCTURE_LOOKBACK_CANDLES);
-  const trendStructure = analyzeMajorStructure(trendWindow, config.MAJOR_PIVOT_LEFT_BARS, config.MAJOR_PIVOT_RIGHT_BARS);
+  const trendStructure = analyzeMajorStructure(trendWindow, config.MAJOR_PIVOT_LEFT_BARS, config.MAJOR_PIVOT_RIGHT_BARS, structureState?.trend);
   const structure = marketStructure(trendWindow, config);
   const trendSide = trendStructure.side;
+  const trendTransition = trendStructure.state === "TRANSITION"
+    ? { state: "TRANSITION", from: trendStructure.transitionFrom, level: trendStructure.transitionLevel, eventAt: trendStructure.eventAt }
+    : null;
   if (trendStructure.state === "TRANSITION")
-    return { side: null, reason: "4H_STRUCTURE_TRANSITION", trendSide, trendEvent: trendStructure.event, transitionFrom: trendStructure.transitionFrom, transitionLevel: trendStructure.transitionLevel };
+    return { side: null, reason: "4H_STRUCTURE_TRANSITION", trendSide, trendEvent: trendStructure.event, transitionFrom: trendStructure.transitionFrom, transitionLevel: trendStructure.transitionLevel, structureState: { trend: trendTransition, confirmation: structureState?.confirmation || null } };
   if (trendSide === "RANGE")
-    return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEvent: trendStructure.event };
+    return { side: null, reason: "TREND_STRUCTURE_NOT_CONFIRMED", trendSide, trendEvent: trendStructure.event, structureState: null };
   let confirmationState = null;
   if (confirmation) {
-    confirmationState = assessConfirmation(confirmation, trendSide, config);
+    confirmationState = assessConfirmation(confirmation, trendSide, config, structureState?.confirmation);
+    const confirmationTransition = confirmationState.major.state === "TRANSITION"
+      ? { state: "TRANSITION", from: confirmationState.major.transitionFrom, level: confirmationState.major.transitionLevel, eventAt: confirmationState.major.eventAt }
+      : null;
     if (confirmationState.state !== "CONTINUATION")
-      return { side: null, reason: confirmationState.state === "TRANSITION" ? "1H_STRUCTURE_TRANSITION" : confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, trendEvent: trendStructure.event, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side };
+      return { side: null, reason: confirmationState.state === "TRANSITION" ? "1H_STRUCTURE_TRANSITION" : confirmationState.state === "REVERSAL" ? "1H_MAJOR_STRUCTURE_REVERSAL" : "1H_STRUCTURE_WEAKENING", trendSide, trendEvent: trendStructure.event, confirmationState: confirmationState.state, confirmationEvent: confirmationState.event, confirmationSide: confirmationState.side, structureState: confirmationTransition ? { trend: null, confirmation: confirmationTransition } : null };
   }
+  const nextStructureState = null;
   // Require a confirmed pullback, a close-only BOS, a later level retest,
   // and a prompt continuation. A breakout candle cannot double as retest.
   const entryWindow = entry.slice(-config.ENTRY_STRUCTURE_LOOKBACK_CANDLES);
   const entrySwings = pivots(entryWindow, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
   const side = trendSide === "UP" ? "LONG" : "SHORT";
   const entryAtr = atr(entryWindow, config.ENTRY_ATR_PERIOD);
-  if (!(entryAtr > 0)) return { side: null, reason: "ENTRY_ATR_UNAVAILABLE", trendSide };
+  if (!(entryAtr > 0)) return { side: null, reason: "ENTRY_ATR_UNAVAILABLE", trendSide, structureState: nextStructureState };
   let setup = null;
   if (side === "LONG") {
     for (let li = entrySwings.lows.length - 1; li >= 1 && !setup; li--) {
@@ -287,15 +311,15 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles,
       }
     }
   }
-  if (!setup) return { side: null, reason: "ENTRY_BOS_RETEST_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_BOS_RETEST_CONTINUATION" };
+  if (!setup) return { side: null, reason: "ENTRY_BOS_RETEST_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_BOS_RETEST_CONTINUATION", structureState: nextStructureState };
   const extension = side === "LONG" ? entryPrice - setup.level : setup.level - entryPrice;
   if (extension < 0 || extension > entryAtr * config.ENTRY_MAX_EXTENSION_ATR)
-    return { side: null, reason: "ENTRY_TOO_EXTENDED_FROM_RETEST", trendSide, entryLevel: setup.level, extensionAtr: extension / entryAtr };
+    return { side: null, reason: "ENTRY_TOO_EXTENDED_FROM_RETEST", trendSide, entryLevel: setup.level, extensionAtr: extension / entryAtr, structureState: nextStructureState };
   if (stopCandles.length < config.SL_ATR_PERIOD + 1)
-    return { side: null, reason: "SL_CANDLE_HISTORY_REQUIRED", trendSide };
+    return { side: null, reason: "SL_CANDLE_HISTORY_REQUIRED", trendSide, structureState: nextStructureState };
   const stopAtr = atr(stopCandles, config.SL_ATR_PERIOD);
   if (!(stopAtr > 0))
-    return { side: null, reason: "SL_ATR_UNAVAILABLE", trendSide };
+    return { side: null, reason: "SL_ATR_UNAVAILABLE", trendSide, structureState: nextStructureState };
   const stopSwings = pivots(stopCandles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
   const validPivots = (side === "LONG" ? stopSwings.lows : stopSwings.highs)
     .filter(p => stopCandles.length - 1 - p.index <= config.SL_PIVOT_MAX_DISTANCE)
@@ -308,7 +332,8 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles,
     pullbackPivotPrice: setup.pullback,
     entryRetestIndex: setup.retestIndex,
     pivotPrice, slAtr: stopAtr,
-    signalAt: entry.at(-1).closeTime
+    signalAt: entry.at(-1).closeTime,
+    structureState: nextStructureState
   };
 }
 
