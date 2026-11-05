@@ -43,7 +43,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   const numericKeys = required.filter(k => !stringKeys.includes(k) && k !== "DRY_RUN");
   const nonNegativeKeys = new Set([
     "MAX_SYMBOLS", "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT",
-    "SL_PIVOT_BUFFER_MIN_PCT", "SL_FALLBACK_MIN_PCT",
+    "SL_PIVOT_BUFFER_MIN_PCT", "SL_FALLBACK_MIN_PCT", "ENTRY_RETEST_MAX_PENETRATION_ATR",
     "MAX_ABS_FUNDING_RATE", "MAX_SPREAD_BPS", "MAX_OPEN_POSITIONS",
     "MAX_TRADES_PER_DAY", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT", "COIN_COOLDOWN_MINUTES"
   ]);
