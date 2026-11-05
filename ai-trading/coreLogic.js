@@ -66,96 +66,122 @@ function marketStructure(candles, config, kind = "major") {
   };
 }
 
-// Analyze only confirmed major pivots. A pivot at index k is not available
-// until k + right bars have closed. Structure direction comes from the latest
-// two confirmed highs and lows; the protected HL/LH is used to detect CHoCH.
+// Find the most recent close-only break of a confirmed protected HL/LH.
+// The event is replayed from candle history on every scan, so a temporary
+// reclaim cannot erase a CHoCH while the bot process is running.
+function latestProtectedBreak(bars, highs, lows, right) {
+  let latest = null;
+  const scan = (list, direction) => {
+    for (let i = 1; i < list.length; i++) {
+      const previous = list[i - 1], pivot = list[i];
+      const isProtected = direction === "UP"
+        ? pivot.price > previous.price
+        : pivot.price < previous.price;
+      if (!isProtected) continue;
+      const confirmIndex = pivot.index + right;
+      for (let j = Math.max(1, confirmIndex + 1); j < bars.length; j++) {
+        const before = Number(bars[j - 1].close), close = Number(bars[j].close);
+        const crossed = direction === "UP"
+          ? before >= pivot.price && close < pivot.price
+          : before <= pivot.price && close > pivot.price;
+        if (crossed) {
+          if (!latest || j > latest.index) {
+            latest = {
+              from: direction, to: direction === "UP" ? "DOWN" : "UP",
+              index: j, eventAt: Number(bars[j].closeTime ?? bars[j].time),
+              level: pivot.price, pivotIndex: pivot.index
+            };
+          }
+          break;
+        }
+      }
+    }
+  };
+  scan(lows, "UP");
+  scan(highs, "DOWN");
+  return latest;
+}
+
+// After CHoCH, require a fresh opposite-side swing structure and a later
+// close through its post-CHoCH swing level before declaring reversal.
+// The same-side path requires a fresh protected swing and BOS to clear a
+// transition after price reclaims the old protected level.
+function postBreakBos(bars, highs, lows, breakEvent, direction, right) {
+  const after = breakEvent.index;
+  if (direction === "DOWN") {
+    const lowerHigh = highs.find((p, i) => p.index > after && i > 0 && p.price < highs[i - 1].price);
+    if (!lowerHigh || lowerHigh.index + right >= bars.length) return null;
+    for (const low of lows) {
+      const confirmedAt = low.index + right;
+      if (low.index <= after || confirmedAt <= lowerHigh.index || confirmedAt >= bars.length - 1) continue;
+      for (let i = confirmedAt + 1; i < bars.length; i++) {
+        const prev = Number(bars[i - 1].close), close = Number(bars[i].close);
+        if (prev >= low.price && close < low.price)
+          return { index: i, eventAt: Number(bars[i].closeTime ?? bars[i].time), level: low.price };
+      }
+    }
+    return null;
+  }
+  const higherLow = lows.find((p, i) => p.index > after && i > 0 && p.price > lows[i - 1].price);
+  if (!higherLow || higherLow.index + right >= bars.length) return null;
+  for (const high of highs) {
+    const confirmedAt = high.index + right;
+    if (high.index <= after || confirmedAt <= higherLow.index || confirmedAt >= bars.length - 1) continue;
+    for (let i = confirmedAt + 1; i < bars.length; i++) {
+      const prev = Number(bars[i - 1].close), close = Number(bars[i].close);
+      if (prev <= high.price && close > high.price)
+        return { index: i, eventAt: Number(bars[i].closeTime ?? bars[i].time), level: high.price };
+    }
+  }
+  return null;
+}
+
 function analyzeMajorStructure(candles, left, right) {
   const bars = Array.isArray(candles) ? candles : [];
   if (!Number.isInteger(left) || !Number.isInteger(right) || left < 1 || right < 1) {
     return { side: "RANGE", state: "UNCLEAR", event: "NONE", lastEvent: "NONE", eventAt: null, transitionFrom: null, transitionLevel: null, highs: [], lows: [], kind: "major" };
   }
-
   const { highs, lows } = pivots(bars, left, right);
-  const side = classifyStructure(highs, lows);
+  const rawSide = classifyStructure(highs, lows);
   const last = bars.at(-1);
   const lastClose = Number(last?.close);
-  const lastTime = Number(last?.closeTime ?? last?.time);
-
-  if (side === "RANGE" || !Number.isFinite(lastClose)) {
-    return { side, state: "UNCLEAR", event: "NONE", lastEvent: "NONE", eventAt: null, transitionFrom: null, transitionLevel: null, highs, lows, kind: "major" };
+  if (!Number.isFinite(lastClose)) {
+    return { side: "RANGE", state: "UNCLEAR", event: "NONE", lastEvent: "NONE", eventAt: null, transitionFrom: null, transitionLevel: null, highs, lows, kind: "major" };
   }
 
-  // Find the latest higher low protecting an up structure, or lower high
-  // protecting a down structure. Fall back only if the sequence is sparse.
-  let protectedPivot = null;
-  if (side === "UP") {
-    for (let i = lows.length - 1; i >= 1; i--) {
-      if (lows[i].price > lows[i - 1].price) {
-        protectedPivot = lows[i];
-        break;
-      }
-    }
-    protectedPivot ||= lows.at(-1) || null;
-  } else {
-    for (let i = highs.length - 1; i >= 1; i--) {
-      if (highs[i].price < highs[i - 1].price) {
-        protectedPivot = highs[i];
-        break;
-      }
-    }
-    protectedPivot ||= highs.at(-1) || null;
-  }
-
-  const breached = protectedPivot && (side === "UP"
-    ? lastClose < protectedPivot.price
-    : lastClose > protectedPivot.price);
-
-  if (breached) {
-    // A close through the protected swing is a CHoCH warning, not an
-    // automatic reversal. Keep the prior structural side but mark it
-    // TRANSITION while price remains beyond the protected level; entries pause.
-    const confirmIndex = protectedPivot.index + right;
-    let eventAt = Number.isFinite(lastTime) ? lastTime : null;
-    for (let i = Math.max(1, confirmIndex + 1); i < bars.length; i++) {
-      const close = Number(bars[i].close);
-      const prevClose = Number(bars[i - 1].close);
-      const broke = side === "UP"
-        ? prevClose >= protectedPivot.price && close < protectedPivot.price
-        : prevClose <= protectedPivot.price && close > protectedPivot.price;
-      if (broke) {
-        eventAt = Number(bars[i].closeTime ?? bars[i].time);
-        break;
-      }
-    }
+  const broken = latestProtectedBreak(bars, highs, lows, right);
+  if (!broken) {
     return {
-      side, state: "TRANSITION", event: "CHoCH", lastEvent: "CHoCH",
-      eventAt, transitionFrom: side, transitionLevel: protectedPivot.price,
+      side: rawSide, state: rawSide === "RANGE" ? "UNCLEAR" : "NORMAL",
+      event: "NONE", lastEvent: "NONE", eventAt: null,
+      transitionFrom: null, transitionLevel: null, highs, lows, kind: "major"
+    };
+  }
+
+  const reversalBos = postBreakBos(bars, highs, lows, broken, broken.to, right);
+  if (reversalBos) {
+    return {
+      side: broken.to, state: "NORMAL", event: "BOS", lastEvent: "BOS",
+      eventAt: reversalBos.eventAt, transitionFrom: null, transitionLevel: null,
       highs, lows, kind: "major"
     };
   }
 
-  // BOS is a close crossing the last confirmed swing in the trend direction.
-  // Ignore any break that happened before the pivot's right-side confirmation.
-  const continuationPivot = side === "UP" ? highs.at(-1) : lows.at(-1);
-  let event = "NONE", eventAt = null;
-  if (continuationPivot) {
-    const confirmIndex = continuationPivot.index + right;
-    for (let i = Math.max(1, confirmIndex + 1); i < bars.length; i++) {
-      const close = Number(bars[i].close);
-      const prevClose = Number(bars[i - 1].close);
-      const broke = side === "UP"
-        ? prevClose <= continuationPivot.price && close > continuationPivot.price
-        : prevClose >= continuationPivot.price && close < continuationPivot.price;
-      if (broke) {
-        event = "BOS";
-        eventAt = Number(bars[i].closeTime ?? bars[i].time);
-      }
-    }
+  const recoveryBos = postBreakBos(bars, highs, lows, broken, broken.from, right);
+  if (recoveryBos && rawSide === broken.from) {
+    return {
+      side: broken.from, state: "NORMAL", event: "BOS", lastEvent: "BOS",
+      eventAt: recoveryBos.eventAt, transitionFrom: null, transitionLevel: null,
+      highs, lows, kind: "major"
+    };
   }
 
-  return { side, state: "NORMAL", event, lastEvent: event, eventAt, transitionFrom: null, transitionLevel: null, highs, lows, kind: "major" };
+  return {
+    side: broken.from, state: "TRANSITION", event: "CHoCH", lastEvent: "CHoCH",
+    eventAt: broken.eventAt, transitionFrom: broken.from,
+    transitionLevel: broken.level, highs, lows, kind: "major"
+  };
 }
-
 function assessConfirmation(candles, bias, config) {
   const major = analyzeMajorStructure(candles, config.CONFIRMATION_PIVOT_LEFT_BARS, config.CONFIRMATION_PIVOT_RIGHT_BARS);
   let state = "WEAKENING";
