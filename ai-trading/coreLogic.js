@@ -159,7 +159,7 @@ function analyzeMajorStructure(candles, left, right) {
   }
 
   const reversalBos = postBreakBos(bars, highs, lows, broken, broken.to, right);
-  if (reversalBos) {
+  if (reversalBos && rawSide === broken.to) {
     return {
       side: broken.to, state: "NORMAL", event: "BOS", lastEvent: "BOS",
       eventAt: reversalBos.eventAt, transitionFrom: null, transitionLevel: null,
