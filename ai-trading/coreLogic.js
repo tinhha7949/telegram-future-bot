@@ -208,8 +208,8 @@ function assessConfirmation(candles, bias, config, previousState = null) {
   return { state, event: major.event, side: major.side, major, minor: null };
 }
 
-function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles, config, structureState = null, now = Date.now() }) {
-  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-config.CONFIRMATION_HISTORY_CANDLES), stopCandles = closed(slCandles, now);
+function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, structureState = null, now = Date.now() }) {
+  const trend = closed(trendCandles, now), entry = closed(entryCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-config.CONFIRMATION_HISTORY_CANDLES);
   const minTrend = Math.max(config.STRUCTURE_LOOKBACK_CANDLES, config.TREND_HISTORY_CANDLES || 0);
   const minEntry = Math.max(config.ENTRY_STRUCTURE_LOOKBACK_CANDLES, config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + 5);
   const minConfirmation = config.CONFIRMATION_HISTORY_CANDLES;
@@ -275,7 +275,7 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles,
             c.close >= swingHigh.price &&
             entryWindow.length - 1 - i <= config.ENTRY_CONTINUATION_MAX_BARS &&
             entryWindow.at(-1).close > c.high) {
-          setup = { level: swingHigh.price, pullback: pullbackLow.price, retestIndex: i, bosIndex }; break;
+          setup = { level: swingHigh.price, pullback: pullbackLow.price, pullbackIndex: pullbackLow.index, retestIndex: i, bosIndex }; break;
         }
       }
     }
@@ -306,25 +306,26 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles,
             c.close <= swingLow.price &&
             entryWindow.length - 1 - i <= config.ENTRY_CONTINUATION_MAX_BARS &&
             entryWindow.at(-1).close < c.low) {
-          setup = { level: swingLow.price, pullback: pullbackHigh.price, retestIndex: i, bosIndex }; break;
+          setup = { level: swingLow.price, pullback: pullbackHigh.price, pullbackIndex: pullbackHigh.index, retestIndex: i, bosIndex }; break;
         }
       }
     }
   }
   if (!setup) return { side: null, reason: "ENTRY_BOS_RETEST_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_BOS_RETEST_CONTINUATION", structureState: nextStructureState };
+  const pullbackAge = entryWindow.length - 1 - setup.pullbackIndex;
+  if (pullbackAge < 0 || pullbackAge > config.SL_PIVOT_MAX_DISTANCE)
+    return { side: null, reason: "ENTRY_PULLBACK_PIVOT_TOO_OLD", trendSide, pullbackPivotPrice: setup.pullback, pullbackAge, structureState: nextStructureState };
   const extension = side === "LONG" ? entryPrice - setup.level : setup.level - entryPrice;
   if (extension < 0 || extension > entryAtr * config.ENTRY_MAX_EXTENSION_ATR)
     return { side: null, reason: "ENTRY_TOO_EXTENDED_FROM_RETEST", trendSide, entryLevel: setup.level, extensionAtr: extension / entryAtr, structureState: nextStructureState };
-  if (stopCandles.length < config.SL_ATR_PERIOD + 1)
+  if (entryWindow.length < config.SL_ATR_PERIOD + 1)
     return { side: null, reason: "SL_CANDLE_HISTORY_REQUIRED", trendSide, structureState: nextStructureState };
-  const stopAtr = atr(stopCandles, config.SL_ATR_PERIOD);
+  // SL uses the exact confirmed pullback pivot that produced this entry setup.
+  // ATR is calculated from the same candles and timeframe as ENTRY_TIMEFRAME.
+  const stopAtr = atr(entryWindow, config.SL_ATR_PERIOD);
   if (!(stopAtr > 0))
     return { side: null, reason: "SL_ATR_UNAVAILABLE", trendSide, structureState: nextStructureState };
-  const stopSwings = pivots(stopCandles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
-  const validPivots = (side === "LONG" ? stopSwings.lows : stopSwings.highs)
-    .filter(p => stopCandles.length - 1 - p.index <= config.SL_PIVOT_MAX_DISTANCE)
-    .filter(p => side === "LONG" ? p.price < entryPrice : p.price > entryPrice);
-  const pivotPrice = validPivots.at(-1)?.price ?? null;
+  const pivotPrice = setup.pullback;
   return {
     side, trendSide,
     entryStructure: side === "LONG" ? "HL_BOS_RETEST" : "LH_BOS_RETEST",

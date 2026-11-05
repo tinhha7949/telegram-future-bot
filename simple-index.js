@@ -218,17 +218,15 @@ async function main() {
         return;
       }
     }
-    const [trendRaw,entryRaw,confirmationRaw,slRaw]=await Promise.all([
+    const [trendRaw,entryRaw,confirmationRaw]=await Promise.all([
       binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:C.TREND_HISTORY_CANDLES+1}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:C.ENTRY_STRUCTURE_LOOKBACK_CANDLES+1}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.CONFIRMATION_TIMEFRAME,limit:C.CONFIRMATION_HISTORY_CANDLES+1}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.SL_TIMEFRAME,limit:Math.max(C.CONFIRMATION_HISTORY_CANDLES+1,C.SL_ATR_PERIOD+1,C.SL_PIVOT_MAX_DISTANCE+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS+1)})
+      binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(C.ENTRY_STRUCTURE_LOOKBACK_CANDLES+1,C.SL_ATR_PERIOD+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS+1)}),
+      binance.get("/fapi/v1/klines",{symbol,interval:C.CONFIRMATION_TIMEFRAME,limit:C.CONFIRMATION_HISTORY_CANDLES+1})
     ]);
     const now=Date.now()+binance.timeOffsetMs;
     const confirmationCandles=toCandles(confirmationRaw);
-    const slCandles=toCandles(slRaw);
     const previousStructureState=structureStates.get(symbol)||null;
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,config:C,structureState:previousStructureState,now});
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,config:C,structureState:previousStructureState,now});
     const nextStructureState=signal.structureState||null;
     if(JSON.stringify(nextStructureState)!==JSON.stringify(previousStructureState)) {
       const statePath="structureTransitions."+symbol;
@@ -286,7 +284,7 @@ async function main() {
     const qty=sizing.qty;
     try { splitQuantity({quantity:qty,stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message,"qty="+qty); return; }
     if(sizing.margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol,"required="+sizing.margin,"available="+available); return; }
-    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,entryStructure:signal.entryStructure,entrySwingLevel:signal.entrySwingLevel,pullbackPivotPrice:signal.pullbackPivotPrice,slAtr:signal.slAtr,pivotPrice:signal.pivotPrice,slTimeframe:C.SL_TIMEFRAME,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
+    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,entryStructure:signal.entryStructure,entrySwingLevel:signal.entrySwingLevel,pullbackPivotPrice:signal.pullbackPivotPrice,slAtr:signal.slAtr,pivotPrice:signal.pivotPrice,slTimeframe:C.ENTRY_TIMEFRAME,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return; }
     let inserted;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }

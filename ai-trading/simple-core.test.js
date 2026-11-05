@@ -41,10 +41,6 @@ function entryCandles(direction) {
   }
   return candlesFromCloses(closes,timeframeMs(C.ENTRY_TIMEFRAME));
 }
-function slCandles() {
-  const closes=Array.from({length:100},(_,i)=>100+Math.sin(i*0.35)*0.5);
-  return candlesFromCloses(closes,timeframeMs(C.SL_TIMEFRAME));
-}
 function setConfigValue(source,key,value) {
   const pattern=new RegExp("^"+key+":.*$","m");
   assert.match(source,pattern,"CONFIG.yaml must define "+key);
@@ -56,7 +52,6 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
   const supported=new Set(["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"]);
   assert.ok(supported.has(C.TREND_TIMEFRAME));
   assert.ok(supported.has(C.ENTRY_TIMEFRAME));
-  assert.ok(supported.has(C.SL_TIMEFRAME));
   assert.ok(C.MAJOR_PIVOT_LEFT_BARS>0 && C.MAJOR_PIVOT_RIGHT_BARS>0);
   assert.ok(C.ENTRY_STRUCTURE_LOOKBACK_CANDLES>=20);
   assert.ok(C.MAX_ABS_FUNDING_RATE>=0);
@@ -67,7 +62,7 @@ test("loaded strategy settings are valid and drive the strategy",()=>{
 test("CONFIG.yaml overrides are accepted without changing tests",()=>{
   const source=fs.readFileSync(path.join(__dirname,"..","CONFIG.yaml"),"utf8");
   const overrides={
-    TREND_TIMEFRAME:"4h",TREND_HISTORY_CANDLES:280,CONFIRMATION_TIMEFRAME:"1h",CONFIRMATION_HISTORY_CANDLES:320,MAJOR_PIVOT_LEFT_BARS:5,MAJOR_PIVOT_RIGHT_BARS:5,CONFIRMATION_PIVOT_LEFT_BARS:1,CONFIRMATION_PIVOT_RIGHT_BARS:1,ENTRY_TIMEFRAME:"15m",SL_TIMEFRAME:"30m",MAX_SYMBOLS:150,
+    TREND_TIMEFRAME:"4h",TREND_HISTORY_CANDLES:280,CONFIRMATION_TIMEFRAME:"1h",CONFIRMATION_HISTORY_CANDLES:320,MAJOR_PIVOT_LEFT_BARS:5,MAJOR_PIVOT_RIGHT_BARS:5,CONFIRMATION_PIVOT_LEFT_BARS:1,CONFIRMATION_PIVOT_RIGHT_BARS:1,ENTRY_TIMEFRAME:"30m",MAX_SYMBOLS:150,
     ENTRY_STRUCTURE_LOOKBACK_CANDLES:120,
     TP1_REWARD_RISK:1.1,TP2_REWARD_RISK:1.6,BE_TRIGGER_TP1_PROGRESS_PCT:65,MAX_ABS_FUNDING_RATE:0.001,MAX_SPREAD_BPS:25
   };
@@ -83,8 +78,8 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     assert.equal(custom.CONFIRMATION_HISTORY_CANDLES,320);
     assert.equal(custom.MAJOR_PIVOT_LEFT_BARS,5);
     assert.equal(custom.CONFIRMATION_PIVOT_LEFT_BARS,1);
-    assert.equal(custom.ENTRY_TIMEFRAME,"15m");
-    assert.equal(custom.SL_TIMEFRAME,"30m");
+    assert.equal(custom.ENTRY_TIMEFRAME,"30m");
+    assert.equal(Object.hasOwn(custom,"SL_TIMEFRAME"),false);
     assert.equal(custom.MAX_SYMBOLS,150);
     assert.equal(custom.ENTRY_STRUCTURE_LOOKBACK_CANDLES,120);
     assert.equal(custom.TP1_REWARD_RISK,1.1);
@@ -108,18 +103,26 @@ test("ATR returns valid closed-candle indicators",()=>{
 test("LONG entry requires a confirmed higher low followed by a close above the prior swing high",()=>{
   const cfg={...C};
   const entry=entryCandles("LONG");
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,slCandles:slCandles(),config:cfg,now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,config:cfg,now:NOW});
   assert.equal(signal.side,"LONG");
   assert.equal(signal.entryStructure,"HL_BOS_RETEST");
   assert.equal(signal.entrySwingLevel,105.2);
   const noBreak=entryCandles("LONG"); noBreak.at(-1).close=104; noBreak.at(-1).open=104;
-  const rejected=coreLogic({trendCandles:trendCandles("UP"),entryCandles:noBreak,slCandles:slCandles(),config:cfg,now:NOW});
+  const rejected=coreLogic({trendCandles:trendCandles("UP"),entryCandles:noBreak,config:cfg,now:NOW});
   assert.equal(rejected.side,null);
   assert.equal(rejected.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
   const alreadyAbove=entryCandles("LONG"); alreadyAbove[alreadyAbove.length-1].close=105.4; alreadyAbove[alreadyAbove.length-1].open=105.4;
-  const noFreshBreak=coreLogic({trendCandles:trendCandles("UP"),entryCandles:alreadyAbove,slCandles:slCandles(),config:cfg,now:NOW});
+  const noFreshBreak=coreLogic({trendCandles:trendCandles("UP"),entryCandles:alreadyAbove,config:cfg,now:NOW});
   assert.equal(noFreshBreak.side,null);
   assert.equal(noFreshBreak.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
+});
+
+test("SL uses the exact pullback pivot from the entry setup and its ATR timeframe",()=>{
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),config:{...C},now:NOW});
+  assert.equal(signal.side,"LONG");
+  assert.equal(signal.pivotPrice,signal.pullbackPivotPrice);
+  assert.ok(signal.pivotPrice<signal.entrySwingLevel);
+  assert.ok(signal.slAtr>0);
 });
 
 test("15m ignores a BOS that occurs before the pullback pivot is confirmed",()=>{
@@ -130,7 +133,7 @@ test("15m ignores a BOS that occurs before the pullback pivot is confirmed",()=>
   }
   entry[95].low=105.1;
   entry[95].high=105.5;
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,slCandles:slCandles(),config:{...C},now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,config:{...C},now:NOW});
   assert.equal(signal.side,null);
   assert.equal(signal.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
 });
@@ -139,7 +142,7 @@ test("15m rejects a retest that penetrates too far below the BOS level",()=>{
   const signal=coreLogic({
     trendCandles:trendCandles("UP"),
     entryCandles:entryCandles("LONG"),
-    slCandles:slCandles(),
+    
     config:{...C,ENTRY_RETEST_MAX_PENETRATION_ATR:0},
     now:NOW
   });
@@ -245,11 +248,11 @@ test("a wick through the protected swing without a close does not create CHoCH",
 test("entry waits for a confirmed pullback and a close-only BOS",()=>{
   const cfg={...C};
   const entry=entryCandles("LONG");
-  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,slCandles:slCandles(),config:cfg,now:NOW});
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,config:cfg,now:NOW});
   assert.equal(signal.side,"LONG");
   assert.equal(signal.entryStructure,"HL_BOS_RETEST");
   const noHigherLow=entryCandles("LONG"); noHigherLow[Math.min(Math.floor(noHigherLow.length*0.75),noHigherLow.length-C.PIVOT_RIGHT_BARS-2)].close=97; noHigherLow[Math.min(Math.floor(noHigherLow.length*0.75),noHigherLow.length-C.PIVOT_RIGHT_BARS-2)].low=96.8;
-  const rejected=coreLogic({trendCandles:trendCandles("UP"),entryCandles:noHigherLow,slCandles:slCandles(),config:cfg,now:NOW});
+  const rejected=coreLogic({trendCandles:trendCandles("UP"),entryCandles:noHigherLow,config:cfg,now:NOW});
   assert.equal(rejected.side,null);
   assert.equal(rejected.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
 });
@@ -290,7 +293,7 @@ test("pivot SL uses configured ATR buffer and independent pivot R clamp",()=>{
   assert.ok(longProtection.sl<98.5 && longProtection.tp1>100 && longProtection.tp2>longProtection.tp1);
   assert.equal(longProtection.buffer,Math.max(100*C.SL_PIVOT_BUFFER_MIN_PCT/100,C.SL_PIVOT_BUFFER_ATR));
   assert.equal(longProtection.riskUnit,Math.abs(100-98.5));
-  assert.equal(longProtection.stopMethod,C.SL_TIMEFRAME.toUpperCase()+"_PIVOT");
+  assert.equal(longProtection.stopMethod,C.ENTRY_TIMEFRAME.toUpperCase()+"_ENTRY_PULLBACK_PIVOT");
   assert.equal(longProtection.tp1RewardRisk,C.TP1_REWARD_RISK);
   assert.equal(longProtection.tp2RewardRisk,C.TP2_REWARD_RISK);
   assert.ok(shortProtection.sl>101.5 && shortProtection.tp1<100 && shortProtection.tp2<shortProtection.tp1);
@@ -303,7 +306,7 @@ test("pivot SL uses configured ATR buffer and independent pivot R clamp",()=>{
 
 test("missing pivot uses exact ATR fallback without applying pivot R clamp",()=>{
   const fallback=buildProtection({side:"LONG",entryPrice:100,atrValue:1,pivotPrice:null,config:C,priceTick:0.01});
-  assert.equal(fallback.stopMethod,C.SL_TIMEFRAME.toUpperCase()+"_ATR_FALLBACK");
+  assert.equal(fallback.stopMethod,C.ENTRY_TIMEFRAME.toUpperCase()+"_ATR_FALLBACK");
   const fallbackDistance=Math.min(100*C.SL_FALLBACK_MAX_PCT/100,Math.max(100*C.SL_FALLBACK_MIN_PCT/100,C.SL_FALLBACK_ATR_MULTIPLIER));
   assert.equal(fallback.sl,100-fallbackDistance);
   assert.equal(fallback.stopDistance,fallbackDistance);

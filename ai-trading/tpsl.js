@@ -22,11 +22,11 @@ function buildProtection({side,entryPrice,atrValue,config,priceTick,pivotPrice})
   const minDistance=riskUnit*config.SL_MIN_R_MULTIPLE;
   const maxDistance=riskUnit*config.SL_MAX_R_MULTIPLE;
   if(finalDistance<minDistance-1e-10||finalDistance>maxDistance+1e-10)throw Error("SL_PIVOT_R_MULTIPLE_OUT_OF_RANGE");
-  stopMethod=String(config.SL_TIMEFRAME||"unknown").toUpperCase()+"_PIVOT";
+  stopMethod=String(config.ENTRY_TIMEFRAME||"unknown").toUpperCase()+"_ENTRY_PULLBACK_PIVOT";
  }else{
   const distance=Math.min(entryPrice*config.SL_FALLBACK_MAX_PCT/100,Math.max(entryPrice*config.SL_FALLBACK_MIN_PCT/100,atrValue*config.SL_FALLBACK_ATR_MULTIPLIER));
   sl=side==="LONG"?down(entryPrice-distance):up(entryPrice+distance);
-  stopMethod=String(config.SL_TIMEFRAME||"unknown").toUpperCase()+"_ATR_FALLBACK";
+  stopMethod=String(config.ENTRY_TIMEFRAME||"unknown").toUpperCase()+"_ATR_FALLBACK";
  }
  const distance=Math.abs(entryPrice-sl);
  let tp1=side==="LONG"?up(entryPrice+distance*config.TP1_REWARD_RISK):down(entryPrice-distance*config.TP1_REWARD_RISK);
