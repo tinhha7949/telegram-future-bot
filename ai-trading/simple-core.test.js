@@ -122,6 +122,31 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
   assert.equal(noFreshBreak.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
 });
 
+test("15m ignores a BOS that occurs before the pullback pivot is confirmed",()=>{
+  const entry=entryCandles("LONG");
+  for(let i=76;i<entry.length;i++) {
+    const close=i===95?105.3:i===99?107:106;
+    entry[i]={open:close,high:close+0.2,low:close-0.2,close,closeTime:entry[i].closeTime};
+  }
+  entry[95].low=105.1;
+  entry[95].high=105.5;
+  const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entry,slCandles:slCandles(),config:{...C},now:NOW});
+  assert.equal(signal.side,null);
+  assert.equal(signal.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
+});
+
+test("15m rejects a retest that penetrates too far below the BOS level",()=>{
+  const signal=coreLogic({
+    trendCandles:trendCandles("UP"),
+    entryCandles:entryCandles("LONG"),
+    slCandles:slCandles(),
+    config:{...C,ENTRY_RETEST_MAX_PENETRATION_ATR:0},
+    now:NOW
+  });
+  assert.equal(signal.side,null);
+  assert.equal(signal.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
+});
+
 test("1h confirmation requires the configured history count",()=>{
   const confirmation=candlesFromCloses(Array.from({length:C.CONFIRMATION_HISTORY_CANDLES-1},(_,i)=>100+i*0.1),timeframeMs(C.CONFIRMATION_TIMEFRAME));
   const signal=coreLogic({trendCandles:trendCandles("UP"),entryCandles:entryCandles("LONG"),confirmationCandles:confirmation,config:C,now:NOW});
