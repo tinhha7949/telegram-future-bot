@@ -78,7 +78,8 @@ function analyzeMajorStructure(candles, left, right) {
 function assessConfirmation(candles, bias, config) {
   const major = analyzeMajorStructure(candles, config.CONFIRMATION_PIVOT_LEFT_BARS, config.CONFIRMATION_PIVOT_RIGHT_BARS);
   let state = "WEAKENING";
-  if (major.side === bias) state = "CONTINUATION";
+  if (major.state === "TRANSITION") state = "TRANSITION";
+  else if (major.side === bias) state = "CONTINUATION";
   else if (major.side !== "RANGE") state = "REVERSAL";
   return { state, event: major.event, side: major.side, major, minor: null };
 }
