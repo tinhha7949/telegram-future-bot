@@ -113,7 +113,7 @@ function postBreakBos(bars, highs, lows, breakEvent, direction, right) {
     if (!lowerHigh || lowerHigh.index + right >= bars.length) return null;
     for (const low of lows) {
       const confirmedAt = low.index + right;
-      if (low.index <= after || confirmedAt <= lowerHigh.index + right || confirmedAt >= bars.length - 1) continue;
+      if (low.index <= after || low.index <= lowerHigh.index + right || confirmedAt >= bars.length - 1) continue;
       for (let i = confirmedAt + 1; i < bars.length; i++) {
         const prev = Number(bars[i - 1].close), close = Number(bars[i].close);
         if (prev >= low.price && close < low.price)
@@ -126,7 +126,7 @@ function postBreakBos(bars, highs, lows, breakEvent, direction, right) {
   if (!higherLow || higherLow.index + right >= bars.length) return null;
   for (const high of highs) {
     const confirmedAt = high.index + right;
-    if (high.index <= after || confirmedAt <= higherLow.index + right || confirmedAt >= bars.length - 1) continue;
+    if (high.index <= after || high.index <= higherLow.index + right || confirmedAt >= bars.length - 1) continue;
     for (let i = confirmedAt + 1; i < bars.length; i++) {
       const prev = Number(bars[i - 1].close), close = Number(bars[i].close);
       if (prev <= high.price && close > high.price)
