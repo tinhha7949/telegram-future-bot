@@ -172,6 +172,29 @@ test("major bias transitions only when a closed candle breaks the protected HL",
   assert.equal(analyzed.transitionLevel,107); // latest confirmed higher low's price
 });
 
+test("CHoCH stays latched after price reclaims the protected level until a fresh BOS",()=>{
+  const centers=[100,110,104,115,108,120,106.5,108,109,110];
+  const source=centers.map((close,i)=>({
+    open:close,high:close+(i===1?1:i===3?1:i===5?1:0.2),
+    low:close-(i===2?1:i===4?1:0.2),close,closeTime:NOW+i*60000
+  }));
+  const analyzed=analyzeMajorStructure(source,1,1);
+  assert.equal(analyzed.state,"TRANSITION");
+  assert.equal(analyzed.event,"CHoCH");
+  assert.equal(analyzed.transitionFrom,"UP");
+});
+
+test("a post-CHoCH lower-high and later close below a confirmed swing low confirms DOWN",()=>{
+  const centers=[100,110,104,115,108,120,106.5,109,111,108,105,106,103];
+  const highs=[101,111,105,116,109,121,106.7,109.2,112,108.5,105.2,106.5,103.5];
+  const lows =[99,109,103,114,107,119,106.3,108.8,110.8,107.5,104,105.5,102.5];
+  const source=centers.map((close,i)=>({open:close,high:highs[i],low:lows[i],close,closeTime:NOW+i*60000}));
+  const analyzed=analyzeMajorStructure(source,1,1);
+  assert.equal(analyzed.side,"DOWN");
+  assert.equal(analyzed.state,"NORMAL");
+  assert.equal(analyzed.event,"BOS");
+});
+
 test("a wick through the protected swing without a close does not create CHoCH",()=>{
   const centers=[100,110,104,115,108,120,109];
   const source=centers.map((close,i)=>({
