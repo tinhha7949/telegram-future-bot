@@ -112,8 +112,8 @@ function analyzeMajorStructure(candles, left, right) {
 
   if (breached) {
     // A close through the protected swing is a CHoCH warning, not an
-    // automatic reversal. Keep the old side but mark it TRANSITION so entries
-    // are blocked until a new confirmed structure establishes the other bias.
+    // automatic reversal. Keep the prior structural side but mark it
+    // TRANSITION while price remains beyond the protected level; entries pause.
     const confirmIndex = protectedPivot.index + right;
     let eventAt = Number.isFinite(lastTime) ? lastTime : null;
     for (let i = Math.max(1, confirmIndex + 1); i < bars.length; i++) {
