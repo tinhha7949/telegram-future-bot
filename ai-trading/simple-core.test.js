@@ -159,7 +159,7 @@ test("major structure analyzer reports confirmed structure and transition states
 });
 
 test("major bias transitions only when a closed candle breaks the protected HL",()=>{
-  const centers=[100,110,104,115,108,120,107];
+  const centers=[100,110,104,115,108,120,106.5];
   const source=centers.map((close,i)=>({
     open:close,high:close+(i===1?1:i===3?1:i===5?1:0.2),
     low:close-(i===2?1:i===4?1:0.2),close,closeTime:NOW+i*60000
