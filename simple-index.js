@@ -80,6 +80,8 @@ async function main() {
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
   await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once",unique:true});
   await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"4H_MAJOR_1H_CONFIRM_"+C.ENTRY_TIMEFRAME+"_HL_LH_BOS_ENTRY"}},{upsert:true});
+  const savedStructureStates=await state.findOne({_id:"runtime"},{projection:{structureTransitions:1}});
+  const structureStates=new Map(Object.entries(savedStructureStates?.structureTransitions||{}));
   async function startCoinCooldown(symbol, closedAt, result="PENDING") {
     const cooldown=cooldownRecordForClose(closedAt,C.COIN_COOLDOWN_MINUTES,result);
     if(!cooldown) return;
@@ -225,7 +227,19 @@ async function main() {
     const now=Date.now()+binance.timeOffsetMs;
     const confirmationCandles=toCandles(confirmationRaw);
     const slCandles=toCandles(slRaw);
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,config:C,now});
+    const previousStructureState=structureStates.get(symbol)||null;
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,slCandles,config:C,structureState:previousStructureState,now});
+    const nextStructureState=signal.structureState||null;
+    if(JSON.stringify(nextStructureState)!==JSON.stringify(previousStructureState)) {
+      const statePath="structureTransitions."+symbol;
+      if(nextStructureState) {
+        structureStates.set(symbol,nextStructureState);
+        await state.updateOne({_id:"runtime"},{$set:{[statePath]:nextStructureState}},{upsert:true});
+      } else if(previousStructureState) {
+        structureStates.delete(symbol);
+        await state.updateOne({_id:"runtime"},{$unset:{[statePath]:""}});
+      }
+    }
     if(!signal.side) return;
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
