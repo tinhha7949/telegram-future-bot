@@ -209,6 +209,17 @@ test("CHoCH stays latched after price reclaims the protected level until a fresh
   assert.equal(analyzed.transitionFrom,"UP");
 });
 
+test("persisted CHoCH remains active after its original candle leaves the fetched window",()=>{
+  const source=candlesFromCloses([108,109,110,111,112],60000,NOW-5*60000);
+  const previous={state:"TRANSITION",from:"UP",level:107,eventAt:NOW-1000000};
+  const analyzed=analyzeMajorStructure(source,1,1,previous);
+  assert.equal(analyzed.side,"UP");
+  assert.equal(analyzed.state,"TRANSITION");
+  assert.equal(analyzed.event,"CHoCH");
+  assert.equal(analyzed.transitionLevel,107);
+  assert.equal(analyzed.eventAt,previous.eventAt);
+});
+
 test("a post-CHoCH lower-high and later close below a confirmed swing low confirms DOWN",()=>{
   const centers=[100,110,104,115,108,120,106.5,109,111,108,105,106,103];
   const highs=[101,111,105,116,109,121,106.7,109.2,112,108.5,105.2,106.5,103.5];
