@@ -149,12 +149,39 @@ test("4h and 1h use independent pivot widths",()=>{
   assert.equal(oneHour.major.kind,"major");
 });
 
-test("major structure analyzer exposes only confirmed close-based events",()=>{
+test("major structure analyzer reports confirmed structure and transition states",()=>{
   const source=trendCandles("UP",C.CONFIRMATION_HISTORY_CANDLES,C.CONFIRMATION_TIMEFRAME);
   const analyzed=analyzeMajorStructure(source,C.CONFIRMATION_PIVOT_LEFT_BARS,C.CONFIRMATION_PIVOT_RIGHT_BARS);
   assert.ok(["UP","DOWN","RANGE"].includes(analyzed.side));
-  assert.ok(["NORMAL","UNCLEAR"].includes(analyzed.state));
+  assert.ok(["NORMAL","UNCLEAR","TRANSITION"].includes(analyzed.state));
   assert.ok(["NONE","BOS","CHoCH"].includes(analyzed.event));
+  assert.equal(analyzed.kind,"major");
+});
+
+test("major bias transitions only when a closed candle breaks the protected HL",()=>{
+  const centers=[100,110,104,115,108,120,107];
+  const source=centers.map((close,i)=>({
+    open:close,high:close+(i===1?1:i===3?1:i===5?1:0.2),
+    low:close-(i===2?1:i===4?1:0.2),close,closeTime:NOW+i*60000
+  }));
+  const analyzed=analyzeMajorStructure(source,1,1);
+  assert.equal(analyzed.side,"UP");
+  assert.equal(analyzed.state,"TRANSITION");
+  assert.equal(analyzed.event,"CHoCH");
+  assert.equal(analyzed.transitionFrom,"UP");
+  assert.equal(analyzed.transitionLevel,107); // latest confirmed higher low's price
+});
+
+test("a wick through the protected swing without a close does not create CHoCH",()=>{
+  const centers=[100,110,104,115,108,120,109];
+  const source=centers.map((close,i)=>({
+    open:close,high:close+(i===1?1:i===3?1:i===5?1:0.2),
+    low:close-(i===2?1:i===4?2:0.2),close,closeTime:NOW+i*60000
+  }));
+  const analyzed=analyzeMajorStructure(source,1,1);
+  assert.equal(analyzed.side,"UP");
+  assert.equal(analyzed.state,"NORMAL");
+  assert.notEqual(analyzed.event,"CHoCH");
 });
 test("entry waits for a confirmed pullback and a close-only BOS",()=>{
   const cfg={...C};
