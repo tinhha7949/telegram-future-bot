@@ -113,7 +113,7 @@ function postBreakBos(bars, highs, lows, breakEvent, direction, right) {
     if (!lowerHigh || lowerHigh.index + right >= bars.length) return null;
     for (const low of lows) {
       const confirmedAt = low.index + right;
-      if (low.index <= after || confirmedAt <= lowerHigh.index || confirmedAt >= bars.length - 1) continue;
+      if (low.index <= after || confirmedAt <= lowerHigh.index + right || confirmedAt >= bars.length - 1) continue;
       for (let i = confirmedAt + 1; i < bars.length; i++) {
         const prev = Number(bars[i - 1].close), close = Number(bars[i].close);
         if (prev >= low.price && close < low.price)
@@ -126,7 +126,7 @@ function postBreakBos(bars, highs, lows, breakEvent, direction, right) {
   if (!higherLow || higherLow.index + right >= bars.length) return null;
   for (const high of highs) {
     const confirmedAt = high.index + right;
-    if (high.index <= after || confirmedAt <= higherLow.index || confirmedAt >= bars.length - 1) continue;
+    if (high.index <= after || confirmedAt <= higherLow.index + right || confirmedAt >= bars.length - 1) continue;
     for (let i = confirmedAt + 1; i < bars.length; i++) {
       const prev = Number(bars[i - 1].close), close = Number(bars[i].close);
       if (prev <= high.price && close > high.price)
@@ -229,17 +229,29 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles,
       if (!(pullbackLow.price > priorLow.price)) continue;
       const swingHigh = entrySwings.highs.filter(p => p.index > priorLow.index && p.index < pullbackLow.index).at(-1);
       if (!swingHigh) continue;
+      // Both the pullback HL and the BOS reference high must be confirmed
+      // before the breakout candle; do not use pivots that were unknowable then.
+      const bosReadyIndex = Math.max(
+        pullbackLow.index + config.PIVOT_RIGHT_BARS,
+        swingHigh.index + config.PIVOT_RIGHT_BARS
+      );
       let bosIndex = -1;
-      for (let i = pullbackLow.index + 1; i < entryWindow.length; i++)
-        if (entryWindow[i - 1].close <= swingHigh.price && entryWindow[i].close > swingHigh.price) { bosIndex = i; break; }
+      for (let i = bosReadyIndex + 1; i < entryWindow.length; i++) {
+        if (entryWindow[i - 1].close <= swingHigh.price && entryWindow[i].close > swingHigh.price) {
+          bosIndex = i;
+          break;
+        }
+      }
       if (bosIndex < 0) continue;
       for (let i = bosIndex + 1; i <= Math.min(entryWindow.length - 2, bosIndex + config.ENTRY_RETEST_MAX_BARS); i++) {
         const c = entryWindow[i];
+        const maxPenetration = entryAtr * config.ENTRY_RETEST_MAX_PENETRATION_ATR;
         if (c.low <= swingHigh.price + entryAtr * config.ENTRY_RETEST_TOLERANCE_ATR &&
+            c.low >= swingHigh.price - maxPenetration &&
             c.close >= swingHigh.price &&
             entryWindow.length - 1 - i <= config.ENTRY_CONTINUATION_MAX_BARS &&
             entryWindow.at(-1).close > c.high) {
-          setup = { level: swingHigh.price, pullback: pullbackLow.price, retestIndex: i }; break;
+          setup = { level: swingHigh.price, pullback: pullbackLow.price, retestIndex: i, bosIndex }; break;
         }
       }
     }
@@ -249,17 +261,28 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, slCandles,
       if (!(pullbackHigh.price < priorHigh.price)) continue;
       const swingLow = entrySwings.lows.filter(p => p.index > priorHigh.index && p.index < pullbackHigh.index).at(-1);
       if (!swingLow) continue;
+      // Symmetric SHORT rule: confirmed LH and reference low before BOS.
+      const bosReadyIndex = Math.max(
+        pullbackHigh.index + config.PIVOT_RIGHT_BARS,
+        swingLow.index + config.PIVOT_RIGHT_BARS
+      );
       let bosIndex = -1;
-      for (let i = pullbackHigh.index + 1; i < entryWindow.length; i++)
-        if (entryWindow[i - 1].close >= swingLow.price && entryWindow[i].close < swingLow.price) { bosIndex = i; break; }
+      for (let i = bosReadyIndex + 1; i < entryWindow.length; i++) {
+        if (entryWindow[i - 1].close >= swingLow.price && entryWindow[i].close < swingLow.price) {
+          bosIndex = i;
+          break;
+        }
+      }
       if (bosIndex < 0) continue;
       for (let i = bosIndex + 1; i <= Math.min(entryWindow.length - 2, bosIndex + config.ENTRY_RETEST_MAX_BARS); i++) {
         const c = entryWindow[i];
+        const maxPenetration = entryAtr * config.ENTRY_RETEST_MAX_PENETRATION_ATR;
         if (c.high >= swingLow.price - entryAtr * config.ENTRY_RETEST_TOLERANCE_ATR &&
+            c.high <= swingLow.price + maxPenetration &&
             c.close <= swingLow.price &&
             entryWindow.length - 1 - i <= config.ENTRY_CONTINUATION_MAX_BARS &&
             entryWindow.at(-1).close < c.low) {
-          setup = { level: swingLow.price, pullback: pullbackHigh.price, retestIndex: i }; break;
+          setup = { level: swingLow.price, pullback: pullbackHigh.price, retestIndex: i, bosIndex }; break;
         }
       }
     }
