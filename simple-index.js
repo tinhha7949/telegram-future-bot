@@ -207,7 +207,7 @@ async function main() {
     const tracked=new Set(open.map(t=>t.symbol));
     for(const p of live) if(!tracked.has(p.symbol)) console.error("UNTRACKED_EXCHANGE_POSITION_SKIP_ENTRY",p.symbol,p.positionAmt);
   }
-  async function tryEntry(symbol) {
+  async function tryEntry(symbol, options = {}) {
     const r=rules.get(symbol);
     if(!r||r.status!=="TRADING"||r.contractType!=="PERPETUAL"||r.quoteAsset!==C.QUOTE_ASSET) return;
     if(C.COIN_COOLDOWN_MINUTES>0) {
@@ -226,7 +226,7 @@ async function main() {
     const now=Date.now()+binance.timeOffsetMs;
     const confirmationCandles=toCandles(confirmationRaw);
     const previousStructureState=structureStates.get(symbol)||null;
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,config:C,structureState:previousStructureState,now});
+    const signal=options.executeSignal || coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,config:C,structureState:previousStructureState,now});
     const nextStructureState=signal.structureState||null;
     if(JSON.stringify(nextStructureState)!==JSON.stringify(previousStructureState)) {
       const statePath="structureTransitions."+symbol;
@@ -238,7 +238,8 @@ async function main() {
         await state.updateOne({_id:"runtime"},{$unset:{[statePath]:""}});
       }
     }
-    if(!signal.side) return;
+    if(!signal.side) return null;
+    if(options.collect) return {symbol,signal,score:Number(signal.score)||0};
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
     const existing=await trades.findOne({symbol,status:"OPEN"});
@@ -345,6 +346,7 @@ async function main() {
       const tracked=new Set(open.map(t=>t.symbol));
       const scanStartedAt=Date.now();
       let scanned=0, eligible=0, skipped=0, errors=0, rateLimited=false;
+      const candidates=[];
       const batchSize=10, batchCount=Math.ceil(symbols.length/batchSize);
       console.log("SCAN_CYCLE_START", "symbols="+symbols.length, "batchSize="+batchSize, "live="+liveSet.size, "tracked="+tracked.size);
       for(let batchStart=0;batchStart<symbols.length;batchStart+=batchSize) {
@@ -361,7 +363,10 @@ async function main() {
             skipped++; batchSkipped++;
           } else {
             eligible++; batchEligible++;
-            try { await tryEntry(symbol); }
+            try {
+              const candidate=await tryEntry(symbol,{collect:true});
+              if(candidate) candidates.push(candidate);
+            }
             catch(e) {
               errors++; batchErrors++;
               console.error("SYMBOL_SCAN_ERROR",symbol,e.message);
@@ -378,7 +383,13 @@ async function main() {
       }
       console.log("SCAN_CYCLE_COMPLETE", "scanned="+scanned+"/"+symbols.length,
         "eligible="+eligible, "skipped="+skipped, "errors="+errors,
-        "rateLimited="+rateLimited, "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
+        "candidates="+candidates.length, "rateLimited="+rateLimited, "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
+      if(!rateLimited&&!stopped&&candidates.length) {
+        candidates.sort((a,b)=>b.score-a.score);
+        const best=candidates[0];
+        console.log("BEST_SCAN_CANDIDATE",best.symbol,"score="+best.score,"side="+best.signal.side);
+        await tryEntry(best.symbol,{executeSignal:best.signal});
+      }
     } catch(e) { console.error("CYCLE_ERROR",e.stack||e.message); }
     finally { busy=false; }
   }
