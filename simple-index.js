@@ -10,7 +10,7 @@ const crypto = require("node:crypto");
 const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");
 const { coreLogic, marketVeto } = require("./ai-trading/coreLogic");
-const { getTopSymbol } = require("./ai-trading/getTopSymbol");
+const { getTopSymbol, applySymbolRefresh } = require("./ai-trading/getTopSymbol");
 const { buildProtection, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const { moveStopToBreakeven } = require("./ai-trading/break-even");
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
@@ -71,15 +71,17 @@ class Binance {
   signed(method,path,params={}) { return this.request(method,path,params,true); }
 }
 function toCandles(raw) { return raw.map(k=>({open:+k[1],high:+k[2],low:+k[3],close:+k[4],closeTime:+k[6]})); }
+let startupMongo = null;
 async function main() {
   if (!process.env.MONGO_URI) throw new Error("MONGO_URI_REQUIRED");
   const binance=new Binance(), mongo=new MongoClient(process.env.MONGO_URI,{serverSelectionTimeoutMS:10000,maxPoolSize:5});
+  startupMongo = mongo;
   await mongo.connect();
   await binance.syncTime();
   const db=mongo.db(C.MONGO_DB_NAME), trades=db.collection(C.MONGO_TRADES_COLLECTION), state=db.collection(C.MONGO_STATE_COLLECTION);
   await trades.createIndex({symbol:1,status:1},{name:"simple_active_symbol",partialFilterExpression:{status:"OPEN"}});
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
-  await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once",unique:true});
+  await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once_v2",unique:true,partialFilterExpression:{signalAt:{$type:"date"}}});
   await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"4H_MAJOR_1H_CONFIRM_"+C.ENTRY_TIMEFRAME+"_HL_LH_BOS_ENTRY"}},{upsert:true});
   const savedStructureStates=await state.findOne({_id:"runtime"},{projection:{structureTransitions:1}});
   const structureStates=new Map(Object.entries(savedStructureStates?.structureTransitions||{}));
@@ -363,8 +365,11 @@ async function main() {
     try {
       await reconcileAndManage();
       if(Date.now()-lastSymbolRefresh>=C.SYMBOL_REFRESH_MS) {
-        symbols=await getTopSymbol({request:(method,path,params)=>binance.request(method,path,params,false),config:C});
-        lastSymbolRefresh=Date.now(); console.log("TOP_SYMBOLS",symbols.length);
+        const refreshedSymbols=await getTopSymbol({request:(method,path,params)=>binance.request(method,path,params,false),config:C});
+        const refresh=applySymbolRefresh({current:symbols,next:refreshedSymbols,lastRefresh:lastSymbolRefresh,now:Date.now()});
+        symbols=refresh.symbols; lastSymbolRefresh=refresh.lastSymbolRefresh;
+        if(refresh.updated) console.log("TOP_SYMBOLS",symbols.length);
+        else console.error("TOP_SYMBOL_REFRESH_EMPTY_RETRYING","kept="+symbols.length);
       }
       const live=await positions(), liveSet=new Set(live.map(p=>p.symbol));
       const open=await trades.find({status:"OPEN"}).toArray();
@@ -437,4 +442,8 @@ async function main() {
   const shutdown=async()=>{ if(stopped)return; stopped=true; clearInterval(timer); await mongo.close(); process.exit(0); };
   process.on("SIGINT",shutdown); process.on("SIGTERM",shutdown);
 }
-main().catch(async e=>{ console.error("FATAL",e.stack||e.message);  process.exitCode=1; });
+main().catch(async e=>{
+  console.error("FATAL",e.stack||e.message);
+  try { await startupMongo?.close(); } catch(closeError) { console.error("MONGO_CLOSE_AFTER_STARTUP_FAILURE",closeError.message); }
+  process.exitCode=1;
+});
