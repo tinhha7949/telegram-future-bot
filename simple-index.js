@@ -15,6 +15,7 @@ const { buildProtection, splitQuantity, placeProtection } = require("./ai-tradin
 const { moveStopToBreakeven } = require("./ai-trading/break-even");
 const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
 const { cooldownRecordForClose, isCoolingDown } = require("./ai-trading/coin-cooldown");
+const { attemptRankedCandidates, isFatalCandidateError } = require("./ai-trading/candidate-runner");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -226,7 +227,9 @@ async function main() {
     const now=Date.now()+binance.timeOffsetMs;
     const confirmationCandles=toCandles(confirmationRaw);
     const previousStructureState=structureStates.get(symbol)||null;
-    const signal=options.executeSignal || coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,config:C,structureState:previousStructureState,now});
+    // Always rebuild the setup from the newest closed candles. A collected scan signal
+    // is ranking metadata only and is never trusted for order execution.
+    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,config:C,structureState:previousStructureState,now});
     const nextStructureState=signal.structureState||null;
     if(JSON.stringify(nextStructureState)!==JSON.stringify(previousStructureState)) {
       const statePath="structureTransitions."+symbol;
@@ -238,8 +241,16 @@ async function main() {
         await state.updateOne({_id:"runtime"},{$unset:{[statePath]:""}});
       }
     }
-    if(!signal.side) return null;
-    if(options.collect) return {symbol,signal,score:Number(signal.score)||0};
+    if(!signal.side) {
+      if(!options.collect) console.log("ENTRY_FRESH_SIGNAL_REJECTED",symbol,signal.reason||"NO_SIGNAL");
+      return null;
+    }
+    const freshScore=Number(signal.score)||0;
+    if(freshScore<C.MIN_SCORE_TO_ENTER) {
+      console.log("ENTRY_FRESH_SCORE_BELOW_MIN",symbol,"score="+freshScore,"minimum="+C.MIN_SCORE_TO_ENTER);
+      return null;
+    }
+    if(options.collect) return {symbol,score:freshScore};
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
     const existing=await trades.findOne({symbol,status:"OPEN"});
@@ -286,11 +297,13 @@ async function main() {
     try { splitQuantity({quantity:qty,stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message,"qty="+qty); return; }
     if(sizing.margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol,"required="+sizing.margin,"available="+available); return; }
     const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,entryStructure:signal.entryStructure,entrySwingLevel:signal.entrySwingLevel,pullbackPivotPrice:signal.pullbackPivotPrice,slAtr:signal.slAtr,pivotPrice:signal.pivotPrice,slTimeframe:C.ENTRY_TIMEFRAME,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
-    if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return; }
+    if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return {opened:true,dryRun:true}; }
     let inserted;
+    let orderSubmissionStarted=false;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }
     try {
       await binance.signed("POST","/fapi/v1/leverage",{symbol,leverage:symbolLeverage});
+      orderSubmissionStarted=true;
       const order=await binance.signed("POST","/fapi/v1/order",{symbol,side:signal.side==="LONG"?"BUY":"SELL",type:"MARKET",quantity:qty.toFixed(precision(r.stepSize)),newOrderRespType:"RESULT"});
       const filled=Number(order.avgPrice)||mark;
       let actual;
@@ -309,16 +322,22 @@ async function main() {
         let after=null, verified=false;
         try { after=(await positions()).find(p=>p.symbol===symbol)||null; verified=true; } catch(positionError) { console.error("TPSL_FAILURE_VERIFY_CLOSE",symbol,positionError.message); }
         if(verified&&!after) {
+          e.orderMayBeOpen=false;
           const closedAt=new Date();
           await startCoinCooldown(symbol,closedAt,"PENDING");
           await trades.updateOne({_id:inserted.insertedId},{$set:{status:"PROTECTION_FAILED_CLOSED",closedAt,closeReason:"PROTECTION_FAILED_FORCE_CLOSE",resultNotificationPending:true,resultNotificationNextAttemptAt:new Date(0),error:e.message}});
-        } else await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,qty:Number(order.executedQty)||qty,protectionError:e.message,closeRequestedAt:new Date(),error:e.message}});
+        } else {
+          e.orderMayBeOpen=true;
+          await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,qty:Number(order.executedQty)||qty,protectionError:e.message,closeRequestedAt:new Date(),error:e.message}});
+        }
         throw e;
       }
       await trades.updateOne({_id:inserted.insertedId,status:"OPEN"},{$set:{entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0),entryNotificationAttempts:0}});
       await notifyPendingEntries();
       console.log("ENTRY_OK",symbol,signal.side,"qty="+qty,"sl="+actual.sl,"tp1="+actual.tp1,"tp2="+actual.tp2);
+      return {opened:true};
     } catch(e) {
+      if(orderSubmissionStarted && e.orderMayBeOpen===undefined) e.orderMayBeOpen=true;
       const current=await trades.findOne({_id:inserted.insertedId});
       if(current?.status==="ENTRY_PENDING") await trades.updateOne({_id:inserted.insertedId},{$set:{lastError:e.message,lastAttemptAt:new Date()}});
       throw e;
@@ -386,9 +405,18 @@ async function main() {
         "candidates="+candidates.length, "rateLimited="+rateLimited, "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
       if(!rateLimited&&!stopped&&candidates.length) {
         candidates.sort((a,b)=>b.score-a.score);
-        const best=candidates[0];
-        console.log("BEST_SCAN_CANDIDATE",best.symbol,"score="+best.score,"side="+best.signal.side);
-        await tryEntry(best.symbol,{executeSignal:best.signal});
+        console.log("RANKED_SCAN_CANDIDATES",candidates.map(c=>c.symbol+":"+c.score).join(","));
+        const outcome=await attemptRankedCandidates(candidates,async candidate=>{
+          console.log("TRY_FRESH_SCAN_CANDIDATE",candidate.symbol,"scanScore="+candidate.score);
+          return tryEntry(candidate.symbol);
+        },{
+          minScore:C.MIN_SCORE_TO_ENTER,
+          isFatalError:isFatalCandidateError,
+          onCandidateError:(candidate,error)=>console.error("CANDIDATE_ATTEMPT_FAILED",candidate.symbol,error.message)
+        });
+        if(outcome.opened) console.log("SCAN_CYCLE_TRADE_OPENED",outcome.candidate.symbol,"score="+(outcome.result?.signal?.score??"fresh"));
+        else if(outcome.fatal) console.error("SCAN_CANDIDATE_RETRY_STOPPED",outcome.candidate?.symbol||"UNKNOWN",outcome.error.message);
+        else console.log("SCAN_CYCLE_NO_CANDIDATE_OPENED","attempted="+outcome.attempted);
       }
     } catch(e) { console.error("CYCLE_ERROR",e.stack||e.message); }
     finally { busy=false; }
