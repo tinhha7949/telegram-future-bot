@@ -121,9 +121,10 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
   alreadyAbove[preBosIndex].low=105.2;
   alreadyAbove[alreadyAbove.length-1].close=105.4;
   alreadyAbove[alreadyAbove.length-1].open=105.4;
-  const noFreshBreak=coreLogic({trendCandles:trendCandles("UP"),entryCandles:alreadyAbove,config:cfg,now:NOW});
-  assert.equal(noFreshBreak.side,null);
-  assert.equal(noFreshBreak.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
+  const historicalBosContinuation=coreLogic({trendCandles:trendCandles("UP"),entryCandles:alreadyAbove,config:cfg,now:NOW});
+  // A fresh cross is required at BOS time, not necessarily on the latest
+  // candle: a previously confirmed BOS + retest may trigger later continuation.
+  assert.equal(historicalBosContinuation.side,"LONG");
 });
 
 test("SL uses the exact pullback pivot from the entry setup and its ATR timeframe",()=>{
