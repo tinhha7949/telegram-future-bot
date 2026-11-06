@@ -5,7 +5,7 @@ function isFatalCandidateError(error) {
   if (error?.orderMayBeOpen === false) return false;
   if (error?.orderMayBeOpen === true) return true;
   const message = String(error?.message || error || "");
-  return /BINANCE_(?:429|418)_|RATE_LIMIT|TimeoutError|AbortError|fetch failed|ECONN(?:RESET|REFUSED|ABORTED)|ETIMEDOUT|Mongo(?:Server|Network|Topology)|MONGO/i.test(message);
+  return /BINANCE_(?:429|418|401|403|5\\d\\d)_|BINANCE_BAD_JSON_|RATE_LIMIT|TimeoutError|AbortError|fetch failed|ECONN(?:RESET|REFUSED|ABORTED)|ETIMEDOUT|Mongo(?:Server|Network|Topology)|MONGO/i.test(message);
 }
 
 async function attemptRankedCandidates(candidates, attempt, options = {}) {
