@@ -14,7 +14,7 @@ const { getEligibleSymbols, applySymbolRefresh } = require("./ai-trading/getTopS
 const { buildProtection, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const { moveStopToBreakeven } = require("./ai-trading/break-even");
 const { calculateOrderSizing, commonStepSize, selectLeverageForNotional } = require("./ai-trading/simple-sizing");
-const { cooldownRecordForClose, isCoolingDown } = require("./ai-trading/coin-cooldown");
+const { cooldownRecordForClose } = require("./ai-trading/coin-cooldown");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -159,7 +159,27 @@ async function main() {
           await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl||recovered.sl,tp1:t.tp1||recovered.tp1,tp2:t.tp2||recovered.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.lotStepSize||0,minQty:rules.get(t.symbol)?.lotMinQty||0,config:C});
           await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true,entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0)}});
           
-        } catch(e) { console.error("PENDING_POSITION_PROTECTION_RECOVERY_FAILED",t.symbol,e.message); }
+        } catch(e) {
+          console.error("PENDING_POSITION_PROTECTION_RECOVERY_FAILED",t.symbol,e.message);
+          try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(cancelError) { console.error("PENDING_PROTECTION_CLEANUP_WARN",t.symbol,cancelError.message); }
+          let current=(await positions()).find(x=>x.symbol===t.symbol)||null;
+          if(current) {
+            try {
+              const marketStep=rules.get(t.symbol)?.marketStepSize||0.001;
+              const closeQty=floorStep(Math.abs(Number(current.positionAmt)),marketStep);
+              if(closeQty>0)await binance.signed("POST","/fapi/v1/order",{symbol:t.symbol,side:Number(current.positionAmt)>0?"SELL":"BUY",type:"MARKET",quantity:closeQty.toFixed(precision(marketStep)),reduceOnly:"true",newOrderRespType:"RESULT"});
+            } catch(closeError) { console.error("PENDING_PROTECTION_FORCE_CLOSE_FAILED",t.symbol,closeError.message); }
+          }
+          let after=null,verified=false;
+          try { after=(await positions()).find(x=>x.symbol===t.symbol)||null; verified=true; }
+          catch(verifyError) { console.error("PENDING_PROTECTION_CLOSE_VERIFY_FAILED",t.symbol,verifyError.message); }
+          if(verified&&!after) {
+            const closedAt=new Date();
+            await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"PROTECTION_FAILED_CLOSED",closedAt,closeReason:"RECOVERY_PROTECTION_FAILED_FORCE_CLOSE",resultNotificationPending:true,resultNotificationNextAttemptAt:new Date(0),error:e.message}});
+          } else if(after) {
+            await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",protectionError:e.message,closeRequestedAt:new Date(),error:e.message}});
+          }
+        }
       } else if(Date.now()-new Date(t.createdAt||t.openedAt).getTime()>60000) {
         await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"ENTRY_FAILED",closedAt:new Date(),error:"NO_EXCHANGE_POSITION_AFTER_RECOVERY_WINDOW"}});
       }
@@ -200,7 +220,7 @@ async function main() {
       }
       if(Date.now()-new Date(t.openedAt).getTime()>=C.MAX_HOLD_HOURS*3600000 && (!t.closeRequestedAt || Date.now()-new Date(t.closeRequestedAt).getTime()>=30000)) {
         const amt=Number(p.positionAmt), side=amt>0?"SELL":"BUY", qty=Math.abs(amt);
-        await binance.signed("POST","/fapi/v1/order",{symbol:t.symbol,side,type:"MARKET",quantity:qty.toFixed(precision(rules.get(t.symbol)?.stepSize||0.001)),reduceOnly:"true",newOrderRespType:"RESULT"});
+        await binance.signed("POST","/fapi/v1/order",{symbol:t.symbol,side,type:"MARKET",quantity:floorStep(qty,rules.get(t.symbol)?.marketStepSize||0.001).toFixed(precision(rules.get(t.symbol)?.marketStepSize||0.001)),reduceOnly:"true",newOrderRespType:"RESULT"});
         await binance.signed("DELETE","/fapi/v1/allOpenOrders",{symbol:t.symbol});
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("ALGO_CANCEL_WARN",t.symbol,e.message); }
         await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{closeRequestedAt:new Date(),closeReason:"MAX_HOLD_24H"}});
@@ -213,14 +233,6 @@ async function main() {
   async function tryEntry(symbol) {
     const r=rules.get(symbol);
     if(!r||r.status!=="TRADING"||r.contractType!=="PERPETUAL"||r.quoteAsset!==C.QUOTE_ASSET) return;
-    if(C.COIN_COOLDOWN_MINUTES>0) {
-      const cooldownState=await state.findOne({_id:"runtime"},{projection:{coinCooldowns:1}});
-      const cooldown=cooldownState?.coinCooldowns?.[symbol];
-      if(isCoolingDown(cooldown)) {
-        console.log("ENTRY_SKIP_COIN_COOLDOWN",symbol,"until="+new Date(cooldown.until).toISOString());
-        return;
-      }
-    }
     const candlesRaw=await binance.get("/fapi/v1/klines",{symbol,interval:C.STRATEGY_TIMEFRAME,limit:C.HISTORY_CANDLES+1});
     const now=Date.now()+binance.timeOffsetMs;
     // All strategy indicators and entry states are evaluated on this single timeframe.
@@ -294,7 +306,7 @@ async function main() {
         let pos=null;
         try { pos=(await positions()).find(p=>p.symbol===symbol)||null; } catch(positionError) { console.error("TPSL_FAILURE_POSITION_CHECK",symbol,positionError.message); }
         if(pos) {
-          try { await binance.signed("POST","/fapi/v1/order",{symbol,side:Number(pos.positionAmt)>0?"SELL":"BUY",type:"MARKET",quantity:Math.abs(Number(pos.positionAmt)).toFixed(precision(r.stepSize)),reduceOnly:"true",newOrderRespType:"RESULT"}); } catch(closeError) { console.error("TPSL_FAILURE_FORCE_CLOSE",symbol,closeError.message); }
+          try { await binance.signed("POST","/fapi/v1/order",{symbol,side:Number(pos.positionAmt)>0?"SELL":"BUY",type:"MARKET",quantity:floorStep(Math.abs(Number(pos.positionAmt)),r.marketStepSize).toFixed(precision(r.marketStepSize)),reduceOnly:"true",newOrderRespType:"RESULT"}); } catch(closeError) { console.error("TPSL_FAILURE_FORCE_CLOSE",symbol,closeError.message); }
         }
         try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol}); } catch(cancelError) { console.error("TPSL_CLEANUP_WARN",symbol,cancelError.message); }
         let after=null, verified=false;
