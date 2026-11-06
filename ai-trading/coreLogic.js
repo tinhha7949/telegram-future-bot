@@ -208,6 +208,41 @@ function assessConfirmation(candles, bias, config, previousState = null) {
   return { state, event: major.event, side: major.side, major, minor: null };
 }
 
+
+function selectBestEntrySetup(candidates, { side, latestIndex, entryPrice, entryAtr, config }) {
+  const rejected = { oldPivot: 0, negativeExtension: 0, tooExtended: 0 };
+  const eligible = [];
+  for (const candidate of candidates) {
+    const pullbackAge = latestIndex - candidate.pullbackIndex;
+    if (pullbackAge < 0 || pullbackAge > config.SL_PIVOT_MAX_DISTANCE) {
+      rejected.oldPivot++;
+      continue;
+    }
+    const extension = side === "LONG" ? entryPrice - candidate.level : candidate.level - entryPrice;
+    if (extension < 0) {
+      rejected.negativeExtension++;
+      continue;
+    }
+    if (extension > entryAtr * config.ENTRY_MAX_EXTENSION_ATR) {
+      rejected.tooExtended++;
+      continue;
+    }
+    eligible.push({ ...candidate, pullbackAge, extension });
+  }
+  eligible.sort((a, b) =>
+    b.score - a.score ||
+    b.retestIndex - a.retestIndex ||
+    b.bosIndex - a.bosIndex ||
+    b.pullbackIndex - a.pullbackIndex
+  );
+  if (eligible.length) return { setup: eligible[0], rejected };
+  if (candidates.length && rejected.oldPivot === candidates.length)
+    return { setup: null, reason: "ENTRY_PULLBACK_PIVOT_TOO_OLD", rejected };
+  if (candidates.length && rejected.tooExtended === candidates.length)
+    return { setup: null, reason: "ENTRY_TOO_EXTENDED_FROM_RETEST", rejected };
+  return { setup: null, reason: "ENTRY_BOS_RETEST_NOT_CONFIRMED", rejected };
+}
+
 function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, structureState = null, now = Date.now() }) {
   const trend = closed(trendCandles, now), entry = closed(entryCandles, now), confirmation = confirmationCandles === undefined ? null : closed(confirmationCandles, now).slice(-config.CONFIRMATION_HISTORY_CANDLES);
   const minTrend = Math.max(config.STRUCTURE_LOOKBACK_CANDLES, config.TREND_HISTORY_CANDLES || 0);
@@ -246,9 +281,9 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
   const side = trendSide === "UP" ? "LONG" : "SHORT";
   const entryAtr = atr(entryWindow, config.ENTRY_ATR_PERIOD);
   if (!(entryAtr > 0)) return { side: null, reason: "ENTRY_ATR_UNAVAILABLE", trendSide, structureState: nextStructureState };
-  let setup = null;
+  const candidates = [];
   if (side === "LONG") {
-    for (let li = entrySwings.lows.length - 1; li >= 1 && !setup; li--) {
+    for (let li = entrySwings.lows.length - 1; li >= 1; li--) {
       const priorLow = entrySwings.lows[li - 1], pullbackLow = entrySwings.lows[li];
       if (!(pullbackLow.price > priorLow.price)) continue;
       const swingHigh = entrySwings.highs.filter(p => p.index > priorLow.index && p.index < pullbackLow.index).at(-1);
@@ -280,12 +315,12 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
         const breakout = entryWindow.at(-1).close > c.high;
         const score = 15 + (touch ? 15 : 0) + (shallow ? 10 : 0) + (hold ? 15 : 0) + (continued ? 15 : 0) + (breakout ? 30 : 0);
         if (score >= config.MIN_SCORE_TO_ENTER) {
-          if (!setup || score > setup.score) setup = { level: swingHigh.price, pullback: pullbackLow.price, pullbackIndex: pullbackLow.index, retestIndex: i, bosIndex, score };
+          candidates.push({ level: swingHigh.price, pullback: pullbackLow.price, pullbackIndex: pullbackLow.index, retestIndex: i, bosIndex, score });
         }
       }
     }
   } else {
-    for (let hi = entrySwings.highs.length - 1; hi >= 1 && !setup; hi--) {
+    for (let hi = entrySwings.highs.length - 1; hi >= 1; hi--) {
       const priorHigh = entrySwings.highs[hi - 1], pullbackHigh = entrySwings.highs[hi];
       if (!(pullbackHigh.price < priorHigh.price)) continue;
       const swingLow = entrySwings.lows.filter(p => p.index > priorHigh.index && p.index < pullbackHigh.index).at(-1);
@@ -316,20 +351,25 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
         const breakout = entryWindow.at(-1).close < c.low;
         const score = 15 + (touch ? 15 : 0) + (shallow ? 10 : 0) + (hold ? 15 : 0) + (continued ? 15 : 0) + (breakout ? 30 : 0);
         if (score >= config.MIN_SCORE_TO_ENTER) {
-          if (!setup || score > setup.score) setup = { level: swingLow.price, pullback: pullbackHigh.price, pullbackIndex: pullbackHigh.index, retestIndex: i, bosIndex, score };
+          candidates.push({ level: swingLow.price, pullback: pullbackHigh.price, pullbackIndex: pullbackHigh.index, retestIndex: i, bosIndex, score });
         }
       }
     }
   }
-  if (!setup) return { side: null, reason: "ENTRY_BOS_RETEST_NOT_CONFIRMED", trendSide, entryStructure: "WAIT_BOS_RETEST_CONTINUATION", structureState: nextStructureState };
-  const pullbackAge = entryWindow.length - 1 - setup.pullbackIndex;
-  if (pullbackAge < 0 || pullbackAge > config.SL_PIVOT_MAX_DISTANCE)
-    return { side: null, reason: "ENTRY_PULLBACK_PIVOT_TOO_OLD", trendSide, pullbackPivotPrice: setup.pullback, pullbackAge, structureState: nextStructureState };
-  const extension = side === "LONG" ? entryPrice - setup.level : setup.level - entryPrice;
-  if (extension < 0)
-    return { side: null, reason: "ENTRY_BOS_RETEST_NOT_CONFIRMED", trendSide, entryLevel: setup.level, extensionAtr: extension / entryAtr, structureState: nextStructureState };
-  if (extension > entryAtr * config.ENTRY_MAX_EXTENSION_ATR)
-    return { side: null, reason: "ENTRY_TOO_EXTENDED_FROM_RETEST", trendSide, entryLevel: setup.level, extensionAtr: extension / entryAtr, structureState: nextStructureState };
+  const selection = selectBestEntrySetup(candidates, {
+    side, latestIndex: entryWindow.length - 1, entryPrice, entryAtr, config
+  });
+  const setup = selection.setup;
+  if (!setup) {
+    return {
+      side: null,
+      reason: selection.reason || "ENTRY_BOS_RETEST_NOT_CONFIRMED",
+      trendSide,
+      entryStructure: "WAIT_BOS_RETEST_CONTINUATION",
+      rejectedSetups: selection.rejected,
+      structureState: nextStructureState
+    };
+  }
   if (entryWindow.length < config.SL_ATR_PERIOD + 1)
     return { side: null, reason: "SL_CANDLE_HISTORY_REQUIRED", trendSide, structureState: nextStructureState };
   // SL uses the exact confirmed pullback pivot that produced this entry setup.
@@ -361,4 +401,4 @@ function marketVeto({ side, fundingRate, bidPrice, askPrice, config }) {
   return { allowed: true, reason: "OK", fundingRate: funding, spreadBps };
 }
 
-module.exports = { atr, closed, pivots, marketStructure, analyzeMajorStructure, assessConfirmation, marketVeto, coreLogic };
+module.exports = { atr, closed, pivots, marketStructure, analyzeMajorStructure, assessConfirmation, marketVeto, selectBestEntrySetup, coreLogic };
