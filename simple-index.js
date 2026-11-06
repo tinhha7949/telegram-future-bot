@@ -82,9 +82,7 @@ async function main() {
   await trades.createIndex({symbol:1,status:1},{name:"simple_active_symbol",partialFilterExpression:{status:"OPEN"}});
   await trades.createIndex({openedAt:1},{name:"simple_opened_at"});
   await trades.createIndex({symbol:1,signalAt:1},{name:"simple_signal_once_v2",unique:true,partialFilterExpression:{signalAt:{$type:"date"}}});
-  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"4H_MAJOR_1H_CONFIRM_"+C.ENTRY_TIMEFRAME+"_HL_LH_BOS_ENTRY"}},{upsert:true});
-  const savedStructureStates=await state.findOne({_id:"runtime"},{projection:{structureTransitions:1}});
-  const structureStates=new Map(Object.entries(savedStructureStates?.structureTransitions||{}));
+  await state.updateOne({_id:"runtime"},{$set:{lastStartedAt:new Date(),strategy:"RSI_DIVERGENCE_LIQUIDITY_SWEEP_"+C.STRATEGY_TIMEFRAME}},{upsert:true});
   async function startCoinCooldown(symbol, closedAt, result="PENDING") {
     const cooldown=cooldownRecordForClose(closedAt,C.COIN_COOLDOWN_MINUTES,result);
     if(!cooldown) return;
@@ -139,7 +137,7 @@ async function main() {
   async function notifyPendingEntries() {
     const now=new Date(), pending=await trades.find({status:"OPEN",entryNotificationPending:true,$or:[{entryNotificationNextAttemptAt:{$exists:false}},{entryNotificationNextAttemptAt:{$lte:now}}]}).toArray();
     for(const t of pending) {
-      const msg="ENTRY "+t.side+" "+t.symbol+"\nEntry: "+t.entryPrice+"\nSL: "+t.sl+"\nTP1: "+t.tp1+"\nTP2: "+t.tp2+"\nTrend "+C.TREND_TIMEFRAME+": "+t.trendSide+"\nTrade ID: "+String(t._id);
+      const msg="ENTRY "+t.side+" "+t.symbol+"\nEntry: "+t.entryPrice+"\nSL: "+t.sl+"\nTP1: "+t.tp1+"\nTP2: "+t.tp2+"\nStrategy timeframe: "+C.STRATEGY_TIMEFRAME+"\\nSignal: "+(t.divergenceType||t.entryStructure||"RSI_DIVERGENCE")+"\nTrade ID: "+String(t._id);
       await trades.updateOne({_id:t._id,entryNotificationPending:true},{$set:{entryNotificationLastAttemptAt:new Date(),entryNotificationNextAttemptAt:new Date(Date.now()+60000)},$inc:{entryNotificationAttempts:1}});
       const sent=await telegramEntry(msg);
       if(sent)await trades.updateOne({_id:t._id,entryNotificationPending:true},{$set:{entryNotificationPending:false,entryNotifiedAt:new Date()},$unset:{entryNotificationNextAttemptAt:""}});
@@ -221,37 +219,15 @@ async function main() {
         return;
       }
     }
-    const [trendRaw,entryRaw,confirmationRaw]=await Promise.all([
-      binance.get("/fapi/v1/klines",{symbol,interval:C.TREND_TIMEFRAME,limit:C.TREND_HISTORY_CANDLES+1}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.ENTRY_TIMEFRAME,limit:Math.max(C.ENTRY_STRUCTURE_LOOKBACK_CANDLES+1,C.SL_ATR_PERIOD+C.PIVOT_LEFT_BARS+C.PIVOT_RIGHT_BARS+1)}),
-      binance.get("/fapi/v1/klines",{symbol,interval:C.CONFIRMATION_TIMEFRAME,limit:C.CONFIRMATION_HISTORY_CANDLES+1})
-    ]);
+    const candlesRaw=await binance.get("/fapi/v1/klines",{symbol,interval:C.STRATEGY_TIMEFRAME,limit:C.HISTORY_CANDLES+1});
     const now=Date.now()+binance.timeOffsetMs;
-    const confirmationCandles=toCandles(confirmationRaw);
-    const previousStructureState=structureStates.get(symbol)||null;
-    // Always rebuild the setup from the newest closed candles. A collected scan signal
-    // is ranking metadata only and is never trusted for order execution.
-    const signal=coreLogic({trendCandles:toCandles(trendRaw),entryCandles:toCandles(entryRaw),confirmationCandles,config:C,structureState:previousStructureState,now});
-    const nextStructureState=signal.structureState||null;
-    if(JSON.stringify(nextStructureState)!==JSON.stringify(previousStructureState)) {
-      const statePath="structureTransitions."+symbol;
-      if(nextStructureState) {
-        structureStates.set(symbol,nextStructureState);
-        await state.updateOne({_id:"runtime"},{$set:{[statePath]:nextStructureState}},{upsert:true});
-      } else if(previousStructureState) {
-        structureStates.delete(symbol);
-        await state.updateOne({_id:"runtime"},{$unset:{[statePath]:""}});
-      }
-    }
+    // All strategy indicators and entry states are evaluated on this single timeframe.
+    const signal=coreLogic({candles:toCandles(candlesRaw),config:C,now});
     if(!signal.side) {
       if(!options.collect) console.log("ENTRY_FRESH_SIGNAL_REJECTED",symbol,signal.reason||"NO_SIGNAL");
       return null;
     }
-    const freshScore=Number(signal.score)||0;
-    if(freshScore<C.MIN_SCORE_TO_ENTER) {
-      console.log("ENTRY_FRESH_SCORE_BELOW_MIN",symbol,"score="+freshScore,"minimum="+C.MIN_SCORE_TO_ENTER);
-      return null;
-    }
+    const freshScore=Number(signal.score)||100;
     if(options.collect) return {symbol,score:freshScore};
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
@@ -298,7 +274,7 @@ async function main() {
     const qty=sizing.qty;
     try { splitQuantity({quantity:qty,stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message,"qty="+qty); return; }
     if(sizing.margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol,"required="+sizing.margin,"available="+available); return; }
-    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,entryStructure:signal.entryStructure,entrySwingLevel:signal.entrySwingLevel,pullbackPivotPrice:signal.pullbackPivotPrice,slAtr:signal.slAtr,pivotPrice:signal.pivotPrice,slTimeframe:C.ENTRY_TIMEFRAME,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
+    const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.ema50Side,entryStructure:signal.divergenceType,entrySwingLevel:signal.referencePrice,pullbackPivotPrice:signal.pivotPrice,divergenceType:signal.divergenceType,sweepTime:new Date(signal.sweepTime),slAtr:signal.slAtr,pivotPrice:signal.pivotPrice,slTimeframe:C.STRATEGY_TIMEFRAME,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return {opened:true,dryRun:true}; }
     let inserted;
     let orderSubmissionStarted=false, orderAccepted=false;
@@ -421,7 +397,7 @@ async function main() {
           console.log("TRY_FRESH_SCAN_CANDIDATE",candidate.symbol,"scanScore="+candidate.score);
           return tryEntry(candidate.symbol);
         },{
-          minScore:C.MIN_SCORE_TO_ENTER,
+          minScore:0,
           isFatalError:isFatalCandidateError,
           onCandidateError:(candidate,error)=>console.error("CANDIDATE_ATTEMPT_FAILED",candidate.symbol,error.message)
         });
@@ -436,7 +412,7 @@ async function main() {
     const live=await positions(), open=await trades.countDocuments({status:"OPEN"});
     return "SIMPLE BOT OK\nTracked open trades: "+open+"\nExchange positions: "+live.length+"\nTop symbols: "+symbols.length+"\nRR: "+C.REWARD_RISK;
   };
-  console.log("MULTI-TIMEFRAME STRUCTURE BOT STARTED", "RR="+C.REWARD_RISK, "MAX_SYMBOLS="+C.MAX_SYMBOLS);
+  console.log("SINGLE-TIMEFRAME RSI DIVERGENCE SWEEP BOT STARTED", "RR="+C.REWARD_RISK, "MAX_SYMBOLS="+C.MAX_SYMBOLS);
   await cycle();
   const timer=setInterval(()=>void cycle(),C.SCAN_INTERVAL_MS);
   const shutdown=async()=>{ if(stopped)return; stopped=true; clearInterval(timer); await mongo.close(); process.exit(0); };
