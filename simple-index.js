@@ -299,12 +299,13 @@ async function main() {
     const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.trendSide,entryStructure:signal.entryStructure,entrySwingLevel:signal.entrySwingLevel,pullbackPivotPrice:signal.pullbackPivotPrice,slAtr:signal.slAtr,pivotPrice:signal.pivotPrice,slTimeframe:C.ENTRY_TIMEFRAME,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return {opened:true,dryRun:true}; }
     let inserted;
-    let orderSubmissionStarted=false;
+    let orderSubmissionStarted=false, orderAccepted=false;
     try { inserted=await trades.insertOne(record); } catch(e) { if(e.code===11000) return; throw e; }
     try {
       await binance.signed("POST","/fapi/v1/leverage",{symbol,leverage:symbolLeverage});
       orderSubmissionStarted=true;
       const order=await binance.signed("POST","/fapi/v1/order",{symbol,side:signal.side==="LONG"?"BUY":"SELL",type:"MARKET",quantity:qty.toFixed(precision(r.stepSize)),newOrderRespType:"RESULT"});
+      orderAccepted=true;
       const filled=Number(order.avgPrice)||mark;
       let actual;
       try {
@@ -337,7 +338,8 @@ async function main() {
       console.log("ENTRY_OK",symbol,signal.side,"qty="+qty,"sl="+actual.sl,"tp1="+actual.tp1,"tp2="+actual.tp2);
       return {opened:true};
     } catch(e) {
-      if(orderSubmissionStarted && e.orderMayBeOpen===undefined) {
+      if(orderAccepted) e.orderWasAccepted=true;
+      else if(orderSubmissionStarted && e.orderMayBeOpen===undefined) {
         // A Binance 4xx response confirms the order was rejected; network/5xx
         // failures are ambiguous, so do not risk opening another coin.
         e.orderMayBeOpen=!/^BINANCE_4\\d\\d_/.test(String(e.message||""));
