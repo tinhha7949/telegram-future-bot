@@ -4,85 +4,78 @@ const path = require("node:path");
 
 function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   const out = {};
-  const text = fs.readFileSync(file, "utf8");
-  for (const [i, line0] of text.split(/\r?\n/).entries()) {
+  const source = fs.readFileSync(file, "utf8");
+  for (const [i, line0] of source.split(/\r?\n/).entries()) {
     const line = line0.replace(/\s+#.*$/, "").trim();
     if (!line || line.startsWith("#")) continue;
-    const m = /^([A-Z][A-Z0-9_]*):\s*(.*?)\s*$/.exec(line);
-    if (!m || Object.hasOwn(out, m[1])) throw new Error("SIMPLE_CONFIG_INVALID_LINE_" + (i + 1));
-    const [, key, raw] = m;
-    let v;
-    if (raw.startsWith('"')) v = JSON.parse(raw);
-    else if (raw === "true" || raw === "false") v = raw === "true";
-    else if (/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(raw)) v = Number(raw);
+    const match = /^([A-Z][A-Z0-9_]*):\s*(.*?)\s*$/.exec(line);
+    if (!match || Object.hasOwn(out, match[1])) throw new Error("SIMPLE_CONFIG_INVALID_LINE_" + (i + 1));
+    const [, key, raw] = match;
+    let value;
+    if (raw.startsWith('"')) value = JSON.parse(raw);
+    else if (raw === "true" || raw === "false") value = raw === "true";
+    else if (/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(raw)) value = Number(raw);
     else throw new Error("SIMPLE_CONFIG_INVALID_VALUE_" + key);
-    out[key] = v;
+    out[key] = value;
   }
+
   const required = [
     "QUOTE_ASSET", "MAX_SYMBOLS", "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT",
-    "TREND_TIMEFRAME", "TREND_HISTORY_CANDLES", "STRUCTURE_LOOKBACK_CANDLES", "CONFIRMATION_TIMEFRAME", "CONFIRMATION_HISTORY_CANDLES", "MAJOR_PIVOT_LEFT_BARS", "MAJOR_PIVOT_RIGHT_BARS", "CONFIRMATION_PIVOT_LEFT_BARS", "CONFIRMATION_PIVOT_RIGHT_BARS", "ENTRY_TIMEFRAME", "ENTRY_STRUCTURE_LOOKBACK_CANDLES",
-    "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS", "MIN_SCORE_TO_ENTER", "BOS_TOLERANCE_ATR", "ENTRY_RETEST_TOLERANCE_ATR", "ENTRY_RETEST_MAX_PENETRATION_ATR", "ENTRY_MAX_EXTENSION_ATR", "ENTRY_RETEST_MAX_BARS", "ENTRY_CONTINUATION_MAX_BARS", "ENTRY_ATR_PERIOD",
-    "SL_ATR_PERIOD", "SL_PIVOT_MAX_DISTANCE", "SL_PIVOT_BUFFER_ATR", "SL_PIVOT_BUFFER_MIN_PCT",
-    "SL_MIN_R_MULTIPLE", "SL_MAX_R_MULTIPLE", "SL_FALLBACK_ATR_MULTIPLIER", "SL_FALLBACK_MIN_PCT", "SL_FALLBACK_MAX_PCT",
-    "REWARD_RISK", "TP1_REWARD_RISK", "TP2_REWARD_RISK", "TP1_CLOSE_PERCENT", "TP2_CLOSE_PERCENT", "BE_TRIGGER_TP1_PROGRESS_PCT",
-    "MAX_ABS_FUNDING_RATE", "MAX_SPREAD_BPS", "MAX_HOLD_HOURS", "MAX_OPEN_POSITIONS", "MAX_TRADES_PER_DAY",
-    "POSITION_MARGIN_PCT", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT", "LEVERAGE", "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS",
-    "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS", "MONGO_DB_NAME", "MONGO_TRADES_COLLECTION",
-    "MONGO_STATE_COLLECTION", "COIN_COOLDOWN_MINUTES", "DRY_RUN"
+    "STRATEGY_TIMEFRAME", "HISTORY_CANDLES", "RSI_PERIOD", "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS",
+    "MIN_PIVOT_DISTANCE", "MAX_PIVOT_DISTANCE", "SWEEP_MAX_WAIT_BARS", "SWEEP_MIN_ATR",
+    "CONFIRMATION_MAX_BARS", "ATR_PERIOD", "EMA50_PERIOD", "USE_EMA50_FILTER",
+    "SL_ATR_BUFFER", "SL_MIN_BUFFER_PERCENT", "MAX_SL_ATR",
+    "REWARD_RISK", "TP1_REWARD_RISK", "TP2_REWARD_RISK", "TP1_CLOSE_PERCENT", "TP2_CLOSE_PERCENT",
+    "BE_TRIGGER_TP1_PROGRESS_PCT", "MAX_ABS_FUNDING_RATE", "MAX_SPREAD_BPS", "MAX_HOLD_HOURS",
+    "MAX_OPEN_POSITIONS", "MAX_TRADES_PER_DAY", "POSITION_MARGIN_PCT", "RISK_PER_TRADE_PCT",
+    "MAX_POSITION_BALANCE_PCT", "LEVERAGE", "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS",
+    "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS", "MONGO_DB_NAME",
+    "MONGO_TRADES_COLLECTION", "MONGO_STATE_COLLECTION", "COIN_COOLDOWN_MINUTES", "DRY_RUN"
   ];
-  for (const k of required) if (!Object.hasOwn(out, k)) throw new Error("SIMPLE_CONFIG_MISSING_" + k);
-  const stringKeys = [
-    "QUOTE_ASSET", "TREND_TIMEFRAME", "CONFIRMATION_TIMEFRAME", "ENTRY_TIMEFRAME",
-    "MONGO_DB_NAME", "MONGO_TRADES_COLLECTION", "MONGO_STATE_COLLECTION"
-  ];
-  for (const k of stringKeys) {
-    if (typeof out[k] !== "string" || !out[k].trim()) throw new Error("SIMPLE_CONFIG_INVALID_" + k);
-  }
-  if (typeof out.DRY_RUN !== "boolean") throw new Error("SIMPLE_CONFIG_INVALID_DRY_RUN");
+  for (const key of required) if (!Object.hasOwn(out, key)) throw new Error("SIMPLE_CONFIG_MISSING_" + key);
 
-  const numericKeys = required.filter(k => !stringKeys.includes(k) && k !== "DRY_RUN");
-  const nonNegativeKeys = new Set([
-    "MAX_SYMBOLS", "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT",
-    "SL_PIVOT_BUFFER_MIN_PCT", "SL_FALLBACK_MIN_PCT", "ENTRY_RETEST_MAX_PENETRATION_ATR",
-    "MAX_ABS_FUNDING_RATE", "MAX_SPREAD_BPS", "MAX_OPEN_POSITIONS",
-    "MAX_TRADES_PER_DAY", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT", "COIN_COOLDOWN_MINUTES"
+  const stringKeys = ["QUOTE_ASSET", "STRATEGY_TIMEFRAME", "MONGO_DB_NAME", "MONGO_TRADES_COLLECTION", "MONGO_STATE_COLLECTION"];
+  for (const key of stringKeys) {
+    if (typeof out[key] !== "string" || !out[key].trim()) throw new Error("SIMPLE_CONFIG_INVALID_" + key);
+  }
+  if (typeof out.DRY_RUN !== "boolean" || typeof out.USE_EMA50_FILTER !== "boolean")
+    throw new Error("SIMPLE_CONFIG_INVALID_BOOLEAN");
+
+  const nonNegative = new Set([
+    "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT", "MAX_ABS_FUNDING_RATE",
+    "MAX_SPREAD_BPS", "COIN_COOLDOWN_MINUTES", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT"
   ]);
-  for (const k of numericKeys) {
-    if (!Number.isFinite(out[k]) || (nonNegativeKeys.has(k) ? out[k] < 0 : out[k] <= 0))
-      throw new Error("SIMPLE_CONFIG_INVALID_" + k);
+  for (const key of required.filter(key => !stringKeys.includes(key) && key !== "DRY_RUN" && key !== "USE_EMA50_FILTER")) {
+    if (!Number.isFinite(out[key]) || (nonNegative.has(key) ? out[key] < 0 : out[key] <= 0))
+      throw new Error("SIMPLE_CONFIG_INVALID_" + key);
   }
 
+  const intervals = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]);
   const invalid = [];
   const check = (name, failed) => { if (failed) invalid.push(name); };
-  const supportedIntervals = new Set(["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"]);
-  check("TREND_TIMEFRAME", !supportedIntervals.has(out.TREND_TIMEFRAME));
-  check("CONFIRMATION_TIMEFRAME", !supportedIntervals.has(out.CONFIRMATION_TIMEFRAME));
-  check("ENTRY_TIMEFRAME", !supportedIntervals.has(out.ENTRY_TIMEFRAME));
-  check("MAX_SYMBOLS", !Number.isInteger(out.MAX_SYMBOLS));
-  check("ENTRY_STRUCTURE_LOOKBACK_CANDLES", !Number.isInteger(out.ENTRY_STRUCTURE_LOOKBACK_CANDLES) || out.ENTRY_STRUCTURE_LOOKBACK_CANDLES < out.PIVOT_LEFT_BARS + out.PIVOT_RIGHT_BARS + 5);
-  check("STRUCTURE_LOOKBACK_CANDLES", !Number.isInteger(out.STRUCTURE_LOOKBACK_CANDLES) || out.STRUCTURE_LOOKBACK_CANDLES < out.MAJOR_PIVOT_LEFT_BARS + out.MAJOR_PIVOT_RIGHT_BARS + 5);
-  check("TREND_HISTORY_CANDLES", !Number.isInteger(out.TREND_HISTORY_CANDLES) || out.TREND_HISTORY_CANDLES < out.MAJOR_PIVOT_LEFT_BARS + out.MAJOR_PIVOT_RIGHT_BARS + 3);
-  check("CONFIRMATION_HISTORY_CANDLES", !Number.isInteger(out.CONFIRMATION_HISTORY_CANDLES) || out.CONFIRMATION_HISTORY_CANDLES < out.CONFIRMATION_PIVOT_LEFT_BARS + out.CONFIRMATION_PIVOT_RIGHT_BARS + 5);
-  check("MAJOR_PIVOT_BARS", !Number.isInteger(out.MAJOR_PIVOT_LEFT_BARS) || !Number.isInteger(out.MAJOR_PIVOT_RIGHT_BARS));
-  check("CONFIRMATION_PIVOT_BARS", !Number.isInteger(out.CONFIRMATION_PIVOT_LEFT_BARS) || !Number.isInteger(out.CONFIRMATION_PIVOT_RIGHT_BARS));
-  check("PIVOT_BARS", !Number.isInteger(out.PIVOT_LEFT_BARS) || !Number.isInteger(out.PIVOT_RIGHT_BARS));
-  check("MIN_SCORE_TO_ENTER", !Number.isInteger(out.MIN_SCORE_TO_ENTER) || out.MIN_SCORE_TO_ENTER < 0 || out.MIN_SCORE_TO_ENTER > 100);
-  check("BOS_TOLERANCE_ATR", out.BOS_TOLERANCE_ATR <= 0);
-  check("ENTRY_RETEST_PARAMS", out.ENTRY_RETEST_TOLERANCE_ATR <= 0 || out.ENTRY_RETEST_MAX_PENETRATION_ATR < 0 || out.ENTRY_MAX_EXTENSION_ATR <= 0 || out.ENTRY_RETEST_MAX_BARS < 1 || out.ENTRY_CONTINUATION_MAX_BARS < 1);
-  check("SL_FALLBACK_RANGE", out.SL_FALLBACK_MIN_PCT > out.SL_FALLBACK_MAX_PCT);
-  check("SL_R_RANGE", out.SL_MIN_R_MULTIPLE >= out.SL_MAX_R_MULTIPLE);
-  check("SL_ATR_PERIOD", !Number.isInteger(out.SL_ATR_PERIOD));
-  check("SL_PIVOT_MAX_DISTANCE", !Number.isInteger(out.SL_PIVOT_MAX_DISTANCE) || out.SL_PIVOT_MAX_DISTANCE < 1);
-  check("REWARD_RISK", out.REWARD_RISK <= 0);
+  check("STRATEGY_TIMEFRAME", !intervals.has(out.STRATEGY_TIMEFRAME));
+  for (const key of ["MAX_SYMBOLS", "HISTORY_CANDLES", "RSI_PERIOD", "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS",
+    "MIN_PIVOT_DISTANCE", "MAX_PIVOT_DISTANCE", "SWEEP_MAX_WAIT_BARS", "CONFIRMATION_MAX_BARS",
+    "ATR_PERIOD", "EMA50_PERIOD", "MAX_OPEN_POSITIONS", "MAX_TRADES_PER_DAY", "LEVERAGE",
+    "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS", "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS",
+    "MAX_HOLD_HOURS", "COIN_COOLDOWN_MINUTES"]) check(key, !Number.isInteger(out[key]));
+  check("HISTORY_CANDLES", out.HISTORY_CANDLES < Math.max(out.EMA50_PERIOD + out.ATR_PERIOD + 2, out.RSI_PERIOD + out.MAX_PIVOT_DISTANCE + out.PIVOT_LEFT_BARS + out.PIVOT_RIGHT_BARS + 5));
+  check("PIVOT_DISTANCE", out.MIN_PIVOT_DISTANCE < 1 || out.MAX_PIVOT_DISTANCE < out.MIN_PIVOT_DISTANCE);
+  check("PIVOT_BARS", out.PIVOT_LEFT_BARS < 1 || out.PIVOT_RIGHT_BARS < 1);
+  check("WAIT_BARS", out.SWEEP_MAX_WAIT_BARS < 1 || out.CONFIRMATION_MAX_BARS < 1);
+  check("ATR_SETTINGS", out.ATR_PERIOD < 2 || out.SWEEP_MIN_ATR < 0);
+  check("EMA50_PERIOD", out.EMA50_PERIOD < 2);
+  check("STOP_SETTINGS", out.SL_ATR_BUFFER <= 0 || out.SL_MIN_BUFFER_PERCENT <= 0 || out.MAX_SL_ATR <= 0);
+  check("MAX_SYMBOLS", out.MAX_SYMBOLS < 1);
   check("TP1_REWARD_RISK", out.TP1_REWARD_RISK <= 0);
   check("TP2_REWARD_RISK", out.TP2_REWARD_RISK <= out.TP1_REWARD_RISK);
-  check("TP_CLOSE_PERCENT", out.TP1_CLOSE_PERCENT <= 0 || out.TP2_CLOSE_PERCENT <= 0 || out.TP1_CLOSE_PERCENT >= 100 || out.TP2_CLOSE_PERCENT >= 100 || out.TP1_CLOSE_PERCENT + out.TP2_CLOSE_PERCENT !== 100);
+  check("TP_CLOSE_PERCENT", out.TP1_CLOSE_PERCENT <= 0 || out.TP2_CLOSE_PERCENT <= 0 ||
+    out.TP1_CLOSE_PERCENT >= 100 || out.TP2_CLOSE_PERCENT >= 100 ||
+    out.TP1_CLOSE_PERCENT + out.TP2_CLOSE_PERCENT !== 100);
   check("BE_TRIGGER_TP1_PROGRESS_PCT", out.BE_TRIGGER_TP1_PROGRESS_PCT <= 0 || out.BE_TRIGGER_TP1_PROGRESS_PCT > 100);
+  check("POSITION_MARGIN_PCT", out.POSITION_MARGIN_PCT > 1);
   check("RISK_PER_TRADE_PCT", out.RISK_PER_TRADE_PCT > 1);
   check("MAX_POSITION_BALANCE_PCT", out.MAX_POSITION_BALANCE_PCT > 1);
-  check("POSITION_MARGIN_PCT", out.POSITION_MARGIN_PCT > 1);
-  for (const k of ["MAX_TRADES_PER_DAY", "MAX_OPEN_POSITIONS", "MAX_SYMBOLS", "TREND_HISTORY_CANDLES", "CONFIRMATION_HISTORY_CANDLES", "MAJOR_PIVOT_LEFT_BARS", "MAJOR_PIVOT_RIGHT_BARS", "CONFIRMATION_PIVOT_LEFT_BARS", "CONFIRMATION_PIVOT_RIGHT_BARS", "ENTRY_STRUCTURE_LOOKBACK_CANDLES", "ENTRY_RETEST_MAX_BARS", "ENTRY_CONTINUATION_MAX_BARS", "ENTRY_ATR_PERIOD", "LEVERAGE", "STRUCTURE_LOOKBACK_CANDLES", "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS", "SL_ATR_PERIOD", "SL_PIVOT_MAX_DISTANCE", "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS", "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS", "COIN_COOLDOWN_MINUTES"])
-    check(k, !Number.isInteger(out[k]));
   if (invalid.length) throw new Error("SIMPLE_CONFIG_INVARIANT:" + invalid.join(", "));
   return Object.freeze(out);
 }
