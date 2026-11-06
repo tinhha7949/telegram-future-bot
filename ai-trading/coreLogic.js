@@ -326,7 +326,9 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
   if (pullbackAge < 0 || pullbackAge > config.SL_PIVOT_MAX_DISTANCE)
     return { side: null, reason: "ENTRY_PULLBACK_PIVOT_TOO_OLD", trendSide, pullbackPivotPrice: setup.pullback, pullbackAge, structureState: nextStructureState };
   const extension = side === "LONG" ? entryPrice - setup.level : setup.level - entryPrice;
-  if (extension < 0 || extension > entryAtr * config.ENTRY_MAX_EXTENSION_ATR)
+  if (extension < 0)
+    return { side: null, reason: "ENTRY_BOS_RETEST_NOT_CONFIRMED", trendSide, entryLevel: setup.level, extensionAtr: extension / entryAtr, structureState: nextStructureState };
+  if (extension > entryAtr * config.ENTRY_MAX_EXTENSION_ATR)
     return { side: null, reason: "ENTRY_TOO_EXTENDED_FROM_RETEST", trendSide, entryLevel: setup.level, extensionAtr: extension / entryAtr, structureState: nextStructureState };
   if (entryWindow.length < config.SL_ATR_PERIOD + 1)
     return { side: null, reason: "SL_CANDLE_HISTORY_REQUIRED", trendSide, structureState: nextStructureState };
