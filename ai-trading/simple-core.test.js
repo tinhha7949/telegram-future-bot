@@ -138,16 +138,15 @@ test("15m ignores a BOS that occurs before the pullback pivot is confirmed",()=>
   assert.equal(signal.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
 });
 
-test("15m rejects a retest that penetrates too far below the BOS level",()=>{
+test("15m scores deep retests instead of treating penetration as a hard gate",()=>{
   const signal=coreLogic({
     trendCandles:trendCandles("UP"),
     entryCandles:entryCandles("LONG"),
-    
-    config:{...C,ENTRY_RETEST_MAX_PENETRATION_ATR:0},
+    config:{...C,ENTRY_RETEST_MAX_PENETRATION_ATR:0,MIN_SCORE_TO_ENTER:70},
     now:NOW
   });
-  assert.equal(signal.side,null);
-  assert.equal(signal.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
+  assert.equal(signal.side,"LONG");
+  assert.ok(signal.score>=70);
 });
 
 test("1h confirmation requires the configured history count",()=>{
