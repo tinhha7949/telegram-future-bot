@@ -111,7 +111,13 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
   const rejected=coreLogic({trendCandles:trendCandles("UP"),entryCandles:noBreak,config:cfg,now:NOW});
   assert.equal(rejected.side,null);
   assert.equal(rejected.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
-  const alreadyAbove=entryCandles("LONG"); alreadyAbove[alreadyAbove.length-1].close=105.4; alreadyAbove[alreadyAbove.length-1].open=105.4;
+  const alreadyAbove=entryCandles("LONG");
+  // Price was already above the BOS level before the final candle; there is
+  // no new close-crossing event to authorize a fresh setup.
+  alreadyAbove[alreadyAbove.length-13].close=105.4;
+  alreadyAbove[alreadyAbove.length-13].open=105.4;
+  alreadyAbove[alreadyAbove.length-1].close=105.4;
+  alreadyAbove[alreadyAbove.length-1].open=105.4;
   const noFreshBreak=coreLogic({trendCandles:trendCandles("UP"),entryCandles:alreadyAbove,config:cfg,now:NOW});
   assert.equal(noFreshBreak.side,null);
   assert.equal(noFreshBreak.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
