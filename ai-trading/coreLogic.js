@@ -275,7 +275,8 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
         const shallow = c.low >= swingHigh.price - maxPenetration;
         const hold = c.close > swingHigh.price;
         const continuationAge = entryWindow.length - 1 - i;
-        const continued = continuationAge >= 0 && continuationAge <= config.ENTRY_CONTINUATION_MAX_BARS;
+        if (continuationAge < 0 || continuationAge > config.ENTRY_CONTINUATION_MAX_BARS) continue;
+        const continued = true;
         const breakout = entryWindow.at(-1).close > c.high;
         const score = 15 + (touch ? 15 : 0) + (shallow ? 10 : 0) + (hold ? 15 : 0) + (continued ? 15 : 0) + (breakout ? 30 : 0);
         if (touch && score >= config.MIN_SCORE_TO_ENTER) {
@@ -310,7 +311,8 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
         const shallow = c.high <= swingLow.price + maxPenetration;
         const hold = c.close < swingLow.price;
         const continuationAge = entryWindow.length - 1 - i;
-        const continued = continuationAge >= 0 && continuationAge <= config.ENTRY_CONTINUATION_MAX_BARS;
+        if (continuationAge < 0 || continuationAge > config.ENTRY_CONTINUATION_MAX_BARS) continue;
+        const continued = true;
         const breakout = entryWindow.at(-1).close < c.low;
         const score = 15 + (touch ? 15 : 0) + (shallow ? 10 : 0) + (hold ? 15 : 0) + (continued ? 15 : 0) + (breakout ? 30 : 0);
         if (touch && score >= config.MIN_SCORE_TO_ENTER) {
