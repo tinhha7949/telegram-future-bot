@@ -14,5 +14,5 @@
   "engines": {
     "node": ">=22"
   },
-  "description": "Simple Binance USDT futures bot using multi-timeframe market-structure entries"
+  "description": "Simple Binance USDT futures bot using single-timeframe RSI divergence and liquidity-sweep entries"
 }
