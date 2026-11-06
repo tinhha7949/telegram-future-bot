@@ -88,41 +88,29 @@ function pivots(candles, left, right) {
 function detectDivergence(candles, config, rsiOverride = null) {
   const { highs, lows } = pivots(candles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
   const rsi = Array.isArray(rsiOverride) ? rsiOverride : rsiSeries(candles, config.RSI_PERIOD);
-  const confirmedThrough = candles.length - 1;
-  const candidates = [];
-
+  const confirmedThrough = candles.length - 1, candidates = [];
+  // MT5 state parity: compare only the newest two confirmed pivots per side.
   const inspect = (list, direction) => {
-    for (let i = list.length - 1; i >= 1; i--) {
-      const current = list[i], previous = list[i - 1];
-      const confirmIndex = current.index + config.PIVOT_RIGHT_BARS;
-      if (confirmIndex > confirmedThrough || !Number.isFinite(rsi[current.index]) || !Number.isFinite(rsi[previous.index])) continue;
-      // MT5 only arms a pivot when it is the newest confirmed pivot of its side.
-      if (list.slice(i + 1).some(p => p.index <= confirmIndex)) continue;
-      const distance = current.index - previous.index;
-      if (distance < config.MIN_PIVOT_DISTANCE || distance > config.MAX_PIVOT_DISTANCE) continue;
-      const priceNow = current.price, priceBefore = previous.price;
-      const rsiNow = rsi[current.index], rsiBefore = rsi[previous.index];
-      let type = null;
-      if (direction === 1) {
-        if (priceNow < priceBefore && rsiNow > rsiBefore) type = "REGULAR_BULLISH";
-        else if (priceNow > priceBefore && rsiNow < rsiBefore) type = "HIDDEN_BULLISH";
-      } else {
-        if (priceNow > priceBefore && rsiNow < rsiBefore) type = "REGULAR_BEARISH";
-        else if (priceNow < priceBefore && rsiNow > rsiBefore) type = "HIDDEN_BEARISH";
-      }
-      if (type) candidates.push({
-        direction, type, pivotIndex: current.index, confirmIndex,
-        pivotTime: candles[current.index].closeTime,
-        referencePrice: direction === 1 ? previous.price : previous.price,
-        divergencePrice: current.price
-      });
+    if (list.length < 2) return;
+    const current=list[list.length-1], previous=list[list.length-2];
+    const confirmIndex=current.index+config.PIVOT_RIGHT_BARS;
+    if(confirmIndex>confirmedThrough||!Number.isFinite(rsi[current.index])||!Number.isFinite(rsi[previous.index]))return;
+    const distance=current.index-previous.index;
+    if(distance<config.MIN_PIVOT_DISTANCE||distance>config.MAX_PIVOT_DISTANCE)return;
+    const priceNow=current.price,priceBefore=previous.price,rsiNow=rsi[current.index],rsiBefore=rsi[previous.index];
+    let type=null;
+    if(direction===1){
+      if(priceNow<priceBefore&&rsiNow>rsiBefore)type="REGULAR_BULLISH";
+      else if(priceNow>priceBefore&&rsiNow<rsiBefore)type="HIDDEN_BULLISH";
+    }else{
+      if(priceNow>priceBefore&&rsiNow<rsiBefore)type="REGULAR_BEARISH";
+      else if(priceNow<priceBefore&&rsiNow>rsiBefore)type="HIDDEN_BEARISH";
     }
+    if(type)candidates.push({direction,type,pivotIndex:current.index,confirmIndex,pivotTime:candles[current.index].closeTime,referencePrice:previous.price,divergencePrice:current.price});
   };
-
-  inspect(lows, 1);
-  inspect(highs, -1);
-  candidates.sort((a, b) => b.pivotIndex - a.pivotIndex);
-  return candidates[0] || null;
+  inspect(lows,1); inspect(highs,-1);
+  candidates.sort((x,y)=>y.pivotIndex-x.pivotIndex);
+  return candidates[0]||null;
 }
 
 function findSweepAndConfirmation(candles, divergence, config, atrValues, emaValues) {

@@ -33,9 +33,17 @@ function clientAlgoId(kind){
 }
 async function placeProtection({request,symbol,side,sl,tp1,tp2,qty,stepSize,minQty,config}){
  const split=splitQuantity({quantity:qty,stepSize,minQty,config}),closeSide=side==="LONG"?"SELL":"BUY",base={symbol,side:closeSide,workingType:"MARK_PRICE",algoType:"CONDITIONAL"};
- const stop=await request("POST","/fapi/v1/algoOrder",{...base,type:"STOP_MARKET",triggerPrice:String(sl),closePosition:"true",clientAlgoId:clientAlgoId("sl")});
- const first=await request("POST","/fapi/v1/algoOrder",{...base,type:"TAKE_PROFIT_MARKET",triggerPrice:String(tp1),quantity:split.tp1.toFixed(precision(stepSize)),reduceOnly:"true",clientAlgoId:clientAlgoId("1")});
- const second=await request("POST","/fapi/v1/algoOrder",{...base,type:"TAKE_PROFIT_MARKET",triggerPrice:String(tp2),quantity:split.tp2.toFixed(precision(stepSize)),reduceOnly:"true",clientAlgoId:clientAlgoId("2")});
- return{stop,tp1:first,tp2:second,quantities:split};
+ const ids=[clientAlgoId("sl"),clientAlgoId("1"),clientAlgoId("2")];
+ const stop=await request("POST","/fapi/v1/algoOrder",{...base,type:"STOP_MARKET",triggerPrice:String(sl),closePosition:"true",clientAlgoId:ids[0]});
+ const first=await request("POST","/fapi/v1/algoOrder",{...base,type:"TAKE_PROFIT_MARKET",triggerPrice:String(tp1),quantity:split.tp1.toFixed(precision(stepSize)),reduceOnly:"true",clientAlgoId:ids[1]});
+ const second=await request("POST","/fapi/v1/algoOrder",{...base,type:"TAKE_PROFIT_MARKET",triggerPrice:String(tp2),quantity:split.tp2.toFixed(precision(stepSize)),reduceOnly:"true",clientAlgoId:ids[2]});
+ const placed=[stop,first,second];
+ if(placed.some(x=>x?.algoId===undefined&&x?.clientAlgoId===undefined))throw Error("ALGO_PROTECTION_RESPONSE_MISSING_ID");
+ const response=await request("GET","/fapi/v1/openAlgoOrders",{symbol});
+ const open=Array.isArray(response)?response:(Array.isArray(response?.orders)?response.orders:[]);
+ const missing=placed.filter((x,i)=>!open.some(y=>(x?.algoId!==undefined&&String(y.algoId)===String(x.algoId))||String(y.clientAlgoId||"")===ids[i]));
+ if(missing.length)throw Error("ALGO_PROTECTION_NOT_VERIFIED_"+missing.length+"_OF_3");
+ return{stop,tp1:first,tp2:second,quantities:split,verified:true,verifiedAt:Date.now()};
 }
+
 module.exports={buildProtection,splitQuantity,placeProtection};

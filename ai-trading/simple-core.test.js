@@ -72,6 +72,12 @@ test("confirmed pivots and regular bullish divergence use the latest two confirm
   assert.equal(found.referencePrice, 90);
 });
 
+test("does not reuse an older divergence when newest two confirmed pivots do not diverge",()=>{
+ const candles=makeCandles(40);candles[10].low=90;candles[20].low=88;candles[30].low=85;
+ const rsi=Array(40).fill(50);rsi[10]=20;rsi[20]=30;rsi[30]=25;
+ const found=detectDivergence(candles,{PIVOT_LEFT_BARS:2,PIVOT_RIGHT_BARS:2,MIN_PIVOT_DISTANCE:5,MAX_PIVOT_DISTANCE:40,RSI_PERIOD:14},rsi);
+ assert.equal(found,null);
+});
 test("liquidity sweep must reclaim the reference and then get a candle close beyond the sweep high", () => {
   const candles = makeCandles(32);
   candles[30] = { ...candles[30], open: 90.5, high: 92, low: 89, close: 91 };

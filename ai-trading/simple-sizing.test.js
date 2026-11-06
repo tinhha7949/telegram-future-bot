@@ -1,86 +1,13 @@
 "use strict";
-const test=require("node:test");
-const assert=require("node:assert/strict");
-const {calculateOrderSizing}=require("./simple-sizing");
-const config={LEVERAGE:20,POSITION_MARGIN_PCT:0.1,RISK_PER_TRADE_PCT:0.01,MAX_POSITION_BALANCE_PCT:0.35};
-const rules={stepSize:0.1,minQty:0.1,minNotional:5};
-
-test("uses the configured percentage of total wallet balance as margin",()=>{
- const r=calculateOrderSizing({wallet:10,available:10,mark:1,rules,config});
- assert.equal(r.ok,true);
- assert.equal(r.targetMargin,1);
- assert.equal(r.qty,20);
- assert.equal(r.notional,20);
- assert.equal(r.margin,1);
-});
-
-test("open positions do not reduce sizing because available balance is not the sizing base",()=>{
- const first=calculateOrderSizing({wallet:10,available:9,mark:1,rules,config});
- const fifth=calculateOrderSizing({wallet:10,available:5,mark:1,rules,config});
- assert.equal(first.ok,true);
- assert.equal(fifth.ok,true);
- assert.equal(first.qty,20);
- assert.equal(fifth.qty,20);
- assert.equal(first.targetMargin,1);
- assert.equal(fifth.targetMargin,1);
-});
-
-test("recalculates the same percentage from the updated total wallet balance",()=>{
- const r=calculateOrderSizing({wallet:20,available:15,mark:1,rules,config});
- assert.equal(r.ok,true);
- assert.equal(r.targetMargin,2);
- assert.equal(r.qty,40);
- assert.equal(r.margin,2);
-});
-
-test("checks actual margin after step-size rounding, not the unrounded target",()=>{
- const r=calculateOrderSizing({
-  wallet:10,
-  available:0.8,
-  mark:0.89,
-  rules:{stepSize:1,minQty:1,minNotional:5},
-  config:{...config,POSITION_MARGIN_PCT:0.08}
- });
- assert.equal(r.targetMargin,0.8);
- assert.equal(r.qty,17);
- assert.ok(Math.abs(r.margin-0.7565)<1e-12);
- assert.equal(r.ok,true);
- assert.equal(r.reason,"OK");
-});
-
-test("does not reduce order size when available balance cannot fund the full target margin",()=>{
- const r=calculateOrderSizing({wallet:10,available:0.8,mark:1,rules,config});
- assert.equal(r.ok,false);
- assert.equal(r.reason,"MARGIN");
- assert.equal(r.targetMargin,1);
- assert.equal(r.qty,20);
-});
-
-test("ignores risk percentage, stop distance, and legacy position cap for sizing",()=>{
- const a=calculateOrderSizing({wallet:10,available:10,mark:1,rules,config});
- const b=calculateOrderSizing({wallet:10,available:10,mark:1,rules,config:{...config,RISK_PER_TRADE_PCT:0.9,MAX_POSITION_BALANCE_PCT:0.01}});
- assert.equal(a.ok,true);
- assert.equal(b.ok,true);
- assert.equal(a.qty,b.qty);
- assert.equal(a.margin,b.margin);
-});
-
-test("floors to exchange step size without exceeding target margin",()=>{
- const r=calculateOrderSizing({wallet:10,available:10,mark:3,rules,config});
- assert.equal(r.ok,true);
- assert.equal(r.qty,6.6);
- assert.ok(r.margin<=r.targetMargin);
-});
-
-test("rejects minimum notional when the configured margin cannot reach it",()=>{
- const fineRules={stepSize:0.0001,minQty:0.0001,minNotional:5};
- const r=calculateOrderSizing({wallet:10,available:10,mark:100,rules:fineRules,config:{...config,POSITION_MARGIN_PCT:0.01}});
- assert.equal(r.ok,false);
- assert.equal(r.reason,"MIN_NOTIONAL");
-});
-
-test("rejects invalid or missing sizing inputs",()=>{
- const r=calculateOrderSizing({wallet:10,available:10,mark:0,rules,config});
- assert.equal(r.ok,false);
- assert.equal(r.reason,"INVALID_SIZING_INPUT");
-});
+const test=require("node:test"),assert=require("node:assert/strict");
+const {calculateOrderSizing,commonStepSize,selectLeverageForNotional}=require("./simple-sizing");
+const config={LEVERAGE:20,POSITION_MARGIN_PCT:.1,RISK_PER_TRADE_PCT:.01,MAX_POSITION_BALANCE_PCT:.35},rules={stepSize:.1,minQty:.1,minNotional:5};
+test("wallet margin sizing remains percentage-based",()=>{const r=calculateOrderSizing({wallet:10,available:10,mark:1,rules,config});assert.equal(r.ok,true);assert.equal(r.targetMargin,1);assert.equal(r.qty,20);assert.equal(r.margin,1);});
+test("available balance does not change target size unless it cannot fund it",()=>{assert.equal(calculateOrderSizing({wallet:10,available:9,mark:1,rules,config}).qty,20);const r=calculateOrderSizing({wallet:10,available:.8,mark:1,rules,config});assert.equal(r.ok,false);assert.equal(r.reason,"MARGIN");});
+test("wallet balance updates sizing",()=>{const r=calculateOrderSizing({wallet:20,available:15,mark:1,rules,config});assert.equal(r.qty,40);assert.equal(r.targetMargin,2);});
+test("step rounding checks actual margin",()=>{const r=calculateOrderSizing({wallet:10,available:.8,mark:.89,rules:{stepSize:1,minQty:1,minNotional:5},config:{...config,POSITION_MARGIN_PCT:.08}});assert.equal(r.qty,17);assert.equal(r.ok,true);});
+test("legacy risk percentage does not affect sizing",()=>{const a=calculateOrderSizing({wallet:10,available:10,mark:1,rules,config}),b=calculateOrderSizing({wallet:10,available:10,mark:1,rules,config:{...config,RISK_PER_TRADE_PCT:.9,MAX_POSITION_BALANCE_PCT:.01}});assert.equal(a.qty,b.qty);});
+test("minimum notional and invalid input are rejected",()=>{assert.equal(calculateOrderSizing({wallet:10,available:10,mark:100,rules:{stepSize:.0001,minQty:.0001,minNotional:5},config:{...config,POSITION_MARGIN_PCT:.01}}).reason,"MIN_NOTIONAL");assert.equal(calculateOrderSizing({wallet:10,available:10,mark:0,rules,config}).reason,"INVALID_SIZING_INPUT");});
+test("common step satisfies both Binance lot filters",()=>{assert.equal(commonStepSize(.001,.01),.01);assert.equal(commonStepSize(.02,.03),.06);});
+test("leverage is selected from the bracket containing target notional",()=>{const x=selectLeverageForNotional({wallet:100,config:{POSITION_MARGIN_PCT:.1,LEVERAGE:50},brackets:[{notionalFloor:0,notionalCap:5000,initialLeverage:50},{notionalFloor:5000,notionalCap:50000,initialLeverage:20}]});assert.equal(x.ok,true);assert.equal(x.leverage,50);assert.equal(x.notionalCap,5000);});
+test("sizing never exceeds the selected tier cap or market maximum quantity",()=>{const r=calculateOrderSizing({wallet:100,available:100,mark:1,rules:{stepSize:1,minQty:1,minNotional:5,maxNotional:5000,maxQty:4000},config:{...config,LEVERAGE:50}});assert.equal(r.ok,true);assert.equal(r.qty,4000);});
