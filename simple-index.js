@@ -337,7 +337,11 @@ async function main() {
       console.log("ENTRY_OK",symbol,signal.side,"qty="+qty,"sl="+actual.sl,"tp1="+actual.tp1,"tp2="+actual.tp2);
       return {opened:true};
     } catch(e) {
-      if(orderSubmissionStarted && e.orderMayBeOpen===undefined) e.orderMayBeOpen=true;
+      if(orderSubmissionStarted && e.orderMayBeOpen===undefined) {
+        // A Binance 4xx response confirms the order was rejected; network/5xx
+        // failures are ambiguous, so do not risk opening another coin.
+        e.orderMayBeOpen=!/^BINANCE_4\\d\\d_/.test(String(e.message||""));
+      }
       const current=await trades.findOne({_id:inserted.insertedId});
       if(current?.status==="ENTRY_PENDING") await trades.updateOne({_id:inserted.insertedId},{$set:{lastError:e.message,lastAttemptAt:new Date()}});
       throw e;
