@@ -96,7 +96,7 @@ test("entry setup selection filters every candidate before choosing the best sur
   const candidates=[
     {level:100,pullback:95,pullbackIndex:40,retestIndex:95,bosIndex:90,score:100},
     {level:90,pullback:88,pullbackIndex:80,retestIndex:96,bosIndex:92,score:95},
-    {level:99,pullback:96,pullbackIndex:85,retestIndex:94,bosIndex:89,score:85}
+    {level:99.5,pullback:96,pullbackIndex:85,retestIndex:94,bosIndex:89,score:85}
   ];
   const selected=selectBestEntrySetup(candidates,{
     side:"LONG",latestIndex:99,entryPrice:101,entryAtr:1,config
