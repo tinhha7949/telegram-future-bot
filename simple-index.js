@@ -10,17 +10,16 @@ const crypto = require("node:crypto");
 const { MongoClient } = require("mongodb");
 const { loadSimpleConfig } = require("./ai-trading/simple-config");
 const { coreLogic, marketVeto } = require("./ai-trading/coreLogic");
-const { getTopSymbol, applySymbolRefresh } = require("./ai-trading/getTopSymbol");
+const { getEligibleSymbols, applySymbolRefresh } = require("./ai-trading/getTopSymbol");
 const { buildProtection, splitQuantity, placeProtection } = require("./ai-trading/tpsl");
 const { moveStopToBreakeven } = require("./ai-trading/break-even");
-const { calculateOrderSizing } = require("./ai-trading/simple-sizing");
+const { calculateOrderSizing, commonStepSize, selectLeverageForNotional } = require("./ai-trading/simple-sizing");
 const { cooldownRecordForClose, isCoolingDown } = require("./ai-trading/coin-cooldown");
-const { attemptRankedCandidates, isFatalCandidateError } = require("./ai-trading/candidate-runner");
 const C = loadSimpleConfig();
 const BASE = "https://fapi.binance.com";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function floorStep(n, step) { if (!(step > 0)) return n; return Math.floor((n + step*1e-10)/step)*step; }
-function precision(step) { const s=String(step); return s.includes(".") ? s.length-s.indexOf(".")-1 : 0; }
+function precision(step) { const s=String(step); if(s.includes("e-")) return Number(s.split("e-")[1]); return s.includes(".") ? s.length-s.indexOf(".")-1 : 0; }
 async function sendTelegram(token,chat,text,label){
   if(!token||!chat){console.error(label+"_NOT_CONFIGURED");return false;}
   try{
@@ -93,18 +92,21 @@ async function main() {
   const rules=new Map();
   for(const s of info.symbols||[]) {
     const f=Object.fromEntries((s.filters||[]).map(x=>[x.filterType,x]));
-    const lot=f.LOT_SIZE||{}, notionalFilter=f.NOTIONAL||f.MIN_NOTIONAL||{};
+    const lot=f.LOT_SIZE||{}, marketLot=f.MARKET_LOT_SIZE||lot, notionalFilter=f.NOTIONAL||f.MIN_NOTIONAL||{};
+    const lotStepSize=Number(lot.stepSize||0), marketStepRaw=Number(marketLot.stepSize||0);
+    const marketStepSize=marketStepRaw>0?marketStepRaw:lotStepSize, stepSize=commonStepSize(lotStepSize,marketStepSize);
+    const lotMinQty=Number(lot.minQty||0), marketMinQty=Number(marketLot.minQty||0)||lotMinQty;
+    const maxQty=Math.min(Number(lot.maxQty||Infinity)||Infinity,Number(marketLot.maxQty||Infinity)||Infinity);
     rules.set(s.symbol,{status:s.status,contractType:s.contractType,quoteAsset:s.quoteAsset,
-      tickSize:Number(f.PRICE_FILTER?.tickSize||0.00000001),tickSizeText:f.PRICE_FILTER?.tickSize,stepSize:Number(lot.stepSize||0),
-      minQty:Number(lot.minQty||0),minNotional:Number(notionalFilter.minNotional||notionalFilter.notional||5)});
+      tickSize:Number(f.PRICE_FILTER?.tickSize||0.00000001),tickSizeText:f.PRICE_FILTER?.tickSize,
+      stepSize,lotStepSize,marketStepSize,minQty:Math.max(lotMinQty,marketMinQty),lotMinQty,marketMinQty,maxQty,
+      minNotional:Number(notionalFilter.minNotional||notionalFilter.notional||5)});
   }
-  const leverageCaps=new Map();
+  const leverageBrackets=new Map();
   try {
-    const brackets=await binance.signed("GET","/fapi/v1/leverageBracket");
-    for(const item of Array.isArray(brackets)?brackets:[]) {
-      const cap=Number(item.brackets?.[0]?.initialLeverage);
-      if(item.symbol&&Number.isFinite(cap)&&cap>0)leverageCaps.set(item.symbol,cap);
-    }
+    const bracketRows=await binance.signed("GET","/fapi/v1/leverageBracket");
+    for(const item of Array.isArray(bracketRows)?bracketRows:[])
+      if(item.symbol&&Array.isArray(item.brackets))leverageBrackets.set(item.symbol,item.brackets);
   } catch(e) { console.error("LEVERAGE_BRACKET_PREFETCH_FAILED",e.message); }
   const mode=await binance.signed("GET","/fapi/v1/positionSide/dual");
   if (mode.dualSidePosition===true) throw new Error("HEDGE_MODE_UNSUPPORTED_SWITCH_TO_ONE_WAY_BEFORE_START");
@@ -154,7 +156,7 @@ async function main() {
         try {
           try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("RECOVERY_ALGO_CANCEL_WARN",t.symbol,e.message); }
           const recovered=(t.sl&&t.tp1&&t.tp2)?null:buildProtection({side:t.side,entryPrice:Number(p.entryPrice)||Number(p.markPrice),atrValue:Number(t.slAtr ?? t.slAtr15),pivotPrice:Number(t.pivotPrice)||null,config:C,priceTick:rules.get(t.symbol)?.tickSize||0.00000001});
-          await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl||recovered.sl,tp1:t.tp1||recovered.tp1,tp2:t.tp2||recovered.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.stepSize||0,minQty:rules.get(t.symbol)?.minQty||0,config:C});
+          await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl||recovered.sl,tp1:t.tp1||recovered.tp1,tp2:t.tp2||recovered.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.lotStepSize||0,minQty:rules.get(t.symbol)?.lotMinQty||0,config:C});
           await trades.updateOne({_id:t._id,status:"ENTRY_PENDING"},{$set:{status:"OPEN",openedAt:new Date(p.updateTime||Date.now()),recoveredAfterRestart:true,entryNotificationPending:true,entryNotificationNextAttemptAt:new Date(0)}});
           
         } catch(e) { console.error("PENDING_POSITION_PROTECTION_RECOVERY_FAILED",t.symbol,e.message); }
@@ -176,12 +178,12 @@ async function main() {
         if(t.closeRequestedAt && Date.now()-new Date(t.closeRequestedAt).getTime()<30000) continue;
         try {
           try { await binance.signed("DELETE","/fapi/v1/algoOpenOrders",{symbol:t.symbol}); } catch(e) { console.error("PROTECTION_RETRY_CANCEL_WARN",t.symbol,e.message); }
-          await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl,tp1:t.tp1,tp2:t.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.stepSize||0,minQty:rules.get(t.symbol)?.minQty||0,config:C});
+          await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol:t.symbol,side:t.side,sl:t.sl,tp1:t.tp1,tp2:t.tp2,qty:Math.abs(Number(p.positionAmt)),stepSize:rules.get(t.symbol)?.lotStepSize||0,minQty:rules.get(t.symbol)?.lotMinQty||0,config:C});
           await trades.updateOne({_id:t._id,status:"OPEN"},{$unset:{protectionError:"",closeRequestedAt:""},$set:{protectionRestoredAt:new Date()}});
           
         } catch(e) {
           console.error("PROTECTION_RETRY_FAILED_CLOSE_ATTEMPT",t.symbol,e.message);
-          try { await binance.signed("POST","/fapi/v1/order",{symbol:t.symbol,side:Number(p.positionAmt)>0?"SELL":"BUY",type:"MARKET",quantity:Math.abs(Number(p.positionAmt)).toFixed(precision(rules.get(t.symbol)?.stepSize||0.001)),reduceOnly:"true",newOrderRespType:"RESULT"}); } catch(closeError) { console.error("UNPROTECTED_POSITION_CLOSE_FAILED",t.symbol,closeError.message); }
+          try { await binance.signed("POST","/fapi/v1/order",{symbol:t.symbol,side:Number(p.positionAmt)>0?"SELL":"BUY",type:"MARKET",quantity:floorStep(Math.abs(Number(p.positionAmt)),rules.get(t.symbol)?.marketStepSize||0.001).toFixed(precision(rules.get(t.symbol)?.marketStepSize||0.001)),reduceOnly:"true",newOrderRespType:"RESULT"}); } catch(closeError) { console.error("UNPROTECTED_POSITION_CLOSE_FAILED",t.symbol,closeError.message); }
           await trades.updateOne({_id:t._id,status:"OPEN"},{$set:{closeRequestedAt:new Date(),protectionError:e.message}});
           continue;
         }
@@ -208,7 +210,7 @@ async function main() {
     const tracked=new Set(open.map(t=>t.symbol));
     for(const p of live) if(!tracked.has(p.symbol)) console.error("UNTRACKED_EXCHANGE_POSITION_SKIP_ENTRY",p.symbol,p.positionAmt);
   }
-  async function tryEntry(symbol, options = {}) {
+  async function tryEntry(symbol) {
     const r=rules.get(symbol);
     if(!r||r.status!=="TRADING"||r.contractType!=="PERPETUAL"||r.quoteAsset!==C.QUOTE_ASSET) return;
     if(C.COIN_COOLDOWN_MINUTES>0) {
@@ -224,24 +226,19 @@ async function main() {
     // All strategy indicators and entry states are evaluated on this single timeframe.
     const signal=coreLogic({candles:toCandles(candlesRaw),config:C,now});
     if(!signal.side) {
-      if(!options.collect) console.log("ENTRY_FRESH_SIGNAL_REJECTED",symbol,signal.reason||"NO_SIGNAL");
+      console.log("ENTRY_FRESH_SIGNAL_REJECTED",symbol,signal.reason||"NO_SIGNAL");
       return null;
     }
-    const freshScore=Number(signal.score)||100;
-    if(options.collect) return {symbol,score:freshScore};
     const signalAt=new Date(signal.signalAt);
     if(!Number.isFinite(signalAt.getTime())) return;
-    const existing=await trades.findOne({symbol,status:"OPEN"});
-    if(existing) return;
+    const pendingEntry=await trades.findOne({symbol,status:"ENTRY_PENDING"});
+    if(pendingEntry) { console.log("ENTRY_SKIP_UNRESOLVED_PENDING_ORDER",symbol); return; }
     if(await trades.findOne({symbol,signalAt})) return;
     const live=await positions();
     if(live.some(p=>p.symbol===symbol)) { console.log("ENTRY_SKIP_EXCHANGE_POSITION",symbol); return; }
-    const [algo,regularOrders]=await Promise.all([binance.signed("GET","/fapi/v1/openAlgoOrders",{symbol}),binance.signed("GET","/fapi/v1/openOrders",{symbol})]);
-    if((Array.isArray(algo)&&algo.length)||(Array.isArray(regularOrders)&&regularOrders.length)) { console.log("ENTRY_SKIP_EXISTING_EXCHANGE_ORDER",symbol); return; }
     const utcStart=new Date(); utcStart.setUTCHours(0,0,0,0);
     const today=await trades.countDocuments({openedAt:{$gte:utcStart},status:{$nin:["ENTRY_FAILED","DRY_RUN"]}});
     if(today>=C.MAX_TRADES_PER_DAY) return;
-    if((await trades.countDocuments({status:"OPEN"}))>=C.MAX_OPEN_POSITIONS) return;
     const acct=await account(), wallet=Number(acct.totalWalletBalance), available=Number(acct.availableBalance);
     if(!(wallet>0&&available>0)) { console.log("ENTRY_SKIP_NO_BALANCE",symbol); return; }
     const [premium,book]=await Promise.all([
@@ -255,24 +252,26 @@ async function main() {
       return;
     }
     const funding=veto.fundingRate, spreadBps=veto.spreadBps;
-    let symbolMaxLeverage=leverageCaps.get(symbol);
-    if(!symbolMaxLeverage) {
+    let symbolBrackets=leverageBrackets.get(symbol);
+    if(!symbolBrackets) {
       try {
         const rows=await binance.signed("GET","/fapi/v1/leverageBracket",{symbol});
-        const item=Array.isArray(rows)?rows[0]:rows, cap=Number(item?.brackets?.[0]?.initialLeverage);
-        if(!(Number.isFinite(cap)&&cap>0))throw new Error("LEVERAGE_BRACKET_MISSING");
-        symbolMaxLeverage=cap; leverageCaps.set(symbol,cap);
-      } catch(e) { console.error("LEVERAGE_CAP_UNAVAILABLE",symbol,e.message); return; }
+        const item=Array.isArray(rows)?rows.find(x=>x.symbol===symbol)||rows[0]:rows;
+        if(!Array.isArray(item?.brackets)||!item.brackets.length)throw new Error("LEVERAGE_BRACKET_MISSING");
+        symbolBrackets=item.brackets; leverageBrackets.set(symbol,symbolBrackets);
+      } catch(e) { console.error("LEVERAGE_BRACKET_UNAVAILABLE",symbol,e.message); return; }
     }
-    const symbolLeverage=Math.min(C.LEVERAGE,symbolMaxLeverage), sizingConfig={...C,LEVERAGE:symbolLeverage};
+    const leverageSelection=selectLeverageForNotional({wallet,config:C,brackets:symbolBrackets});
+    if(!leverageSelection.ok) { console.error("LEVERAGE_TIER_UNAVAILABLE",symbol,leverageSelection.reason); return; }
+    const symbolLeverage=leverageSelection.leverage, sizingConfig={...C,LEVERAGE:symbolLeverage};
     const protection=buildProtection({side:signal.side,entryPrice:mark,atrValue:signal.slAtr,pivotPrice:signal.pivotPrice,config:C,priceTick:r.tickSize});
-    const sizing=calculateOrderSizing({wallet,available,mark,stopDistance:protection.stopDistance,rules:r,config:sizingConfig});
+    const sizing=calculateOrderSizing({wallet,available,mark,stopDistance:protection.stopDistance,rules:{...r,maxNotional:leverageSelection.notionalCap},config:sizingConfig});
     if(!sizing.ok) {
       console.log("ENTRY_SKIP_"+sizing.reason,symbol,"qty="+sizing.qty,"notional="+sizing.notional,"minNotional="+r.minNotional,"maxNotional="+sizing.maxNotional);
       return;
     }
     const qty=sizing.qty;
-    try { splitQuantity({quantity:qty,stepSize:r.stepSize,minQty:r.minQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message,"qty="+qty); return; }
+    try { splitQuantity({quantity:qty,stepSize:r.lotStepSize,minQty:r.lotMinQty,config:C}); } catch(e) { console.log("ENTRY_SKIP_TP_SPLIT",symbol,e.message,"qty="+qty); return; }
     if(sizing.margin>available*0.95) { console.log("ENTRY_SKIP_MARGIN",symbol,"required="+sizing.margin,"available="+available); return; }
     const record={symbol,side:signal.side,status:"ENTRY_PENDING",signalAt,trendSide:signal.ema50Side,entryStructure:signal.divergenceType,entrySwingLevel:signal.referencePrice,pullbackPivotPrice:signal.pivotPrice,divergenceType:signal.divergenceType,sweepTime:new Date(signal.sweepTime),slAtr:signal.slAtr,pivotPrice:signal.pivotPrice,slTimeframe:C.STRATEGY_TIMEFRAME,tp1RewardRisk:protection.tp1RewardRisk,tp2RewardRisk:protection.tp2RewardRisk,fundingRate:funding,spreadBps,requestedPrice:mark,sl:protection.sl,tp1:protection.tp1,tp2:protection.tp2,qty,openedAt:new Date(),createdAt:new Date(),maxHoldHours:C.MAX_HOLD_HOURS};
     if(C.DRY_RUN) { await trades.insertOne({...record,status:"DRY_RUN"}); console.log("DRY_RUN_SIGNAL",symbol,signal.side); return {opened:true,dryRun:true}; }
@@ -289,7 +288,7 @@ async function main() {
       try {
         actual=buildProtection({side:signal.side,entryPrice:filled,atrValue:signal.slAtr,pivotPrice:signal.pivotPrice,config:C,priceTick:r.tickSize});
         await trades.updateOne({_id:inserted.insertedId},{$set:{status:"OPEN",exchangeOrderId:order.orderId,entryPrice:filled,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,openedAt:new Date(order.updateTime||Date.now())}});
-        await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol,side:signal.side,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,stepSize:r.stepSize,minQty:r.minQty,config:C});
+        await placeProtection({request:(method,path,params)=>binance.signed(method,path,params),symbol,side:signal.side,sl:actual.sl,tp1:actual.tp1,tp2:actual.tp2,qty:Number(order.executedQty)||qty,stepSize:r.lotStepSize,minQty:r.lotMinQty,config:C});
       } catch(e) {
         console.error("TPSL_PLACEMENT_FAILED_FORCE_CLOSE",symbol,e.message);
         let pos=null;
@@ -320,7 +319,7 @@ async function main() {
       else if(orderSubmissionStarted && e.orderMayBeOpen===undefined) {
         // A Binance 4xx response confirms the order was rejected; network/5xx
         // failures are ambiguous, so do not risk opening another coin.
-        e.orderMayBeOpen=!/^BINANCE_4\\d\\d_/.test(String(e.message||""));
+        e.orderMayBeOpen=!/^BINANCE_4\d\d_/.test(String(e.message||""));
       }
       const current=await trades.findOne({_id:inserted.insertedId});
       if(current?.status==="ENTRY_PENDING") await trades.updateOne({_id:inserted.insertedId},{$set:{lastError:e.message,lastAttemptAt:new Date()}});
@@ -341,78 +340,51 @@ async function main() {
     try {
       await reconcileAndManage();
       if(Date.now()-lastSymbolRefresh>=C.SYMBOL_REFRESH_MS) {
-        const refreshedSymbols=await getTopSymbol({request:(method,path,params)=>binance.request(method,path,params,false),config:C});
+        const refreshedSymbols=await getEligibleSymbols({request:(method,path,params)=>binance.request(method,path,params,false),config:C});
         const refresh=applySymbolRefresh({current:symbols,next:refreshedSymbols,lastRefresh:lastSymbolRefresh,now:Date.now()});
         symbols=refresh.symbols; lastSymbolRefresh=refresh.lastSymbolRefresh;
-        if(refresh.updated) console.log("TOP_SYMBOLS",symbols.length);
-        else console.error("TOP_SYMBOL_REFRESH_EMPTY_RETRYING","kept="+symbols.length);
+        if(refresh.updated) console.log("ELIGIBLE_SYMBOLS",symbols.length);
+        else console.error("ELIGIBLE_SYMBOL_REFRESH_EMPTY_RETRYING","kept="+symbols.length);
       }
       const live=await positions(), liveSet=new Set(live.map(p=>p.symbol));
-      const open=await trades.find({status:"OPEN"}).toArray();
-      const tracked=new Set(open.map(t=>t.symbol));
       const scanStartedAt=Date.now();
-      let scanned=0, eligible=0, skipped=0, errors=0, rateLimited=false;
-      const candidates=[];
-      const batchSize=10, batchCount=Math.ceil(symbols.length/batchSize);
-      console.log("SCAN_CYCLE_START", "symbols="+symbols.length, "batchSize="+batchSize, "live="+liveSet.size, "tracked="+tracked.size);
+      let scanned=0,eligible=0,skipped=0,errors=0,opened=0,rateLimited=false;
+      const batchSize=10,batchCount=Math.ceil(symbols.length/batchSize);
+      console.log("SCAN_CYCLE_START","eligibleSymbols="+symbols.length,"batchSize="+batchSize,"live="+liveSet.size);
       for(let batchStart=0;batchStart<symbols.length;batchStart+=batchSize) {
         if(stopped||rateLimited) break;
-        const batchIndex=Math.floor(batchStart/batchSize)+1;
-        const batchEnd=Math.min(batchStart+batchSize,symbols.length);
-        const batchStartedAt=Date.now();
-        let batchScanned=0, batchEligible=0, batchSkipped=0, batchErrors=0;
+        const batchIndex=Math.floor(batchStart/batchSize)+1,batchEnd=Math.min(batchStart+batchSize,symbols.length),batchStartedAt=Date.now();
+        let batchScanned=0,batchEligible=0,batchSkipped=0,batchErrors=0,batchOpened=0;
         for(let i=batchStart;i<batchEnd;i++) {
           if(stopped) break;
-          const symbol=symbols[i];
-          scanned++; batchScanned++;
-          if(liveSet.has(symbol)||tracked.has(symbol)) {
-            skipped++; batchSkipped++;
-          } else {
-            eligible++; batchEligible++;
-            try {
-              const candidate=await tryEntry(symbol,{collect:true});
-              if(candidate) candidates.push(candidate);
-            }
-            catch(e) {
-              errors++; batchErrors++;
-              console.error("SYMBOL_SCAN_ERROR",symbol,e.message);
-              if(/BINANCE_(?:429|418)_/.test(e.message)) { rateLimited=true; break; }
-            }
+          const symbol=symbols[i]; scanned++; batchScanned++;
+          if(liveSet.has(symbol)) { skipped++; batchSkipped++; continue; }
+          eligible++; batchEligible++;
+          try {
+            const result=await tryEntry(symbol);
+            if(result?.opened) { opened++; batchOpened++; liveSet.add(symbol); }
+          } catch(e) {
+            errors++; batchErrors++; console.error("SYMBOL_SCAN_ERROR",symbol,e.message);
+            if(/BINANCE_(?:429|418)_/.test(e.message)) { rateLimited=true; break; }
           }
         }
-        console.log("SCAN_BATCH_COMPLETE", "batch="+batchIndex+"/"+batchCount,
-          "scanned="+batchScanned, "range="+(batchStart+1)+"-"+batchEnd,
-          "eligible="+batchEligible, "skipped="+batchSkipped, "errors="+batchErrors,
-          "elapsedSec="+((Date.now()-batchStartedAt)/1000).toFixed(1));
+        console.log("SCAN_BATCH_COMPLETE","batch="+batchIndex+"/"+batchCount,"scanned="+batchScanned,
+          "range="+(batchStart+1)+"-"+batchEnd,"eligible="+batchEligible,"skippedExchangePosition="+batchSkipped,
+          "opened="+batchOpened,"errors="+batchErrors,"elapsedSec="+((Date.now()-batchStartedAt)/1000).toFixed(1));
         if(rateLimited||stopped||batchEnd>=symbols.length) break;
         await sleep(3000);
       }
-      console.log("SCAN_CYCLE_COMPLETE", "scanned="+scanned+"/"+symbols.length,
-        "eligible="+eligible, "skipped="+skipped, "errors="+errors,
-        "candidates="+candidates.length, "rateLimited="+rateLimited, "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
-      if(!rateLimited&&!stopped&&candidates.length) {
-        candidates.sort((a,b)=>b.score-a.score);
-        console.log("RANKED_SCAN_CANDIDATES",candidates.map(c=>c.symbol+":"+c.score).join(","));
-        const outcome=await attemptRankedCandidates(candidates,async candidate=>{
-          console.log("TRY_FRESH_SCAN_CANDIDATE",candidate.symbol,"scanScore="+candidate.score);
-          return tryEntry(candidate.symbol);
-        },{
-          minScore:0,
-          isFatalError:isFatalCandidateError,
-          onCandidateError:(candidate,error)=>console.error("CANDIDATE_ATTEMPT_FAILED",candidate.symbol,error.message)
-        });
-        if(outcome.opened) console.log("SCAN_CYCLE_TRADE_OPENED",outcome.candidate.symbol,"score="+(outcome.result?.signal?.score??"fresh"));
-        else if(outcome.fatal) console.error("SCAN_CANDIDATE_RETRY_STOPPED",outcome.candidate?.symbol||"UNKNOWN",outcome.error.message);
-        else console.log("SCAN_CYCLE_NO_CANDIDATE_OPENED","attempted="+outcome.attempted);
-      }
+      console.log("SCAN_CYCLE_COMPLETE","scanned="+scanned+"/"+symbols.length,"eligible="+eligible,
+        "skippedExchangePosition="+skipped,"opened="+opened,"errors="+errors,"rateLimited="+rateLimited,
+        "elapsedSec="+((Date.now()-scanStartedAt)/1000).toFixed(1));
     } catch(e) { console.error("CYCLE_ERROR",e.stack||e.message); }
     finally { busy=false; }
   }
   const status=async()=> {
     const live=await positions(), open=await trades.countDocuments({status:"OPEN"});
-    return "SIMPLE BOT OK\nTracked open trades: "+open+"\nExchange positions: "+live.length+"\nTop symbols: "+symbols.length+"\nRR: "+C.REWARD_RISK;
+    return "SIMPLE BOT OK\nTracked open trades: "+open+"\nExchange positions: "+live.length+"\nEligible symbols: "+symbols.length+"\nRR: "+C.REWARD_RISK;
   };
-  console.log("SINGLE-TIMEFRAME RSI DIVERGENCE SWEEP BOT STARTED", "RR="+C.REWARD_RISK, "MAX_SYMBOLS="+C.MAX_SYMBOLS);
+  console.log("SINGLE-TIMEFRAME RSI DIVERGENCE SWEEP BOT STARTED", "RR="+C.REWARD_RISK);
   await cycle();
   const timer=setInterval(()=>void cycle(),C.SCAN_INTERVAL_MS);
   const shutdown=async()=>{ if(stopped)return; stopped=true; clearInterval(timer); await mongo.close(); process.exit(0); };
