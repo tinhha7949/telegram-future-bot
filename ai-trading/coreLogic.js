@@ -279,7 +279,7 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
         const continued = true;
         const breakout = entryWindow.at(-1).close > c.high;
         const score = 15 + (touch ? 15 : 0) + (shallow ? 10 : 0) + (hold ? 15 : 0) + (continued ? 15 : 0) + (breakout ? 30 : 0);
-        if (touch && score >= config.MIN_SCORE_TO_ENTER) {
+        if (score >= config.MIN_SCORE_TO_ENTER) {
           if (!setup || score > setup.score) setup = { level: swingHigh.price, pullback: pullbackLow.price, pullbackIndex: pullbackLow.index, retestIndex: i, bosIndex, score };
         }
       }
@@ -315,7 +315,7 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
         const continued = true;
         const breakout = entryWindow.at(-1).close < c.low;
         const score = 15 + (touch ? 15 : 0) + (shallow ? 10 : 0) + (hold ? 15 : 0) + (continued ? 15 : 0) + (breakout ? 30 : 0);
-        if (touch && score >= config.MIN_SCORE_TO_ENTER) {
+        if (score >= config.MIN_SCORE_TO_ENTER) {
           if (!setup || score > setup.score) setup = { level: swingLow.price, pullback: pullbackHigh.price, pullbackIndex: pullbackHigh.index, retestIndex: i, bosIndex, score };
         }
       }
