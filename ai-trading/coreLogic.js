@@ -267,15 +267,19 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
         }
       }
       if (bosIndex < 0) continue;
+      if (entryWindow[bosIndex].close - swingHigh.price > entryAtr * config.BOS_TOLERANCE_ATR) continue;
       for (let i = bosIndex + 1; i <= Math.min(entryWindow.length - 2, bosIndex + config.ENTRY_RETEST_MAX_BARS); i++) {
         const c = entryWindow[i];
         const maxPenetration = entryAtr * config.ENTRY_RETEST_MAX_PENETRATION_ATR;
-        if (c.low <= swingHigh.price + entryAtr * config.ENTRY_RETEST_TOLERANCE_ATR &&
-            c.low >= swingHigh.price - maxPenetration &&
-            c.close >= swingHigh.price &&
-            entryWindow.length - 1 - i <= config.ENTRY_CONTINUATION_MAX_BARS &&
-            entryWindow.at(-1).close > c.high) {
-          setup = { level: swingHigh.price, pullback: pullbackLow.price, pullbackIndex: pullbackLow.index, retestIndex: i, bosIndex }; break;
+        const touch = c.low <= swingHigh.price + entryAtr * config.ENTRY_RETEST_TOLERANCE_ATR;
+        const shallow = c.low >= swingHigh.price - maxPenetration;
+        const hold = c.close > swingHigh.price;
+        const continuationAge = entryWindow.length - 1 - i;
+        const continued = continuationAge >= 0 && continuationAge <= config.ENTRY_CONTINUATION_MAX_BARS;
+        const breakout = entryWindow.at(-1).close > c.high;
+        const score = 15 + (touch ? 15 : 0) + (shallow ? 10 : 0) + (hold ? 15 : 0) + (continued ? 15 : 0) + (breakout ? 30 : 0);
+        if (touch && score >= config.MIN_SCORE_TO_ENTER) {
+          if (!setup || score > setup.score) setup = { level: swingHigh.price, pullback: pullbackLow.price, pullbackIndex: pullbackLow.index, retestIndex: i, bosIndex, score };
         }
       }
     }
@@ -298,15 +302,19 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
         }
       }
       if (bosIndex < 0) continue;
+      if (swingLow.price - entryWindow[bosIndex].close > entryAtr * config.BOS_TOLERANCE_ATR) continue;
       for (let i = bosIndex + 1; i <= Math.min(entryWindow.length - 2, bosIndex + config.ENTRY_RETEST_MAX_BARS); i++) {
         const c = entryWindow[i];
         const maxPenetration = entryAtr * config.ENTRY_RETEST_MAX_PENETRATION_ATR;
-        if (c.high >= swingLow.price - entryAtr * config.ENTRY_RETEST_TOLERANCE_ATR &&
-            c.high <= swingLow.price + maxPenetration &&
-            c.close <= swingLow.price &&
-            entryWindow.length - 1 - i <= config.ENTRY_CONTINUATION_MAX_BARS &&
-            entryWindow.at(-1).close < c.low) {
-          setup = { level: swingLow.price, pullback: pullbackHigh.price, pullbackIndex: pullbackHigh.index, retestIndex: i, bosIndex }; break;
+        const touch = c.high >= swingLow.price - entryAtr * config.ENTRY_RETEST_TOLERANCE_ATR;
+        const shallow = c.high <= swingLow.price + maxPenetration;
+        const hold = c.close < swingLow.price;
+        const continuationAge = entryWindow.length - 1 - i;
+        const continued = continuationAge >= 0 && continuationAge <= config.ENTRY_CONTINUATION_MAX_BARS;
+        const breakout = entryWindow.at(-1).close < c.low;
+        const score = 15 + (touch ? 15 : 0) + (shallow ? 10 : 0) + (hold ? 15 : 0) + (continued ? 15 : 0) + (breakout ? 30 : 0);
+        if (touch && score >= config.MIN_SCORE_TO_ENTER) {
+          if (!setup || score > setup.score) setup = { level: swingLow.price, pullback: pullbackHigh.price, pullbackIndex: pullbackHigh.index, retestIndex: i, bosIndex, score };
         }
       }
     }
@@ -332,6 +340,7 @@ function coreLogic({ trendCandles, entryCandles, confirmationCandles, config, st
     entrySwingLevel: setup.level,
     pullbackPivotPrice: setup.pullback,
     entryRetestIndex: setup.retestIndex,
+    score: setup.score,
     pivotPrice, slAtr: stopAtr,
     signalAt: entry.at(-1).closeTime,
     structureState: nextStructureState
