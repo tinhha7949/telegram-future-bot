@@ -114,7 +114,7 @@ test("SL is anchored beyond the sweep extreme with the MT5 ATR/percent buffer; T
   assert.equal(short.tp1, 97.96);
   assert.equal(short.tp2, 97.45);
   assert.equal(long.stopMethod, "15M_LIQUIDITY_SWEEP");
-  assert.throws(() => buildProtection({ side: "LONG", entryPrice: 100, atrValue: 1, pivotPrice: 99.9, config, priceTick: 0.01 }), /BLOCKED_SL_TOO_WIDE/);
+  assert.throws(() => buildProtection({ side: "LONG", entryPrice: 100, atrValue: 1, pivotPrice: 97.1, config, priceTick: 0.01 }), /BLOCKED_SL_TOO_WIDE/);
 });
 
 test("existing Binance TP quantity split remains unchanged", () => {
