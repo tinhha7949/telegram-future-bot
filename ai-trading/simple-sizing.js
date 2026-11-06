@@ -10,15 +10,16 @@ function floorStep(value,step) {
   return Number((units*step).toFixed(precision(step)));
 }
 function gcd(a,b) {
-  while(b){const t=b;b=a%b;a=t;}
+  while(b!==0n){const t=b;b=a%b;a=t;}
   return a;
 }
 function commonStepSize(a,b) {
   if(!(Number.isFinite(a)&&a>0&&Number.isFinite(b)&&b>0)) return 0;
   const places=Math.max(precision(a),precision(b)),scale=10**places;
-  const ai=Math.round(a*scale),bi=Math.round(b*scale);
-  if(!(ai>0&&bi>0)) return 0;
-  return Number((Math.abs(ai*bi)/gcd(ai,bi)/scale).toFixed(places));
+  const ai=BigInt(Math.round(a*scale)),bi=BigInt(Math.round(b*scale));
+  if(ai<=0n||bi<=0n) return 0;
+  const lcm=(ai/gcd(ai,bi))*bi;
+  return Number(lcm)/scale;
 }
 function selectLeverageForNotional({wallet,config,brackets}) {
   const targetMargin=Number(wallet)*Number(config?.POSITION_MARGIN_PCT),requested=Number(config?.LEVERAGE);

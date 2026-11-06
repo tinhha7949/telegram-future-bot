@@ -248,6 +248,12 @@ async function main() {
     if(await trades.findOne({symbol,signalAt})) return;
     const live=await positions();
     if(live.some(p=>p.symbol===symbol)) { console.log("ENTRY_SKIP_EXCHANGE_POSITION",symbol); return; }
+    const activeTracked=await trades.find({status:{$in:["OPEN","ENTRY_PENDING"]}},{projection:{symbol:1}}).toArray();
+    const activeSymbols=new Set([...live.map(p=>p.symbol),...activeTracked.map(t=>t.symbol)]);
+    if(activeSymbols.size>=C.MAX_OPEN_POSITIONS) {
+      console.log("ENTRY_SKIP_MAX_OPEN_POSITIONS",symbol,"active="+activeSymbols.size,"limit="+C.MAX_OPEN_POSITIONS);
+      return;
+    }
     const utcStart=new Date(); utcStart.setUTCHours(0,0,0,0);
     const today=await trades.countDocuments({openedAt:{$gte:utcStart},status:{$nin:["ENTRY_FAILED","DRY_RUN"]}});
     if(today>=C.MAX_TRADES_PER_DAY) return;
