@@ -85,9 +85,9 @@ function pivots(candles, left, right) {
   return { highs, lows };
 }
 
-function detectDivergence(candles, config) {
+function detectDivergence(candles, config, rsiOverride = null) {
   const { highs, lows } = pivots(candles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
-  const rsi = rsiSeries(candles, config.RSI_PERIOD);
+  const rsi = Array.isArray(rsiOverride) ? rsiOverride : rsiSeries(candles, config.RSI_PERIOD);
   const confirmedThrough = candles.length - 1;
   const candidates = [];
 
