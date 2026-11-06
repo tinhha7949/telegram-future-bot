@@ -28,4 +28,16 @@ async function getTopSymbol({ request, config }) {
     .map(t => t.symbol);
 }
 
-module.exports = { getTopSymbol };
+function applySymbolRefresh({ current = [], next, lastRefresh = 0, now = Date.now() }) {
+  const valid = Array.isArray(next) ? next.filter(symbol => typeof symbol === "string" && symbol.trim()) : [];
+  if (!valid.length) {
+    return {
+      symbols: Array.isArray(current) ? current : [],
+      lastSymbolRefresh: lastRefresh,
+      updated: false
+    };
+  }
+  return { symbols: valid, lastSymbolRefresh: now, updated: true };
+}
+
+module.exports = { getTopSymbol, applySymbolRefresh };
