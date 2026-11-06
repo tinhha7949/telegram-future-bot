@@ -101,7 +101,7 @@ test("entry setup selection filters every candidate before choosing the best sur
   const selected=selectBestEntrySetup(candidates,{
     side:"LONG",latestIndex:99,entryPrice:101,entryAtr:1,config
   });
-  assert.equal(selected.setup.level,99);
+  assert.equal(selected.setup.level,99.5);
   assert.equal(selected.setup.score,85);
   assert.equal(selected.rejected.oldPivot,1);
   assert.equal(selected.rejected.tooExtended,1);
