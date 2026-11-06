@@ -1,6 +1,7 @@
 "use strict";
 
 function isFatalCandidateError(error) {
+  if (error?.orderWasAccepted === true) return true;
   if (error?.orderMayBeOpen === false) return false;
   if (error?.orderMayBeOpen === true) return true;
   const message = String(error?.message || error || "");
