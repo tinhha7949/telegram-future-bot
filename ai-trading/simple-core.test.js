@@ -112,8 +112,8 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
   assert.equal(rejected.side,null);
   assert.equal(rejected.reason,"ENTRY_BOS_RETEST_NOT_CONFIRMED");
   const alreadyAbove=entryCandles("LONG");
-  // Price was already above the BOS level before the final candle; there is
-  // no new close-crossing event to authorize a fresh setup.
+  // The latest candle is already above the BOS level; a historical confirmed
+  // BOS may still authorize the later retest/continuation entry.
   const preBosIndex=alreadyAbove.length-23;
   alreadyAbove[preBosIndex].close=105.4;
   alreadyAbove[preBosIndex].open=105.4;
