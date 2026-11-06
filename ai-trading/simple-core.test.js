@@ -114,8 +114,11 @@ test("LONG entry requires a confirmed higher low followed by a close above the p
   const alreadyAbove=entryCandles("LONG");
   // Price was already above the BOS level before the final candle; there is
   // no new close-crossing event to authorize a fresh setup.
-  alreadyAbove[alreadyAbove.length-13].close=105.4;
-  alreadyAbove[alreadyAbove.length-13].open=105.4;
+  const preBosIndex=alreadyAbove.length-23;
+  alreadyAbove[preBosIndex].close=105.4;
+  alreadyAbove[preBosIndex].open=105.4;
+  alreadyAbove[preBosIndex].high=105.6;
+  alreadyAbove[preBosIndex].low=105.2;
   alreadyAbove[alreadyAbove.length-1].close=105.4;
   alreadyAbove[alreadyAbove.length-1].open=105.4;
   const noFreshBreak=coreLogic({trendCandles:trendCandles("UP"),entryCandles:alreadyAbove,config:cfg,now:NOW});
