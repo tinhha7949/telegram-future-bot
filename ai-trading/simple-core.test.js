@@ -7,7 +7,7 @@ const assert = require("node:assert/strict");
 const { atr, marketStructure, analyzeMajorStructure, assessConfirmation, marketVeto, selectBestEntrySetup, coreLogic } = require("./coreLogic");
 const { loadSimpleConfig } = require("./simple-config");
 const { buildProtection } = require("./tpsl");
-const { getTopSymbol } = require("./getTopSymbol");
+const { getTopSymbol, applySymbolRefresh } = require("./getTopSymbol");
 const C = loadSimpleConfig();
 const NOW = 2000000000000;
 
@@ -353,6 +353,22 @@ test("missing pivot uses exact ATR fallback without applying pivot R clamp",()=>
   const fallbackDistance=Math.min(100*C.SL_FALLBACK_MAX_PCT/100,Math.max(100*C.SL_FALLBACK_MIN_PCT/100,C.SL_FALLBACK_ATR_MULTIPLIER));
   assert.equal(fallback.sl,100-fallbackDistance);
   assert.equal(fallback.stopDistance,fallbackDistance);
+});
+
+test("empty symbol refresh keeps the last valid list and retries immediately",()=>{
+  const previous=["BTCUSDT","ETHUSDT"];
+  const empty=applySymbolRefresh({current:previous,next:[],lastRefresh:1000,now:2000});
+  assert.deepEqual(empty.symbols,previous);
+  assert.equal(empty.lastSymbolRefresh,1000);
+  assert.equal(empty.updated,false);
+  const initial=applySymbolRefresh({current:[],next:[],lastRefresh:0,now:2000});
+  assert.deepEqual(initial.symbols,[]);
+  assert.equal(initial.lastSymbolRefresh,0);
+  assert.equal(initial.updated,false);
+  const valid=applySymbolRefresh({current:previous,next:["SOLUSDT"],lastRefresh:1000,now:2000});
+  assert.deepEqual(valid.symbols,["SOLUSDT"]);
+  assert.equal(valid.lastSymbolRefresh,2000);
+  assert.equal(valid.updated,true);
 });
 
 test("coin selection keeps existing liquidity and symbol filters",async()=>{
