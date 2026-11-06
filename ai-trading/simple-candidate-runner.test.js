@@ -73,15 +73,28 @@ test("does not continue after an uncertain market-order submission", async () =>
   assert.equal(isFatalCandidateError(error), true);
 });
 
-test("continues after a failed protection attempt only when force-close was verified", async () => {
+test("does not try a second coin after an accepted market order, even if protection force-close was verified", async () => {
   const tried = [];
   const error = new Error("PROTECTION_FAILED_FORCE_CLOSE");
+  error.orderWasAccepted = true;
   error.orderMayBeOpen = false;
   const result = await attemptRankedCandidates([
     { symbol: "A", score: 95 }, { symbol: "B", score: 90 }
   ], async candidate => {
     tried.push(candidate.symbol);
-    if (candidate.symbol === "A") throw error;
+    throw error;
+  }, { minScore: 70 });
+  assert.deepEqual(tried, ["A"]);
+  assert.equal(result.fatal, true);
+});
+
+test("continues after a candidate-specific SL calculation error before any market order", async () => {
+  const tried = [];
+  const result = await attemptRankedCandidates([
+    { symbol: "A", score: 95 }, { symbol: "B", score: 90 }
+  ], async candidate => {
+    tried.push(candidate.symbol);
+    if (candidate.symbol === "A") throw new Error("INVALID_SWING_PIVOT_SIDE");
     return { opened: true };
   }, { minScore: 70 });
   assert.deepEqual(tried, ["A", "B"]);
