@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const assert = require("node:assert/strict");
-const { atr, marketStructure, analyzeMajorStructure, assessConfirmation, marketVeto, coreLogic } = require("./coreLogic");
+const { atr, marketStructure, analyzeMajorStructure, assessConfirmation, marketVeto, selectBestEntrySetup, coreLogic } = require("./coreLogic");
 const { loadSimpleConfig } = require("./simple-config");
 const { buildProtection } = require("./tpsl");
 const { getTopSymbol } = require("./getTopSymbol");
@@ -88,6 +88,40 @@ test("CONFIG.yaml overrides are accepted without changing tests",()=>{
     assert.equal(custom.MAX_ABS_FUNDING_RATE,0.001);
     assert.equal(custom.MAX_SPREAD_BPS,25);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
+
+
+test("entry setup selection filters every candidate before choosing the best survivor",()=>{
+  const config={SL_PIVOT_MAX_DISTANCE:30,ENTRY_MAX_EXTENSION_ATR:1.5};
+  const candidates=[
+    {level:100,pullback:95,pullbackIndex:40,retestIndex:95,bosIndex:90,score:100},
+    {level:90,pullback:88,pullbackIndex:80,retestIndex:96,bosIndex:92,score:95},
+    {level:99,pullback:96,pullbackIndex:85,retestIndex:94,bosIndex:89,score:85}
+  ];
+  const selected=selectBestEntrySetup(candidates,{
+    side:"LONG",latestIndex:99,entryPrice:101,entryAtr:1,config
+  });
+  assert.equal(selected.setup.level,99);
+  assert.equal(selected.setup.score,85);
+  assert.equal(selected.rejected.oldPivot,1);
+  assert.equal(selected.rejected.tooExtended,1);
+});
+
+test("entry setup selection reports a rejection only after checking all candidates",()=>{
+  const config={SL_PIVOT_MAX_DISTANCE:30,ENTRY_MAX_EXTENSION_ATR:1.5};
+  const old=selectBestEntrySetup([
+    {level:100,pullback:95,pullbackIndex:10,retestIndex:95,bosIndex:90,score:90},
+    {level:101,pullback:96,pullbackIndex:20,retestIndex:96,bosIndex:91,score:80}
+  ],{side:"LONG",latestIndex:99,entryPrice:102,entryAtr:1,config});
+  assert.equal(old.setup,null);
+  assert.equal(old.reason,"ENTRY_PULLBACK_PIVOT_TOO_OLD");
+
+  const extended=selectBestEntrySetup([
+    {level:90,pullback:88,pullbackIndex:80,retestIndex:95,bosIndex:90,score:90},
+    {level:91,pullback:89,pullbackIndex:85,retestIndex:96,bosIndex:91,score:80}
+  ],{side:"LONG",latestIndex:99,entryPrice:100,entryAtr:1,config});
+  assert.equal(extended.setup,null);
+  assert.equal(extended.reason,"ENTRY_TOO_EXTENDED_FROM_RETEST");
 });
 
 test("entry structure lookback is configurable",()=>{
