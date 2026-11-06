@@ -116,7 +116,6 @@ function detectDivergence(candles, config, rsiOverride = null) {
         referencePrice: direction === 1 ? previous.price : previous.price,
         divergencePrice: current.price
       });
-      break;
     }
   };
 
