@@ -3,8 +3,10 @@ async function getEligibleSymbols({request,config}) {
  const [exchangeInfo,tickers]=await Promise.all([request("GET","/fapi/v1/exchangeInfo"),request("GET","/fapi/v1/ticker/24hr")]);
  const allowed=new Set((exchangeInfo.symbols||[]).filter(s=>s.status==="TRADING"&&s.contractType==="PERPETUAL"&&s.quoteAsset===config.QUOTE_ASSET&&s.symbol.endsWith(config.QUOTE_ASSET)).map(s=>s.symbol));
  return (tickers||[]).filter(t=>allowed.has(t.symbol)&&Number(t.quoteVolume)>=config.MIN_24H_QUOTE_VOLUME_USDT&&Number(t.lastPrice)>0&&Number(t.highPrice)>=Number(t.lowPrice))
-  .map(t=>({symbol:t.symbol,rangePct:(Number(t.highPrice)-Number(t.lowPrice))/Number(t.lastPrice)*100}))
-  .filter(t=>Number.isFinite(t.rangePct)&&t.rangePct>=config.MIN_24H_RANGE_PCT).map(t=>t.symbol).sort((a,b)=>a.localeCompare(b));
+  .map(t=>({symbol:t.symbol,quoteVolume:Number(t.quoteVolume),rangePct:(Number(t.highPrice)-Number(t.lowPrice))/Number(t.lastPrice)*100}))
+  .filter(t=>Number.isFinite(t.quoteVolume)&&Number.isFinite(t.rangePct)&&t.rangePct>=config.MIN_24H_RANGE_PCT)
+  .sort((a,b)=>b.quoteVolume-a.quoteVolume||a.symbol.localeCompare(b.symbol))
+  .slice(0,config.MAX_SYMBOLS).map(t=>t.symbol);
 }
 function applySymbolRefresh({current=[],next,lastRefresh=0,now=Date.now()}){
  const valid=Array.isArray(next)?next.filter(symbol=>typeof symbol==="string"&&symbol.trim()):[];
