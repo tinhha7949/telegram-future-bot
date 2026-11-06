@@ -163,6 +163,7 @@ function findSweepAndConfirmation(candles, divergence, config, atrValues, emaVal
       ? bullish && candle.close > sweep.high
       : bearish && candle.close < sweep.low;
     if (!confirmed) continue;
+    if (i !== candles.length - 1) return { expired: true, reason: "CONFIRMATION_NOT_CURRENT_CLOSED_CANDLE" };
     const ema = emaValues[i];
     if (config.USE_EMA50_FILTER && !(Number.isFinite(ema) && (divergence.direction === 1 ? candle.close > ema : candle.close < ema)))
       return { expired: true, reason: divergence.direction === 1 ? "BLOCKED_EMA50_TREND_BULLISH_FAIL" : "BLOCKED_EMA50_TREND_BEARISH_FAIL" };
