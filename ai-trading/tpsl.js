@@ -24,7 +24,7 @@ function buildProtection({side,entryPrice,atrValue,config,priceTick,pivotPrice})
  if(side==="LONG"&&tp2<=tp1)tp2=Number((tp1+priceTick).toFixed(d));
  if(side==="SHORT"&&tp2>=tp1)tp2=Number((tp1-priceTick).toFixed(d));
  if(!(sl>0&&tp1>0&&tp2>0)||(side==="LONG"?!(sl<entryPrice&&tp1>entryPrice&&tp2>tp1):!(sl>entryPrice&&tp1<entryPrice&&tp2<tp1)))throw Error("INVALID_PROTECTION_LEVELS");
- return{sl,tp1,tp2,tp:tp2,stopDistance:distance,stopMethod,pivotPrice:hasPivot?pivotPrice:null,riskUnit,buffer,tp1RewardRisk:config.TP1_REWARD_RISK,tp2RewardRisk:config.TP2_REWARD_RISK,rewardRisk:config.TP2_REWARD_RISK};
+ return{sl,tp1,tp2,tp:tp2,stopDistance:distance,stopMethod,pivotPrice:hasPivot?pivotPrice:null,buffer,tp1RewardRisk:config.TP1_REWARD_RISK,tp2RewardRisk:config.TP2_REWARD_RISK,rewardRisk:config.TP2_REWARD_RISK};
 }
 function clientAlgoId(kind){
  const id="s"+kind+Date.now().toString(36)+crypto.randomBytes(5).toString("hex");
