@@ -181,6 +181,50 @@ test("hidden bearish divergence is detected from a lower price high and higher R
   assert.equal(found?.type, "HIDDEN_BEARISH");
 });
 
+test("hidden bullish and bearish divergence can pass the full live-entry sequence", () => {
+  const config = {
+    ...C,
+    HISTORY_CANDLES: 300,
+    MIN_PIVOT_DISTANCE: 5,
+    MAX_PIVOT_DISTANCE: 40,
+    RSI_PIVOT_MATCH_TOLERANCE: 0,
+    MIN_DIVERGENCE_RSI_DELTA: 3,
+    MIN_DIVERGENCE_PRICE_PCT: 0.15,
+    MIN_RSI_PIVOT_PROMINENCE: 1,
+    SWEEP_MAX_WAIT_BARS: 20,
+    SWEEP_MIN_ATR: 0.05,
+    CONFIRMATION_MAX_BARS: 3
+  };
+
+  // Hidden bullish: price makes a higher low (90 -> 92), RSI makes a lower low (30 -> 24).
+  const bullishCandles = makeCandles(70);
+  bullishCandles[45].low = 90;
+  bullishCandles[55].low = 92;
+  bullishCandles[58] = { ...bullishCandles[58], open: 92.5, high: 94, low: 91.5, close: 93 };
+  bullishCandles[59] = { ...bullishCandles[59], open: 93, high: 96, low: 92.8, close: 95 };
+  const bullishRsi = Array(70).fill(50);
+  bullishRsi[45] = 30;
+  bullishRsi[55] = 24;
+  const bullish = coreLogic({ candles: bullishCandles, config, now: NOW, rsiOverride: bullishRsi });
+  assert.equal(bullish.side, "LONG");
+  assert.equal(bullish.divergenceType, "HIDDEN_BULLISH");
+  assert.equal(bullish.sweepReferencePrice, 92);
+
+  // Hidden bearish: price makes a lower high (110 -> 108), RSI makes a higher high (70 -> 78).
+  const bearishCandles = makeCandles(70);
+  bearishCandles[45].high = 110;
+  bearishCandles[55].high = 108;
+  bearishCandles[58] = { ...bearishCandles[58], open: 108.2, high: 108.5, low: 106.5, close: 107.5 };
+  bearishCandles[59] = { ...bearishCandles[59], open: 107, high: 107.2, low: 105, close: 105.5 };
+  const bearishRsi = Array(70).fill(50);
+  bearishRsi[45] = 70;
+  bearishRsi[55] = 78;
+  const bearish = coreLogic({ candles: bearishCandles, config, now: NOW, rsiOverride: bearishRsi });
+  assert.equal(bearish.side, "SHORT");
+  assert.equal(bearish.divergenceType, "HIDDEN_BEARISH");
+  assert.equal(bearish.sweepReferencePrice, 108);
+});
+
 test("liquidity sweep must reclaim the reference and then get a candle close beyond the sweep high", () => {
   const candles = makeCandles(32);
   candles[30] = { ...candles[30], open: 90.5, high: 92, low: 89, close: 91 };
