@@ -29,6 +29,7 @@ test("strategy config has one adjustable timeframe and no legacy 4H/1H entry set
   assert.equal(C.RSI_PERIOD, 14);
   assert.equal(C.PIVOT_LEFT_BARS, 2);
   assert.equal(C.PIVOT_RIGHT_BARS, 2);
+  assert.equal(C.RSI_PIVOT_MATCH_TOLERANCE, 2);
 });
 
 test("strategy timeframe can be changed through CONFIG.yaml without changing tests", () => {
@@ -77,6 +78,55 @@ test("does not reuse an older divergence when newest two confirmed pivots do not
  const found=detectDivergence(candles,{PIVOT_LEFT_BARS:2,PIVOT_RIGHT_BARS:2,MIN_PIVOT_DISTANCE:5,MAX_PIVOT_DISTANCE:40,RSI_PERIOD:14},rsi);
  assert.equal(found,null);
 });
+
+test("RSI pivot can be a few candles away from its matching price pivot", () => {
+  const candles = makeCandles(36);
+  candles[20].low = 90;
+  candles[28].low = 88;
+  const rsi = Array(36).fill(50);
+  rsi[19] = 24;
+  rsi[27] = 32;
+  const found = detectDivergence(candles, {
+    PIVOT_LEFT_BARS: 2, PIVOT_RIGHT_BARS: 2, RSI_PIVOT_LEFT_BARS: 2, RSI_PIVOT_RIGHT_BARS: 2,
+    RSI_PIVOT_MATCH_TOLERANCE: 1, MIN_DIVERGENCE_RSI_DELTA: 3, MIN_DIVERGENCE_PRICE_PCT: 0.15,
+    MIN_RSI_PIVOT_PROMINENCE: 1, MIN_PIVOT_DISTANCE: 5, MAX_PIVOT_DISTANCE: 40
+  }, rsi);
+  assert.equal(found?.type, "REGULAR_BULLISH");
+  assert.equal(found?.pivotIndex, 28);
+  assert.equal(found?.confirmIndex, 30);
+});
+
+test("weak divergence below configured RSI or price separation is rejected", () => {
+  const candles = makeCandles(31);
+  candles[20].low = 90;
+  candles[28].low = 89.95;
+  const rsi = Array(31).fill(50);
+  rsi[20] = 30;
+  rsi[28] = 31;
+  const found = detectDivergence(candles, {
+    PIVOT_LEFT_BARS: 2, PIVOT_RIGHT_BARS: 2, RSI_PIVOT_LEFT_BARS: 2, RSI_PIVOT_RIGHT_BARS: 2,
+    RSI_PIVOT_MATCH_TOLERANCE: 0, MIN_DIVERGENCE_RSI_DELTA: 3, MIN_DIVERGENCE_PRICE_PCT: 0.15,
+    MIN_RSI_PIVOT_PROMINENCE: 1, MIN_PIVOT_DISTANCE: 5, MAX_PIVOT_DISTANCE: 40
+  }, rsi);
+  assert.equal(found, null);
+});
+
+test("regular bearish divergence is detected using independent RSI high pivots", () => {
+  const candles = makeCandles(31);
+  candles[20].high = 110;
+  candles[28].high = 112;
+  const rsi = Array(31).fill(50);
+  rsi[20] = 75;
+  rsi[28] = 68;
+  const found = detectDivergence(candles, {
+    PIVOT_LEFT_BARS: 2, PIVOT_RIGHT_BARS: 2, RSI_PIVOT_LEFT_BARS: 2, RSI_PIVOT_RIGHT_BARS: 2,
+    RSI_PIVOT_MATCH_TOLERANCE: 0, MIN_DIVERGENCE_RSI_DELTA: 3, MIN_DIVERGENCE_PRICE_PCT: 0.15,
+    MIN_RSI_PIVOT_PROMINENCE: 1, MIN_PIVOT_DISTANCE: 5, MAX_PIVOT_DISTANCE: 40
+  }, rsi);
+  assert.equal(found?.direction, -1);
+  assert.equal(found?.type, "REGULAR_BEARISH");
+});
+
 test("liquidity sweep must reclaim the reference and then get a candle close beyond the sweep high", () => {
   const candles = makeCandles(32);
   candles[30] = { ...candles[30], open: 90.5, high: 92, low: 89, close: 91 };

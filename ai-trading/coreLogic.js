@@ -72,32 +72,90 @@ function pivots(candles, left, right) {
   return { highs, lows };
 }
 
-function detectDivergence(candles, config, rsiOverride = null) {
-  const { highs, lows } = pivots(candles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
-  const rsi = Array.isArray(rsiOverride) ? rsiOverride : rsiSeries(candles, config.RSI_PERIOD);
-  const confirmedThrough = candles.length - 1, candidates = [];
-  // MT5 state parity: compare only the newest two confirmed pivots per side.
-  const inspect = (list, direction) => {
-    if (list.length < 2) return;
-    const current=list[list.length-1], previous=list[list.length-2];
-    const confirmIndex=current.index+config.PIVOT_RIGHT_BARS;
-    if(confirmIndex>confirmedThrough||!Number.isFinite(rsi[current.index])||!Number.isFinite(rsi[previous.index]))return;
-    const distance=current.index-previous.index;
-    if(distance<config.MIN_PIVOT_DISTANCE||distance>config.MAX_PIVOT_DISTANCE)return;
-    const priceNow=current.price,priceBefore=previous.price,rsiNow=rsi[current.index],rsiBefore=rsi[previous.index];
-    let type=null;
-    if(direction===1){
-      if(priceNow<priceBefore&&rsiNow>rsiBefore)type="REGULAR_BULLISH";
-      else if(priceNow>priceBefore&&rsiNow<rsiBefore)type="HIDDEN_BULLISH";
-    }else{
-      if(priceNow>priceBefore&&rsiNow<rsiBefore)type="REGULAR_BEARISH";
-      else if(priceNow<priceBefore&&rsiNow>rsiBefore)type="HIDDEN_BEARISH";
+function oscillatorPivots(values, left, right, direction) {
+  const out = [];
+  for (let i = left; i < values.length - right; i++) {
+    const value = values[i];
+    if (!Number.isFinite(value)) continue;
+    let valid = true, prominence = Infinity;
+    for (let j = 1; j <= left; j++) {
+      const other = values[i - j];
+      if (!Number.isFinite(other) || (direction === "low" ? other <= value : other >= value)) { valid = false; break; }
+      prominence = Math.min(prominence, Math.abs(other - value));
     }
-    if(type)candidates.push({direction,type,pivotIndex:current.index,confirmIndex,pivotTime:candles[current.index].closeTime,referencePrice:previous.price,divergencePrice:current.price});
+    if (!valid) continue;
+    for (let j = 1; j <= right; j++) {
+      const other = values[i + j];
+      if (!Number.isFinite(other) || (direction === "low" ? other <= value : other >= value)) { valid = false; break; }
+      prominence = Math.min(prominence, Math.abs(other - value));
+    }
+    if (valid) out.push({ index: i, value, prominence: Number.isFinite(prominence) ? prominence : 0 });
+  }
+  return out;
+}
+
+function detectDivergence(candles, config, rsiOverride = null) {
+  const price = pivots(candles, config.PIVOT_LEFT_BARS, config.PIVOT_RIGHT_BARS);
+  const rsi = Array.isArray(rsiOverride) ? rsiOverride : rsiSeries(candles, config.RSI_PERIOD);
+  const left = config.RSI_PIVOT_LEFT_BARS ?? config.PIVOT_LEFT_BARS;
+  const right = config.RSI_PIVOT_RIGHT_BARS ?? config.PIVOT_RIGHT_BARS;
+  const tolerance = config.RSI_PIVOT_MATCH_TOLERANCE ?? 2;
+  const minRsiDelta = config.MIN_DIVERGENCE_RSI_DELTA ?? 3;
+  const minPricePct = config.MIN_DIVERGENCE_PRICE_PCT ?? 0.15;
+  const minRsiProminence = config.MIN_RSI_PIVOT_PROMINENCE ?? 0;
+  const confirmedThrough = candles.length - 1, candidates = [];
+
+  // Match each confirmed price swing to the nearest independently confirmed RSI swing.
+  const match = (pricePivot, oscillatorList) => oscillatorList
+    .filter(p => Math.abs(p.index - pricePivot.index) <= tolerance && p.index + right <= confirmedThrough)
+    .sort((a, b) => Math.abs(a.index - pricePivot.index) - Math.abs(b.index - pricePivot.index) ||
+      b.prominence - a.prominence)[0] || null;
+
+  const inspect = (priceList, oscillatorList, direction) => {
+    const matched = priceList
+      .filter(p => p.index + config.PIVOT_RIGHT_BARS <= confirmedThrough)
+      .map(p => ({ price: p, oscillator: match(p, oscillatorList) }))
+      .filter(x => x.oscillator && x.oscillator.prominence >= minRsiProminence)
+      .sort((a, b) => a.price.index - b.price.index);
+
+    if (matched.length < 2) return;
+    const current = matched[matched.length - 1];
+    // Evaluate multiple earlier reference swings for the newest confirmed price swing.
+    for (let j = matched.length - 2; j >= 0; j--) {
+      const previous = matched[j];
+      const distance = current.price.index - previous.price.index;
+      if (distance < config.MIN_PIVOT_DISTANCE || distance > config.MAX_PIVOT_DISTANCE) continue;
+      const priceBefore = previous.price.price, priceNow = current.price.price;
+      const rsiBefore = previous.oscillator.value, rsiNow = current.oscillator.value;
+      const priceDeltaPct = Math.abs(priceNow - priceBefore) / Math.max(Math.abs(priceBefore), 1e-12) * 100;
+      if (priceDeltaPct < minPricePct || Math.abs(rsiNow - rsiBefore) < minRsiDelta) continue;
+      let type = null;
+      if (direction === 1) {
+        if (priceNow < priceBefore && rsiNow > rsiBefore) type = "REGULAR_BULLISH";
+        else if (priceNow > priceBefore && rsiNow < rsiBefore) type = "HIDDEN_BULLISH";
+      } else {
+        if (priceNow > priceBefore && rsiNow < rsiBefore) type = "REGULAR_BEARISH";
+        else if (priceNow < priceBefore && rsiNow > rsiBefore) type = "HIDDEN_BEARISH";
+      }
+      if (!type) continue;
+      const confirmIndex = Math.max(
+        current.price.index + config.PIVOT_RIGHT_BARS,
+        current.oscillator.index + right
+      );
+      if (confirmIndex > confirmedThrough) continue;
+      candidates.push({
+        direction, type, pivotIndex: current.price.index, confirmIndex,
+        pivotTime: candles[current.price.index].closeTime,
+        referencePrice: previous.price.price, divergencePrice: current.price.price
+      });
+      break;
+    }
   };
-  inspect(lows,1); inspect(highs,-1);
-  candidates.sort((x,y)=>y.pivotIndex-x.pivotIndex);
-  return candidates[0]||null;
+
+  inspect(price.lows, oscillatorPivots(rsi, left, right, "low"), 1);
+  inspect(price.highs, oscillatorPivots(rsi, left, right, "high"), -1);
+  candidates.sort((a, b) => b.pivotIndex - a.pivotIndex || a.confirmIndex - b.confirmIndex);
+  return candidates[0] || null;
 }
 
 function findSweepAndConfirmation(candles, divergence, config, atrValues) {
