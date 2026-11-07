@@ -62,7 +62,10 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
     "ATR_PERIOD", "MAX_SYMBOLS", "MAX_OPEN_POSITIONS", "MAX_TRADES_PER_DAY", "LEVERAGE",
     "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS", "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS",
     "MAX_HOLD_HOURS", "COIN_COOLDOWN_MINUTES"]) check(key, !Number.isInteger(out[key]));
-  check("HISTORY_CANDLES", out.HISTORY_CANDLES < Math.max(out.ATR_PERIOD + 2, out.RSI_PERIOD + out.MAX_PIVOT_DISTANCE + out.PIVOT_LEFT_BARS + out.PIVOT_RIGHT_BARS + 5));
+  const requiredDivergenceHistory = out.RSI_PERIOD + out.MAX_PIVOT_DISTANCE +
+    Math.max(out.PIVOT_LEFT_BARS, out.RSI_PIVOT_LEFT_BARS) +
+    Math.max(out.PIVOT_RIGHT_BARS, out.RSI_PIVOT_RIGHT_BARS) + 5;
+  check("HISTORY_CANDLES", out.HISTORY_CANDLES < Math.max(out.ATR_PERIOD + 2, requiredDivergenceHistory));
   check("PIVOT_DISTANCE", out.MIN_PIVOT_DISTANCE < 1 || out.MAX_PIVOT_DISTANCE < out.MIN_PIVOT_DISTANCE);
   check("PIVOT_BARS", out.PIVOT_LEFT_BARS < 1 || out.PIVOT_RIGHT_BARS < 1 || out.RSI_PIVOT_LEFT_BARS < 1 || out.RSI_PIVOT_RIGHT_BARS < 1);
   check("DIVERGENCE_FILTERS", out.RSI_PIVOT_MATCH_TOLERANCE < 0 || out.MIN_DIVERGENCE_RSI_DELTA < 0 || out.MIN_DIVERGENCE_PRICE_PCT < 0 || out.MIN_RSI_PIVOT_PROMINENCE < 0);
