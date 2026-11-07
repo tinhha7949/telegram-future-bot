@@ -105,16 +105,37 @@ function detectDivergence(candles, config, rsiOverride = null) {
   const minRsiProminence = config.MIN_RSI_PIVOT_PROMINENCE ?? 0;
   const confirmedThrough = candles.length - 1, candidates = [];
 
-  // Match each confirmed price swing to the nearest independently confirmed RSI swing.
-  const match = (pricePivot, oscillatorList) => oscillatorList
-    .filter(p => Math.abs(p.index - pricePivot.index) <= tolerance && p.index + right <= confirmedThrough)
-    .sort((a, b) => Math.abs(a.index - pricePivot.index) - Math.abs(b.index - pricePivot.index) ||
-      b.prominence - a.prominence)[0] || null;
+  // Match pivots one-to-one. Reusing one RSI swing for two price swings can
+  // manufacture a divergence that does not exist, so reserve each RSI pivot once.
+  const matchPivots = (priceList, oscillatorList) => {
+    const edges = [];
+    for (const pricePivot of priceList) {
+      if (pricePivot.index + config.PIVOT_RIGHT_BARS > confirmedThrough) continue;
+      for (const oscillator of oscillatorList) {
+        const distance = Math.abs(oscillator.index - pricePivot.index);
+        if (distance <= tolerance && oscillator.index + right <= confirmedThrough) {
+          edges.push({ pricePivot, oscillator, distance });
+        }
+      }
+    }
+    edges.sort((a, b) => a.distance - b.distance ||
+      b.oscillator.prominence - a.oscillator.prominence ||
+      a.pricePivot.index - b.pricePivot.index ||
+      a.oscillator.index - b.oscillator.index);
+    const usedPrices = new Set(), usedOscillators = new Set(), matched = new Map();
+    for (const edge of edges) {
+      if (usedPrices.has(edge.pricePivot.index) || usedOscillators.has(edge.oscillator.index)) continue;
+      usedPrices.add(edge.pricePivot.index);
+      usedOscillators.add(edge.oscillator.index);
+      matched.set(edge.pricePivot.index, edge.oscillator);
+    }
+    return matched;
+  };
 
   const inspect = (priceList, oscillatorList, direction) => {
+    const matches = matchPivots(priceList, oscillatorList);
     const matched = priceList
-      .filter(p => p.index + config.PIVOT_RIGHT_BARS <= confirmedThrough)
-      .map(p => ({ price: p, oscillator: match(p, oscillatorList) }))
+      .map(p => ({ price: p, oscillator: matches.get(p.index) }))
       .filter(x => x.oscillator && x.oscillator.prominence >= minRsiProminence)
       .sort((a, b) => a.price.index - b.price.index);
 
@@ -210,6 +231,11 @@ function coreLogic({ candles: rawCandles, config, now = Date.now() }) {
   if (candles.length < minimum) return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
   const divergence = detectDivergence(candles, config);
   if (!divergence) return { side: null, reason: "NO_NEW_CONFIRMED_DIVERGENCE" };
+  // Hidden divergence is recognized for diagnostics, but the active strategy
+  // only permits regular divergence as an entry trigger.
+  if (divergence.type.startsWith("HIDDEN_")) {
+    return { side: null, reason: "HIDDEN_DIVERGENCE_NOT_ELIGIBLE", divergenceType: divergence.type };
+  }
   const atrValues = atrSeries(candles, config.ATR_PERIOD);
   const sequence = findSweepAndConfirmation(candles, divergence, config, atrValues);
   if (!sequence.confirmed) return { side: null, reason: sequence.reason || "SIGNAL_NOT_CONFIRMED" };
