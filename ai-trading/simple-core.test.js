@@ -206,7 +206,7 @@ test("hidden bullish and bearish divergence can pass the full live-entry sequenc
   bullishRsi[45] = 30;
   bullishRsi[55] = 24;
   const bullish = coreLogic({ candles: bullishCandles, config, now: NOW, rsiOverride: bullishRsi });
-  assert.equal(bullish.side, "LONG");
+  assert.equal(bullish.side, "LONG", JSON.stringify(bullish));
   assert.equal(bullish.divergenceType, "HIDDEN_BULLISH");
   assert.equal(bullish.sweepReferencePrice, 92);
 
