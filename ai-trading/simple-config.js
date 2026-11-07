@@ -44,7 +44,8 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
 
   const nonNegative = new Set([
     "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT", "MAX_ABS_FUNDING_RATE",
-    "MAX_SPREAD_BPS", "COIN_COOLDOWN_MINUTES", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT"
+    "MAX_SPREAD_BPS", "COIN_COOLDOWN_MINUTES", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT",
+    "RSI_PIVOT_MATCH_TOLERANCE", "MIN_RSI_PIVOT_PROMINENCE"
   ]);
   for (const key of required.filter(key => !stringKeys.includes(key) && key !== "DRY_RUN")) {
     if (!Number.isFinite(out[key]) || (nonNegative.has(key) ? out[key] < 0 : out[key] <= 0))
