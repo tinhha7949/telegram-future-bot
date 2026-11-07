@@ -186,7 +186,7 @@ test("hidden bullish and bearish divergence can pass the full live-entry sequenc
     ...C,
     HISTORY_CANDLES: 300,
     MIN_PIVOT_DISTANCE: 5,
-    MAX_PIVOT_DISTANCE: 40,
+    MAX_PIVOT_DISTANCE: 20,
     RSI_PIVOT_MATCH_TOLERANCE: 0,
     MIN_DIVERGENCE_RSI_DELTA: 3,
     MIN_DIVERGENCE_PRICE_PCT: 0.15,
