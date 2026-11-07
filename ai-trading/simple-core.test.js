@@ -96,6 +96,27 @@ test("RSI pivot can be a few candles away from its matching price pivot", () => 
   assert.equal(found?.confirmIndex, 30);
 });
 
+test("divergence waits for the RSI pivot to be fully confirmed, even when price pivot confirms earlier", () => {
+  const candles = makeCandles(33);
+  candles[20].low = 90;
+  candles[28].low = 88;
+  const rsi = Array(33).fill(50);
+  rsi[20] = 25;
+  rsi[30] = 32;
+  const config = {
+    PIVOT_LEFT_BARS: 2, PIVOT_RIGHT_BARS: 2, RSI_PIVOT_LEFT_BARS: 2, RSI_PIVOT_RIGHT_BARS: 2,
+    RSI_PIVOT_MATCH_TOLERANCE: 2, MIN_DIVERGENCE_RSI_DELTA: 3, MIN_DIVERGENCE_PRICE_PCT: 0.15,
+    MIN_RSI_PIVOT_PROMINENCE: 1, MIN_PIVOT_DISTANCE: 5, MAX_PIVOT_DISTANCE: 40
+  };
+  const found = detectDivergence(candles, config, rsi);
+  assert.equal(found?.type, "REGULAR_BULLISH");
+  assert.equal(found?.pivotIndex, 28);
+  assert.equal(found?.confirmIndex, 32);
+
+  const notYetClosed = detectDivergence(candles.slice(0, 32), config, rsi.slice(0, 32));
+  assert.equal(notYetClosed, null);
+});
+
 test("weak divergence below configured RSI or price separation is rejected", () => {
   const candles = makeCandles(31);
   candles[20].low = 90;
