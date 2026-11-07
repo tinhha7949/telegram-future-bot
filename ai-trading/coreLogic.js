@@ -53,19 +53,6 @@ function rsiSeries(candles, period = 14) {
   return out;
 }
 
-function emaSeries(candles, period = 50) {
-  const out = Array(candles.length).fill(null);
-  if (!Array.isArray(candles) || !Number.isInteger(period) || period < 2 || candles.length < period) return out;
-  let value = candles.slice(0, period).reduce((sum, c) => sum + c.close, 0) / period;
-  out[period - 1] = value;
-  const multiplier = 2 / (period + 1);
-  for (let i = period; i < candles.length; i++) {
-    value = (candles[i].close - value) * multiplier + value;
-    out[i] = value;
-  }
-  return out;
-}
-
 function pivots(candles, left, right) {
   const highs = [], lows = [];
   for (let i = left; i < candles.length - right; i++) {
@@ -113,7 +100,7 @@ function detectDivergence(candles, config, rsiOverride = null) {
   return candidates[0]||null;
 }
 
-function findSweepAndConfirmation(candles, divergence, config, atrValues, emaValues) {
+function findSweepAndConfirmation(candles, divergence, config, atrValues) {
   const sweepEnd = Math.min(candles.length - 1, divergence.confirmIndex + config.SWEEP_MAX_WAIT_BARS - 1);
   let sweep = null;
   for (let i = divergence.confirmIndex; i <= sweepEnd; i++) {
@@ -151,9 +138,6 @@ function findSweepAndConfirmation(candles, divergence, config, atrValues, emaVal
       : bearish && candle.close < sweep.low;
     if (!confirmed) continue;
     if (i !== candles.length - 1) return { expired: true, reason: "CONFIRMATION_NOT_CURRENT_CLOSED_CANDLE" };
-    const ema = emaValues[i];
-    if (config.USE_EMA50_FILTER && !(Number.isFinite(ema) && (divergence.direction === 1 ? candle.close > ema : candle.close < ema)))
-      return { expired: true, reason: divergence.direction === 1 ? "BLOCKED_EMA50_TREND_BULLISH_FAIL" : "BLOCKED_EMA50_TREND_BEARISH_FAIL" };
     return { sweep, confirmation: candle, confirmationIndex: i, confirmed: true };
   }
   if (candles.length - 1 > sweep.index + config.CONFIRMATION_MAX_BARS)
@@ -166,14 +150,13 @@ function coreLogic({ candles: rawCandles, config, now = Date.now() }) {
   const minimum = Math.max(
     config.HISTORY_CANDLES > 0 ? 60 : 0,
     config.RSI_PERIOD + config.PIVOT_LEFT_BARS + config.PIVOT_RIGHT_BARS + config.MAX_PIVOT_DISTANCE + 5,
-    config.EMA50_PERIOD + config.ATR_PERIOD + 2
+    config.ATR_PERIOD + 2
   );
   if (candles.length < minimum) return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
   const divergence = detectDivergence(candles, config);
   if (!divergence) return { side: null, reason: "NO_NEW_CONFIRMED_DIVERGENCE" };
   const atrValues = atrSeries(candles, config.ATR_PERIOD);
-  const emaValues = emaSeries(candles, config.EMA50_PERIOD);
-  const sequence = findSweepAndConfirmation(candles, divergence, config, atrValues, emaValues);
+  const sequence = findSweepAndConfirmation(candles, divergence, config, atrValues);
   if (!sequence.confirmed) return { side: null, reason: sequence.reason || "SIGNAL_NOT_CONFIRMED" };
   const latestIndex = sequence.confirmationIndex;
   const stopReference = divergence.direction === 1 ? sequence.sweep.low : sequence.sweep.high;
@@ -190,8 +173,6 @@ function coreLogic({ candles: rawCandles, config, now = Date.now() }) {
     sweepLow: sequence.sweep.low,
     pivotPrice: stopReference,
     slAtr: stopAtr,
-    ema50: emaValues[latestIndex],
-    ema50Side: divergence.direction === 1 ? "ABOVE_EMA50" : "BELOW_EMA50",
     score: 100,
     signalAt: sequence.confirmation.closeTime
   };
@@ -207,4 +188,4 @@ function marketVeto({ side, fundingRate, bidPrice, askPrice, config }) {
   return { allowed: true, reason: "OK", fundingRate: funding, spreadBps };
 }
 
-module.exports = { closed, atr, atrSeries, rsiSeries, emaSeries, pivots, detectDivergence, findSweepAndConfirmation, marketVeto, coreLogic };
+module.exports = { closed, atr, atrSeries, rsiSeries, pivots, detectDivergence, findSweepAndConfirmation, marketVeto, coreLogic };
