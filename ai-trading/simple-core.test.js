@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
-  atr, rsiSeries, emaSeries, pivots, detectDivergence,
+  atr, rsiSeries, pivots, detectDivergence,
   findSweepAndConfirmation, marketVeto, coreLogic
 } = require("./coreLogic");
 const { loadSimpleConfig } = require("./simple-config");
@@ -44,14 +44,13 @@ test("strategy timeframe can be changed through CONFIG.yaml without changing tes
   }
 });
 
-test("ATR, RSI and EMA series produce finite indicator values after warmup", () => {
+test("ATR and RSI series produce finite indicator values after warmup", () => {
   const candles = Array.from({ length: 100 }, (_, i) => {
     const close = 100 + i * 0.1 + Math.sin(i / 3);
     return { open: close, high: close + 0.5, low: close - 0.5, close, closeTime: NOW - (100 - i) * 60000 };
   });
   assert.ok(atr(candles, C.ATR_PERIOD) > 0);
   assert.ok(Number.isFinite(rsiSeries(candles, C.RSI_PERIOD).at(-1)));
-  assert.ok(Number.isFinite(emaSeries(candles, C.EMA50_PERIOD).at(-1)));
 });
 
 test("confirmed pivots and regular bullish divergence use the latest two confirmed lows", () => {
@@ -83,25 +82,12 @@ test("liquidity sweep must reclaim the reference and then get a candle close bey
   candles[30] = { ...candles[30], open: 90.5, high: 92, low: 89, close: 91 };
   candles[31] = { ...candles[31], open: 91, high: 94, low: 90.8, close: 93 };
   const atrValues = Array(32).fill(0.5);
-  const emaValues = Array(32).fill(90);
   const result = findSweepAndConfirmation(candles, {
     direction: 1, confirmIndex: 30, referencePrice: 90
-  }, { SWEEP_MAX_WAIT_BARS: 20, SWEEP_MIN_ATR: 0.05, CONFIRMATION_MAX_BARS: 3, USE_EMA50_FILTER: true }, atrValues, emaValues);
+  }, { SWEEP_MAX_WAIT_BARS: 20, SWEEP_MIN_ATR: 0.05, CONFIRMATION_MAX_BARS: 3 }, atrValues);
   assert.equal(result.confirmed, true);
   assert.equal(result.sweep.low, 89);
   assert.equal(result.confirmation.close, 93);
-});
-
-test("EMA50 filter blocks a confirmation candle on the wrong side", () => {
-  const candles = makeCandles(32);
-  candles[30] = { ...candles[30], open: 90.5, high: 92, low: 89, close: 91 };
-  candles[31] = { ...candles[31], open: 91, high: 94, low: 90.8, close: 93 };
-  const result = findSweepAndConfirmation(candles, {
-    direction: 1, confirmIndex: 30, referencePrice: 90
-  }, { SWEEP_MAX_WAIT_BARS: 20, SWEEP_MIN_ATR: 0.05, CONFIRMATION_MAX_BARS: 3, USE_EMA50_FILTER: true },
-  Array(32).fill(0.5), Array(32).fill(94));
-  assert.equal(result.confirmed, undefined);
-  assert.equal(result.reason, "BLOCKED_EMA50_TREND_BULLISH_FAIL");
 });
 
 test("SL is anchored beyond the sweep extreme with the MT5 ATR/percent buffer; TP formulas remain config-driven", () => {
