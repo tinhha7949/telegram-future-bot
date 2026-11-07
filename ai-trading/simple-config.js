@@ -23,7 +23,7 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
     "QUOTE_ASSET", "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT", "MAX_SYMBOLS",
     "STRATEGY_TIMEFRAME", "HISTORY_CANDLES", "RSI_PERIOD", "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS",
     "MIN_PIVOT_DISTANCE", "MAX_PIVOT_DISTANCE", "SWEEP_MAX_WAIT_BARS", "SWEEP_MIN_ATR",
-    "CONFIRMATION_MAX_BARS", "ATR_PERIOD", "EMA50_PERIOD", "USE_EMA50_FILTER",
+    "CONFIRMATION_MAX_BARS", "ATR_PERIOD",
     "SL_ATR_BUFFER", "SL_MIN_BUFFER_PERCENT", "MAX_SL_ATR",
     "REWARD_RISK", "TP1_REWARD_RISK", "TP2_REWARD_RISK", "TP1_CLOSE_PERCENT", "TP2_CLOSE_PERCENT",
     "BE_TRIGGER_TP1_PROGRESS_PCT", "MAX_ABS_FUNDING_RATE", "MAX_SPREAD_BPS", "MAX_HOLD_HOURS", "MAX_OPEN_POSITIONS",
@@ -38,14 +38,14 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   for (const key of stringKeys) {
     if (typeof out[key] !== "string" || !out[key].trim()) throw new Error("SIMPLE_CONFIG_INVALID_" + key);
   }
-  if (typeof out.DRY_RUN !== "boolean" || typeof out.USE_EMA50_FILTER !== "boolean")
+  if (typeof out.DRY_RUN !== "boolean")
     throw new Error("SIMPLE_CONFIG_INVALID_BOOLEAN");
 
   const nonNegative = new Set([
     "MIN_24H_QUOTE_VOLUME_USDT", "MIN_24H_RANGE_PCT", "MAX_ABS_FUNDING_RATE",
     "MAX_SPREAD_BPS", "COIN_COOLDOWN_MINUTES", "RISK_PER_TRADE_PCT", "MAX_POSITION_BALANCE_PCT"
   ]);
-  for (const key of required.filter(key => !stringKeys.includes(key) && key !== "DRY_RUN" && key !== "USE_EMA50_FILTER")) {
+  for (const key of required.filter(key => !stringKeys.includes(key) && key !== "DRY_RUN")) {
     if (!Number.isFinite(out[key]) || (nonNegative.has(key) ? out[key] < 0 : out[key] <= 0))
       throw new Error("SIMPLE_CONFIG_INVALID_" + key);
   }
@@ -56,15 +56,14 @@ function loadSimpleConfig(file = path.join(__dirname, "..", "CONFIG.yaml")) {
   check("STRATEGY_TIMEFRAME", !intervals.has(out.STRATEGY_TIMEFRAME));
   for (const key of ["HISTORY_CANDLES", "RSI_PERIOD", "PIVOT_LEFT_BARS", "PIVOT_RIGHT_BARS",
     "MIN_PIVOT_DISTANCE", "MAX_PIVOT_DISTANCE", "SWEEP_MAX_WAIT_BARS", "CONFIRMATION_MAX_BARS",
-    "ATR_PERIOD", "EMA50_PERIOD", "MAX_SYMBOLS", "MAX_OPEN_POSITIONS", "MAX_TRADES_PER_DAY", "LEVERAGE",
+    "ATR_PERIOD", "MAX_SYMBOLS", "MAX_OPEN_POSITIONS", "MAX_TRADES_PER_DAY", "LEVERAGE",
     "SCAN_INTERVAL_MS", "SYMBOL_REFRESH_MS", "BINANCE_RECV_WINDOW_MS", "BINANCE_HTTP_TIMEOUT_MS",
     "MAX_HOLD_HOURS", "COIN_COOLDOWN_MINUTES"]) check(key, !Number.isInteger(out[key]));
-  check("HISTORY_CANDLES", out.HISTORY_CANDLES < Math.max(out.EMA50_PERIOD + out.ATR_PERIOD + 2, out.RSI_PERIOD + out.MAX_PIVOT_DISTANCE + out.PIVOT_LEFT_BARS + out.PIVOT_RIGHT_BARS + 5));
+  check("HISTORY_CANDLES", out.HISTORY_CANDLES < Math.max(out.ATR_PERIOD + 2, out.RSI_PERIOD + out.MAX_PIVOT_DISTANCE + out.PIVOT_LEFT_BARS + out.PIVOT_RIGHT_BARS + 5));
   check("PIVOT_DISTANCE", out.MIN_PIVOT_DISTANCE < 1 || out.MAX_PIVOT_DISTANCE < out.MIN_PIVOT_DISTANCE);
   check("PIVOT_BARS", out.PIVOT_LEFT_BARS < 1 || out.PIVOT_RIGHT_BARS < 1);
   check("WAIT_BARS", out.SWEEP_MAX_WAIT_BARS < 1 || out.CONFIRMATION_MAX_BARS < 1);
   check("ATR_SETTINGS", out.ATR_PERIOD < 2 || out.SWEEP_MIN_ATR < 0);
-  check("EMA50_PERIOD", out.EMA50_PERIOD < 2);
   check("STOP_SETTINGS", out.SL_ATR_BUFFER <= 0 || out.SL_MIN_BUFFER_PERCENT <= 0 || out.MAX_SL_ATR <= 0);
   check("MAX_SYMBOLS", out.MAX_SYMBOLS < 1);
   check("MAX_OPEN_POSITIONS", out.MAX_OPEN_POSITIONS < 1);
