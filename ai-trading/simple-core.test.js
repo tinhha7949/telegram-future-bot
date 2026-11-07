@@ -127,6 +127,39 @@ test("regular bearish divergence is detected using independent RSI high pivots",
   assert.equal(found?.type, "REGULAR_BEARISH");
 });
 
+
+test("hidden bullish divergence is detected from a higher price low and lower RSI low", () => {
+  const candles = makeCandles(31);
+  candles[20].low = 90;
+  candles[28].low = 92;
+  const rsi = Array(31).fill(50);
+  rsi[20] = 30;
+  rsi[28] = 24;
+  const found = detectDivergence(candles, {
+    PIVOT_LEFT_BARS: 2, PIVOT_RIGHT_BARS: 2, RSI_PIVOT_LEFT_BARS: 2, RSI_PIVOT_RIGHT_BARS: 2,
+    RSI_PIVOT_MATCH_TOLERANCE: 0, MIN_DIVERGENCE_RSI_DELTA: 3, MIN_DIVERGENCE_PRICE_PCT: 0.15,
+    MIN_RSI_PIVOT_PROMINENCE: 1, MIN_PIVOT_DISTANCE: 5, MAX_PIVOT_DISTANCE: 40
+  }, rsi);
+  assert.equal(found?.direction, 1);
+  assert.equal(found?.type, "HIDDEN_BULLISH");
+});
+
+test("hidden bearish divergence is detected from a lower price high and higher RSI high", () => {
+  const candles = makeCandles(31);
+  candles[20].high = 110;
+  candles[28].high = 108;
+  const rsi = Array(31).fill(50);
+  rsi[20] = 70;
+  rsi[28] = 78;
+  const found = detectDivergence(candles, {
+    PIVOT_LEFT_BARS: 2, PIVOT_RIGHT_BARS: 2, RSI_PIVOT_LEFT_BARS: 2, RSI_PIVOT_RIGHT_BARS: 2,
+    RSI_PIVOT_MATCH_TOLERANCE: 0, MIN_DIVERGENCE_RSI_DELTA: 3, MIN_DIVERGENCE_PRICE_PCT: 0.15,
+    MIN_RSI_PIVOT_PROMINENCE: 1, MIN_PIVOT_DISTANCE: 5, MAX_PIVOT_DISTANCE: 40
+  }, rsi);
+  assert.equal(found?.direction, -1);
+  assert.equal(found?.type, "HIDDEN_BEARISH");
+});
+
 test("liquidity sweep must reclaim the reference and then get a candle close beyond the sweep high", () => {
   const candles = makeCandles(32);
   candles[30] = { ...candles[30], open: 90.5, high: 92, low: 89, close: 91 };
