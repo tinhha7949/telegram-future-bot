@@ -166,7 +166,11 @@ function detectDivergence(candles, config, rsiOverride = null) {
     candidates.push({
       direction, type, pivotIndex: current.price.index, confirmIndex,
       pivotTime: candles[current.price.index].closeTime,
-      referencePrice: previous.price.price, divergencePrice: current.price.price
+      referencePrice: previous.price.price,
+      divergencePrice: current.price.price,
+      // Regular divergence sweeps the prior swing liquidity. Hidden divergence
+      // sweeps the current continuation pivot, which is the protected HL/LH.
+      sweepReferencePrice: type.startsWith("HIDDEN_") ? current.price.price : previous.price.price
     });
   };
 
@@ -182,20 +186,23 @@ function findSweepAndConfirmation(candles, divergence, config, atrValues) {
   // Start at pivotIndex, not confirmIndex, so that event is not discarded.
   const sweepStart = Math.max(0, divergence.pivotIndex ?? divergence.confirmIndex);
   const sweepEnd = Math.min(candles.length - 1, divergence.confirmIndex + config.SWEEP_MAX_WAIT_BARS - 1);
+  const sweepReferencePrice = Number.isFinite(divergence.sweepReferencePrice)
+    ? divergence.sweepReferencePrice
+    : divergence.referencePrice;
   let sweep = null;
   for (let i = sweepStart; i <= sweepEnd; i++) {
     const a = atrValues[i], candle = candles[i];
     if (!(a > 0)) continue;
     if (divergence.direction === 1) {
-      const swept = candle.low < divergence.referencePrice - a * config.SWEEP_MIN_ATR;
-      const returnedInside = candle.close > divergence.referencePrice;
+      const swept = candle.low < sweepReferencePrice - a * config.SWEEP_MIN_ATR;
+      const returnedInside = candle.close > sweepReferencePrice;
       if (swept && returnedInside) {
         sweep = { index: i, high: candle.high, low: candle.low, time: candle.closeTime };
         break;
       }
     } else {
-      const swept = candle.high > divergence.referencePrice + a * config.SWEEP_MIN_ATR;
-      const returnedInside = candle.close < divergence.referencePrice;
+      const swept = candle.high > sweepReferencePrice + a * config.SWEEP_MIN_ATR;
+      const returnedInside = candle.close < sweepReferencePrice;
       if (swept && returnedInside) {
         sweep = { index: i, high: candle.high, low: candle.low, time: candle.closeTime };
         break;
@@ -232,7 +239,7 @@ function findSweepAndConfirmation(candles, divergence, config, atrValues) {
   return { pending: true, reason: "WAITING_CONFIRMATION" };
 }
 
-function coreLogic({ candles: rawCandles, config, now = Date.now() }) {
+function coreLogic({ candles: rawCandles, config, now = Date.now(), rsiOverride = null }) {
   const candles = closed(rawCandles, now).slice(-config.HISTORY_CANDLES);
   const minimum = Math.max(
     config.HISTORY_CANDLES > 0 ? 60 : 0,
@@ -240,13 +247,8 @@ function coreLogic({ candles: rawCandles, config, now = Date.now() }) {
     config.ATR_PERIOD + 2
   );
   if (candles.length < minimum) return { side: null, reason: "INSUFFICIENT_CLOSED_CANDLES" };
-  const divergence = detectDivergence(candles, config);
+  const divergence = detectDivergence(candles, config, rsiOverride);
   if (!divergence) return { side: null, reason: "NO_NEW_CONFIRMED_DIVERGENCE" };
-  // Hidden divergence is recognized for diagnostics, but the active strategy
-  // only permits regular divergence as an entry trigger.
-  if (divergence.type.startsWith("HIDDEN_")) {
-    return { side: null, reason: "HIDDEN_DIVERGENCE_NOT_ELIGIBLE", divergenceType: divergence.type };
-  }
   const atrValues = atrSeries(candles, config.ATR_PERIOD);
   const sequence = findSweepAndConfirmation(candles, divergence, config, atrValues);
   if (!sequence.confirmed) return { side: null, reason: sequence.reason || "SIGNAL_NOT_CONFIRMED" };
@@ -258,6 +260,7 @@ function coreLogic({ candles: rawCandles, config, now = Date.now() }) {
     side: divergence.direction === 1 ? "LONG" : "SHORT",
     divergenceType: divergence.type,
     referencePrice: divergence.referencePrice,
+    sweepReferencePrice: divergence.sweepReferencePrice,
     divergencePrice: divergence.divergencePrice,
     pivotTime: divergence.pivotTime,
     sweepTime: sequence.sweep.time,
