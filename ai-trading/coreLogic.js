@@ -177,9 +177,13 @@ function detectDivergence(candles, config, rsiOverride = null) {
 }
 
 function findSweepAndConfirmation(candles, divergence, config, atrValues) {
+  // A valid sweep can happen on the divergence pivot candle or while its
+  // price/RSI pivots are waiting for right-side confirmation candles.
+  // Start at pivotIndex, not confirmIndex, so that event is not discarded.
+  const sweepStart = Math.max(0, divergence.pivotIndex ?? divergence.confirmIndex);
   const sweepEnd = Math.min(candles.length - 1, divergence.confirmIndex + config.SWEEP_MAX_WAIT_BARS - 1);
   let sweep = null;
-  for (let i = divergence.confirmIndex; i <= sweepEnd; i++) {
+  for (let i = sweepStart; i <= sweepEnd; i++) {
     const a = atrValues[i], candle = candles[i];
     if (!(a > 0)) continue;
     if (divergence.direction === 1) {
@@ -204,8 +208,15 @@ function findSweepAndConfirmation(candles, divergence, config, atrValues) {
     return { pending: true, reason: "WAITING_LIQUIDITY_SWEEP" };
   }
 
-  const confirmationEnd = Math.min(candles.length - 1, sweep.index + config.CONFIRMATION_MAX_BARS);
-  for (let i = sweep.index + 1; i <= confirmationEnd; i++) {
+  // Never use a confirmation candle that closed before the divergence itself
+  // became confirmed. If the sweep happened earlier, wait for a fresh candle
+  // after confirmIndex instead of demanding another sweep of the same level.
+  const confirmationStart = Math.max(sweep.index + 1, divergence.confirmIndex + 1);
+  const confirmationEnd = Math.min(
+    candles.length - 1,
+    confirmationStart + config.CONFIRMATION_MAX_BARS - 1
+  );
+  for (let i = confirmationStart; i <= confirmationEnd; i++) {
     const candle = candles[i];
     const bullish = candle.close > candle.open;
     const bearish = candle.close < candle.open;
@@ -216,7 +227,7 @@ function findSweepAndConfirmation(candles, divergence, config, atrValues) {
     if (i !== candles.length - 1) return { expired: true, reason: "CONFIRMATION_NOT_CURRENT_CLOSED_CANDLE" };
     return { sweep, confirmation: candle, confirmationIndex: i, confirmed: true };
   }
-  if (candles.length - 1 > sweep.index + config.CONFIRMATION_MAX_BARS)
+  if (candles.length - 1 >= confirmationStart + config.CONFIRMATION_MAX_BARS)
     return { expired: true, reason: "CONFIRMATION_EXPIRED" };
   return { pending: true, reason: "WAITING_CONFIRMATION" };
 }
