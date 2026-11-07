@@ -197,12 +197,12 @@ test("hidden bullish and bearish divergence can pass the full live-entry sequenc
   };
 
   // Hidden bullish: price makes a higher low (90 -> 92), RSI makes a lower low (30 -> 24).
-  const bullishCandles = makeCandles(70);
+  const bullishCandles = makeCandles(60);
   bullishCandles[45].low = 90;
   bullishCandles[55].low = 92;
   bullishCandles[58] = { ...bullishCandles[58], open: 92.5, high: 94, low: 91.5, close: 93 };
   bullishCandles[59] = { ...bullishCandles[59], open: 93, high: 96, low: 92.8, close: 95 };
-  const bullishRsi = Array(70).fill(50);
+  const bullishRsi = Array(60).fill(50);
   bullishRsi[45] = 30;
   bullishRsi[55] = 24;
   const bullish = coreLogic({ candles: bullishCandles, config, now: NOW, rsiOverride: bullishRsi });
@@ -211,12 +211,12 @@ test("hidden bullish and bearish divergence can pass the full live-entry sequenc
   assert.equal(bullish.sweepReferencePrice, 92);
 
   // Hidden bearish: price makes a lower high (110 -> 108), RSI makes a higher high (70 -> 78).
-  const bearishCandles = makeCandles(70);
+  const bearishCandles = makeCandles(60);
   bearishCandles[45].high = 110;
   bearishCandles[55].high = 108;
   bearishCandles[58] = { ...bearishCandles[58], open: 108.2, high: 108.5, low: 106.5, close: 107.5 };
   bearishCandles[59] = { ...bearishCandles[59], open: 107, high: 107.2, low: 105, close: 105.5 };
-  const bearishRsi = Array(70).fill(50);
+  const bearishRsi = Array(60).fill(50);
   bearishRsi[45] = 70;
   bearishRsi[55] = 78;
   const bearish = coreLogic({ candles: bearishCandles, config, now: NOW, rsiOverride: bearishRsi });
