@@ -120,36 +120,33 @@ function detectDivergence(candles, config, rsiOverride = null) {
 
     if (matched.length < 2) return;
     const current = matched[matched.length - 1];
-    // Evaluate multiple earlier reference swings for the newest confirmed price swing.
-    for (let j = matched.length - 2; j >= 0; j--) {
-      const previous = matched[j];
-      const distance = current.price.index - previous.price.index;
-      if (distance < config.MIN_PIVOT_DISTANCE || distance > config.MAX_PIVOT_DISTANCE) continue;
-      const priceBefore = previous.price.price, priceNow = current.price.price;
-      const rsiBefore = previous.oscillator.value, rsiNow = current.oscillator.value;
-      const priceDeltaPct = Math.abs(priceNow - priceBefore) / Math.max(Math.abs(priceBefore), 1e-12) * 100;
-      if (priceDeltaPct < minPricePct || Math.abs(rsiNow - rsiBefore) < minRsiDelta) continue;
-      let type = null;
-      if (direction === 1) {
-        if (priceNow < priceBefore && rsiNow > rsiBefore) type = "REGULAR_BULLISH";
-        else if (priceNow > priceBefore && rsiNow < rsiBefore) type = "HIDDEN_BULLISH";
-      } else {
-        if (priceNow > priceBefore && rsiNow < rsiBefore) type = "REGULAR_BEARISH";
-        else if (priceNow < priceBefore && rsiNow > rsiBefore) type = "HIDDEN_BEARISH";
-      }
-      if (!type) continue;
-      const confirmIndex = Math.max(
-        current.price.index + config.PIVOT_RIGHT_BARS,
-        current.oscillator.index + right
-      );
-      if (confirmIndex > confirmedThrough) continue;
-      candidates.push({
-        direction, type, pivotIndex: current.price.index, confirmIndex,
-        pivotTime: candles[current.price.index].closeTime,
-        referencePrice: previous.price.price, divergencePrice: current.price.price
-      });
-      break;
+    // Only compare the newest two matched swings; never recycle a stale older setup.
+    const previous = matched[matched.length - 2];
+    const distance = current.price.index - previous.price.index;
+    if (distance < config.MIN_PIVOT_DISTANCE || distance > config.MAX_PIVOT_DISTANCE) return;
+    const priceBefore = previous.price.price, priceNow = current.price.price;
+    const rsiBefore = previous.oscillator.value, rsiNow = current.oscillator.value;
+    const priceDeltaPct = Math.abs(priceNow - priceBefore) / Math.max(Math.abs(priceBefore), 1e-12) * 100;
+    if (priceDeltaPct < minPricePct || Math.abs(rsiNow - rsiBefore) < minRsiDelta) return;
+    let type = null;
+    if (direction === 1) {
+      if (priceNow < priceBefore && rsiNow > rsiBefore) type = "REGULAR_BULLISH";
+      else if (priceNow > priceBefore && rsiNow < rsiBefore) type = "HIDDEN_BULLISH";
+    } else {
+      if (priceNow > priceBefore && rsiNow < rsiBefore) type = "REGULAR_BEARISH";
+      else if (priceNow < priceBefore && rsiNow > rsiBefore) type = "HIDDEN_BEARISH";
     }
+    if (!type) return;
+    const confirmIndex = Math.max(
+      current.price.index + config.PIVOT_RIGHT_BARS,
+      current.oscillator.index + right
+    );
+    if (confirmIndex > confirmedThrough) return;
+    candidates.push({
+      direction, type, pivotIndex: current.price.index, confirmIndex,
+      pivotTime: candles[current.price.index].closeTime,
+      referencePrice: previous.price.price, divergencePrice: current.price.price
+    });
   };
 
   inspect(price.lows, oscillatorPivots(rsi, left, right, "low"), 1);
