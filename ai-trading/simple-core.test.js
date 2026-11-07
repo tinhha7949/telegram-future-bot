@@ -194,6 +194,36 @@ test("liquidity sweep must reclaim the reference and then get a candle close bey
   assert.equal(result.confirmation.close, 93);
 });
 
+test("sweep during divergence pivot confirmation is retained; no second sweep is required", () => {
+  const candles = makeCandles(32);
+  // Pivot at 28; the sweep/reclaim happens at 29, before divergence confirms at 30.
+  candles[29] = { ...candles[29], open: 90.5, high: 92, low: 89, close: 91 };
+  // After divergence confirmation, price confirms above the already-recorded sweep high.
+  candles[31] = { ...candles[31], open: 91, high: 94, low: 90.8, close: 93 };
+  const atrValues = Array(32).fill(0.5);
+  const result = findSweepAndConfirmation(candles, {
+    direction: 1, pivotIndex: 28, confirmIndex: 30, referencePrice: 90
+  }, { SWEEP_MAX_WAIT_BARS: 20, SWEEP_MIN_ATR: 0.05, CONFIRMATION_MAX_BARS: 3 }, atrValues);
+  assert.equal(result.confirmed, true);
+  assert.equal(result.sweep.index, 29);
+  assert.equal(result.sweep.low, 89);
+  assert.equal(result.confirmation.close, 93);
+});
+
+test("confirmation before divergence confirmation cannot trigger an entry", () => {
+  const candles = makeCandles(32);
+  candles[29] = { ...candles[29], open: 90.5, high: 92, low: 89, close: 91 };
+  // This candle breaks the sweep high, but divergence is not confirmed until 30.
+  candles[30] = { ...candles[30], open: 91, high: 94, low: 90.8, close: 93 };
+  // No later confirmation candle yet.
+  const atrValues = Array(32).fill(0.5);
+  const result = findSweepAndConfirmation(candles.slice(0, 31), {
+    direction: 1, pivotIndex: 28, confirmIndex: 30, referencePrice: 90
+  }, { SWEEP_MAX_WAIT_BARS: 20, SWEEP_MIN_ATR: 0.05, CONFIRMATION_MAX_BARS: 3 }, atrValues.slice(0, 31));
+  assert.equal(result.confirmed, undefined);
+  assert.equal(result.reason, "WAITING_CONFIRMATION");
+});
+
 test("SL is anchored beyond the sweep extreme with the MT5 ATR/percent buffer; TP formulas remain config-driven", () => {
   const config = {
     STRATEGY_TIMEFRAME: "15m", SL_ATR_BUFFER: 0.2, SL_MIN_BUFFER_PERCENT: 0.1,
