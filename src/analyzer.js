@@ -112,11 +112,13 @@ const NEWS_STOP_WORDS = new Set([
 ]);
 
 function newsTokens(title) {
+  const synonyms = { fed:"federal", rates:"rate", indicates:"signal", indicated:"signal", signals:"signal", signaled:"signal", remain:"stay", remains:"stay", remained:"stay" };
   return new Set(String(title || "").toLowerCase()
     .replace(/&amp;/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
     .split(/\s+/)
-    .filter(token => token.length > 2 && !NEWS_STOP_WORDS.has(token)));
+    .filter(token => token.length > 2 && !NEWS_STOP_WORDS.has(token))
+    .map(token => synonyms[token] || token));
 }
 
 function dedupeNewsEvents(items = []) {
@@ -142,7 +144,7 @@ function dedupeNewsEvents(items = []) {
         const union = new Set([...tokens, ...referenceTokens]).size || 1;
         const similarity = intersection / union;
         const sameEventType = item.eventType && item.eventType !== "unclassified" && item.eventType === reference.eventType;
-        if ((similarity >= 0.62 && intersection >= 3) || (sameEventType && intersection >= 3 && similarity >= 0.25)) {
+        if ((similarity >= 0.62 && intersection >= 3) || (sameEventType && intersection >= 3 && similarity >= 0.5)) {
           match = cluster;
           break;
         }
