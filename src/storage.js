@@ -66,6 +66,12 @@ async function createStorage(config) {
           url: String(item.url || "").slice(0, 500),
           publishedAt: item.publishedAt || now, fetchedAt: now, importance,
           sentiment: item.sentiment || "neutral",
+          eventType: item.eventType || "unclassified",
+          eventTypes: item.eventTypes || [],
+          impactScore: Number(item.impactScore || 0),
+          relevance: Number(item.relevance || 0.25),
+          sourceWeight: Number(item.sourceWeight || 0.8),
+          eventHalfLifeHours: Number(item.eventHalfLifeHours || 24),
           expiresAt: new Date(now.getTime() + days * 86400000)
         };
         const result = await news.updateOne({ key }, { $setOnInsert: doc }, { upsert: true });
@@ -87,7 +93,8 @@ async function createStorage(config) {
         await markets.updateOne({ key }, { $set: doc }, { upsert: true });
         await marketHistory.insertOne({
           assetId: item.assetId, assetName: item.assetName, symbol: item.symbol,
-          price: item.price, changePercent: item.changePercent, source: item.source,
+          price: item.price, changePercent: item.changePercent, momentum: item.momentum || {},
+          volatilityPct: item.volatilityPct || 0, source: item.source,
           capturedAt: now,
           expiresAt: new Date(now.getTime() + (config.database.marketHistoryRetentionDays || 45) * 86400000)
         });
@@ -108,7 +115,7 @@ async function createStorage(config) {
       const candidates = [];
       for (const item of importantNews) candidates.push({
         key: `news:${item.key}`,
-        message: `🚨 TIN TỨC QUAN TRỌNG | ${item.assetName}\n${item.title}\nMức độ: ${item.importance}/10\nNguồn: ${item.source}\n${item.url}`
+        message: `🚨 TIN TỨC QUAN TRỌNG | ${item.assetName}\n${item.title}\nSự kiện: ${item.eventType || "chưa phân loại"}\nTác động theo mô hình: ${Number(item.impactScore || 0) > 0 ? "TÍCH CỰC" : Number(item.impactScore || 0) < 0 ? "TIÊU CỰC" : "CHƯA RÕ"} (${Number(item.impactScore || 0).toFixed(1)})\nMức độ: ${item.importance}/10\nNguồn: ${item.source}\n${item.url}`
       });
       for (const item of largeMoves) {
         const direction = item.changePercent >= 0 ? "TĂNG" : "GIẢM";
@@ -146,7 +153,8 @@ async function createStorage(config) {
             { $setOnInsert: {
               forecastKey, reportDay: day, assetId: item.assetId, assetName: item.assetName,
               horizon: forecast.horizon, direction: forecast.direction, confidence: forecast.confidence,
-              method: forecast.method || item.analysisMethod || "local-evidence",
+              method: forecast.method || item.analysisMethod || "deterministic-quantitative",
+              modelScore: forecast.score || 0, evidenceCount: forecast.evidenceCount || 0,
               referenceSymbol: reference.symbol, referencePrice: reference.price,
               referenceAt: reference.capturedAt || new Date(), dueAt, status: "pending",
               expiresAt: new Date(Date.now() + config.database.analysisRetentionDays * 86400000)

@@ -160,5 +160,12 @@
       ],
       "sentiment": "metals"
     }
-  ]
+  ],
+  "analysis": {
+    "directionThreshold": 0.55,
+    "maxNewsAgeHours": 720,
+    "newsWeight": 0.48,
+    "momentumWeight": 0.42,
+    "crossMarketWeight": 0.1
+  }
 }
