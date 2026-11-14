@@ -34,3 +34,11 @@ test("multiple free news providers cover every asset and have independent fallba
   assert.ok(config.marketMaxAgeHours >= 72);
   assert.equal(config.marketFetchConcurrency, 2);
 });
+
+test("news feeds and automatic headline translation have Vietnamese display settings", () => {
+  assert.equal(config.translationTimeoutMs, 6000);
+  assert.ok(config.translationConcurrency >= 1);
+  for (const source of config.newsSources) {
+    if (source.name) assert.match(source.name, /[À-ỹĐđ]/u, "Source name should be Vietnamese: " + source.id);
+  }
+});
