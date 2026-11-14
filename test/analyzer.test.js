@@ -64,3 +64,28 @@ test("analyzeAll excludes stale market snapshots", async () => {
   assert.equal(result[0].direction, "NEUTRAL");
   assert.equal(result[0].evidenceCount, 0);
 });
+
+test("forecast confidence decay follows the configured horizon values", () => {
+  const now = Date.now();
+  const asset = { id:"energy", name:"DẦU" };
+  const news = [{
+    title:"Oil supply disruption",
+    publishedAt:new Date(now),
+    impactScore:1.5,
+    sourceWeight:1,
+    importance:8,
+    relevance:1
+  }];
+  const result = buildAnalysis(asset, news, [], {
+    forecastHorizons:[
+      { id:"24h", label:"24 GIỜ", hours:24, confidenceDecay:0 },
+      { id:"3d", label:"3 NGÀY", hours:72, confidenceDecay:4 },
+      { id:"7d", label:"7 NGÀY", hours:168, confidenceDecay:8 },
+      { id:"30d", label:"30 NGÀY", hours:720, confidenceDecay:14 }
+    ]
+  }, now);
+  const confidence = result.forecasts.map(item => item.confidence);
+  assert.ok(confidence[0] > confidence[1]);
+  assert.ok(confidence[1] > confidence[2]);
+  assert.ok(confidence[2] > confidence[3]);
+});
