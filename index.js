@@ -25,32 +25,66 @@ async function main() {
   async function runCycle(options = {}) {
     if (busy) return null;
     busy = true;
+    const newsResult = { found:0, inserted:0, importantNews:[] };
+    const marketResult = { updated:0, largeMoves:[] };
     try {
-      const newsResult = options.news ? await collectNews(config, storage) : { found:0, inserted:0, importantNews:[] };
-      const marketResult = options.markets ? await collectMarkets(config, storage) : { updated:0, largeMoves:[] };
+      // A failed upstream provider must not prevent the other provider from updating.
+      if (options.news) {
+        try {
+          Object.assign(newsResult, await collectNews(config, storage));
+        } catch (error) {
+          log("WARN", "News collection failed; continuing with stored news", { error:error.message });
+        }
+      }
+      if (options.markets) {
+        try {
+          Object.assign(marketResult, await collectMarkets(config, storage));
+        } catch (error) {
+          log("WARN", "Market collection failed; continuing with stored market data", { error:error.message });
+        }
+      }
+
       const analyses = await analyzeAll(config, storage);
       await storage.saveLiveAnalyses(analyses);
-      const alerts = await storage.createAlerts(analyses, newsResult.importantNews, marketResult.largeMoves);
-      for (const alert of alerts.slice(0, config.maxAlertsPerRun)) {
-        await telegram.send(alert.message);
-        await storage.markAlertSent(alert.key);
+
+      try {
+        const alerts = await storage.createAlerts(analyses, newsResult.importantNews, marketResult.largeMoves);
+        for (const alert of alerts.slice(0, config.maxAlertsPerRun)) {
+          try {
+            await telegram.send(alert.message);
+            await storage.markAlertSent(alert.key);
+          } catch (error) {
+            log("WARN", "Telegram alert delivery failed; alert remains queued", { key:alert.key, error:error.message });
+          }
+        }
+      } catch (error) {
+        log("WARN", "Alert processing failed; analysis cycle will continue", { error:error.message });
       }
-      const evaluated = await storage.evaluateDueForecasts();
+
+      let evaluated = 0;
+      try {
+        evaluated = await storage.evaluateDueForecasts();
+      } catch (error) {
+        log("WARN", "Forecast evaluation failed", { error:error.message });
+      }
+
       log("INFO", "Deterministic analysis cycle completed", {
         newsFound:newsResult.found, newsInserted:newsResult.inserted,
-        marketUpdated:marketResult.updated, alerts:alerts.length, forecastsEvaluated:evaluated
+        marketUpdated:marketResult.updated, forecastsEvaluated:evaluated
       });
       return { newsResult, marketResult, analyses };
     } catch (error) {
-      log("ERROR", "Collection cycle failed", { error:error.message });
+      log("ERROR", "Analysis cycle failed", { error:error.message });
       return null;
-    } finally { busy = false; }
+    } finally {
+      busy = false;
+    }
   }
 
   async function dailyReport() {
     const cycle = await runCycle({ news:true, markets:true });
     if (!cycle) throw new Error("Daily collection failed; report was not sent");
-    const analyses = await analyzeAll(config, storage);
+    const analyses = cycle.analyses;
     await telegram.send(await telegram.buildDailyReport(analyses, storage));
     await storage.saveDailyReport(analyses);
     const stats = await storage.getForecastStats();
@@ -61,21 +95,27 @@ async function main() {
     log("INFO", "Daily deterministic forecast report sent");
   }
 
+  let stopScheduler = () => {};
+  let shuttingDown = false;
+  const shutdown = async signal => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log("INFO", "Shutting down", { signal });
+    stopScheduler();
+    try { await storage.close(); }
+    catch (error) { log("ERROR", "Storage shutdown failed", { error:error.message }); }
+    process.exit(0);
+  };
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+
   await runCycle({ news:true, markets:true });
-  startScheduler(config, storage, {
+  stopScheduler = startScheduler(config, storage, {
     onNewsPoll:() => runCycle({ news:true }),
     onMarketPoll:() => runCycle({ markets:true }),
     onDailyReport:dailyReport,
     onError:error => log("ERROR", "Scheduler error", { error:error.message })
   });
-
-  const shutdown = async signal => {
-    log("INFO", "Shutting down", { signal });
-    await storage.close();
-    process.exit(0);
-  };
-  process.once("SIGINT", () => shutdown("SIGINT"));
-  process.once("SIGTERM", () => shutdown("SIGTERM"));
   log("INFO", "MARKET INTELLIGENCE started", {
     timezone:config.timezone, dailyReportTime:config.dailyReportTime,
     analyzer:"deterministic-quantitative", externalAI:false
