@@ -19,7 +19,12 @@ async function createStorage(config) {
     maxPoolSize: 3, minPoolSize: 0, maxIdleTimeMS: 30000,
     serverSelectionTimeoutMS: 10000, connectTimeoutMS: 10000, retryWrites: true
   });
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (error) {
+    await client.close().catch(() => {});
+    throw error;
+  }
   const db = client.db(config.database.name);
   const news = db.collection("news");
   const markets = db.collection("market_snapshots");
@@ -29,7 +34,8 @@ async function createStorage(config) {
   const alerts = db.collection("alerts");
   const state = db.collection("bot_state");
 
-  await Promise.all([
+  try {
+    await Promise.all([
     news.createIndex({ key: 1 }, { unique: true, name: "news_key_unique" }),
     news.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "news_ttl" }),
     news.createIndex({ assetId: 1, publishedAt: -1 }, { name: "news_asset_date" }),
@@ -46,7 +52,11 @@ async function createStorage(config) {
     alerts.createIndex({ key: 1 }, { unique: true, name: "alert_key_unique" }),
     alerts.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "alert_ttl" }),
     state.createIndex({ key: 1 }, { unique: true, name: "state_key_unique" })
-  ]);
+    ]);
+  } catch (error) {
+    await client.close().catch(() => {});
+    throw error;
+  }
 
   async function trim(collection, max) {
     const count = await collection.countDocuments();
