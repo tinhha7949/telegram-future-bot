@@ -3,7 +3,7 @@
   "dailyReportTime": "07:00",
   "newsPollMinutes": 10,
   "marketPollMinutes": 15,
-  "requestTimeoutMs": 12000,
+  "requestTimeoutMs": 20000,
   "maxNewsPerCategory": 25,
   "maxAlertsPerRun": 3,
   "alertCooldownMinutes": 90,
@@ -167,5 +167,22 @@
     "newsWeight": 0.48,
     "momentumWeight": 0.42,
     "crossMarketWeight": 0.1
+  },
+  "httpMaxRetries": 2,
+  "httpRetryBaseMs": 2000,
+  "gdeltRequestGapMs": 3000,
+  "symbolLabels": {
+    "XAUUSDm": "Vàng giao ngay theo giá broker",
+    "GC=F": "Vàng COMEX (hợp đồng tương lai)",
+    "CL=F": "Dầu thô WTI (hợp đồng tương lai)",
+    "BZ=F": "Dầu thô Brent (hợp đồng tương lai)",
+    "RB=F": "Xăng RBOB Mỹ (hợp đồng tương lai)",
+    "^GSPC": "Chỉ số S&P 500",
+    "^IXIC": "Chỉ số Nasdaq Composite",
+    "^DJI": "Chỉ số Dow Jones Industrial Average",
+    "^TNX": "Lợi suất trái phiếu Chính phủ Mỹ kỳ hạn 10 năm",
+    "DX-Y.NYB": "Chỉ số sức mạnh đồng USD (DXY)",
+    "SI=F": "Bạc COMEX (hợp đồng tương lai)",
+    "PL=F": "Bạch kim NYMEX (hợp đồng tương lai)"
   }
 }
