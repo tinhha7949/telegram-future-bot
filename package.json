@@ -2,7 +2,7 @@
   "name": "market-intelligence-bot",
   "version": "2.0.0",
   "private": true,
-  "description": "Lightweight multi-asset market news and daily outlook Telegram bot",
+  "description": "Bot Telegram thu thập tin tức đa nguồn, phân tích thị trường và lập dự báo định lượng",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
