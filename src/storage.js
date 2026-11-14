@@ -2,6 +2,7 @@
 
 const { MongoClient } = require("mongodb");
 const crypto = require("node:crypto");
+const { directionVi, eventVi, sourceVi, horizonVi } = require("./i18n");
 
 function hash(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex");
@@ -79,6 +80,7 @@ async function createStorage(config) {
         const doc = {
           key, assetId: item.assetId, assetName: item.assetName,
           title: String(item.title || "").slice(0, 280),
+          originalTitle: String(item.originalTitle || item.title || "").slice(0, 280),
           source: String(item.source || "Unknown").slice(0, 80),
           url: String(item.url || "").slice(0, 500),
           publishedAt: item.publishedAt || now, fetchedAt: now, importance,
@@ -149,15 +151,15 @@ async function createStorage(config) {
         const forecast = latest && (latest.forecasts || []).find(value => value.horizon === "24h");
         const impact = Number(item.impactScore || 0);
         const impactLabel = impact > 0 ? "TÍCH CỰC" : impact < 0 ? "TIÊU CỰC" : "CHƯA RÕ";
-        const outlook = forecast ? forecast.direction + " | điểm " + forecast.confidence + "/82" : "Chưa đủ dữ liệu";
+        const outlook = forecast ? directionVi(forecast.direction) + " | điểm chất lượng " + forecast.confidence + "/82" : "Chưa đủ dữ liệu";
         candidates.push({
           key: "news:" + item.key,
           message: "🚨 TIN TỨC QUAN TRỌNG | " + item.assetName + "\n" + item.title +
-            "\nSự kiện: " + (item.eventType || "chưa phân loại") +
+            "\nSự kiện: " + eventVi(item.eventType) +
             "\nTác động theo mô hình: " + impactLabel + " (" + impact.toFixed(1) + ")" +
             "\nDự báo 24h sau cập nhật: " + outlook +
             "\nMức độ: " + item.importance + "/10" +
-            "\nNguồn: " + item.source + "\n" + item.url
+            "\nNguồn: " + sourceVi(item.source) + "\n" + item.url
         });
       }
       const cooldownMs = Math.max(0, Number(config.alertCooldownMinutes ?? 90)) * 60000;
@@ -174,7 +176,7 @@ async function createStorage(config) {
         const direction = item.changePercent >= 0 ? "TĂNG" : "GIẢM";
         candidates.push({
           key: prefix + new Date().toISOString(),
-          message: "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n" + (item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol) + " (" + item.symbol + "): " + direction + " " + Number(item.changePercent).toFixed(2) + "%\nGiá tham chiếu: " + item.price + "\nNguồn: " + (item.source || "Yahoo Finance")
+          message: "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n" + (item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol) + " (" + item.symbol + "): " + direction + " " + Number(item.changePercent).toFixed(2) + "%\nGiá tham chiếu: " + item.price + "\nNguồn: " + sourceVi(item.source || "Yahoo Finance")
         });
       }
       for (const candidate of candidates) {
