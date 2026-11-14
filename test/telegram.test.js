@@ -108,7 +108,7 @@ test("daily Telegram report translates forecast directions and source labels", a
     }]
   });
   assert.match(report, /TRUNG LẬP/);
-  assert.match(report, /TÍCH CỰC/);
+  assert.match(report, /XU HƯỚNG TĂNG/);
   assert.match(report, /Lạm phát Mỹ cao hơn dự kiến/);
   assert.doesNotMatch(report, /NEUTRAL|BULLISH|inflation_hot/);
 });
