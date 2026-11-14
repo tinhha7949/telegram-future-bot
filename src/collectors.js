@@ -85,9 +85,10 @@ async function fetchYahoo(symbol, config) {
 async function collectNews(config, storage) {
   const all = [];
   let lastRequestAt = 0;
+  let consecutiveFailures = 0;
   if (Date.now() < gdeltCooldownUntil) {
     const seconds = Math.ceil((gdeltCooldownUntil - Date.now()) / 1000);
-    process.stderr.write("[WARN] GDELT đang tạm nghỉ sau HTTP 429; thử lại sau " + seconds + " giây.\\n");
+    process.stderr.write("[WARN] GDELT đang tạm nghỉ sau lỗi nguồn; thử lại sau " + seconds + " giây.\n");
     return { found:0, inserted:0, importantNews:[] };
   }
   for (const asset of config.assets) {
@@ -95,8 +96,9 @@ async function collectNews(config, storage) {
       const gapMs = Math.max(0, Number(config.gdeltRequestGapMs || 0));
       const waitMs = gapMs - (Date.now() - lastRequestAt);
       if (lastRequestAt && waitMs > 0) await sleep(waitMs);
-      lastRequestAt = Date.now();
       const articles = await fetchGdelt(asset.newsQuery, config);
+      lastRequestAt = Date.now();
+      consecutiveFailures = 0;
       for (const article of articles) {
         const title = String(article.title || "").trim();
         const url = String(article.url || "").trim();
@@ -114,7 +116,16 @@ async function collectNews(config, storage) {
         });
       }
     } catch (error) {
+      lastRequestAt = Date.now();
+      consecutiveFailures++;
       process.stderr.write("[WARN] GDELT " + asset.name + " (" + asset.id + "): " + error.message + "\n");
+      if (Number(error.status) === 429 || consecutiveFailures >= 2) {
+        const minimumCooldown = Number(error.status) === 429 ? 5 * 60 * 1000 : 3 * 60 * 1000;
+        const cooldownMs = Math.max(Number(error.retryAfterMs || 0), minimumCooldown);
+        gdeltCooldownUntil = Date.now() + Math.min(cooldownMs, 30 * 60 * 1000);
+        process.stderr.write("[WARN] Dừng truy vấn GDELT còn lại trong chu kỳ để tránh tăng tải; tạm nghỉ " + Math.ceil((gdeltCooldownUntil - Date.now()) / 1000) + " giây.\n");
+        break;
+      }
     }
   }
   const saved = await storage.saveNews(all);
