@@ -60,3 +60,26 @@ test("requestJson does not retry permanent HTTP 404 errors", async t => {
   );
   assert.equal(calls, 1);
 });
+
+test("requestJson can hand HTTP 429 to a provider cooldown without retrying", async t => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let calls = 0;
+  global.fetch = async () => {
+    calls++;
+    return {
+      ok:false,
+      status:429,
+      headers:{ get:() => "300" }
+    };
+  };
+
+  await assert.rejects(
+    requestJson("https://example.test/rate-limited", 1000, {}, {
+      retries:2,
+      retryOnRateLimit:false
+    }),
+    error => error.status === 429 && error.retryAfterMs === 300000
+  );
+  assert.equal(calls, 1);
+});
