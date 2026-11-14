@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { fetchYahoo, safeDate, sourceWeight } = require("../src/collectors");
+const { forecastDueAt } = require("../src/storage");
 
 test("fetchYahoo uses completed hourly candles and reports their observation time", async t => {
   const originalFetch = global.fetch;
@@ -49,4 +50,10 @@ test("sourceWeight recognizes major financial and official sources", () => {
   assert.equal(sourceWeight("reuters.com"), 1.15);
   assert.equal(sourceWeight("eia.gov"), 1.25);
   assert.equal(sourceWeight("unknown.example"), 0.8);
+});
+
+test("forecast due time is measured from the reference market candle", () => {
+  const referenceAt = new Date("2026-11-14T10:00:00.000Z");
+  assert.equal(forecastDueAt(referenceAt, 24).toISOString(), "2026-11-15T10:00:00.000Z");
+  assert.equal(forecastDueAt(referenceAt, 72).toISOString(), "2026-11-17T10:00:00.000Z");
 });
