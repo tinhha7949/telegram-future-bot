@@ -2,6 +2,7 @@
 
 const { requestJson, requestText, sleep } = require("./http");
 const { classifyHeadline, dedupeNewsEvents } = require("./analyzer");
+const { translateBatch } = require("./translator");
 
 const newsSourceCooldowns = new Map();
 const newsSourceFailures = new Map();
@@ -205,7 +206,7 @@ async function collectNews(config, storage) {
           ? Math.max(Number(error.retryAfterMs || 0), 10 * 60 * 1000)
           : Math.min(30 * 60 * 1000, 60 * 1000 * (2 ** Math.min(failures - 1, 5)));
         newsSourceCooldowns.set(sourceId, Date.now() + Math.min(base, 2 * 60 * 60 * 1000));
-        process.stderr.write("[WARN] NEWS " + sourceId + ": " + error.message + "; nghỉ " + Math.ceil(base / 1000) + " giây, tiếp tục nguồn khác.\n");
+        process.stderr.write("[CẢNH BÁO] NGUỒN TIN " + sourceId + ": " + error.message + "; tạm nghỉ " + Math.ceil(base / 1000) + " giây, rồi thử lại; vẫn tiếp tục các nguồn khác.\n");
         return { source, failed:true, articles:[] };
       }
     }));
@@ -240,8 +241,9 @@ async function collectNews(config, storage) {
   }
 
   const uniqueEvents = dedupeNewsEvents(all);
+  await translateBatch(uniqueEvents, config);
   const saved = await storage.saveNews(uniqueEvents);
-  process.stdout.write("[INFO] News providers completed " + JSON.stringify({
+  process.stdout.write("[THÔNG TIN] Đã hoàn tất lấy tin từ các nguồn " + JSON.stringify({
     providersConfigured:sources.length, providersSucceeded:succeeded, providersFailed:failed,
     providersCoolingDown:skipped, articlesFetched:all.length, uniqueEvents:uniqueEvents.length
   }) + "\n");
@@ -261,7 +263,7 @@ async function collectMarkets(config, storage) {
         const quote = await fetchYahoo(symbol, config);
         return quote ? { assetId:owners.get(symbol).id, assetName:owners.get(symbol).name, instrumentName:(config.symbolLabels || {})[symbol] || symbol, symbol, ...quote } : null;
       } catch (error) {
-        process.stderr.write("[WARN] Quote " + ((config.symbolLabels || {})[symbol] || symbol) + " (" + symbol + ") [" + owners.get(symbol).name + "]: " + error.message + "\n");
+        process.stderr.write("[CẢNH BÁO] Giá tham chiếu " + ((config.symbolLabels || {})[symbol] || symbol) + " (" + symbol + ") [" + owners.get(symbol).name + "]: " + error.message + "\n");
         return null;
       }
     }));
@@ -279,7 +281,7 @@ async function collectMarkets(config, storage) {
         source:"Configured broker endpoint", currency:"USD", marketTime:new Date()
       });
     } catch (error) {
-      process.stderr.write("[WARN] " + ((config.symbolLabels || {}).XAUUSDm || "Vàng giao ngay theo giá broker") + " (XAUUSDm): " + error.message + "\n");
+      process.stderr.write("[CẢNH BÁO] " + ((config.symbolLabels || {}).XAUUSDm || "Vàng giao ngay theo giá broker") + " (XAUUSDm): " + error.message + "\n");
     }
   }
   const saved = await storage.saveMarkets(all);
