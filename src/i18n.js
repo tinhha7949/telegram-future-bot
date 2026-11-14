@@ -42,16 +42,36 @@ const SOURCES = {
   "Configured broker endpoint":"Nguồn dữ liệu do người dùng cấu hình"
 };
 
-function directionVi(value) { return DIRECTIONS[value] || value || "CHƯA CÓ DỮ LIỆU"; }
-function eventVi(value) { return EVENTS[value] || (value ? String(value).replace(/_/g, " ") : EVENTS.unclassified); }
+function directionVi(value) { return DIRECTIONS[value] || "CHƯA XÁC ĐỊNH"; }
+function eventVi(value) { return EVENTS[value] || (value ? "Sự kiện khác" : EVENTS.unclassified); }
 function componentVi(value) { return COMPONENTS[value] || value || ""; }
 function sourceVi(value) { return SOURCES[value] || value || "Nguồn tin chưa xác định"; }
 function horizonVi(value) {
   const map = { "24h":"24 giờ", "3d":"3 ngày", "7d":"7 ngày", "30d":"30 ngày" };
-  return map[value] || value || "";
+  return map[value] || (value ? "Khung thời gian khác" : "");
 }
 function methodVi(value) {
-  return value === "deterministic-quantitative" ? "Mô hình định lượng theo quy tắc" : value || "";
+  return value === "deterministic-quantitative" ? "Mô hình định lượng theo quy tắc" : "Mô hình phân tích";
 }
 
-module.exports = { DIRECTIONS, EVENTS, COMPONENTS, SOURCES, directionVi, eventVi, componentVi, sourceVi, horizonVi, methodVi };
+
+function formatNewsAlert(item, forecast) {
+  const impact = Number(item.impactScore || 0);
+  const impactLabel = impact > 0 ? "TÍCH CỰC" : impact < 0 ? "TIÊU CỰC" : "CHƯA RÕ";
+  const outlook = forecast ? directionVi(forecast.direction) + " | điểm chất lượng " + forecast.confidence + "/82" : "Chưa đủ dữ liệu";
+  return "🚨 TIN TỨC QUAN TRỌNG | " + item.assetName + "\n" + item.title +
+    "\nSự kiện: " + eventVi(item.eventType) +
+    "\nTác động theo mô hình: " + impactLabel + " (" + impact.toFixed(1) + ")" +
+    "\nDự báo 24 giờ sau khi cập nhật: " + outlook +
+    "\nMức độ quan trọng: " + item.importance + "/10" +
+    "\nNguồn: " + sourceVi(item.source) + "\n" + item.url;
+}
+
+function formatMarketAlert(item, config = {}) {
+  const direction = item.changePercent >= 0 ? "TĂNG" : "GIẢM";
+  const name = item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol;
+  return "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n" + name + " (" + item.symbol + "): " + direction + " " +
+    Number(item.changePercent).toFixed(2) + "%\nGiá tham chiếu: " + item.price +
+    "\nNguồn: " + sourceVi(item.source || "Yahoo Finance");
+}
+module.exports = { DIRECTIONS, EVENTS, COMPONENTS, SOURCES, directionVi, eventVi, componentVi, sourceVi, horizonVi, methodVi, formatNewsAlert, formatMarketAlert };
