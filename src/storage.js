@@ -133,7 +133,7 @@ async function createStorage(config) {
         const direction = item.changePercent >= 0 ? "TĂNG" : "GIẢM";
         candidates.push({
           key: `move:${item.assetId}:${item.symbol}:${new Date().toISOString().slice(0, 13)}`,
-          message: `⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n${item.symbol}: ${direction} ${Number(item.changePercent).toFixed(2)}%\nGiá tham chiếu: ${item.price}\nNguồn: ${item.source || "Yahoo Finance"}`
+          message: `⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n${item.instrumentName || item.symbol} (${item.symbol}): ${direction} ${Number(item.changePercent).toFixed(2)}%\nGiá tham chiếu: ${item.price}\nNguồn: ${item.source || "Yahoo Finance"}`
         });
       }
       for (const candidate of candidates) {
