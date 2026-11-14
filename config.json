@@ -184,5 +184,6 @@
     "DX-Y.NYB": "Chỉ số sức mạnh đồng USD (DXY)",
     "SI=F": "Bạc COMEX (hợp đồng tương lai)",
     "PL=F": "Bạch kim NYMEX (hợp đồng tương lai)"
-  }
+  },
+  "gdeltMaxRetries": 1
 }
