@@ -31,7 +31,7 @@ async function fetchGdelt(query, config) {
   url.searchParams.set("sort", "DateDesc");
   url.searchParams.set("timespan", "24h");
   const data = await requestJson(url, config.requestTimeoutMs, {}, {
-    retries: config.gdeltMaxRetries ?? 1,
+    retries: config.gdeltMaxRetries ?? config.httpMaxRetries ?? 1,
     retryOnRateLimit:false,
     retryBaseMs: config.httpRetryBaseMs ?? 2000
   });
@@ -53,7 +53,7 @@ async function fetchYahoo(symbol, config) {
     url.searchParams.set("interval", "1h");
     try {
       const data = await requestJson(url, config.requestTimeoutMs, headers, {
-        retries: 1,
+        retries: config.httpMaxRetries ?? 1,
         retryOnRateLimit:false,
         retryBaseMs: config.httpRetryBaseMs ?? 2000
       });
@@ -199,7 +199,7 @@ async function collectMarkets(config, storage) {
   }
   if (process.env.XAUUSD_PRICE_URL) {
     try {
-      const exact = await requestJson(process.env.XAUUSD_PRICE_URL, config.requestTimeoutMs);
+      const exact = await requestJson(process.env.XAUUSD_PRICE_URL, config.requestTimeoutMs, {}, { retries:config.httpMaxRetries ?? 1, retryOnRateLimit:false, retryBaseMs:config.httpRetryBaseMs ?? 2000 });
       const price = Number(exact.price ?? exact.last ?? exact.close ?? exact.regularMarketPrice);
       if (Number.isFinite(price) && price > 0) all.push({
         assetId:"gold", assetName:"VÀNG (XAUUSDm)", instrumentName:(config.symbolLabels || {}).XAUUSDm || "Vàng giao ngay theo giá broker", symbol:"XAUUSDm", price,
