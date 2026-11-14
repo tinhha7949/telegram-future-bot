@@ -74,4 +74,20 @@ function formatMarketAlert(item, config = {}) {
     Number(item.changePercent).toFixed(2) + "%\nGiá tham chiếu: " + item.price +
     "\nNguồn: " + sourceVi(item.source || "Yahoo Finance");
 }
-module.exports = { DIRECTIONS, EVENTS, COMPONENTS, SOURCES, directionVi, eventVi, componentVi, sourceVi, horizonVi, methodVi, formatNewsAlert, formatMarketAlert };
+
+function errorVi(error) {
+  const message = String(error && error.message || error || "Lỗi không xác định");
+  let match = message.match(/HTTP (\\d+) from ([a-z0-9.-]+)/i);
+  if (match) return "Máy chủ " + match[2] + " trả về mã HTTP " + match[1];
+  match = message.match(/Network fetch failed \\(([^)]+)\\): ([A-Z0-9_]+)/i);
+  if (match) return "Không kết nối được tới " + match[1] + " (mã lỗi " + match[2] + ")";
+  match = message.match(/Request timeout after (\\d+)ms \\(([^)]+)\\)/i);
+  if (match) return "Hết thời gian chờ " + match[1] + " mili giây khi kết nối tới " + match[2];
+  if (/Yahoo Finance is in a temporary rate-limit cooldown/i.test(message)) return "Yahoo Finance đang tạm giới hạn số lần truy cập";
+  if (/Yahoo Finance returned no chart data/i.test(message)) return "Yahoo Finance không trả về dữ liệu biểu đồ";
+  if (/Too Many Requests|rate limit/i.test(message)) return "Nguồn dữ liệu đang giới hạn số lần truy cập";
+  if (/MongoServerSelectionError|MongoNetworkError/i.test(message)) return "Không kết nối được tới cơ sở dữ liệu MongoDB";
+  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/.test(message)) return "Lỗi kết nối mạng: " + message.match(/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/)[0];
+  return "Lỗi kỹ thuật: " + message;
+}
+module.exports = { DIRECTIONS, EVENTS, COMPONENTS, SOURCES, directionVi, eventVi, componentVi, sourceVi, horizonVi, methodVi, formatNewsAlert, formatMarketAlert, errorVi };
