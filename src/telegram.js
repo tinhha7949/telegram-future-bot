@@ -10,7 +10,7 @@ class Telegram {
   }
 
   async send(text) {
-    const chunks = String(text).match(/[\\s\\S]{1,3900}/g) || [];
+    const chunks = String(text).match(/[\s\S]{1,3900}/g) || [];
     for (const chunk of chunks) {
       let delivered = false;
       let lastError = null;
