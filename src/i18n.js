@@ -86,6 +86,10 @@ function errorVi(error) {
   if (/Yahoo Finance is in a temporary rate-limit cooldown/i.test(message)) return "Yahoo Finance đang tạm giới hạn số lần truy cập";
   if (/Yahoo Finance returned no chart data/i.test(message)) return "Yahoo Finance không trả về dữ liệu biểu đồ";
   if (/Too Many Requests|rate limit/i.test(message)) return "Nguồn dữ liệu đang giới hạn số lần truy cập";
+  if (/Telegram trả về mã lỗi HTTP (\d+)/i.test(message)) return "Telegram trả về mã lỗi HTTP " + message.match(/HTTP (\d+)/i)[1];
+  if (/Bad Request/i.test(message)) return "Telegram từ chối tin nhắn do nội dung hoặc tham số không hợp lệ";
+  if (/chat not found/i.test(message)) return "Không tìm thấy cuộc trò chuyện Telegram; hãy kiểm tra CHAT_ID";
+  if (/Unauthorized/i.test(message)) return "Telegram từ chối mã truy cập; hãy kiểm tra BOT_TOKEN";
   if (/MongoServerSelectionError|MongoNetworkError/i.test(message)) return "Không kết nối được tới cơ sở dữ liệu MongoDB";
   if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/.test(message)) return "Lỗi kết nối mạng: " + message.match(/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/)[0];
   return "Lỗi kỹ thuật: " + message;
