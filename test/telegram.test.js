@@ -88,3 +88,27 @@ test("Telegram splits long Unicode messages without losing or breaking character
   assert.equal(sent.join(""), message);
   assert.ok(sent.every(chunk => !chunk.includes("\\uFFFD")));
 });
+
+test("daily Telegram report translates forecast directions and source labels", async () => {
+  const telegram = new Telegram({ requestTimeoutMs:1000, timezone:"Asia/Ho_Chi_Minh", symbolLabels:{} });
+  const report = await telegram.buildDailyReport([{
+    assetId:"gold", assetName:"VÀNG (XAUUSD)", direction:"NEUTRAL", confidence:65,
+    summary:"Chưa có lợi thế tăng/giảm đủ rõ; nên chờ thêm xác nhận.",
+    forecasts:[{
+      horizon:"24h", label:"24 GIỜ", direction:"BULLISH", confidence:65, score:0.9,
+      evidenceCount:3, rationale:"Tín hiệu tổng hợp nghiêng tăng.", drivers:["Nhu cầu vàng tăng"],
+      risks:["Lợi suất trái phiếu tăng"]
+    }],
+    risks:[], caveat:"Dữ liệu xác nhận còn ít."
+  }], {
+    getLatestMarkets:async () => [],
+    getRecentNews:async () => [{
+      title:"Lạm phát Mỹ cao hơn dự kiến", source:"The Guardian", importance:8,
+      impactScore:-0.3, url:"https://example.test/news"
+    }]
+  });
+  assert.match(report, /TRUNG LẬP/);
+  assert.match(report, /TÍCH CỰC/);
+  assert.match(report, /Lạm phát Mỹ cao hơn dự kiến/);
+  assert.doesNotMatch(report, /NEUTRAL|BULLISH|inflation_hot/);
+});
