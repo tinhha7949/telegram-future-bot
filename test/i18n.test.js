@@ -5,8 +5,8 @@ const assert = require("node:assert/strict");
 const { directionVi, eventVi, sourceVi, horizonVi, methodVi, formatNewsAlert, formatMarketAlert, errorVi } = require("../src/i18n");
 
 test("internal forecast directions are displayed in Vietnamese", () => {
-  assert.equal(directionVi("BULLISH"), "TÍCH CỰC");
-  assert.equal(directionVi("BEARISH"), "TIÊU CỰC");
+  assert.equal(directionVi("BULLISH"), "XU HƯỚNG TĂNG");
+  assert.equal(directionVi("BEARISH"), "XU HƯỚNG GIẢM");
   assert.equal(directionVi("NEUTRAL"), "TRUNG LẬP");
 });
 
