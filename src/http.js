@@ -46,6 +46,16 @@ async function requestJson(url, timeoutMs = 12000, headers = {}, options = {}) {
       return await response.json();
     } catch (error) {
       lastError = error;
+      if (error && error.name === "TypeError" && error.message === "fetch failed") {
+        const hostname = new URL(url).hostname;
+        const cause = error.cause;
+        const detail = cause && (cause.code || cause.message);
+        lastError = new Error(detail
+          ? `Network fetch failed (${hostname}): ${detail}`
+          : `Network fetch failed (${hostname}); underlying cause unavailable`);
+        lastError.name = error.name;
+        if (cause) lastError.cause = cause;
+      }
       if (timedOut) {
         lastError = new Error(`Request timeout after ${timeoutMs}ms (${new URL(url).hostname})`);
         lastError.name = "TimeoutError";
