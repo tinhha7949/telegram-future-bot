@@ -99,7 +99,7 @@ function marketMomentumScore(quote, horizon) {
   if (change === null) return null;
   const rawVolatility = Number(quote.volatilityPct);
   const volatility = Number.isFinite(rawVolatility) && rawVolatility > 0 ? Math.max(0.15, rawVolatility) : 0.8;
-  const days = horizon === "24h" ? 1 : horizon === "3d" ? 3 : horizon === "7d" ? 7 : 21;
+  const days = horizon === "24h" ? 1 : horizon === "3d" ? 3 : horizon === "7d" ? 7 : horizon === "30d" ? 30 : 1;
   const score = tanh(change / (volatility * Math.sqrt(days))) * 1.8;
   return Number.isFinite(score) ? clamp(score, -1.8, 1.8) : null;
 }
