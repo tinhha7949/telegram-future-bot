@@ -104,7 +104,66 @@ function marketMomentumScore(quote, horizon) {
   return Number.isFinite(score) ? clamp(score, -1.8, 1.8) : null;
 }
 
+const NEWS_STOP_WORDS = new Set([
+  "the","a","an","and","or","to","of","in","on","for","from","with","as","at","by","after","before",
+  "is","are","was","were","be","been","being","will","would","could","should","may","might","says","said",
+  "over","under","into","amid","its","their","this","that","these","those","new","latest","update","report",
+  "market","markets","price","prices","today","week","daily","what","how","why","more","than"
+]);
+
+function newsTokens(title) {
+  return new Set(String(title || "").toLowerCase()
+    .replace(/&amp;/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter(token => token.length > 2 && !NEWS_STOP_WORDS.has(token)));
+}
+
+function dedupeNewsEvents(items = []) {
+  const groups = new Map();
+  for (const item of items) {
+    const key = String(item.assetId || "unknown");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const unique = [];
+  for (const group of groups.values()) {
+    const clusters = [];
+    for (const item of group) {
+      const tokens = newsTokens(item.title);
+      const published = new Date(item.publishedAt || 0).getTime();
+      let match = null;
+      for (const cluster of clusters) {
+        const reference = cluster[0];
+        const referenceTime = new Date(reference.publishedAt || 0).getTime();
+        if (Number.isFinite(published) && Number.isFinite(referenceTime) && Math.abs(published - referenceTime) > 12 * 3600000) continue;
+        const referenceTokens = newsTokens(reference.title);
+        const intersection = [...tokens].filter(token => referenceTokens.has(token)).length;
+        const union = new Set([...tokens, ...referenceTokens]).size || 1;
+        const similarity = intersection / union;
+        const sameEventType = item.eventType && item.eventType !== "unclassified" && item.eventType === reference.eventType;
+        if ((similarity >= 0.62 && intersection >= 3) || (sameEventType && intersection >= 3 && similarity >= 0.45)) {
+          match = cluster;
+          break;
+        }
+      }
+      if (match) match.push(item);
+      else clusters.push([item]);
+    }
+    for (const cluster of clusters) {
+      cluster.sort((left, right) => {
+        const score = item => Number(item.sourceWeight || 0.8) * Number(item.importance || 1) * Number(item.relevance || 0.5);
+        return score(right) - score(left);
+      });
+      const representative = { ...cluster[0], corroboratingSources:[...new Set(cluster.map(item => item.source).filter(Boolean))] };
+      unique.push(representative);
+    }
+  }
+  return unique;
+}
+
 function buildHorizon(asset, news, markets, horizon, config, now) {
+  news = dedupeNewsEvents(news);
   const drivers = [];
   const risks = [];
   let newsSum = 0, newsWeight = 0, newsCount = 0;
@@ -229,4 +288,4 @@ async function analyzeAll(config, storage) {
   return results;
 }
 
-module.exports = { classifyHeadline, scoreNews, directionFromScore, marketMomentumScore, buildAnalysis, analyzeAll };
+module.exports = { classifyHeadline, scoreNews, directionFromScore, marketMomentumScore, dedupeNewsEvents, buildAnalysis, analyzeAll };
