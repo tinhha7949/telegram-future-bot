@@ -1,7 +1,7 @@
 "use strict";
 
 const { sleep } = require("./http");
-const { directionVi, eventVi, sourceVi, horizonVi } = require("./i18n");
+const { directionVi, eventVi, horizonVi } = require("./i18n");
 const { translateToVietnamese } = require("./translator");
 
 class Telegram {
@@ -22,8 +22,11 @@ class Telegram {
         .replace(" | điểm ", " | điểm chất lượng ");
     }
     if (lines[5] && lines[5].startsWith("Mức độ: ")) lines[5] = lines[5].replace("Mức độ:", "Mức độ quan trọng:");
-    if (lines[6] && lines[6].startsWith("Nguồn: ")) lines[6] = "Nguồn: " + sourceVi(lines[6].slice("Nguồn: ".length));
-    return lines.join("\n");
+    // Loại bỏ nguồn và liên kết trong mọi loại tin nhắn, kể cả tin cũ còn trong hàng đợi.
+    return lines.filter(line =>
+      !/^\s*(?:Nguồn|Source)\s*:/i.test(line) &&
+      !/https?:\/\//i.test(line)
+    ).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   }
 
   async send(text) {
@@ -121,7 +124,7 @@ class Telegram {
           const impact = Number(news.impactScore || 0);
           const vietnameseTitle = await translateToVietnamese(news.title, this.config);
           lines.push("- [" + news.importance + "/10 | " + (impact > 0 ? "+" : "") + impact.toFixed(1) + "] " + vietnameseTitle);
-          lines.push("  " + sourceVi(news.source) + " | " + news.url);
+
         }
       }
       if (item.risks && item.risks.length) lines.push("Rủi ro chính: " + item.risks.slice(0, 3).join(" • "));
