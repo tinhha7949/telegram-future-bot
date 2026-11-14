@@ -1,7 +1,7 @@
 "use strict";
 
 const { sleep } = require("./http");
-const { directionVi, sourceVi } = require("./i18n");
+const { directionVi, sourceVi, horizonVi } = require("./i18n");
 
 class Telegram {
   constructor(config) {
@@ -87,7 +87,7 @@ class Telegram {
       lines.push(item.summary);
       for (const forecast of item.forecasts || []) {
         const icon = forecast.direction === "BULLISH" ? "🟢" : forecast.direction === "BEARISH" ? "🔴" : "🟡";
-        lines.push(icon + " " + (forecast.label || forecast.horizon) + ": " + directionVi(forecast.direction) + " — " + forecast.confidence + "/82");
+        lines.push(icon + " " + (forecast.label || horizonVi(forecast.horizon)) + ": " + directionVi(forecast.direction) + " — " + forecast.confidence + "/82");
         lines.push("  Điểm mô hình: " + forecast.score + "; bằng chứng: " + forecast.evidenceCount);
         if (forecast.rationale) lines.push("  Nhận định: " + forecast.rationale);
         if (forecast.drivers && forecast.drivers.length) lines.push("  Động lực: " + forecast.drivers.slice(0, 2).join(" • "));
