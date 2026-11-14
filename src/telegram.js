@@ -55,7 +55,7 @@ class Telegram {
       }
       for (const quote of markets.filter(value => value.assetId === item.assetId).slice(0, 3)) {
         const change = Number(quote.changePercent || 0);
-        lines.push("• " + quote.symbol + ": " + quote.price + " (" + (change >= 0 ? "+" : "") + change.toFixed(2) + "%)");
+        lines.push("• " + (quote.instrumentName || quote.symbol) + " (" + quote.symbol + "): " + quote.price + " (" + (change >= 0 ? "+" : "") + change.toFixed(2) + "%)");
       }
       const headlines = groups[i] || [];
       if (headlines.length) {
@@ -71,7 +71,7 @@ class Telegram {
     }
     lines.push("━━━━━━━━━━━━━━━━━━");
     lines.push("Điểm 0-82 là điểm chất lượng tín hiệu, KHÔNG phải xác suất dự báo đúng.");
-    lines.push("Giá tham chiếu: Yahoo Finance; GC=F không phải giá broker XAUUSDm.");
+    lines.push("Giá tham chiếu Yahoo Finance: mã futures/chỉ số như ghi rõ bên cạnh từng tài sản; GC=F là hợp đồng vàng COMEX, KHÔNG phải giá broker XAUUSDm.");
     lines.push("Mô hình định lượng có thể sai; đây không phải khuyến nghị đầu tư.");
     return lines.join("\n");
   }
