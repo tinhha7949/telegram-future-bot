@@ -1,6 +1,6 @@
 module.exports = {
   apps: [{
-    name: "market-intelligence",
+    name: "index",
     script: "index.js",
     cwd: __dirname,
     instances: 1,
