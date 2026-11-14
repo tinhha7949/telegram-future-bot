@@ -1,6 +1,7 @@
 "use strict";
 
 const { sleep } = require("./http");
+const { directionVi, sourceVi, methodVi } = require("./i18n");
 
 class Telegram {
   constructor(config) {
@@ -73,20 +74,20 @@ class Telegram {
       ...analyses.map(item => storage.getRecentNews(item.assetId, 5))
     ]);
     const lines = [
-      "🧠 MARKET INTELLIGENCE",
+      "🧠 TRÍ TUỆ THỊ TRƯỜNG",
       "📅 " + now + " (GMT+7)",
       "BÁO CÁO TIN TỨC & DỰ BÁO ĐỊNH LƯỢNG",
-      "Mô hình: quy tắc sự kiện + tác động theo tài sản + động lượng giá",
+      "Mô hình: phân loại sự kiện + đánh giá tác động theo tài sản + động lượng giá",
       "━━━━━━━━━━━━━━━━━━", ""
     ];
     for (let i = 0; i < analyses.length; i++) {
       const item = analyses[i];
       lines.push("📌 " + item.assetName);
-      lines.push("Tổng quan 24h: " + item.direction + " | Điểm tín hiệu: " + item.confidence + "/82");
+      lines.push("Tổng quan 24 giờ: " + directionVi(item.direction) + " | Điểm chất lượng tín hiệu: " + item.confidence + "/82");
       lines.push(item.summary);
       for (const forecast of item.forecasts || []) {
         const icon = forecast.direction === "BULLISH" ? "🟢" : forecast.direction === "BEARISH" ? "🔴" : "🟡";
-        lines.push(icon + " " + (forecast.label || forecast.horizon) + ": " + forecast.direction + " — " + forecast.confidence + "/82");
+        lines.push(icon + " " + (forecast.label || forecast.horizon) + ": " + directionVi(forecast.direction) + " — " + forecast.confidence + "/82");
         lines.push("  Điểm mô hình: " + forecast.score + "; bằng chứng: " + forecast.evidenceCount);
         if (forecast.rationale) lines.push("  Nhận định: " + forecast.rationale);
         if (forecast.drivers && forecast.drivers.length) lines.push("  Động lực: " + forecast.drivers.slice(0, 2).join(" • "));
@@ -102,15 +103,15 @@ class Telegram {
         for (const news of headlines) {
           const impact = Number(news.impactScore || 0);
           lines.push("- [" + news.importance + "/10 | " + (impact > 0 ? "+" : "") + impact.toFixed(1) + "] " + news.title);
-          lines.push("  " + news.source + " | " + news.url);
+          lines.push("  " + sourceVi(news.source) + " | " + news.url);
         }
       }
       if (item.risks && item.risks.length) lines.push("Rủi ro chính: " + item.risks.slice(0, 3).join(" • "));
       lines.push("Lưu ý: " + item.caveat, "");
     }
     lines.push("━━━━━━━━━━━━━━━━━━");
-    lines.push("Điểm 0-82 là điểm chất lượng tín hiệu, KHÔNG phải xác suất dự báo đúng.");
-    lines.push("Giá tham chiếu Yahoo Finance: mã futures/chỉ số như ghi rõ bên cạnh từng tài sản; GC=F là hợp đồng vàng COMEX, KHÔNG phải giá broker XAUUSDm.");
+    lines.push("Điểm 0–82 thể hiện chất lượng tín hiệu, KHÔNG phải xác suất dự báo đúng.");
+    lines.push("Giá tham chiếu từ Yahoo Finance: mã hợp đồng tương lai/chỉ số được ghi bên cạnh từng tài sản; GC=F là hợp đồng vàng COMEX, KHÔNG phải giá vàng XAUUSDm tại sàn giao dịch của mày.");
     lines.push("Mô hình định lượng có thể sai; đây không phải khuyến nghị đầu tư.");
     return lines.join("\n");
   }
