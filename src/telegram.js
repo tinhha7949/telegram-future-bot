@@ -1,7 +1,8 @@
 "use strict";
 
 const { sleep } = require("./http");
-const { directionVi, sourceVi, horizonVi } = require("./i18n");
+const { directionVi, eventVi, sourceVi, horizonVi } = require("./i18n");
+const { translateToVietnamese } = require("./translator");
 
 class Telegram {
   constructor(config) {
@@ -10,8 +11,24 @@ class Telegram {
     this.chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID;
   }
 
+  async localizeMessage(value) {
+    const lines = String(value).split("\n");
+    if (!lines[0].startsWith("🚨 TIN TỨC QUAN TRỌNG |")) return lines.join("\n");
+    if (lines[1]) lines[1] = await translateToVietnamese(lines[1], this.config);
+    if (lines[2] && lines[2].startsWith("Sự kiện: ")) lines[2] = "Sự kiện: " + eventVi(lines[2].slice("Sự kiện: ".length));
+    if (lines[4]) {
+      lines[4] = lines[4].replace("Dự báo 24h sau cập nhật:", "Dự báo 24 giờ sau khi cập nhật:")
+        .replace(/: (BULLISH|BEARISH|NEUTRAL) \\|/, (_match, direction) => ": " + directionVi(direction) + " |")
+        .replace(" | điểm ", " | điểm chất lượng ");
+    }
+    if (lines[5] && lines[5].startsWith("Mức độ: ")) lines[5] = lines[5].replace("Mức độ:", "Mức độ quan trọng:");
+    if (lines[6] && lines[6].startsWith("Nguồn: ")) lines[6] = "Nguồn: " + sourceVi(lines[6].slice("Nguồn: ".length));
+    return lines.join("\n");
+  }
+
   async send(text) {
-    const characters = Array.from(String(text));
+    const localizedText = await this.localizeMessage(text);
+    const characters = Array.from(String(localizedText));
     const chunks = [];
     for (let i = 0; i < characters.length; i += 3900) {
       chunks.push(characters.slice(i, i + 3900).join(""));
@@ -102,7 +119,8 @@ class Telegram {
         lines.push("Tin tức mới:");
         for (const news of headlines) {
           const impact = Number(news.impactScore || 0);
-          lines.push("- [" + news.importance + "/10 | " + (impact > 0 ? "+" : "") + impact.toFixed(1) + "] " + news.title);
+          const vietnameseTitle = await translateToVietnamese(news.title, this.config);
+          lines.push("- [" + news.importance + "/10 | " + (impact > 0 ? "+" : "") + impact.toFixed(1) + "] " + vietnameseTitle);
           lines.push("  " + sourceVi(news.source) + " | " + news.url);
         }
       }
