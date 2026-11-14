@@ -4,6 +4,7 @@ const { requestJson, sleep } = require("./http");
 const { classifyHeadline } = require("./analyzer");
 
 let gdeltCooldownUntil = 0;
+let yahooCooldownUntil = 0;
 
 function safeDate(value) {
   if (typeof value === "string" && /^\d{8}T\d{6}Z$/.test(value)) {
@@ -37,6 +38,11 @@ async function fetchGdelt(query, config) {
 }
 
 async function fetchYahoo(symbol, config) {
+  if (Date.now() < yahooCooldownUntil) {
+    const error = new Error("Yahoo Finance is in a temporary rate-limit cooldown");
+    error.status = 429;
+    throw error;
+  }
   const headers = { "User-Agent":"Mozilla/5.0 MarketIntelligenceBot/3.0" };
   let result = null;
   let lastError = null;
@@ -54,6 +60,10 @@ async function fetchYahoo(symbol, config) {
       lastError = new Error("Yahoo Finance returned no chart data");
     } catch (error) {
       lastError = error;
+      if (Number(error.status) === 429) {
+        yahooCooldownUntil = Date.now() + 5 * 60 * 1000;
+        break;
+      }
     }
   }
   if (!result && lastError) throw lastError;
@@ -171,8 +181,9 @@ async function collectMarkets(config, storage) {
   const owners = new Map();
   for (const asset of config.assets) for (const symbol of asset.marketSymbols || []) owners.set(symbol, asset);
   const symbols = [...owners.keys()];
-  for (let i = 0; i < symbols.length; i += 4) {
-    const batch = symbols.slice(i, i + 4);
+  const batchSize = Math.max(1, Math.min(4, Number(config.marketFetchConcurrency || 2)));
+  for (let i = 0; i < symbols.length; i += batchSize) {
+    const batch = symbols.slice(i, i + batchSize);
     const results = await Promise.all(batch.map(async symbol => {
       try {
         const quote = await fetchYahoo(symbol, config);
