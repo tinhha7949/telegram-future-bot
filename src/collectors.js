@@ -63,7 +63,7 @@ async function fetchYahoo(symbol, config) {
     } catch (error) {
       lastError = error;
       if (Number(error.status) === 429) {
-        yahooCooldownUntil = Date.now() + 5 * 60 * 1000;
+        yahooCooldownUntil = Date.now() + Math.min(Math.max(Number(error.retryAfterMs || 0), 5 * 60 * 1000), 2 * 60 * 60 * 1000);
         break;
       }
     }
