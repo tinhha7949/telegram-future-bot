@@ -143,11 +143,21 @@ async function createStorage(config) {
             "\nNguồn: " + item.source + "\n" + item.url
         });
       }
+      const cooldownMs = Math.max(0, Number(config.alertCooldownMinutes ?? 90)) * 60000;
       for (const item of largeMoves) {
+        const prefix = "move:" + item.assetId + ":" + item.symbol + ":";
+        if (cooldownMs > 0) {
+          const escapedPrefix = prefix.replace(/\./g, "\\.");
+          const recent = await alerts.findOne({
+            key: { $regex: "^" + escapedPrefix },
+            createdAt: { $gte: new Date(Date.now() - cooldownMs) }
+          });
+          if (recent) continue;
+        }
         const direction = item.changePercent >= 0 ? "TĂNG" : "GIẢM";
         candidates.push({
-          key: `move:${item.assetId}:${item.symbol}:${new Date().toISOString().slice(0, 13)}`,
-          message: `⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n${item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol} (${item.symbol}): ${direction} ${Number(item.changePercent).toFixed(2)}%\nGiá tham chiếu: ${item.price}\nNguồn: ${item.source || "Yahoo Finance"}`
+          key: prefix + new Date().toISOString(),
+          message: "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\\n" + (item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol) + " (" + item.symbol + "): " + direction + " " + Number(item.changePercent).toFixed(2) + "%\\nGiá tham chiếu: " + item.price + "\\nNguồn: " + (item.source || "Yahoo Finance")
         });
       }
       for (const candidate of candidates) {
