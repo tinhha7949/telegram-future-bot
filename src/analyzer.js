@@ -90,14 +90,18 @@ function ageHours(date, now) {
 function momentumFor(quote, horizon) {
   if (!quote) return null;
   const raw = (quote.momentum || {})[horizon] ?? (horizon === "24h" ? quote.changePercent : null);
-  return Number.isFinite(Number(raw)) ? Number(raw) : null;
+  if (raw === null || raw === undefined || raw === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
 }
 function marketMomentumScore(quote, horizon) {
   const change = momentumFor(quote, horizon);
   if (change === null) return null;
-  const volatility = Math.max(0.15, Number(quote.volatilityPct || 0.8));
+  const rawVolatility = Number(quote.volatilityPct);
+  const volatility = Number.isFinite(rawVolatility) && rawVolatility > 0 ? Math.max(0.15, rawVolatility) : 0.8;
   const days = horizon === "24h" ? 1 : horizon === "3d" ? 3 : horizon === "7d" ? 7 : 21;
-  return clamp(tanh(change / (volatility * Math.sqrt(days))) * 1.8, -1.8, 1.8);
+  const score = tanh(change / (volatility * Math.sqrt(days))) * 1.8;
+  return Number.isFinite(score) ? clamp(score, -1.8, 1.8) : null;
 }
 
 function buildHorizon(asset, news, markets, horizon, config, now) {
@@ -155,10 +159,16 @@ function buildHorizon(asset, news, markets, horizon, config, now) {
     if (value !== null) { crossScore += value * 0.2; crossCount++; }
   }
 
+  const configuredWeights = config.analysis || {};
+  const weights = {
+    news: Number.isFinite(Number(configuredWeights.newsWeight)) ? Math.max(0, Number(configuredWeights.newsWeight)) : 0.48,
+    momentum: Number.isFinite(Number(configuredWeights.momentumWeight)) ? Math.max(0, Number(configuredWeights.momentumWeight)) : 0.42,
+    crossMarket: Number.isFinite(Number(configuredWeights.crossMarketWeight)) ? Math.max(0, Number(configuredWeights.crossMarketWeight)) : 0.10
+  };
   const components = [
-    { name:"news", value:newsScore, weight:0.48, count:newsCount },
-    { name:"momentum", value:ownMomentum, weight:0.42, count:ownScores.length },
-    { name:"crossMarket", value:crossCount ? crossScore / crossCount : 0, weight:0.10, count:crossCount }
+    { name:"news", value:newsScore, weight:weights.news, count:newsCount },
+    { name:"momentum", value:ownMomentum, weight:weights.momentum, count:ownScores.length },
+    { name:"crossMarket", value:crossCount ? crossScore / crossCount : 0, weight:weights.crossMarket, count:crossCount }
   ];
   const available = components.reduce((sum, item) => sum + (item.count ? item.weight : 0), 0);
   const score = available ? components.reduce((sum, item) => sum + item.value * (item.count ? item.weight : 0), 0) / available : 0;
@@ -206,7 +216,13 @@ function buildAnalysis(asset, news = [], markets = [], config = {}, now = Date.n
 }
 
 async function analyzeAll(config, storage) {
-  const markets = await storage.getLatestMarkets();
+  const now = Date.now();
+  const maxAgeMs = Math.max(1, Number(config.marketMaxAgeHours || 96)) * 3600000;
+  const storedMarkets = await storage.getLatestMarkets();
+  const markets = storedMarkets.filter(item => {
+    const time = new Date(item.marketTime || item.capturedAt || 0).getTime();
+    return Number.isFinite(time) && time <= now + 5 * 60000 && now - time <= maxAgeMs;
+  });
   const results = [];
   for (const asset of config.assets) results.push(buildAnalysis(asset, await storage.getRecentNews(asset.id, 40), markets, config));
   return results;
