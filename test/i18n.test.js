@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { directionVi, eventVi, sourceVi, horizonVi, methodVi, formatNewsAlert, formatMarketAlert } = require("../src/i18n");
+const { directionVi, eventVi, sourceVi, horizonVi, methodVi, formatNewsAlert, formatMarketAlert, errorVi } = require("../src/i18n");
 
 test("internal forecast directions are displayed in Vietnamese", () => {
   assert.equal(directionVi("BULLISH"), "TÍCH CỰC");
@@ -37,4 +37,9 @@ test("Telegram alert templates contain Vietnamese labels instead of internal Eng
   });
   assert.match(market, /BIẾN ĐỘNG THỊ TRƯỜNG/);
   assert.match(market, /TĂNG 1.25%/);
+});
+
+test("technical network errors are described in Vietnamese", () => {
+  assert.equal(errorVi(new Error("Network fetch failed (api.gdeltproject.org): UND_ERR_CONNECT_TIMEOUT")), "Không kết nối được tới api.gdeltproject.org (mã lỗi UND_ERR_CONNECT_TIMEOUT)");
+  assert.equal(errorVi(new Error("HTTP 429 from api.example.com")), "Máy chủ api.example.com trả về mã HTTP 429");
 });
