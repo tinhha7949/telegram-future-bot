@@ -110,7 +110,7 @@ async function createStorage(config) {
           { upsert: true }
         );
       }
-      return alerts.find({ key: { $in: candidates.map(x => x.key) }, sentAt: { $exists: false } }).limit(config.maxAlertsPerRun).toArray();
+      return alerts.find({ sentAt: { $exists: false }, expiresAt: { $gt: new Date() } }).sort({ createdAt: 1 }).limit(config.maxAlertsPerRun).toArray();
     },
     async markAlertSent(key) { await alerts.updateOne({ key }, { $set: { sentAt: new Date() } }); },
     async saveDailyReport(items) {
