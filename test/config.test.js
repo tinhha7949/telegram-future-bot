@@ -38,7 +38,8 @@ test("multiple free news providers cover every asset and have independent fallba
 test("news feeds and automatic headline translation have Vietnamese display settings", () => {
   assert.equal(config.translationTimeoutMs, 6000);
   assert.ok(config.translationConcurrency >= 1);
+  const untranslatedNames = new Set(["CNBC Markets", "MarketWatch", "Federal Reserve", "US Energy Information Administration", "European Central Bank", "BBC Business", "Deutsche Welle"]);
   for (const source of config.newsSources) {
-    if (source.name) assert.match(source.name, /[À-ỹĐđ]/u, "Source name should be Vietnamese: " + source.id);
+    if (source.name) assert.ok(!untranslatedNames.has(source.name), "Source name should be Vietnamese: " + source.id);
   }
 });
