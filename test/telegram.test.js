@@ -110,7 +110,7 @@ test("daily Telegram report translates forecast directions and source labels", a
   assert.match(report, /TRUNG LẬP/);
   assert.match(report, /XU HƯỚNG TĂNG/);
   assert.match(report, /Lạm phát Mỹ cao hơn dự kiến/);
-  assert.doesNotMatch(report, /NEUTRAL|BULLISH|inflation_hot/);
+  assert.doesNotMatch(report, /NEUTRAL|BULLISH|inflation_hot|The Guardian|Nguồn:|https?:\\/\\//);
 });
 
 test("queued English news alerts are converted to Vietnamese before sending", async t => {
@@ -154,4 +154,35 @@ test("already Vietnamese news alerts are not translated or relabeled twice", asy
   assert.equal((localized.match(/điểm chất lượng/g) || []).length, 1);
   assert.match(localized, /Sự kiện: Lạm phát cao hơn dự kiến/);
   assert.doesNotMatch(localized, /Sự kiện: Sự kiện khác/);
+});
+
+test("all Telegram message types remove source labels and raw article URLs", async () => {
+  const telegram = new Telegram({ requestTimeoutMs:1000 });
+  const samples = [
+    "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\\nVÀNG: TĂNG 1.2%\\nNguồn: Yahoo Finance",
+    "BÁO CÁO\\nTin tức mới\\nNguồn: EnergyNow.com | https://news.google.com/rss/articles/example",
+    "Thông báo\\nhttps://example.test/article"
+  ];
+  for (const sample of samples) {
+    const output = await telegram.localizeMessage(sample);
+    assert.doesNotMatch(output, /Nguồn:|Source:|https?:\\/\\//i);
+  }
+});
+
+test("queued news alerts remove source and link while preserving the analysis", async () => {
+  const telegram = new Telegram({ requestTimeoutMs:1000 });
+  const output = await telegram.localizeMessage([
+    "🚨 TIN TỨC QUAN TRỌNG | DẦU (WTI / BRENT)",
+    "Giá dầu biến động mạnh",
+    "Sự kiện: geopolitical_escalation",
+    "Tác động theo mô hình: TÍCH CỰC (0.9)",
+    "Dự báo 24h sau cập nhật: NEUTRAL | điểm 65/82",
+    "Mức độ: 10/10",
+    "Nguồn: EnergyNow.com",
+    "https://news.google.com/rss/articles/example"
+  ].join("\\n"));
+  assert.match(output, /DẦU/);
+  assert.match(output, /Căng thẳng địa chính trị leo thang/);
+  assert.match(output, /Mức độ quan trọng: 10\\/10/);
+  assert.doesNotMatch(output, /EnergyNow|Nguồn:|https?:\\/\\//);
 });
