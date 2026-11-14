@@ -89,3 +89,9 @@ test("forecast confidence decay follows the configured horizon values", () => {
   assert.ok(confidence[1] > confidence[2]);
   assert.ok(confidence[2] > confidence[3]);
 });
+
+test("30-day momentum uses a 30-day volatility scale", () => {
+  const quote = { momentum:{ "30d":6 }, volatilityPct:2 };
+  const expected = Math.tanh(6 / (2 * Math.sqrt(30))) * 1.8;
+  assert.ok(Math.abs(marketMomentumScore(quote, "30d") - expected) < 1e-12);
+});
