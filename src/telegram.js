@@ -55,7 +55,7 @@ class Telegram {
       }
       for (const quote of markets.filter(value => value.assetId === item.assetId).slice(0, 3)) {
         const change = Number(quote.changePercent || 0);
-        lines.push("• " + (quote.instrumentName || quote.symbol) + " (" + quote.symbol + "): " + quote.price + " (" + (change >= 0 ? "+" : "") + change.toFixed(2) + "%)");
+        lines.push("• " + (quote.instrumentName || (this.config.symbolLabels || {})[quote.symbol] || quote.symbol) + " (" + quote.symbol + "): " + quote.price + " (" + (change >= 0 ? "+" : "") + change.toFixed(2) + "%)");
       }
       const headlines = groups[i] || [];
       if (headlines.length) {
