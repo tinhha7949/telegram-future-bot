@@ -170,7 +170,6 @@
   },
   "httpMaxRetries": 2,
   "httpRetryBaseMs": 2000,
-  "gdeltRequestGapMs": 10000,
   "marketMaxAgeHours": 96,
   "marketFetchConcurrency": 2,
   "symbolLabels": {
@@ -187,5 +186,143 @@
     "SI=F": "Bạc COMEX (hợp đồng tương lai)",
     "PL=F": "Bạch kim NYMEX (hợp đồng tương lai)"
   },
-  "gdeltMaxRetries": 1
+  "newsSourceConcurrency": 3,
+  "newsHttpRetries": 1,
+  "newsSources": [
+    {
+      "id": "google-gold",
+      "kind": "google-news",
+      "assetId": "gold",
+      "query": "(gold OR bullion OR XAUUSD OR \"precious metals\" OR gold ETF)"
+    },
+    {
+      "id": "google-energy",
+      "kind": "google-news",
+      "assetId": "energy",
+      "query": "(\"crude oil\" OR WTI OR Brent OR OPEC OR petroleum OR oil supply)"
+    },
+    {
+      "id": "google-gasoline",
+      "kind": "google-news",
+      "assetId": "gasoline",
+      "query": "(gasoline OR petrol OR diesel OR refinery OR fuel prices)"
+    },
+    {
+      "id": "google-stocks",
+      "kind": "google-news",
+      "assetId": "stocks",
+      "query": "(\"stock market\" OR S&P 500 OR Nasdaq OR Dow Jones OR equities OR earnings)"
+    },
+    {
+      "id": "google-macro",
+      "kind": "google-news",
+      "assetId": "macro",
+      "query": "(Federal Reserve OR FOMC OR inflation OR CPI OR PCE OR payrolls OR GDP OR PMI)"
+    },
+    {
+      "id": "google-usd",
+      "kind": "google-news",
+      "assetId": "usd",
+      "query": "(\"US dollar\" OR DXY OR forex OR Treasury yields OR Federal Reserve OR interest rates)"
+    },
+    {
+      "id": "google-geopolitics",
+      "kind": "google-news",
+      "assetId": "geopolitics",
+      "query": "(war OR military conflict OR sanctions OR ceasefire OR tariffs OR geopolitical tension)"
+    },
+    {
+      "id": "google-metals",
+      "kind": "google-news",
+      "assetId": "metals",
+      "query": "(silver OR platinum OR palladium OR \"precious metals\")"
+    },
+    {
+      "id": "cnbc-markets",
+      "name": "CNBC Markets",
+      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069",
+      "assets": [
+        "gold",
+        "energy",
+        "gasoline",
+        "stocks",
+        "macro",
+        "usd",
+        "metals"
+      ]
+    },
+    {
+      "id": "marketwatch",
+      "name": "MarketWatch",
+      "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+      "assets": [
+        "gold",
+        "energy",
+        "gasoline",
+        "stocks",
+        "macro",
+        "usd",
+        "metals"
+      ]
+    },
+    {
+      "id": "fed-official",
+      "name": "Federal Reserve",
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+      "assets": [
+        "gold",
+        "stocks",
+        "macro",
+        "usd"
+      ]
+    },
+    {
+      "id": "eia-official",
+      "name": "US Energy Information Administration",
+      "url": "https://www.eia.gov/rss/press_rss.xml",
+      "assets": [
+        "energy",
+        "gasoline"
+      ]
+    },
+    {
+      "id": "ecb-official",
+      "name": "European Central Bank",
+      "url": "https://www.ecb.europa.eu/rss/pub.html",
+      "assets": [
+        "gold",
+        "stocks",
+        "macro",
+        "usd",
+        "metals"
+      ]
+    },
+    {
+      "id": "bbc-business",
+      "name": "BBC Business",
+      "url": "https://feeds.bbci.co.uk/news/business/rss.xml",
+      "assets": [
+        "gold",
+        "energy",
+        "stocks",
+        "macro",
+        "usd"
+      ]
+    },
+    {
+      "id": "dw-world",
+      "name": "Deutsche Welle",
+      "url": "https://rss.dw.com/xml/rss-en-all",
+      "assets": [
+        "gold",
+        "energy",
+        "gasoline",
+        "stocks",
+        "macro",
+        "usd",
+        "geopolitics",
+        "metals"
+      ]
+    }
+  ]
 }
