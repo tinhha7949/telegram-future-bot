@@ -67,3 +67,24 @@ test("Telegram retries server errors even when the proxy returns non-JSON", asyn
   await telegram.send("test message");
   assert.equal(calls, 2);
 });
+
+test("Telegram splits long Unicode messages without losing or breaking characters", async t => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  const sent = [];
+  global.fetch = async (_url, options) => {
+    sent.push(JSON.parse(options.body).text);
+    return { ok:true, status:200, text:async () => JSON.stringify({ ok:true }) };
+  };
+
+  const telegram = new Telegram({ requestTimeoutMs:1000 });
+  telegram.token = "test-token";
+  telegram.chatId = "test-chat";
+  const message = "A".repeat(3899) + "🟡" + "B".repeat(200);
+  await telegram.send(message);
+
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].length, 3901);
+  assert.equal(sent.join(""), message);
+  assert.ok(sent.every(chunk => !chunk.includes("\\uFFFD")));
+});
