@@ -1,7 +1,7 @@
 "use strict";
 
 const { sleep } = require("./http");
-const { directionVi, sourceVi, methodVi } = require("./i18n");
+const { directionVi, sourceVi } = require("./i18n");
 
 class Telegram {
   constructor(config) {
@@ -33,11 +33,11 @@ class Telegram {
           try { result = raw ? JSON.parse(raw) : {}; }
           catch {
             if (!response.ok) {
-              const error = new Error("Telegram HTTP " + response.status);
+              const error = new Error("Telegram trả về mã lỗi HTTP " + response.status);
               error.status = response.status;
               throw error;
             }
-            throw new Error("Telegram returned invalid JSON (HTTP " + response.status + ")");
+            throw new Error("Telegram trả về dữ liệu không hợp lệ (HTTP " + response.status + ")");
           }
 
           if (response.ok && result.ok) {
@@ -45,7 +45,7 @@ class Telegram {
             lastError = null;
             break;
           }
-          const error = new Error(result.description || "Telegram HTTP " + response.status);
+          const error = new Error("Telegram báo lỗi: " + (result.description || "mã HTTP " + response.status));
           error.status = response.status;
           error.retryAfterMs = Number(result.parameters && result.parameters.retry_after || 0) * 1000;
           throw error;
@@ -61,7 +61,7 @@ class Telegram {
         const backoff = Math.min(10000, 500 * (2 ** attempt));
         await sleep(serverDelay || backoff);
       }
-      if (!delivered) throw lastError || new Error("Telegram message was not delivered");
+      if (!delivered) throw lastError || new Error("Telegram không gửi được tin nhắn");
     }
   }
 
