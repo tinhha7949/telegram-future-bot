@@ -64,16 +64,14 @@ function formatNewsAlert(item, forecast) {
     "\nSự kiện: " + eventVi(item.eventType) +
     "\nTác động theo mô hình: " + impactLabel + " (" + impact.toFixed(1) + ")" +
     "\nDự báo 24 giờ sau khi cập nhật: " + outlook +
-    "\nMức độ quan trọng: " + item.importance + "/10" +
-    "\nNguồn: " + sourceVi(item.source) + "\n" + item.url;
+    "\nMức độ quan trọng: " + item.importance + "/10";
 }
 
 function formatMarketAlert(item, config = {}) {
   const direction = item.changePercent >= 0 ? "TĂNG" : "GIẢM";
   const name = item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol;
   return "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n" + name + " (" + item.symbol + "): " + direction + " " +
-    Number(item.changePercent).toFixed(2) + "%\nGiá tham chiếu: " + item.price +
-    "\nNguồn: " + sourceVi(item.source || "Yahoo Finance");
+    Number(item.changePercent).toFixed(2) + "%\nGiá tham chiếu: " + item.price;
 }
 
 function errorVi(error) {
