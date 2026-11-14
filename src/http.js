@@ -56,7 +56,7 @@ async function requestJson(url, timeoutMs = 12000, headers = {}, options = {}) {
 
       if (attempt >= retries || !isRetryable(lastError)) throw lastError;
 
-      const serverDelay = Math.min(60000, Number(lastError.retryAfterMs || 0));
+      const serverDelay = Math.min(15 * 60 * 1000, Number(lastError.retryAfterMs || 0));
       const backoff = Math.min(15000, retryBaseMs * (2 ** attempt));
       await sleep(serverDelay || backoff);
     } finally {
