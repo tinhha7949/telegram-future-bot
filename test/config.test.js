@@ -22,8 +22,15 @@ test("commodity ticker labels distinguish gold, crude oil, gasoline and precious
   assert.match(config.symbolLabels["SI=F"], /Bạc/);
 });
 
-test("provider pacing and market freshness guards are configured", () => {
-  assert.ok(config.gdeltRequestGapMs >= 8000);
+test("multiple free news providers cover every asset and have independent fallback identities", () => {
+  assert.ok(config.newsSources.length >= 12);
+  const ids = config.newsSources.map(source => source.id);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const asset of config.assets) {
+    assert.ok(config.newsSources.some(source => source.kind === "google-news" && source.assetId === asset.id), "Missing Google News fallback for " + asset.id);
+  }
+  assert.ok(config.newsSources.some(source => source.url && source.url.includes("federalreserve.gov")));
+  assert.ok(config.newsSources.some(source => source.url && source.url.includes("eia.gov")));
   assert.ok(config.marketMaxAgeHours >= 72);
   assert.equal(config.marketFetchConcurrency, 2);
 });
