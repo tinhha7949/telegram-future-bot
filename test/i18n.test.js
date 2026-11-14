@@ -14,6 +14,7 @@ test("internal event codes are displayed as readable Vietnamese labels", () => {
   assert.equal(eventVi("inflation_hot"), "Lạm phát cao hơn dự kiến");
   assert.equal(eventVi("geopolitical_escalation"), "Căng thẳng địa chính trị leo thang");
   assert.equal(eventVi("unclassified"), "Chưa phân loại sự kiện");
+  assert.equal(eventVi("Lạm phát cao hơn dự kiến"), "Lạm phát cao hơn dự kiến");
 });
 
 test("source, horizon and model labels are Vietnamese", () => {
