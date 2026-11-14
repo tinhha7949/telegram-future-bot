@@ -44,7 +44,7 @@ const SOURCES = {
 };
 
 function directionVi(value) { return DIRECTIONS[value] || "CHƯA XÁC ĐỊNH"; }
-function eventVi(value) { return EVENTS[value] || (value ? "Sự kiện khác" : EVENTS.unclassified); }
+function eventVi(value) { return EVENTS[value] || (Object.values(EVENTS).includes(value) ? value : value ? "Sự kiện khác" : EVENTS.unclassified); }
 function componentVi(value) { return COMPONENTS[value] || value || ""; }
 function sourceVi(value) { return SOURCES[value] || value || "Nguồn tin chưa xác định"; }
 function horizonVi(value) {
