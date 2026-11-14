@@ -1,5 +1,7 @@
 "use strict";
 
+const { eventVi, horizonVi } = require("./i18n");
+
 const EVENT_RULES = [
   ["fed_hawkish", /\b(fed|fomc|powell|central bank).{0,55}\b(hawkish|higher for longer|keep rates high|tighten|restrictive)\b|\bhawkish.{0,45}\b(fed|fomc|powell|rates)\b/i, 3, 120],
   ["fed_dovish", /\b(fed|fomc|powell|central bank).{0,55}\b(dovish|rate cuts?|easing|lower rates|pivot)\b|\bdovish.{0,45}\b(fed|fomc|powell|rates)\b/i, 3, 120],
@@ -182,7 +184,7 @@ function buildHorizon(asset, news, markets, horizon, config, now) {
     newsSum += impact * weight;
     newsWeight += weight;
     newsCount++;
-    const label = String(item.title || "Tin tức") + " [" + String(item.eventType || "event") + "]";
+    const label = String(item.title || "Tin tức") + " — " + eventVi(item.eventType);
     if (impact > 0 && drivers.length < 5) drivers.push(label);
     if (impact < 0 && risks.length < 4) risks.push(label);
   }
@@ -193,7 +195,8 @@ function buildHorizon(asset, news, markets, horizon, config, now) {
   const ownMomentum = ownScores.length ? ownScores.reduce((sum, item) => sum + item.score, 0) / ownScores.length : 0;
   for (const item of ownScores) {
     const pct = momentumFor(item.item, horizon.id);
-    const label = item.item.symbol + " " + horizon.id + ": " + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%";
+    const symbolLabel = (config.symbolLabels || {})[item.item.symbol] || item.item.symbol;
+    const label = symbolLabel + " (" + horizonVi(horizon.id) + "): " + (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%";
     if (pct > 0 && drivers.length < 5) drivers.push(label);
     if (pct < 0 && risks.length < 4) risks.push(label);
   }
