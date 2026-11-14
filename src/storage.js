@@ -7,6 +7,13 @@ function hash(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
+function forecastDueAt(referenceAt, hours) {
+  const parsed = new Date(referenceAt || Date.now());
+  const baseTime = Number.isFinite(parsed.getTime()) ? parsed.getTime() : Date.now();
+  const horizonMs = Math.max(0, Number(hours) || 0) * 3600000;
+  return new Date(baseTime + horizonMs);
+}
+
 async function createStorage(config) {
   const client = new MongoClient(process.env.MONGO_URI, {
     maxPoolSize: 3, minPoolSize: 0, maxIdleTimeMS: 30000,
@@ -193,7 +200,8 @@ async function createStorage(config) {
         if (!reference) continue;
         for (const forecast of item.forecasts || []) {
           const forecastKey = `${day}:${item.assetId}:${forecast.horizon}`;
-          const dueAt = new Date(Date.now() + Number(forecast.hours || 24) * 3600000);
+          const referenceAt = reference.marketTime || reference.capturedAt || new Date();
+          const dueAt = forecastDueAt(referenceAt, forecast.hours || 24);
           await forecasts.updateOne(
             { forecastKey },
             { $setOnInsert: {
@@ -202,7 +210,7 @@ async function createStorage(config) {
               method: forecast.method || item.analysisMethod || "deterministic-quantitative",
               modelScore: forecast.score || 0, evidenceCount: forecast.evidenceCount || 0,
               referenceSymbol: reference.symbol, referencePrice: reference.price,
-              referenceAt: reference.marketTime || reference.capturedAt || new Date(), dueAt, status: "pending",
+              referenceAt, dueAt, status: "pending",
               expiresAt: new Date(Date.now() + config.database.analysisRetentionDays * 86400000)
             } },
             { upsert: true }
@@ -244,4 +252,4 @@ async function createStorage(config) {
   };
 }
 
-module.exports = { createStorage, hash };
+module.exports = { createStorage, hash, forecastDueAt };
