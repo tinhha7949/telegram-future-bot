@@ -29,6 +29,7 @@ async function main() {
       const newsResult = options.news ? await collectNews(config, storage) : { found:0, inserted:0, importantNews:[] };
       const marketResult = options.markets ? await collectMarkets(config, storage) : { updated:0, largeMoves:[] };
       const analyses = await analyzeAll(config, storage);
+      await storage.saveLiveAnalyses(analyses);
       const alerts = await storage.createAlerts(analyses, newsResult.importantNews, marketResult.largeMoves);
       for (const alert of alerts.slice(0, config.maxAlertsPerRun)) {
         await telegram.send(alert.message);

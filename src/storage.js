@@ -113,10 +113,22 @@ async function createStorage(config) {
     },
     async createAlerts(analysisItems, importantNews, largeMoves) {
       const candidates = [];
-      for (const item of importantNews) candidates.push({
-        key: `news:${item.key}`,
-        message: `🚨 TIN TỨC QUAN TRỌNG | ${item.assetName}\n${item.title}\nSự kiện: ${item.eventType || "chưa phân loại"}\nTác động theo mô hình: ${Number(item.impactScore || 0) > 0 ? "TÍCH CỰC" : Number(item.impactScore || 0) < 0 ? "TIÊU CỰC" : "CHƯA RÕ"} (${Number(item.impactScore || 0).toFixed(1)})\nMức độ: ${item.importance}/10\nNguồn: ${item.source}\n${item.url}`
-      });
+      for (const item of importantNews) {
+        const latest = analysisItems.find(value => value.assetId === item.assetId);
+        const forecast = latest && (latest.forecasts || []).find(value => value.horizon === "24h");
+        const impact = Number(item.impactScore || 0);
+        const impactLabel = impact > 0 ? "TÍCH CỰC" : impact < 0 ? "TIÊU CỰC" : "CHƯA RÕ";
+        const outlook = forecast ? forecast.direction + " | điểm " + forecast.confidence + "/82" : "Chưa đủ dữ liệu";
+        candidates.push({
+          key: "news:" + item.key,
+          message: "🚨 TIN TỨC QUAN TRỌNG | " + item.assetName + "\n" + item.title +
+            "\nSự kiện: " + (item.eventType || "chưa phân loại") +
+            "\nTác động theo mô hình: " + impactLabel + " (" + impact.toFixed(1) + ")" +
+            "\nDự báo 24h sau cập nhật: " + outlook +
+            "\nMức độ: " + item.importance + "/10" +
+            "\nNguồn: " + item.source + "\n" + item.url
+        });
+      }
       for (const item of largeMoves) {
         const direction = item.changePercent >= 0 ? "TĂNG" : "GIẢM";
         candidates.push({
@@ -134,6 +146,16 @@ async function createStorage(config) {
       return alerts.find({ sentAt: { $exists: false }, expiresAt: { $gt: new Date() } }).sort({ createdAt: 1 }).limit(config.maxAlertsPerRun).toArray();
     },
     async markAlertSent(key) { await alerts.updateOne({ key }, { $set: { sentAt: new Date() } }); },
+    async saveLiveAnalyses(items) {
+      const now = new Date();
+      for (const item of items) {
+        await analyses.updateOne(
+          { assetId: item.assetId, snapshotType: "live" },
+          { $set: { ...item, snapshotType: "live", updatedAt: now, expiresAt: new Date(now.getTime() + 7 * 86400000) } },
+          { upsert: true }
+        );
+      }
+    },
     async saveDailyReport(items) {
       const day = new Intl.DateTimeFormat("en-CA", { timeZone: config.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
       const marketsNow = await this.getLatestMarkets();
