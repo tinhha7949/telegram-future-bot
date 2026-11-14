@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { fetchYahoo, safeDate, sourceWeight } = require("../src/collectors");
+const { fetchYahoo, safeDate, sourceWeight, parseRss, headlineRelevant } = require("../src/collectors");
 const { forecastDueAt } = require("../src/storage");
 
 test("fetchYahoo uses completed hourly candles and reports their observation time", async t => {
@@ -56,4 +56,21 @@ test("forecast due time is measured from the reference market candle", () => {
   const referenceAt = new Date("2026-11-14T10:00:00.000Z");
   assert.equal(forecastDueAt(referenceAt, 24).toISOString(), "2026-11-15T10:00:00.000Z");
   assert.equal(forecastDueAt(referenceAt, 72).toISOString(), "2026-11-17T10:00:00.000Z");
+});
+
+test("RSS parser reads RSS and Atom entries including Google News publisher attribution", () => {
+  const xml = `<?xml version="1.0"?><rss><channel><item><title><![CDATA[Gold rises as US yields fall]]></title><link>https://news.google.com/rss/articles/example</link><pubDate>Sat, 14 Nov 2026 10:00:00 GMT</pubDate><source url="https://www.cnbc.com">CNBC</source></item></channel></rss>`;
+  const items = parseRss(xml);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, "Gold rises as US yields fall");
+  assert.equal(items[0].source, "CNBC");
+  assert.equal(items[0].sourceUrl, "https://www.cnbc.com");
+  assert.equal(items[0].publishedAt.toISOString(), "2026-11-14T10:00:00.000Z");
+  const atom = `<feed><entry><title>Fed signals rates outlook</title><link href="https://example.com/story" rel="alternate"/><updated>2026-11-14T10:00:00Z</updated></entry></feed>`;
+  assert.equal(parseRss(atom)[0].url, "https://example.com/story");
+});
+
+test("generic RSS feeds are filtered to relevant asset classes", () => {
+  assert.equal(headlineRelevant("EIA reports crude oil inventory draw", "energy"), true);
+  assert.equal(headlineRelevant("EIA reports crude oil inventory draw", "stocks"), false);
 });
