@@ -239,7 +239,7 @@
     },
     {
       "id": "cnbc-markets",
-      "name": "CNBC Markets",
+      "name": "CNBC - Thị trường",
       "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069",
       "assets": [
         "gold",
@@ -253,7 +253,7 @@
     },
     {
       "id": "marketwatch",
-      "name": "MarketWatch",
+      "name": "MarketWatch - Tin thị trường",
       "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
       "assets": [
         "gold",
@@ -267,7 +267,7 @@
     },
     {
       "id": "fed-official",
-      "name": "Federal Reserve",
+      "name": "Cục Dự trữ Liên bang Mỹ (Fed)",
       "url": "https://www.federalreserve.gov/feeds/press_all.xml",
       "assets": [
         "gold",
@@ -278,7 +278,7 @@
     },
     {
       "id": "eia-official",
-      "name": "US Energy Information Administration",
+      "name": "Cơ quan Thông tin Năng lượng Mỹ (EIA)",
       "url": "https://www.eia.gov/rss/press_rss.xml",
       "assets": [
         "energy",
@@ -287,7 +287,7 @@
     },
     {
       "id": "ecb-official",
-      "name": "European Central Bank",
+      "name": "Ngân hàng Trung ương châu Âu (ECB)",
       "url": "https://www.ecb.europa.eu/rss/pub.html",
       "assets": [
         "gold",
@@ -299,7 +299,7 @@
     },
     {
       "id": "bbc-business",
-      "name": "BBC Business",
+      "name": "BBC - Kinh doanh",
       "url": "https://feeds.bbci.co.uk/news/business/rss.xml",
       "assets": [
         "gold",
@@ -311,7 +311,7 @@
     },
     {
       "id": "dw-world",
-      "name": "Deutsche Welle",
+      "name": "Đài DW - Tin quốc tế",
       "url": "https://rss.dw.com/xml/rss-en-all",
       "assets": [
         "gold",
@@ -325,5 +325,7 @@
       ]
     }
   ],
-  "newsRequestTimeoutMs": 10000
+  "newsRequestTimeoutMs": 10000,
+  "translationTimeoutMs": 6000,
+  "translationConcurrency": 3
 }
