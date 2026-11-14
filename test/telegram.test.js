@@ -110,7 +110,7 @@ test("daily Telegram report translates forecast directions and source labels", a
   assert.match(report, /TRUNG LẬP/);
   assert.match(report, /XU HƯỚNG TĂNG/);
   assert.match(report, /Lạm phát Mỹ cao hơn dự kiến/);
-  assert.doesNotMatch(report, /NEUTRAL|BULLISH|inflation_hot|The Guardian|Nguồn:|https?:);
+  assert.doesNotMatch(report, /NEUTRAL|BULLISH|inflation_hot|The Guardian|Nguồn:|http/);
 });
 
 test("queued English news alerts are converted to Vietnamese before sending", async t => {
@@ -165,7 +165,7 @@ test("all Telegram message types remove source labels and raw article URLs", asy
   ];
   for (const sample of samples) {
     const output = await telegram.localizeMessage(sample);
-    assert.doesNotMatch(output, /Nguồn:|Source:|https?:i);
+    assert.doesNotMatch(output, /Nguồn:|Source:|http/i);
   }
 });
 
@@ -184,5 +184,5 @@ test("queued news alerts remove source and link while preserving the analysis", 
   assert.match(output, /DẦU/);
   assert.match(output, /Căng thẳng địa chính trị leo thang/);
   assert.match(output, /Mức độ quan trọng: 10\\/10/);
-  assert.doesNotMatch(output, /EnergyNow|Nguồn:|https?:);
+  assert.doesNotMatch(output, /EnergyNow|Nguồn:|http/);
 });
