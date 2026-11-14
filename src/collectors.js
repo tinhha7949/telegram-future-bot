@@ -284,7 +284,7 @@ async function collectMarkets(config, storage) {
         source:"Configured broker endpoint", currency:"USD", marketTime:new Date()
       });
     } catch (error) {
-      process.stderr.write("[CẢNH BÁO] " + ((config.symbolLabels || {}).XAUUSDm || "Vàng giao ngay theo giá broker") + " (XAUUSDm): " + error.message + "\n");
+      process.stderr.write("[CẢNH BÁO] " + ((config.symbolLabels || {}).XAUUSDm || "Vàng giao ngay theo giá broker") + " (XAUUSDm): " + errorVi(error) + "\n");
     }
   }
   const saved = await storage.saveMarkets(all);
