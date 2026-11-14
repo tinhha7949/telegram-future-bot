@@ -92,7 +92,7 @@ async function createStorage(config) {
         const doc = { ...item, key, capturedAt: now, expiresAt: new Date(now.getTime() + config.database.marketRetentionDays * 86400000) };
         await markets.updateOne({ key }, { $set: doc }, { upsert: true });
         await marketHistory.insertOne({
-          assetId: item.assetId, assetName: item.assetName, symbol: item.symbol,
+          assetId: item.assetId, assetName: item.assetName, symbol: item.symbol, instrumentName: item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol,
           price: item.price, changePercent: item.changePercent, momentum: item.momentum || {},
           volatilityPct: item.volatilityPct || 0, source: item.source,
           capturedAt: now,
@@ -133,7 +133,7 @@ async function createStorage(config) {
         const direction = item.changePercent >= 0 ? "TĂNG" : "GIẢM";
         candidates.push({
           key: `move:${item.assetId}:${item.symbol}:${new Date().toISOString().slice(0, 13)}`,
-          message: `⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n${item.instrumentName || item.symbol} (${item.symbol}): ${direction} ${Number(item.changePercent).toFixed(2)}%\nGiá tham chiếu: ${item.price}\nNguồn: ${item.source || "Yahoo Finance"}`
+          message: `⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n${item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol} (${item.symbol}): ${direction} ${Number(item.changePercent).toFixed(2)}%\nGiá tham chiếu: ${item.price}\nNguồn: ${item.source || "Yahoo Finance"}`
         });
       }
       for (const candidate of candidates) {
