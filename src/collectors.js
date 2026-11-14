@@ -3,6 +3,8 @@
 const { requestJson, sleep } = require("./http");
 const { classifyHeadline } = require("./analyzer");
 
+let gdeltCooldownUntil = 0;
+
 function safeDate(value) {
   if (typeof value === "string" && /^\d{8}T\d{6}Z$/.test(value)) {
     value = value.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, "$1-$2-$3T$4:$5:$6Z");
@@ -83,13 +85,18 @@ async function fetchYahoo(symbol, config) {
 async function collectNews(config, storage) {
   const all = [];
   let lastRequestAt = 0;
+  if (Date.now() < gdeltCooldownUntil) {
+    const seconds = Math.ceil((gdeltCooldownUntil - Date.now()) / 1000);
+    process.stderr.write("[WARN] GDELT đang tạm nghỉ sau HTTP 429; thử lại sau " + seconds + " giây.\\n");
+    return { found:0, inserted:0, importantNews:[] };
+  }
   for (const asset of config.assets) {
     try {
       const gapMs = Math.max(0, Number(config.gdeltRequestGapMs || 0));
       const waitMs = gapMs - (Date.now() - lastRequestAt);
       if (lastRequestAt && waitMs > 0) await sleep(waitMs);
-      const articles = await fetchGdelt(asset.newsQuery, config);
       lastRequestAt = Date.now();
+      const articles = await fetchGdelt(asset.newsQuery, config);
       for (const article of articles) {
         const title = String(article.title || "").trim();
         const url = String(article.url || "").trim();
