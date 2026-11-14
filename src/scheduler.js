@@ -28,10 +28,14 @@ function startScheduler(config, storage, handlers) {
       const newsBucket = Math.floor(now.getTime() / (config.newsPollMinutes * 60000));
       const marketBucket = Math.floor(now.getTime() / (config.marketPollMinutes * 60000));
 
-      if (minute >= target && lastDailyKey !== day && !(await storage.wasDailySent(day))) {
-        await handlers.onDailyReport();
-        lastDailyKey = day;
-        await storage.markDailySent(day);
+      if (minute >= target && lastDailyKey !== day) {
+        if (await storage.wasDailySent(day)) {
+          lastDailyKey = day;
+        } else {
+          await handlers.onDailyReport();
+          lastDailyKey = day;
+          await storage.markDailySent(day);
+        }
       }
       if (newsBucket !== lastNewsBucket) {
         lastNewsBucket = newsBucket;
