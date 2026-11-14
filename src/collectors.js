@@ -30,7 +30,7 @@ async function fetchGdelt(query, config) {
   url.searchParams.set("sort", "DateDesc");
   url.searchParams.set("timespan", "24h");
   const data = await requestJson(url, config.requestTimeoutMs, {}, {
-    retries: config.httpMaxRetries ?? 2,
+    retries: config.gdeltMaxRetries ?? 1,
     retryBaseMs: config.httpRetryBaseMs ?? 2000
   });
   return Array.isArray(data.articles) ? data.articles : [];
