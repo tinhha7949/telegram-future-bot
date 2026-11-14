@@ -83,3 +83,21 @@ test("requestJson can hand HTTP 429 to a provider cooldown without retrying", as
   );
   assert.equal(calls, 1);
 });
+
+test("requestJson exposes the underlying network cause for fetch failed", async t => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let calls = 0;
+  global.fetch = async () => {
+    calls++;
+    const cause = new Error("connection reset by peer");
+    cause.code = "ECONNRESET";
+    throw new TypeError("fetch failed", { cause });
+  };
+
+  await assert.rejects(
+    requestJson("https://api.gdeltproject.org/api/v2/doc/doc", 1000, {}, { retries:1, retryBaseMs:250 }),
+    error => error.name === "TypeError" && /api\\.gdeltproject\\.org/.test(error.message) && /ECONNRESET/.test(error.message)
+  );
+  assert.equal(calls, 2);
+});
