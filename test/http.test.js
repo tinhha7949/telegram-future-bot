@@ -97,7 +97,7 @@ test("requestJson exposes the underlying network cause for fetch failed", async 
 
   await assert.rejects(
     requestJson("https://api.gdeltproject.org/api/v2/doc/doc", 1000, {}, { retries:1, retryBaseMs:250 }),
-    error => error.name === "TypeError" && /api\\.gdeltproject\\.org/.test(error.message) && /ECONNRESET/.test(error.message)
+    error => error.name === "TypeError" && error.message.includes("api.gdeltproject.org") && error.message.includes("ECONNRESET")
   );
   assert.equal(calls, 2);
 });
