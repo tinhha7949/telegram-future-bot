@@ -43,7 +43,7 @@ async function fetchYahoo(symbol, config) {
   for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
     const url = new URL("https://" + host + "/v8/finance/chart/" + encodeURIComponent(symbol));
     url.searchParams.set("range", "3mo");
-    url.searchParams.set("interval", "1d");
+    url.searchParams.set("interval", "1h");
     try {
       const data = await requestJson(url, config.requestTimeoutMs, headers, {
         retries: 1,
@@ -58,27 +58,55 @@ async function fetchYahoo(symbol, config) {
   }
   if (!result && lastError) throw lastError;
   if (!result) return null;
+
   const quote = result.indicators && result.indicators.quote && result.indicators.quote[0];
-  const closes = (quote && quote.close || []).filter(value => Number.isFinite(value) && value > 0);
-  const price = closes.at(-1);
-  const previous = closes.at(-2) || Number(result.meta && (result.meta.chartPreviousClose || result.meta.previousClose));
-  if (!Number.isFinite(price)) return null;
-  const percentAt = sessions => {
-    const base = closes[Math.max(0, closes.length - 1 - sessions)];
-    return Number.isFinite(base) && base > 0 ? ((price - base) / base) * 100 : null;
+  const rawCloses = quote && Array.isArray(quote.close) ? quote.close : [];
+  const timestamps = Array.isArray(result.timestamp) ? result.timestamp : [];
+  const now = Date.now();
+  const intervalMs = 60 * 60 * 1000;
+  const bars = [];
+  for (let i = 0; i < Math.min(rawCloses.length, timestamps.length); i++) {
+    const close = Number(rawCloses[i]);
+    const timestamp = Number(timestamps[i]);
+    if (!Number.isFinite(close) || close <= 0 || !Number.isFinite(timestamp) || timestamp <= 0) continue;
+    const closeTime = timestamp * 1000 + intervalMs;
+    // Only completed hourly candles may be used for analysis and forecast verification.
+    if (closeTime > now) continue;
+    bars.push({ close, marketTime:new Date(closeTime) });
+  }
+  if (!bars.length) return null;
+
+  const latest = bars[bars.length - 1];
+  const previous = bars.length > 1 ? bars[bars.length - 2].close : null;
+  const percentAt = hours => {
+    const baseIndex = bars.length - 1 - hours;
+    if (baseIndex < 0) return null;
+    const base = bars[baseIndex].close;
+    return Number.isFinite(base) && base > 0 ? ((latest.close - base) / base) * 100 : null;
   };
+  const momentum24h = percentAt(24);
   const returns = [];
-  for (let i = Math.max(1, closes.length - 15); i < closes.length; i++) returns.push(((closes[i] - closes[i - 1]) / closes[i - 1]) * 100);
-  const mean = returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
-  const variance = returns.length > 1 ? returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1) : 0;
-  const timestamps = result.timestamp || [];
+  const firstReturn = Math.max(1, bars.length - 24);
+  for (let i = firstReturn; i < bars.length; i++) {
+    const prior = bars[i - 1].close;
+    if (prior > 0) returns.push(((bars[i].close - prior) / prior) * 100);
+  }
+  // Convert hourly returns into an approximate 24-hour realized volatility.
+  const volatilityPct = returns.length ? Math.sqrt(returns.reduce((sum, value) => sum + value * value, 0)) : null;
+
   return {
-    price,
-    changePercent:Number.isFinite(previous) && previous > 0 ? ((price - previous) / previous) * 100 : 0,
-    momentum:{ "24h":percentAt(1), "3d":percentAt(3), "7d":percentAt(7), "30d":percentAt(21) },
-    volatilityPct:Math.sqrt(variance), currency:result.meta.currency || "",
+    price:latest.close,
+    changePercent:momentum24h,
+    momentum:{
+      "24h":momentum24h,
+      "3d":percentAt(72),
+      "7d":percentAt(168),
+      "30d":percentAt(720)
+    },
+    volatilityPct,
+    currency:result.meta && result.meta.currency || "",
     source:"Yahoo Finance",
-    marketTime:timestamps.length ? new Date(timestamps[timestamps.length - 1] * 1000) : new Date()
+    marketTime:latest.marketTime
   };
 }
 
