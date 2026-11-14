@@ -1,6 +1,6 @@
 "use strict";
 
-const { requestJson } = require("./http");
+const { requestJson, sleep } = require("./http");
 const { classifyHeadline } = require("./analyzer");
 
 function safeDate(value) {
@@ -27,16 +27,34 @@ async function fetchGdelt(query, config) {
   url.searchParams.set("maxrecords", String(config.maxNewsPerCategory));
   url.searchParams.set("sort", "DateDesc");
   url.searchParams.set("timespan", "24h");
-  const data = await requestJson(url, config.requestTimeoutMs);
+  const data = await requestJson(url, config.requestTimeoutMs, {}, {
+    retries: config.httpMaxRetries ?? 2,
+    retryBaseMs: config.httpRetryBaseMs ?? 2000
+  });
   return Array.isArray(data.articles) ? data.articles : [];
 }
 
 async function fetchYahoo(symbol, config) {
-  const url = new URL("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(symbol));
-  url.searchParams.set("range", "3mo");
-  url.searchParams.set("interval", "1d");
-  const data = await requestJson(url, config.requestTimeoutMs, { "User-Agent":"Mozilla/5.0 MarketIntelligenceBot/3.0" });
-  const result = data.chart && data.chart.result && data.chart.result[0];
+  const headers = { "User-Agent":"Mozilla/5.0 MarketIntelligenceBot/3.0" };
+  let result = null;
+  let lastError = null;
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    const url = new URL("https://" + host + "/v8/finance/chart/" + encodeURIComponent(symbol));
+    url.searchParams.set("range", "3mo");
+    url.searchParams.set("interval", "1d");
+    try {
+      const data = await requestJson(url, config.requestTimeoutMs, headers, {
+        retries: 1,
+        retryBaseMs: config.httpRetryBaseMs ?? 2000
+      });
+      result = data.chart && data.chart.result && data.chart.result[0];
+      if (result) break;
+      lastError = new Error("Yahoo Finance returned no chart data");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!result && lastError) throw lastError;
   if (!result) return null;
   const quote = result.indicators && result.indicators.quote && result.indicators.quote[0];
   const closes = (quote && quote.close || []).filter(value => Number.isFinite(value) && value > 0);
@@ -64,9 +82,14 @@ async function fetchYahoo(symbol, config) {
 
 async function collectNews(config, storage) {
   const all = [];
+  let lastRequestAt = 0;
   for (const asset of config.assets) {
     try {
+      const gapMs = Math.max(0, Number(config.gdeltRequestGapMs || 0));
+      const waitMs = gapMs - (Date.now() - lastRequestAt);
+      if (lastRequestAt && waitMs > 0) await sleep(waitMs);
       const articles = await fetchGdelt(asset.newsQuery, config);
+      lastRequestAt = Date.now();
       for (const article of articles) {
         const title = String(article.title || "").trim();
         const url = String(article.url || "").trim();
@@ -84,7 +107,7 @@ async function collectNews(config, storage) {
         });
       }
     } catch (error) {
-      process.stderr.write("[WARN] GDELT " + asset.id + ": " + error.message + "\n");
+      process.stderr.write("[WARN] GDELT " + asset.name + " (" + asset.id + "): " + error.message + "\n");
     }
   }
   const saved = await storage.saveNews(all);
@@ -101,9 +124,9 @@ async function collectMarkets(config, storage) {
     const results = await Promise.all(batch.map(async symbol => {
       try {
         const quote = await fetchYahoo(symbol, config);
-        return quote ? { assetId:owners.get(symbol).id, assetName:owners.get(symbol).name, symbol, ...quote } : null;
+        return quote ? { assetId:owners.get(symbol).id, assetName:owners.get(symbol).name, instrumentName:(config.symbolLabels || {})[symbol] || symbol, symbol, ...quote } : null;
       } catch (error) {
-        process.stderr.write("[WARN] Quote " + symbol + ": " + error.message + "\n");
+        process.stderr.write("[WARN] Quote " + ((config.symbolLabels || {})[symbol] || symbol) + " (" + symbol + ") [" + owners.get(symbol).name + "]: " + error.message + "\n");
         return null;
       }
     }));
@@ -114,14 +137,14 @@ async function collectMarkets(config, storage) {
       const exact = await requestJson(process.env.XAUUSD_PRICE_URL, config.requestTimeoutMs);
       const price = Number(exact.price ?? exact.last ?? exact.close ?? exact.regularMarketPrice);
       if (Number.isFinite(price) && price > 0) all.push({
-        assetId:"gold", assetName:"VÀNG", symbol:"XAUUSDm", price,
+        assetId:"gold", assetName:"VÀNG (XAUUSDm)", instrumentName:(config.symbolLabels || {}).XAUUSDm || "Vàng giao ngay theo giá broker", symbol:"XAUUSDm", price,
         changePercent:Number(exact.changePercent || 0),
         momentum:{ "24h":Number(exact.changePercent || 0) },
         volatilityPct:Number(exact.volatilityPct || 0.8),
         source:"Configured broker endpoint", currency:"USD", marketTime:new Date()
       });
     } catch (error) {
-      process.stderr.write("[WARN] Exact XAUUSDm quote: " + error.message + "\n");
+      process.stderr.write("[WARN] " + ((config.symbolLabels || {}).XAUUSDm || "Vàng giao ngay theo giá broker") + " (XAUUSDm): " + error.message + "\n");
     }
   }
   const saved = await storage.saveMarkets(all);
