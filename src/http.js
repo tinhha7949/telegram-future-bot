@@ -54,7 +54,7 @@ async function requestJson(url, timeoutMs = 12000, headers = {}, options = {}) {
         lastError.name = "AbortError";
       }
 
-      if (attempt >= retries || !isRetryable(lastError)) throw lastError;
+      if (attempt >= retries || !isRetryable(lastError) || (Number(lastError.status) === 429 && options.retryOnRateLimit === false)) throw lastError;
 
       const serverDelay = Math.min(15 * 60 * 1000, Number(lastError.retryAfterMs || 0));
       const backoff = Math.min(15000, retryBaseMs * (2 ** attempt));
