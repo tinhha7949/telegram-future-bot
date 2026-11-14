@@ -79,15 +79,21 @@ async function fetchYahoo(symbol, config) {
   const latest = bars[bars.length - 1];
   const previous = bars.length > 1 ? bars[bars.length - 2].close : null;
   const percentAt = hours => {
-    const baseIndex = bars.length - 1 - hours;
-    if (baseIndex < 0) return null;
-    const base = bars[baseIndex].close;
+    const targetTime = latest.marketTime.getTime() - hours * 3600000;
+    let base = null;
+    for (let i = bars.length - 2; i >= 0; i--) {
+      if (bars[i].marketTime.getTime() <= targetTime) {
+        base = bars[i].close;
+        break;
+      }
+    }
     return Number.isFinite(base) && base > 0 ? ((latest.close - base) / base) * 100 : null;
   };
   const momentum24h = percentAt(24);
   const returns = [];
-  const firstReturn = Math.max(1, bars.length - 24);
-  for (let i = firstReturn; i < bars.length; i++) {
+  const dayAgo = latest.marketTime.getTime() - 24 * 3600000;
+  for (let i = 1; i < bars.length; i++) {
+    if (bars[i].marketTime.getTime() < dayAgo) continue;
     const prior = bars[i - 1].close;
     if (prior > 0) returns.push(((bars[i].close - prior) / prior) * 100);
   }
