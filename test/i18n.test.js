@@ -32,13 +32,13 @@ test("Telegram alert templates contain Vietnamese labels instead of internal Eng
   assert.match(news, /TRUNG LẬP/);
   assert.match(news, /Lạm phát cao hơn dự kiến/);
   assert.doesNotMatch(news, /inflation_hot|NEUTRAL|Nguồn:|http/);
-  assert.doesNotMatch(market, /Nguồn:|Yahoo Finance|http/);
 
   const market = formatMarketAlert({
     instrumentName:"Vàng giao ngay", symbol:"XAUUSDm", changePercent:1.25, price:4200, source:"Yahoo Finance"
   });
   assert.match(market, /BIẾN ĐỘNG THỊ TRƯỜNG/);
   assert.match(market, /TĂNG 1.25%/);
+  assert.doesNotMatch(market, /Nguồn:|Yahoo Finance|http/);
 });
 
 test("technical network errors are described in Vietnamese", () => {
