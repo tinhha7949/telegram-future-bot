@@ -32,6 +32,7 @@ async function fetchGdelt(query, config) {
   url.searchParams.set("timespan", "24h");
   const data = await requestJson(url, config.requestTimeoutMs, {}, {
     retries: config.gdeltMaxRetries ?? 1,
+    retryOnRateLimit:false,
     retryBaseMs: config.httpRetryBaseMs ?? 2000
   });
   return Array.isArray(data.articles) ? data.articles : [];
@@ -53,6 +54,7 @@ async function fetchYahoo(symbol, config) {
     try {
       const data = await requestJson(url, config.requestTimeoutMs, headers, {
         retries: 1,
+        retryOnRateLimit:false,
         retryBaseMs: config.httpRetryBaseMs ?? 2000
       });
       result = data.chart && data.chart.result && data.chart.result[0];
