@@ -21,3 +21,8 @@ test("commodity ticker labels distinguish gold, crude oil, gasoline and precious
   assert.match(config.symbolLabels["PL=F"], /Bạch kim/);
   assert.match(config.symbolLabels["SI=F"], /Bạc/);
 });
+
+test("provider pacing and market freshness guards are configured", () => {
+  assert.ok(config.gdeltRequestGapMs >= 8000);
+  assert.ok(config.marketMaxAgeHours >= 72);
+});
