@@ -49,7 +49,7 @@ async function main() {
     const cycle = await runCycle({ news: true, markets: true });
     if (!cycle) throw new Error("Daily collection failed; report was not sent");
     const analyses = await analyzeAll(config, storage, true);
-    const report = await telegram.buildDailyReport(analyses);
+    const report = await telegram.buildDailyReport(analyses, storage);
     await telegram.send(report);
     await storage.saveDailyReport(analyses);
     log("INFO", "Daily report sent");
