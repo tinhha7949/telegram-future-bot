@@ -93,7 +93,7 @@ async function createStorage(config) {
           eventHalfLifeHours: Number(item.eventHalfLifeHours || 24),
           expiresAt: new Date(now.getTime() + days * 86400000)
         };
-        const result = await news.updateOne({ key }, { $setOnInsert: doc }, { upsert: true });
+        const result = await news.updateOne({ key }, { $set: doc }, { upsert: true });
         if (result.upsertedCount) {
           inserted++;
           if (importance >= config.importantNewsScore) importantNews.push(doc);
