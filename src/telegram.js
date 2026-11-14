@@ -10,7 +10,11 @@ class Telegram {
   }
 
   async send(text) {
-    const chunks = String(text).match(/[\s\S]{1,3900}/g) || [];
+    const characters = Array.from(String(text));
+    const chunks = [];
+    for (let i = 0; i < characters.length; i += 3900) {
+      chunks.push(characters.slice(i, i + 3900).join(""));
+    }
     for (const chunk of chunks) {
       let delivered = false;
       let lastError = null;
