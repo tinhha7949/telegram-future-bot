@@ -3,6 +3,7 @@
 const { requestJson, requestText, sleep } = require("./http");
 const { classifyHeadline, dedupeNewsEvents } = require("./analyzer");
 const { translateBatch } = require("./translator");
+const { errorVi } = require("./i18n");
 
 const newsSourceCooldowns = new Map();
 const newsSourceFailures = new Map();
@@ -206,7 +207,9 @@ async function collectNews(config, storage) {
           ? Math.max(Number(error.retryAfterMs || 0), 10 * 60 * 1000)
           : Math.min(30 * 60 * 1000, 60 * 1000 * (2 ** Math.min(failures - 1, 5)));
         newsSourceCooldowns.set(sourceId, Date.now() + Math.min(base, 2 * 60 * 60 * 1000));
-        process.stderr.write("[CẢNH BÁO] NGUỒN TIN " + sourceId + ": " + error.message + "; tạm nghỉ " + Math.ceil(base / 1000) + " giây, rồi thử lại; vẫn tiếp tục các nguồn khác.\n");
+        const sourceLabel = source.name || source.publisher ||
+          (source.assetId ? "Google Tin tức - " + ((config.assets.find(item => item.id === source.assetId) || {}).name || source.assetId) : "Nguồn tin dự phòng");
+        process.stderr.write("[CẢNH BÁO] " + sourceLabel + ": " + errorVi(error) + "; tạm nghỉ " + Math.ceil(base / 1000) + " giây rồi thử lại; các nguồn khác vẫn hoạt động.\n");
         return { source, failed:true, articles:[] };
       }
     }));
@@ -243,9 +246,9 @@ async function collectNews(config, storage) {
   const uniqueEvents = dedupeNewsEvents(all);
   await translateBatch(uniqueEvents, config);
   const saved = await storage.saveNews(uniqueEvents);
-  process.stdout.write("[THÔNG TIN] Đã hoàn tất lấy tin từ các nguồn " + JSON.stringify({
-    providersConfigured:sources.length, providersSucceeded:succeeded, providersFailed:failed,
-    providersCoolingDown:skipped, articlesFetched:all.length, uniqueEvents:uniqueEvents.length
+  process.stdout.write("[THÔNG TIN] Hoàn tất thu thập tin tức " + JSON.stringify({
+    "sốNguồnĐãCấuHình":sources.length, "sốNguồnHoạtĐộng":succeeded, "sốNguồnGặpLỗi":failed,
+    "sốNguồnĐangTạmNghỉ":skipped, "sốBàiĐãThuThập":all.length, "sốSựKiệnSauKhiLọcTrùng":uniqueEvents.length
   }) + "\n");
   return { found:uniqueEvents.length, inserted:saved.inserted, importantNews:saved.importantNews };
 }
@@ -263,7 +266,7 @@ async function collectMarkets(config, storage) {
         const quote = await fetchYahoo(symbol, config);
         return quote ? { assetId:owners.get(symbol).id, assetName:owners.get(symbol).name, instrumentName:(config.symbolLabels || {})[symbol] || symbol, symbol, ...quote } : null;
       } catch (error) {
-        process.stderr.write("[CẢNH BÁO] Giá tham chiếu " + ((config.symbolLabels || {})[symbol] || symbol) + " (" + symbol + ") [" + owners.get(symbol).name + "]: " + error.message + "\n");
+        process.stderr.write("[CẢNH BÁO] Giá tham chiếu " + ((config.symbolLabels || {})[symbol] || symbol) + " (" + symbol + ") [" + owners.get(symbol).name + "]: " + errorVi(error) + "\n");
         return null;
       }
     }));
