@@ -39,7 +39,8 @@ const SOURCES = {
   "BBC Business":"BBC - Kinh doanh",
   "Deutsche Welle":"Đài DW",
   "Yahoo Finance":"Yahoo Finance",
-  "Configured broker endpoint":"Nguồn dữ liệu do người dùng cấu hình"
+  "Configured broker endpoint":"Nguồn dữ liệu do người dùng cấu hình",
+  "Unknown":"Nguồn tin chưa xác định", "unknown":"Nguồn tin chưa xác định", "Google News":"Google Tin tức"
 };
 
 function directionVi(value) { return DIRECTIONS[value] || "CHƯA XÁC ĐỊNH"; }
@@ -83,6 +84,8 @@ function errorVi(error) {
   if (match) return "Không kết nối được tới " + match[1] + " (mã lỗi " + match[2] + ")";
   match = message.match(/Request timeout after (\d+)ms \(([^)]+)\)/i);
   if (match) return "Hết thời gian chờ " + match[1] + " mili giây khi kết nối tới " + match[2];
+  const aborted = message.match(/Request aborted \(([^)]+)\)/i);
+  if (aborted) return "Kết nối tới " + aborted[1] + " đã bị hủy";
   if (/Yahoo Finance is in a temporary rate-limit cooldown/i.test(message)) return "Yahoo Finance đang tạm giới hạn số lần truy cập";
   if (/Yahoo Finance returned no chart data/i.test(message)) return "Yahoo Finance không trả về dữ liệu biểu đồ";
   if (/Too Many Requests|rate limit/i.test(message)) return "Nguồn dữ liệu đang giới hạn số lần truy cập";
