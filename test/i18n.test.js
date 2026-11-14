@@ -31,8 +31,8 @@ test("Telegram alert templates contain Vietnamese labels instead of internal Eng
   }, { direction:"NEUTRAL", confidence:65 });
   assert.match(news, /TRUNG LẬP/);
   assert.match(news, /Lạm phát cao hơn dự kiến/);
-  assert.doesNotMatch(news, /inflation_hot|NEUTRAL|Nguồn:|https?:);
-  assert.doesNotMatch(market, /Nguồn:|Yahoo Finance|https?:);
+  assert.doesNotMatch(news, /inflation_hot|NEUTRAL|Nguồn:|http/);
+  assert.doesNotMatch(market, /Nguồn:|Yahoo Finance|http/);
 
   const market = formatMarketAlert({
     instrumentName:"Vàng giao ngay", symbol:"XAUUSDm", changePercent:1.25, price:4200, source:"Yahoo Finance"
