@@ -1,18 +1,19 @@
 {
-  "name": "future-scanner-bot",
-  "version": "1.0.0",
-  "main": "simple-index.js",
+  "name": "market-intelligence-bot",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Lightweight multi-asset market news and daily outlook Telegram bot",
+  "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node simple-index.js",
-    "test": "node scripts/check-syntax.cjs && node --test ai-trading/simple-*.test.js",
-    "install:service": "bash scripts/install-service.sh"
+    "start": "node index.js",
+    "test": "node --test",
+    "check": "node --check index.js && node --check src/config.js && node --check src/http.js && node --check src/storage.js && node --check src/collectors.js && node --check src/analyzer.js && node --check src/telegram.js && node --check src/scheduler.js && node --check ecosystem.config.js"
   },
   "dependencies": {
     "mongodb": "^6.3.0"
   },
   "engines": {
     "node": ">=22"
-  },
-  "description": "Simple Binance USDT futures bot using single-timeframe RSI divergence and liquidity-sweep entries"
+  }
 }

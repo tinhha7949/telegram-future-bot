@@ -1,0 +1,57 @@
+{
+  "timezone": "Asia/Ho_Chi_Minh",
+  "dailyReportTime": "07:00",
+  "newsPollMinutes": 10,
+  "marketPollMinutes": 15,
+  "requestTimeoutMs": 12000,
+  "maxNewsPerCategory": 25,
+  "maxAlertsPerRun": 3,
+  "alertCooldownMinutes": 90,
+  "urgentMovePercent": 1.2,
+  "importantNewsScore": 3,
+  "database": {
+    "name": "market_intelligence",
+    "maxNewsDocuments": 1200,
+    "maxMarketDocuments": 1800,
+    "newsRetentionDays": 7,
+    "importantNewsRetentionDays": 30,
+    "criticalNewsRetentionDays": 90,
+    "marketRetentionDays": 14,
+    "alertRetentionDays": 30,
+    "analysisRetentionDays": 180
+  },
+  "assets": [
+    {
+      "id": "gold",
+      "name": "VÀNG",
+      "symbols": ["XAUUSDm", "GC=F"],
+      "newsQuery": "(gold OR bullion OR XAUUSD OR precious metals) AND (market OR price OR Fed OR dollar OR yields OR central bank OR demand)",
+      "marketSymbols": ["GC=F"],
+      "sentiment": "gold"
+    },
+    {
+      "id": "energy",
+      "name": "NĂNG LƯỢNG",
+      "symbols": ["WTI", "BRENT", "GASOLINE"],
+      "newsQuery": "(crude oil OR WTI OR Brent OR gasoline OR OPEC OR petroleum) AND (price OR supply OR demand OR production OR sanctions)",
+      "marketSymbols": ["CL=F", "BZ=F", "RB=F"],
+      "sentiment": "energy"
+    },
+    {
+      "id": "stocks",
+      "name": "CỔ PHIẾU",
+      "symbols": ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN"],
+      "newsQuery": "(Apple OR NVIDIA OR Microsoft OR Tesla OR Amazon OR stock market OR equities) AND (shares OR earnings OR forecast OR guidance OR market)",
+      "marketSymbols": ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN"],
+      "sentiment": "stocks"
+    },
+    {
+      "id": "macro",
+      "name": "KINH TẾ VĨ MÔ",
+      "symbols": ["DXY", "US10Y", "FED"],
+      "newsQuery": "(Federal Reserve OR FOMC OR inflation OR CPI OR PCE OR payrolls OR Treasury yields OR US dollar OR DXY) AND (United States OR US economy OR interest rates)",
+      "marketSymbols": ["DX-Y.NYB", "^TNX"],
+      "sentiment": "macro"
+    }
+  ]
+}

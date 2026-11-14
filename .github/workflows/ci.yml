@@ -1,4 +1,4 @@
-name: CI
+name: MARKET INTELLIGENCE CI
 
 on:
   push:
@@ -11,18 +11,14 @@ permissions:
 
 jobs:
   test:
-    name: Node.js 22 - syntax and tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Install locked dependencies
-        run: npm ci
-      - name: Run syntax checks and test suite
-        run: npm test
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
