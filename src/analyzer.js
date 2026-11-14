@@ -205,7 +205,7 @@ function buildHorizon(asset, news, markets, horizon, config, now) {
   const dxy = markets.find(item => item.symbol === "DX-Y.NYB");
   const yields = markets.find(item => item.symbol === "^TNX");
   if (asset.id === "gold" || asset.id === "metals") {
-    for (const pair of [[dxy, -0.55, "USD/DXY"], [yields, -0.5, "US 10Y yield"]]) {
+    for (const pair of [[dxy, -0.55, "Chỉ số sức mạnh đồng USD (DXY)"], [yields, -0.5, "Lợi suất trái phiếu Mỹ kỳ hạn 10 năm"]]) {
       const value = marketMomentumScore(pair[0], horizon.id);
       if (value === null) continue;
       crossScore += value * pair[1];
