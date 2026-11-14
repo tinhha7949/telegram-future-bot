@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { directionVi, eventVi, sourceVi, horizonVi, methodVi } = require("../src/i18n");
+const { directionVi, eventVi, sourceVi, horizonVi, methodVi, formatNewsAlert, formatMarketAlert } = require("../src/i18n");
 
 test("internal forecast directions are displayed in Vietnamese", () => {
   assert.equal(directionVi("BULLISH"), "TÍCH CỰC");
@@ -20,4 +20,21 @@ test("source, horizon and model labels are Vietnamese", () => {
   assert.equal(sourceVi("Federal Reserve"), "Cục Dự trữ Liên bang Mỹ (Fed)");
   assert.equal(horizonVi("24h"), "24 giờ");
   assert.equal(methodVi("deterministic-quantitative"), "Mô hình định lượng theo quy tắc");
+});
+
+test("Telegram alert templates contain Vietnamese labels instead of internal English codes", () => {
+  const news = formatNewsAlert({
+    assetName:"VÀNG (XAUUSD)", title:"Lạm phát Mỹ cao hơn dự kiến trong tháng 10",
+    eventType:"inflation_hot", impactScore:-0.3, importance:8,
+    source:"The Guardian", url:"https://example.test/news"
+  }, { direction:"NEUTRAL", confidence:65 });
+  assert.match(news, /TRUNG LẬP/);
+  assert.match(news, /Lạm phát cao hơn dự kiến/);
+  assert.doesNotMatch(news, /inflation_hot|NEUTRAL/);
+
+  const market = formatMarketAlert({
+    instrumentName:"Vàng giao ngay", symbol:"XAUUSDm", changePercent:1.25, price:4200, source:"Yahoo Finance"
+  });
+  assert.match(market, /BIẾN ĐỘNG THỊ TRƯỜNG/);
+  assert.match(market, /TĂNG 1.25%/);
 });
