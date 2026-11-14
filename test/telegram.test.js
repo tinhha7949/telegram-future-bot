@@ -50,3 +50,20 @@ test("Telegram does not retry permanent client errors", async t => {
   await assert.rejects(telegram.send("test message"), /Bad Request/);
   assert.equal(calls, 1);
 });
+
+test("Telegram retries server errors even when the proxy returns non-JSON", async t => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let calls = 0;
+  global.fetch = async () => {
+    calls++;
+    if (calls === 1) return { ok:false, status:502, text:async () => "<html>bad gateway</html>" };
+    return { ok:true, status:200, text:async () => JSON.stringify({ ok:true }) };
+  };
+
+  const telegram = new Telegram({ requestTimeoutMs:1000 });
+  telegram.token = "test-token";
+  telegram.chatId = "test-chat";
+  await telegram.send("test message");
+  assert.equal(calls, 2);
+});
