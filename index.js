@@ -124,7 +124,7 @@ async function main() {
     onNewsPoll:() => runCycle({ news:true }),
     onMarketPoll:() => runCycle({ markets:true }),
     onDailyReport:dailyReport,
-    onError:error => log("ERROR", "Scheduler error", { error:error.message })
+    onError:error => log("ERROR", "Bộ lập lịch gặp lỗi", { error:error.message })
   });
   log("INFO", "BOT PHÂN TÍCH THỊ TRƯỜNG ĐÃ KHỞI ĐỘNG", {
     timezone:"Giờ Việt Nam (UTC+7)", dailyReportTime:config.dailyReportTime,
@@ -133,6 +133,6 @@ async function main() {
 }
 
 main().catch(error => {
-  process.stderr.write("LỖI NGHIÊM TRỌNG: " + (error.stack || error.message) + "\n");
+  process.stderr.write("LỖI NGHIÊM TRỌNG: " + errorVi(error) + "\n");
   process.exit(1);
 });
