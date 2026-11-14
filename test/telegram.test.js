@@ -183,6 +183,6 @@ test("queued news alerts remove source and link while preserving the analysis", 
   ].join("\\n"));
   assert.match(output, /DẦU/);
   assert.match(output, /Căng thẳng địa chính trị leo thang/);
-  assert.match(output, /Mức độ quan trọng: 10\\/10/);
+  assert.ok(output.includes("Mức độ quan trọng: 10/10"));
   assert.doesNotMatch(output, /EnergyNow|Nguồn:|http/);
 });
