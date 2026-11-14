@@ -45,7 +45,7 @@ class Telegram {
         } finally {
           clearTimeout(timer);
         }
-        const serverDelay = Math.min(60000, Number(lastError.retryAfterMs || 0));
+        const serverDelay = Math.min(15 * 60 * 1000, Number(lastError.retryAfterMs || 0));
         const backoff = Math.min(10000, 500 * (2 ** attempt));
         await sleep(serverDelay || backoff);
       }
