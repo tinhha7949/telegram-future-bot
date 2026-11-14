@@ -142,7 +142,7 @@ function dedupeNewsEvents(items = []) {
         const union = new Set([...tokens, ...referenceTokens]).size || 1;
         const similarity = intersection / union;
         const sameEventType = item.eventType && item.eventType !== "unclassified" && item.eventType === reference.eventType;
-        if ((similarity >= 0.62 && intersection >= 3) || (sameEventType && intersection >= 3 && similarity >= 0.45)) {
+        if ((similarity >= 0.62 && intersection >= 3) || (sameEventType && intersection >= 3 && similarity >= 0.28)) {
           match = cluster;
           break;
         }
