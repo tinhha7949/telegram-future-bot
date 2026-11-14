@@ -168,7 +168,7 @@ async function collectNews(config, storage) {
       if (Number(error.status) === 429 || consecutiveFailures >= 2) {
         const minimumCooldown = Number(error.status) === 429 ? 5 * 60 * 1000 : 3 * 60 * 1000;
         const cooldownMs = Math.max(Number(error.retryAfterMs || 0), minimumCooldown);
-        gdeltCooldownUntil = Date.now() + Math.min(cooldownMs, 30 * 60 * 1000);
+        gdeltCooldownUntil = Date.now() + Math.min(cooldownMs, 2 * 60 * 60 * 1000);
         process.stderr.write("[WARN] Dừng truy vấn GDELT còn lại trong chu kỳ để tránh tăng tải; tạm nghỉ " + Math.ceil((gdeltCooldownUntil - Date.now()) / 1000) + " giây.\n");
         break;
       }
