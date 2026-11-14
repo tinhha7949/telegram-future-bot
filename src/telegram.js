@@ -26,7 +26,14 @@ class Telegram {
           const raw = await response.text();
           let result;
           try { result = raw ? JSON.parse(raw) : {}; }
-          catch { throw new Error("Telegram returned invalid JSON (HTTP " + response.status + ")"); }
+          catch {
+            if (!response.ok) {
+              const error = new Error("Telegram HTTP " + response.status);
+              error.status = response.status;
+              throw error;
+            }
+            throw new Error("Telegram returned invalid JSON (HTTP " + response.status + ")");
+          }
 
           if (response.ok && result.ok) {
             delivered = true;
