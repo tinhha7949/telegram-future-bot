@@ -141,3 +141,17 @@ test("queued English news alerts are converted to Vietnamese before sending", as
   assert.match(localized, /Mức độ quan trọng: 8\/10/);
   assert.doesNotMatch(localized, /inflation_hot|NEUTRAL|US inflation/);
 });
+
+test("already Vietnamese news alerts are not translated or relabeled twice", async () => {
+  const { formatNewsAlert } = require("../src/i18n");
+  const telegram = new Telegram({ requestTimeoutMs:1000 });
+  const alert = formatNewsAlert({
+    assetName:"VÀNG", title:"Lạm phát Mỹ tăng",
+    eventType:"inflation_hot", impactScore:-0.3, importance:8,
+    source:"The Guardian", url:"https://example.test/news"
+  }, { direction:"NEUTRAL", confidence:65 });
+  const localized = await telegram.localizeMessage(alert);
+  assert.equal((localized.match(/điểm chất lượng/g) || []).length, 1);
+  assert.match(localized, /Sự kiện: Lạm phát cao hơn dự kiến/);
+  assert.doesNotMatch(localized, /Sự kiện: Sự kiện khác/);
+});
