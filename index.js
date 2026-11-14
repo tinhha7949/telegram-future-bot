@@ -6,7 +6,7 @@ const { collectNews, collectMarkets } = require("./src/collectors");
 const { analyzeAll } = require("./src/analyzer");
 const { Telegram } = require("./src/telegram");
 const { startScheduler } = require("./src/scheduler");
-const { horizonVi } = require("./src/i18n");
+const { horizonVi, errorVi } = require("./src/i18n");
 
 loadEnv();
 const config = loadConfig();
@@ -18,7 +18,7 @@ const LOG_KEYS = {
   analyzer:"moHinhPhanTich", externalAI:"suDungTriTueNhanTao", signal:"tinHieuDung", key:"maCanhBao", error:"loi", hostname:"mayChu", status:"maTrangThai"
 };
 const log = (level, message, extra = {}) => {
-  const localized = Object.fromEntries(Object.entries(extra).map(([key, value]) => [LOG_KEYS[key] || key, value]));
+  const localized = Object.fromEntries(Object.entries(extra).map(([key, value]) => [LOG_KEYS[key] || key, key === "error" ? errorVi(value) : value]));
   const suffix = Object.keys(localized).length ? " " + JSON.stringify(localized) : "";
   const levels = { INFO:"THÔNG TIN", WARN:"CẢNH BÁO", ERROR:"LỖI" };
   process.stdout.write("[" + new Date().toISOString() + "] [" + (levels[level] || level) + "] " + message + suffix + "\n");
