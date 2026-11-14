@@ -170,7 +170,7 @@
   },
   "httpMaxRetries": 2,
   "httpRetryBaseMs": 2000,
-  "gdeltRequestGapMs": 8000,
+  "gdeltRequestGapMs": 10000,
   "marketMaxAgeHours": 96,
   "marketFetchConcurrency": 2,
   "symbolLabels": {
