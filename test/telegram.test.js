@@ -112,3 +112,32 @@ test("daily Telegram report translates forecast directions and source labels", a
   assert.match(report, /Lạm phát Mỹ cao hơn dự kiến/);
   assert.doesNotMatch(report, /NEUTRAL|BULLISH|inflation_hot/);
 });
+
+test("queued English news alerts are converted to Vietnamese before sending", async t => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  global.fetch = async url => {
+    const requested = new URL(String(url));
+    assert.equal(requested.hostname, "translate.googleapis.com");
+    return {
+      ok:true,
+      json:async () => [[["Lạm phát Mỹ cao hơn dự kiến trong tháng 10", "US inflation higher than expected in October"]]]
+    };
+  };
+  const telegram = new Telegram({ requestTimeoutMs:1000, translationTimeoutMs:1000 });
+  const localized = await telegram.localizeMessage([
+    "🚨 TIN TỨC QUAN TRỌNG | VÀNG (XAUUSD)",
+    "US inflation higher than expected in October",
+    "Sự kiện: inflation_hot",
+    "Tác động theo mô hình: TIÊU CỰC (-0.3)",
+    "Dự báo 24h sau cập nhật: NEUTRAL | điểm 65/82",
+    "Mức độ: 8/10",
+    "Nguồn: The Guardian",
+    "https://example.test/news"
+  ].join("\n"));
+  assert.match(localized, /Lạm phát Mỹ cao hơn dự kiến/);
+  assert.match(localized, /Lạm phát cao hơn dự kiến/);
+  assert.match(localized, /TRUNG LẬP/);
+  assert.match(localized, /Mức độ quan trọng: 8\/10/);
+  assert.doesNotMatch(localized, /inflation_hot|NEUTRAL|US inflation/);
+});
