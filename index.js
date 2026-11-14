@@ -35,7 +35,11 @@ async function main() {
         await telegram.send(alert.message);
         await storage.markAlertSent(alert.key);
       }
-      log("INFO", "Collection cycle completed", { newsFound: newsResult.found, newsInserted: newsResult.inserted, marketUpdated: marketResult.updated, alerts: alerts.length });
+      const evaluatedForecasts = await storage.evaluateDueForecasts();
+      log("INFO", "Collection cycle completed", {
+        newsFound: newsResult.found, newsInserted: newsResult.inserted,
+        marketUpdated: marketResult.updated, alerts: alerts.length, forecastsEvaluated: evaluatedForecasts
+      });
       return { newsResult, marketResult, analyses };
     } catch (error) {
       log("ERROR", "Collection cycle failed", { error: error.message });
@@ -52,6 +56,11 @@ async function main() {
     const report = await telegram.buildDailyReport(analyses, storage);
     await telegram.send(report);
     await storage.saveDailyReport(analyses);
+    const stats = await storage.getForecastStats();
+    if (stats.length) {
+      const summary = stats.map(s => `${s.horizon}: ${s.accuracy}% (${s.total} mẫu)`).join(" | ");
+      await telegram.send(`📊 KIỂM ĐỊNH DỰ BÁO ĐÃ ĐẾN HẠN\n${summary}\nLưu ý: thống kê chỉ tính các dự báo đã đủ thời gian và có dữ liệu giá đối chiếu.`);
+    }
     log("INFO", "Daily report sent");
   }
 

@@ -16,7 +16,9 @@ async function createStorage(config) {
   const db = client.db(config.database.name);
   const news = db.collection("news");
   const markets = db.collection("market_snapshots");
+  const marketHistory = db.collection("market_history");
   const analyses = db.collection("analyses");
+  const forecasts = db.collection("forecast_history");
   const alerts = db.collection("alerts");
   const state = db.collection("bot_state");
 
@@ -27,8 +29,13 @@ async function createStorage(config) {
     markets.createIndex({ key: 1 }, { unique: true, name: "market_key_unique" }),
     markets.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "market_ttl" }),
     markets.createIndex({ assetId: 1, capturedAt: -1 }, { name: "market_asset_date" }),
+    marketHistory.createIndex({ assetId: 1, symbol: 1, capturedAt: 1 }, { name: "market_history_lookup" }),
+    marketHistory.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "market_history_ttl" }),
     analyses.createIndex({ assetId: 1, reportDay: -1 }, { name: "analysis_asset_day" }),
     analyses.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "analysis_ttl" }),
+    forecasts.createIndex({ forecastKey: 1 }, { unique: true, name: "forecast_key_unique" }),
+    forecasts.createIndex({ status: 1, dueAt: 1 }, { name: "forecast_due_lookup" }),
+    forecasts.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "forecast_ttl" }),
     alerts.createIndex({ key: 1 }, { unique: true, name: "alert_key_unique" }),
     alerts.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "alert_ttl" }),
     state.createIndex({ key: 1 }, { unique: true, name: "state_key_unique" })
@@ -78,10 +85,17 @@ async function createStorage(config) {
         const key = `${item.assetId}:${item.symbol}`;
         const doc = { ...item, key, capturedAt: now, expiresAt: new Date(now.getTime() + config.database.marketRetentionDays * 86400000) };
         await markets.updateOne({ key }, { $set: doc }, { upsert: true });
+        await marketHistory.insertOne({
+          assetId: item.assetId, assetName: item.assetName, symbol: item.symbol,
+          price: item.price, changePercent: item.changePercent, source: item.source,
+          capturedAt: now,
+          expiresAt: new Date(now.getTime() + (config.database.marketHistoryRetentionDays || 45) * 86400000)
+        });
         updated++;
         if (Math.abs(Number(item.changePercent || 0)) >= config.urgentMovePercent) largeMoves.push(doc);
       }
       await trim(markets, config.database.maxMarketDocuments);
+      await trim(marketHistory, config.database.maxMarketHistoryDocuments || 12000);
       return { updated, largeMoves };
     },
     async getRecentNews(assetId, limit = 12) {
@@ -115,14 +129,61 @@ async function createStorage(config) {
     async markAlertSent(key) { await alerts.updateOne({ key }, { $set: { sentAt: new Date() } }); },
     async saveDailyReport(items) {
       const day = new Intl.DateTimeFormat("en-CA", { timeZone: config.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const marketsNow = await this.getLatestMarkets();
       for (const item of items) {
         await analyses.updateOne(
           { assetId: item.assetId, reportDay: day },
           { $set: { ...item, reportDay: day, createdAt: new Date(), expiresAt: new Date(Date.now() + config.database.analysisRetentionDays * 86400000) } },
           { upsert: true }
         );
+        const reference = marketsNow.find(m => m.assetId === item.assetId && Number(m.price) > 0);
+        if (!reference) continue;
+        for (const forecast of item.forecasts || []) {
+          const forecastKey = `${day}:${item.assetId}:${forecast.horizon}`;
+          const dueAt = new Date(Date.now() + Number(forecast.hours || 24) * 3600000);
+          await forecasts.updateOne(
+            { forecastKey },
+            { $setOnInsert: {
+              forecastKey, reportDay: day, assetId: item.assetId, assetName: item.assetName,
+              horizon: forecast.horizon, direction: forecast.direction, confidence: forecast.confidence,
+              method: forecast.method || item.analysisMethod || "local-evidence",
+              referenceSymbol: reference.symbol, referencePrice: reference.price,
+              referenceAt: reference.capturedAt || new Date(), dueAt, status: "pending",
+              expiresAt: new Date(Date.now() + config.database.analysisRetentionDays * 86400000)
+            } },
+            { upsert: true }
+          );
+        }
       }
     },
+    async evaluateDueForecasts() {
+      const due = await forecasts.find({ status: "pending", dueAt: { $lte: new Date() } }).limit(100).toArray();
+      let evaluated = 0;
+      for (const forecast of due) {
+        const observed = await marketHistory.findOne(
+          { assetId: forecast.assetId, symbol: forecast.referenceSymbol, capturedAt: { $gte: forecast.dueAt }, price: { $gt: 0 } },
+          { sort: { capturedAt: 1 } }
+        );
+        if (!observed || !Number(forecast.referencePrice)) continue;
+        const changePct = ((Number(observed.price) - Number(forecast.referencePrice)) / Number(forecast.referencePrice)) * 100;
+        const neutralBand = Number(config.forecastNeutralBandPct || 0.15);
+        const actual = changePct > neutralBand ? "BULLISH" : changePct < -neutralBand ? "BEARISH" : "NEUTRAL";
+        const correct = forecast.direction === actual;
+        await forecasts.updateOne({ _id: forecast._id, status: "pending" }, {
+          $set: { status: "evaluated", actualDirection: actual, changePct: Number(changePct.toFixed(4)), correct, evaluatedAt: observed.capturedAt }
+        });
+        evaluated++;
+      }
+      return evaluated;
+    },
+    async getForecastStats() {
+      const rows = await forecasts.aggregate([
+        { $match: { status: "evaluated" } },
+        { $group: { _id: "$horizon", total: { $sum: 1 }, correct: { $sum: { $cond: ["$correct", 1, 0] } } } }
+      ]).toArray();
+      return rows.map(row => ({ horizon: row._id, total: row.total, accuracy: row.total ? Math.round(row.correct / row.total * 100) : 0 }));
+    },
+    async saveDailySentState(day) { await state.updateOne({ key: `daily:${day}` }, { $set: { sentAt: new Date() } }, { upsert: true }); },
     async wasDailySent(day) { return Boolean(await state.findOne({ key: `daily:${day}` })); },
     async markDailySent(day) { await state.updateOne({ key: `daily:${day}` }, { $set: { sentAt: new Date() } }, { upsert: true }); },
     async close() { await client.close(); }

@@ -26,6 +26,13 @@ test("analysis reports neutral when there is no evidence", () => {
   assert.ok(result.confidence <= 50);
 });
 
+test("analysis generates four separate forecast horizons", () => {
+  const result = buildAnalysis({ id: "gold", name: "GOLD" }, [], [], {});
+  assert.deepEqual(result.forecasts.map(x => x.horizon), ["24h", "3d", "7d", "30d"]);
+  assert.ok(result.forecasts[3].confidence <= result.forecasts[0].confidence);
+  assert.equal(result.forecasts[0].direction, "NEUTRAL");
+});
+
 test("hash is deterministic", () => {
   assert.equal(hash("same"), hash("same"));
   assert.notEqual(hash("same"), hash("different"));

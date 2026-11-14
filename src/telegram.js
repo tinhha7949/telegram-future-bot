@@ -8,7 +8,7 @@ class Telegram {
   }
 
   async send(text) {
-    const chunks = String(text).match(/[\s\S]{1,3900}/g) || [];
+    const chunks = String(text).match(/[\\s\\S]{1,3900}/g) || [];
     for (const chunk of chunks) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
@@ -33,32 +33,39 @@ class Telegram {
     }).format(new Date());
     const [markets, ...newsGroups] = await Promise.all([
       storage.getLatestMarkets(),
-      ...analyses.map(item => storage.getRecentNews(item.assetId, 3))
+      ...analyses.map(item => storage.getRecentNews(item.assetId, 4))
     ]);
-    const lines = ["📰 MARKET INTELLIGENCE", `📅 ${now} (GMT+7)`, "BÁO CÁO TRIỂN VỌNG THỊ TRƯỜNG", ""];
+    const lines = ["🧠 MARKET INTELLIGENCE", `📅 ${now} (GMT+7)`, "BÁO CÁO TIN TỨC & DỰ BÁO XU HƯỚNG", "━━━━━━━━━━━━━━━━━━", ""];
     for (let i = 0; i < analyses.length; i++) {
       const item = analyses[i];
-      const icon = item.direction === "BULLISH" ? "🟢" : item.direction === "BEARISH" ? "🔴" : "🟡";
-      lines.push(`${icon} ${item.assetName}: ${item.direction}`);
-      lines.push(`Độ tin cậy tham khảo: ${item.confidence}% | Điểm: ${item.score}`);
+      lines.push(`📌 ${item.assetName}`);
+      lines.push(`Tổng quan: ${item.direction} | Điểm tín hiệu: ${item.confidence}/85`);
       lines.push(item.summary);
+      for (const forecast of item.forecasts || []) {
+        const icon = forecast.direction === "BULLISH" ? "🟢" : forecast.direction === "BEARISH" ? "🔴" : "🟡";
+        lines.push(`${icon} ${forecast.label || forecast.horizon}: ${forecast.direction} — ${forecast.confidence}/85`);
+        if (forecast.rationale) lines.push(`  Nhận định: ${forecast.rationale}`);
+        if (forecast.drivers?.length) lines.push(`  Động lực: ${forecast.drivers.slice(0, 2).join(" • ")}`);
+        if (forecast.risks?.length) lines.push(`  Rủi ro: ${forecast.risks.slice(0, 2).join(" • ")}`);
+      }
       const quotes = markets.filter(m => m.assetId === item.assetId);
-      for (const quote of quotes.slice(0, 4)) {
+      for (const quote of quotes.slice(0, 3)) {
         const change = Number(quote.changePercent || 0);
         lines.push(`• ${quote.symbol}: ${quote.price} (${change >= 0 ? "+" : ""}${change.toFixed(2)}%)`);
       }
-      if (item.drivers.length) lines.push("Yếu tố: " + item.drivers.slice(0, 3).join(" • "));
+      if (item.drivers?.length) lines.push("Yếu tố chính: " + item.drivers.slice(0, 3).join(" • "));
       const headlines = newsGroups[i] || [];
       if (headlines.length) {
-        lines.push("Tin mới:");
-        for (const news of headlines) lines.push(`- ${news.title}\n  ${news.url}`);
+        lines.push("Tin tức mới:");
+        for (const news of headlines) lines.push(`- [${news.importance}/10] ${news.title}\n  ${news.source} | ${news.url}`);
       }
+      if (item.risks?.length) lines.push("Rủi ro cần theo dõi: " + item.risks.slice(0, 3).join(" • "));
       lines.push(`Lưu ý: ${item.caveat}`, "");
     }
-    lines.push("Nguồn tin: GDELT. Giá tham chiếu: Yahoo Finance.");
-    lines.push("GC=F là hợp đồng vàng tương lai tham chiếu, không phải giá broker XAUUSDm.");
-    lines.push("Muốn dùng đúng giá XAUUSDm, cấu hình XAUUSD_PRICE_URL từ broker.");
-    lines.push("Đây là phân tích thông tin, không phải khuyến nghị đầu tư hay cam kết kết quả.");
+    lines.push("━━━━━━━━━━━━━━━━━━");
+    lines.push("Điểm 0-85 là mức đánh giá tín hiệu, không phải xác suất dự báo đúng.");
+    lines.push("Nguồn tin: GDELT. Giá tham chiếu: Yahoo Finance; GC=F không phải giá broker XAUUSDm.");
+    lines.push("Dự báo được cập nhật khi có tin mới; không phải khuyến nghị đầu tư hay cam kết kết quả.");
     return lines.join("\n");
   }
 }

@@ -9,49 +9,90 @@
   "alertCooldownMinutes": 90,
   "urgentMovePercent": 1.2,
   "importantNewsScore": 3,
+  "forecastHorizons": [
+    { "id": "24h", "label": "24 GIỜ", "hours": 24, "confidenceDecay": 0 },
+    { "id": "3d", "label": "3 NGÀY", "hours": 72, "confidenceDecay": 4 },
+    { "id": "7d", "label": "7 NGÀY", "hours": 168, "confidenceDecay": 8 },
+    { "id": "30d", "label": "30 NGÀY", "hours": 720, "confidenceDecay": 14 }
+  ],
+  "forecastNeutralBandPct": 0.15,
   "database": {
     "name": "market_intelligence",
     "maxNewsDocuments": 1200,
     "maxMarketDocuments": 1800,
+    "maxMarketHistoryDocuments": 12000,
     "newsRetentionDays": 7,
     "importantNewsRetentionDays": 30,
     "criticalNewsRetentionDays": 90,
     "marketRetentionDays": 14,
+    "marketHistoryRetentionDays": 45,
     "alertRetentionDays": 30,
     "analysisRetentionDays": 180
   },
   "assets": [
     {
       "id": "gold",
-      "name": "VÀNG",
+      "name": "VÀNG (XAUUSD)",
       "symbols": ["XAUUSDm", "GC=F"],
-      "newsQuery": "(gold OR bullion OR XAUUSD OR precious metals) AND (market OR price OR Fed OR dollar OR yields OR central bank OR demand)",
+      "newsQuery": "(gold OR bullion OR XAUUSD OR precious metals OR central bank gold buying OR gold ETF) AND (market OR price OR Fed OR dollar OR yields OR central bank OR demand)",
       "marketSymbols": ["GC=F"],
       "sentiment": "gold"
     },
     {
       "id": "energy",
-      "name": "NĂNG LƯỢNG",
-      "symbols": ["WTI", "BRENT", "GASOLINE"],
-      "newsQuery": "(crude oil OR WTI OR Brent OR gasoline OR OPEC OR petroleum) AND (price OR supply OR demand OR production OR sanctions)",
-      "marketSymbols": ["CL=F", "BZ=F", "RB=F"],
+      "name": "DẦU (WTI / BRENT)",
+      "symbols": ["WTI", "BRENT"],
+      "newsQuery": "(crude oil OR WTI OR Brent OR OPEC OR petroleum OR oil supply) AND (price OR supply OR demand OR production OR sanctions OR inventory)",
+      "marketSymbols": ["CL=F", "BZ=F"],
+      "sentiment": "energy"
+    },
+    {
+      "id": "gasoline",
+      "name": "XĂNG / NHIÊN LIỆU",
+      "symbols": ["GASOLINE", "RBOB"],
+      "newsQuery": "(gasoline OR petrol OR diesel OR jet fuel OR fuel prices OR refinery) AND (price OR supply OR demand OR tax OR shortage OR inventory)",
+      "marketSymbols": ["RB=F"],
       "sentiment": "energy"
     },
     {
       "id": "stocks",
-      "name": "CỔ PHIẾU",
-      "symbols": ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN"],
-      "newsQuery": "(Apple OR NVIDIA OR Microsoft OR Tesla OR Amazon OR stock market OR equities) AND (shares OR earnings OR forecast OR guidance OR market)",
-      "marketSymbols": ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN"],
+      "name": "CHỨNG KHOÁN",
+      "symbols": ["S&P 500", "NASDAQ", "DOW JONES"],
+      "newsQuery": "(stock market OR S&P 500 OR Nasdaq OR Dow Jones OR equities OR major company earnings) AND (shares OR earnings OR forecast OR guidance OR market)",
+      "marketSymbols": ["^GSPC", "^IXIC", "^DJI"],
       "sentiment": "stocks"
     },
     {
       "id": "macro",
       "name": "KINH TẾ VĨ MÔ",
-      "symbols": ["DXY", "US10Y", "FED"],
-      "newsQuery": "(Federal Reserve OR FOMC OR inflation OR CPI OR PCE OR payrolls OR Treasury yields OR US dollar OR DXY) AND (United States OR US economy OR interest rates)",
-      "marketSymbols": ["DX-Y.NYB", "^TNX"],
+      "symbols": ["FED", "CPI", "PCE", "NFP", "GDP", "PMI"],
+      "newsQuery": "(Federal Reserve OR FOMC OR inflation OR CPI OR PCE OR payrolls OR NFP OR GDP OR PMI OR retail sales OR unemployment OR Treasury yields) AND (United States OR US economy OR interest rates)",
+      "marketSymbols": ["^TNX"],
       "sentiment": "macro"
+    },
+    {
+      "id": "usd",
+      "name": "USD / DXY",
+      "symbols": ["DXY", "US DOLLAR"],
+      "newsQuery": "(US dollar OR dollar index OR DXY OR currency market OR forex) AND (Federal Reserve OR interest rates OR Treasury yields OR inflation OR exchange rate)",
+      "marketSymbols": ["DX-Y.NYB"],
+      "sentiment": "macro"
+    },
+    {
+      "id": "geopolitics",
+      "name": "ĐỊA CHÍNH TRỊ",
+      "symbols": ["GEOPOLITICAL RISK"],
+      "newsQuery": "(war OR military conflict OR geopolitical tension OR sanctions OR trade war OR tariff OR ceasefire OR diplomatic crisis OR Middle East OR Ukraine OR Taiwan) AND (global markets OR oil OR gold OR economy OR trade)",
+      "marketSymbols": [],
+      "sentiment": "geopolitics"
+    },
+    {
+      "id": "metals",
+      "name": "KIM LOẠI QUÝ",
+      "symbols": ["SILVER", "PLATINUM"],
+      "newsQuery": "(silver OR platinum OR palladium OR precious metals) AND (price OR demand OR supply OR industrial use OR investment)",
+      "marketSymbols": ["SI=F", "PL=F"],
+      "sentiment": "metals"
     }
   ]
 }
