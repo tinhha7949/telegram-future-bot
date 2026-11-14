@@ -159,9 +159,9 @@ test("already Vietnamese news alerts are not translated or relabeled twice", asy
 test("all Telegram message types remove source labels and raw article URLs", async () => {
   const telegram = new Telegram({ requestTimeoutMs:1000 });
   const samples = [
-    "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\\nVÀNG: TĂNG 1.2%\\nNguồn: Yahoo Finance",
-    "BÁO CÁO\\nTin tức mới\\nNguồn: EnergyNow.com | https://news.google.com/rss/articles/example",
-    "Thông báo\\nhttps://example.test/article"
+    "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\nVÀNG: TĂNG 1.2%\nNguồn: Yahoo Finance",
+    "BÁO CÁO\nTin tức mới\nNguồn: EnergyNow.com | https://news.google.com/rss/articles/example",
+    "Thông báo\nhttps://example.test/article"
   ];
   for (const sample of samples) {
     const output = await telegram.localizeMessage(sample);
@@ -180,7 +180,7 @@ test("queued news alerts remove source and link while preserving the analysis", 
     "Mức độ: 10/10",
     "Nguồn: EnergyNow.com",
     "https://news.google.com/rss/articles/example"
-  ].join("\\n"));
+  ].join("\n"));
   assert.match(output, /DẦU/);
   assert.match(output, /Căng thẳng địa chính trị leo thang/);
   assert.ok(output.includes("Mức độ quan trọng: 10/10"));
