@@ -170,7 +170,8 @@
   },
   "httpMaxRetries": 2,
   "httpRetryBaseMs": 2000,
-  "gdeltRequestGapMs": 3000,
+  "gdeltRequestGapMs": 8000,
+  "marketMaxAgeHours": 96,
   "symbolLabels": {
     "XAUUSDm": "Vàng giao ngay theo giá broker",
     "GC=F": "Vàng COMEX (hợp đồng tương lai)",
