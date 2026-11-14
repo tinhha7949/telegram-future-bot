@@ -176,8 +176,9 @@ function buildHorizon(asset, news, markets, horizon, config, now) {
   const direction = evidenceCount ? directionFromScore(score, Number(config.analysis?.directionThreshold || 0.55)) : "NEUTRAL";
   const active = components.filter(item => item.count && Math.abs(item.value) > 0.15);
   const agreement = active.length > 1 ? Math.abs(active.reduce((sum, item) => sum + Math.sign(item.value), 0)) / active.length : active.length ? 0.65 : 0;
+  const confidenceDecay = Math.max(0, Number(horizon.confidenceDecay || 0));
   const confidence = evidenceCount
-    ? Math.round(clamp(22 + clamp(evidenceCount / 6, 0, 1) * 30 + clamp(Math.abs(score) / 1.8, 0, 1) * 25 + agreement * 12, 15, 82))
+    ? Math.round(clamp(22 + clamp(evidenceCount / 6, 0, 1) * 30 + clamp(Math.abs(score) / 1.8, 0, 1) * 25 + agreement * 12 - confidenceDecay, 15, 82))
     : 10;
   const rationale = direction === "NEUTRAL"
     ? "Tín hiệu tin tức và dữ liệu giá chưa đủ mạnh hoặc đang trái chiều; ưu tiên chờ xác nhận."
