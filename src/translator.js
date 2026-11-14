@@ -7,7 +7,7 @@ const MAX_CACHE = 3000;
 let translationCooldownUntil = 0;
 
 function isVietnamese(text) {
-  return (String(text || "").match(/[À-ỹĐđ]/gu) || []).length >= 2;
+  return (String(text || "").match(/[À-ỹĐđ]/gu) || []).length >= 1;
 }
 
 function cleanTranslation(value) {
@@ -50,7 +50,7 @@ async function translateToVietnamese(value, config = {}) {
   for (const provider of providers) {
     try {
       const translated = await provider();
-      if (!translated || /^MYMEMORY WARNING/i.test(translated)) throw new Error("Nguồn dịch không trả về bản dịch hợp lệ");
+      if (!translated || /^MYMEMORY WARNING/i.test(translated) || !isVietnamese(translated)) throw new Error("Nguồn dịch không trả về bản dịch tiếng Việt hợp lệ");
       if (cache.size >= MAX_CACHE) cache.delete(cache.keys().next().value);
       cache.set(original, translated);
       return translated;
