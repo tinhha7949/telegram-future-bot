@@ -13,16 +13,24 @@ class Telegram {
 
   async localizeMessage(value) {
     const lines = String(value).split("\n");
-    if (!lines[0].startsWith("🚨 TIN TỨC QUAN TRỌNG |")) return lines.join("\n");
-    if (lines[1]) lines[1] = await translateToVietnamese(lines[1], this.config);
-    if (lines[2] && lines[2].startsWith("Sự kiện: ")) lines[2] = "Sự kiện: " + eventVi(lines[2].slice("Sự kiện: ".length));
-    if (lines[4] && (/BULLISH|BEARISH|NEUTRAL/.test(lines[4]) || lines[4].startsWith("Dự báo 24h sau cập nhật:"))) {
-      lines[4] = lines[4].replace("Dự báo 24h sau cập nhật:", "Dự báo 24 giờ sau khi cập nhật:")
-        .replace(/: (BULLISH|BEARISH|NEUTRAL) \|/, (_match, direction) => ": " + directionVi(direction) + " |")
-        .replace(" | điểm ", " | điểm chất lượng ");
+    const isNewsAlert = lines[0].startsWith("🚨 TIN TỨC QUAN TRỌNG |");
+
+    if (isNewsAlert) {
+      if (lines[1]) lines[1] = await translateToVietnamese(lines[1], this.config);
+      if (lines[2] && lines[2].startsWith("Sự kiện: ")) {
+        lines[2] = "Sự kiện: " + eventVi(lines[2].slice("Sự kiện: ".length));
+      }
+      if (lines[4] && (/BULLISH|BEARISH|NEUTRAL/.test(lines[4]) || lines[4].startsWith("Dự báo 24h sau cập nhật:"))) {
+        lines[4] = lines[4].replace("Dự báo 24h sau cập nhật:", "Dự báo 24 giờ sau khi cập nhật:")
+          .replace(/: (BULLISH|BEARISH|NEUTRAL) \|/, (_match, direction) => ": " + directionVi(direction) + " |")
+          .replace(" | điểm ", " | điểm chất lượng ");
+      }
+      if (lines[5] && lines[5].startsWith("Mức độ: ")) {
+        lines[5] = lines[5].replace("Mức độ:", "Mức độ quan trọng:");
+      }
     }
-    if (lines[5] && lines[5].startsWith("Mức độ: ")) lines[5] = lines[5].replace("Mức độ:", "Mức độ quan trọng:");
-    // Loại bỏ nguồn và liên kết trong mọi loại tin nhắn, kể cả tin cũ còn trong hàng đợi.
+
+    // Áp dụng cho mọi loại tin nhắn, kể cả thông báo cũ còn trong hàng đợi.
     return lines.filter(line =>
       !/^\s*(?:Nguồn|Source)\s*:/i.test(line) &&
       !/https?:\/\//i.test(line)
