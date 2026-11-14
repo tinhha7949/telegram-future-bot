@@ -79,7 +79,7 @@ function headlineRelevant(title, assetId) {
 
 async function fetchRss(source, config) {
   const url = source.kind === "google-news" ? googleNewsUrl(source.query) : new URL(source.url);
-  const xml = await requestText(url, config.requestTimeoutMs, {}, {
+  const xml = await requestText(url, config.newsRequestTimeoutMs ?? config.requestTimeoutMs, {}, {
     retries:config.newsHttpRetries ?? 1,
     retryOnRateLimit:false,
     retryBaseMs:config.httpRetryBaseMs ?? 2000
@@ -218,8 +218,9 @@ async function collectNews(config, storage) {
       const assetIds = Array.isArray(source.assets) ? source.assets : source.assetId ? [source.assetId] : [];
       for (const article of result.articles) {
         const sourceName = article.source || source.publisher || source.name || "Unknown";
-        const domain = article.sourceUrl ? new URL(article.sourceUrl).hostname : (() => {
-          try { return new URL(article.url).hostname; } catch { return sourceName; }
+        const domain = (() => {
+          try { return new URL(article.sourceUrl || article.url).hostname; }
+          catch { return sourceName; }
         })();
         for (const assetId of assetIds) {
           const asset = config.assets.find(item => item.id === assetId);
