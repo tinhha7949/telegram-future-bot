@@ -1,7 +1,7 @@
 "use strict";
 
 const DIRECTIONS = {
-  BULLISH:"TÍCH CỰC", BEARISH:"TIÊU CỰC", NEUTRAL:"TRUNG LẬP",
+  BULLISH:"XU HƯỚNG TĂNG", BEARISH:"XU HƯỚNG GIẢM", NEUTRAL:"TRUNG LẬP",
   positive:"TÍCH CỰC", negative:"TIÊU CỰC", neutral:"TRUNG LẬP"
 };
 
@@ -94,7 +94,7 @@ function errorVi(error) {
   if (/chat not found/i.test(message)) return "Không tìm thấy cuộc trò chuyện Telegram; hãy kiểm tra CHAT_ID";
   if (/Unauthorized/i.test(message)) return "Telegram từ chối mã truy cập; hãy kiểm tra BOT_TOKEN";
   if (/MongoServerSelectionError|MongoNetworkError/i.test(message)) return "Không kết nối được tới cơ sở dữ liệu MongoDB";
-  if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/.test(message)) return "Lỗi kết nối mạng: " + message.match(/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/)[0];
+  if (/ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/.test(message)) return "Lỗi kết nối mạng: " + message.match(/ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/)[0];
   return "Lỗi kỹ thuật: " + message;
 }
 module.exports = { DIRECTIONS, EVENTS, COMPONENTS, SOURCES, directionVi, eventVi, componentVi, sourceVi, horizonVi, methodVi, formatNewsAlert, formatMarketAlert, errorVi };
