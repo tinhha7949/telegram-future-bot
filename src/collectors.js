@@ -1,9 +1,10 @@
 "use strict";
 
-const { requestJson, sleep } = require("./http");
-const { classifyHeadline } = require("./analyzer");
+const { requestJson, requestText, sleep } = require("./http");
+const { classifyHeadline, dedupeNewsEvents } = require("./analyzer");
 
-let gdeltCooldownUntil = 0;
+const newsSourceCooldowns = new Map();
+const newsSourceFailures = new Map();
 let yahooCooldownUntil = 0;
 
 function safeDate(value) {
@@ -22,20 +23,68 @@ function sourceWeight(domain) {
   return 0.8;
 }
 
-async function fetchGdelt(query, config) {
-  const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
-  url.searchParams.set("query", query);
-  url.searchParams.set("mode", "ArtList");
-  url.searchParams.set("format", "json");
-  url.searchParams.set("maxrecords", String(config.maxNewsPerCategory));
-  url.searchParams.set("sort", "DateDesc");
-  url.searchParams.set("timespan", "24h");
-  const data = await requestJson(url, config.requestTimeoutMs, {}, {
-    retries: config.gdeltMaxRetries ?? config.httpMaxRetries ?? 1,
+function decodeXml(value) {
+  return String(value || "")
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, " ");
+}
+
+function xmlTag(block, name) {
+  const match = block.match(new RegExp("<(?:[\\w.-]+:)?" + name + "\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?" + name + "\\s*>", "i"));
+  return match ? decodeXml(match[1]).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "";
+}
+
+function parseRss(xml) {
+  const blocks = [...String(xml || "").matchAll(/<(item|entry)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi)].map(match => match[2]);
+  const items = [];
+  for (const block of blocks) {
+    const title = xmlTag(block, "title");
+    const linkTag = block.match(/<(?:[\w.-]+:)?link\b([^>]*)>([\s\S]*?)<\/(?:[\w.-]+:)?link\s*>/i);
+    const linkAttr = block.match(/<(?:[\w.-]+:)?link\b[^>]*\bhref=["']([^"']+)["'][^>]*\/?>/i);
+    const link = decodeXml(linkAttr ? linkAttr[1] : linkTag ? linkTag[2] : xmlTag(block, "guid")).trim();
+    const sourceTag = block.match(/<(?:[\w.-]+:)?source\b([^>]*)>([\s\S]*?)<\/(?:[\w.-]+:)?source\s*>/i);
+    const sourceUrl = sourceTag && sourceTag[1].match(/\burl=["']([^"']+)["']/i);
+    const source = sourceTag ? decodeXml(sourceTag[2]).replace(/<[^>]+>/g, "").trim() : "";
+    const publishedAt = xmlTag(block, "pubDate") || xmlTag(block, "published") || xmlTag(block, "updated") || xmlTag(block, "date");
+    if (title && /^https?:\/\//i.test(link)) items.push({ title, url:link, source, sourceUrl:sourceUrl ? sourceUrl[1] : "", publishedAt:safeDate(publishedAt) });
+  }
+  return items;
+}
+
+function googleNewsUrl(query) {
+  const url = new URL("https://news.google.com/rss/search");
+  url.searchParams.set("q", String(query || "") + " when:24h");
+  url.searchParams.set("hl", "en-US");
+  url.searchParams.set("gl", "US");
+  url.searchParams.set("ceid", "US:en");
+  return url;
+}
+
+function headlineRelevant(title, assetId) {
+  const patterns = {
+    gold:/\b(gold|bullion|precious metals?|xau|fed|fomc|inflation|cpi|pce|treasury yields?|us dollar|dxy|central bank)\b/i,
+    energy:/\b(oil|crude|wti|brent|opec|petroleum|pipeline|refinery|energy|shipping|sanctions)\b/i,
+    gasoline:/\b(gasoline|petrol|diesel|fuel|refinery|crude|oil|opec|inventory)\b/i,
+    stocks:/\b(stock|stocks|equities|shares|nasdaq|s&p|dow jones|wall street|earnings|market|fed|rates)\b/i,
+    macro:/\b(fed|fomc|powell|inflation|cpi|pce|payroll|employment|jobs|gdp|pmi|interest rates?|treasury|economy|unemployment)\b/i,
+    usd:/\b(us dollar|dollar|dxy|currency|forex|fed|fomc|interest rates?|treasury yields?|inflation)\b/i,
+    geopolitics:/\b(war|conflict|military|sanctions|ceasefire|tariff|invasion|attack|ukraine|russia|iran|israel|middle east|taiwan|china)\b/i,
+    metals:/\b(silver|platinum|palladium|precious metals?|gold|industrial metals?)\b/i
+  };
+  return Boolean((patterns[assetId] || /\b(market|economy|finance)\b/i).test(title));
+}
+
+async function fetchRss(source, config) {
+  const url = source.kind === "google-news" ? googleNewsUrl(source.query) : new URL(source.url);
+  const xml = await requestText(url, config.requestTimeoutMs, {}, {
+    retries:config.newsHttpRetries ?? 1,
     retryOnRateLimit:false,
-    retryBaseMs: config.httpRetryBaseMs ?? 2000
+    retryBaseMs:config.httpRetryBaseMs ?? 2000
   });
-  return Array.isArray(data.articles) ? data.articles : [];
+  return parseRss(xml).slice(0, Math.max(1, Number(config.maxNewsPerCategory || 25)));
 }
 
 async function fetchYahoo(symbol, config) {
@@ -134,52 +183,68 @@ async function fetchYahoo(symbol, config) {
 
 async function collectNews(config, storage) {
   const all = [];
-  let lastRequestAt = 0;
-  let consecutiveFailures = 0;
-  if (Date.now() < gdeltCooldownUntil) {
-    const seconds = Math.ceil((gdeltCooldownUntil - Date.now()) / 1000);
-    process.stderr.write("[WARN] GDELT đang tạm nghỉ sau lỗi nguồn; thử lại sau " + seconds + " giây.\n");
-    return { found:0, inserted:0, importantNews:[] };
-  }
-  for (const asset of config.assets) {
-    try {
-      const gapMs = Math.max(0, Number(config.gdeltRequestGapMs || 0));
-      const waitMs = gapMs - (Date.now() - lastRequestAt);
-      if (lastRequestAt && waitMs > 0) await sleep(waitMs);
-      const articles = await fetchGdelt(asset.newsQuery, config);
-      lastRequestAt = Date.now();
-      consecutiveFailures = 0;
-      for (const article of articles) {
-        const title = String(article.title || "").trim();
-        const url = String(article.url || "").trim();
-        if (!title || !url || !/^https?:\/\//i.test(url)) continue;
-        const domain = article.domain || article.source || "GDELT";
-        const classification = classifyHeadline(title, asset.id);
-        all.push({
-          assetId:asset.id, assetName:asset.name, title, url,
-          source:domain, sourceWeight:sourceWeight(domain),
-          publishedAt:safeDate(article.seendate),
-          sentiment:classification.sentiment, importance:classification.importance,
-          eventType:classification.eventType, eventTypes:classification.eventTypes,
-          impactScore:classification.impactScore, relevance:classification.relevance,
-          eventHalfLifeHours:classification.eventHalfLifeHours
-        });
+  const sources = Array.isArray(config.newsSources) ? config.newsSources : [];
+  const concurrency = Math.max(1, Math.min(5, Number(config.newsSourceConcurrency || 3)));
+  let succeeded = 0, failed = 0, skipped = 0;
+
+  for (let i = 0; i < sources.length; i += concurrency) {
+    const batch = sources.slice(i, i + concurrency);
+    const results = await Promise.all(batch.map(async source => {
+      const sourceId = String(source.id || source.name || source.url || source.query);
+      const cooldownUntil = newsSourceCooldowns.get(sourceId) || 0;
+      if (Date.now() < cooldownUntil) return { source, skipped:true, articles:[] };
+      try {
+        const articles = await fetchRss(source, config);
+        newsSourceFailures.delete(sourceId);
+        newsSourceCooldowns.delete(sourceId);
+        return { source, articles };
+      } catch (error) {
+        const failures = (newsSourceFailures.get(sourceId) || 0) + 1;
+        newsSourceFailures.set(sourceId, failures);
+        const base = Number(error.status) === 429
+          ? Math.max(Number(error.retryAfterMs || 0), 10 * 60 * 1000)
+          : Math.min(30 * 60 * 1000, 60 * 1000 * (2 ** Math.min(failures - 1, 5)));
+        newsSourceCooldowns.set(sourceId, Date.now() + Math.min(base, 2 * 60 * 60 * 1000));
+        process.stderr.write("[WARN] NEWS " + sourceId + ": " + error.message + "; nghỉ " + Math.ceil(base / 1000) + " giây, tiếp tục nguồn khác.\n");
+        return { source, failed:true, articles:[] };
       }
-    } catch (error) {
-      lastRequestAt = Date.now();
-      consecutiveFailures++;
-      process.stderr.write("[WARN] GDELT " + asset.name + " (" + asset.id + "): " + error.message + "\n");
-      if (Number(error.status) === 429 || consecutiveFailures >= 2) {
-        const minimumCooldown = Number(error.status) === 429 ? 5 * 60 * 1000 : 3 * 60 * 1000;
-        const cooldownMs = Math.max(Number(error.retryAfterMs || 0), minimumCooldown);
-        gdeltCooldownUntil = Date.now() + Math.min(cooldownMs, 2 * 60 * 60 * 1000);
-        process.stderr.write("[WARN] Dừng truy vấn GDELT còn lại trong chu kỳ để tránh tăng tải; tạm nghỉ " + Math.ceil((gdeltCooldownUntil - Date.now()) / 1000) + " giây.\n");
-        break;
+    }));
+
+    for (const result of results) {
+      if (result.skipped) { skipped++; continue; }
+      if (result.failed) { failed++; continue; }
+      succeeded++;
+      const source = result.source;
+      const assetIds = Array.isArray(source.assets) ? source.assets : source.assetId ? [source.assetId] : [];
+      for (const article of result.articles) {
+        const sourceName = article.source || source.publisher || source.name || "Unknown";
+        const domain = article.sourceUrl ? new URL(article.sourceUrl).hostname : (() => {
+          try { return new URL(article.url).hostname; } catch { return sourceName; }
+        })();
+        for (const assetId of assetIds) {
+          const asset = config.assets.find(item => item.id === assetId);
+          if (!asset || (source.kind !== "google-news" && !headlineRelevant(article.title, assetId))) continue;
+          const classification = classifyHeadline(article.title, asset.id);
+          all.push({
+            assetId:asset.id, assetName:asset.name, title:article.title, url:article.url,
+            source:sourceName, sourceWeight:sourceWeight(domain || sourceName),
+            publishedAt:article.publishedAt, sentiment:classification.sentiment,
+            importance:classification.importance, eventType:classification.eventType,
+            eventTypes:classification.eventTypes, impactScore:classification.impactScore,
+            relevance:classification.relevance, eventHalfLifeHours:classification.eventHalfLifeHours
+          });
+        }
       }
     }
   }
-  const saved = await storage.saveNews(all);
-  return { found:all.length, inserted:saved.inserted, importantNews:saved.importantNews };
+
+  const uniqueEvents = dedupeNewsEvents(all);
+  const saved = await storage.saveNews(uniqueEvents);
+  process.stdout.write("[INFO] News providers completed " + JSON.stringify({
+    providersConfigured:sources.length, providersSucceeded:succeeded, providersFailed:failed,
+    providersCoolingDown:skipped, articlesFetched:all.length, uniqueEvents:uniqueEvents.length
+  }) + "\n");
+  return { found:uniqueEvents.length, inserted:saved.inserted, importantNews:saved.importantNews };
 }
 
 async function collectMarkets(config, storage) {
@@ -220,4 +285,4 @@ async function collectMarkets(config, storage) {
   return { updated:saved.updated, largeMoves:saved.largeMoves };
 }
 
-module.exports = { collectNews, collectMarkets, fetchGdelt, fetchYahoo, safeDate, sourceWeight };
+module.exports = { collectNews, collectMarkets, fetchRss, parseRss, fetchYahoo, safeDate, sourceWeight, headlineRelevant };
