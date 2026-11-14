@@ -29,7 +29,7 @@ async function createStorage(config) {
     markets.createIndex({ key: 1 }, { unique: true, name: "market_key_unique" }),
     markets.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "market_ttl" }),
     markets.createIndex({ assetId: 1, capturedAt: -1 }, { name: "market_asset_date" }),
-    marketHistory.createIndex({ assetId: 1, symbol: 1, capturedAt: 1 }, { name: "market_history_lookup" }),
+    marketHistory.createIndex({ assetId: 1, symbol: 1, marketTime: 1 }, { name: "market_history_observation" }),
     marketHistory.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "market_history_ttl" }),
     analyses.createIndex({ assetId: 1, reportDay: -1 }, { name: "analysis_asset_day" }),
     analyses.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: "analysis_ttl" }),
@@ -89,17 +89,26 @@ async function createStorage(config) {
       const largeMoves = [];
       for (const item of items) {
         const key = `${item.assetId}:${item.symbol}`;
-        const doc = { ...item, key, capturedAt: now, expiresAt: new Date(now.getTime() + config.database.marketRetentionDays * 86400000) };
+        const sourceTime = item.marketTime ? new Date(item.marketTime) : now;
+        const marketTime = Number.isFinite(sourceTime.getTime()) && sourceTime.getTime() <= now.getTime() + 5 * 60000 ? sourceTime : now;
+        const doc = { ...item, key, marketTime, capturedAt: now, expiresAt: new Date(now.getTime() + config.database.marketRetentionDays * 86400000) };
         await markets.updateOne({ key }, { $set: doc }, { upsert: true });
-        await marketHistory.insertOne({
-          assetId: item.assetId, assetName: item.assetName, symbol: item.symbol, instrumentName: item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol,
+        const historyDoc = {
+          assetId: item.assetId, assetName: item.assetName, symbol: item.symbol,
+          instrumentName: item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol,
           price: item.price, changePercent: item.changePercent, momentum: item.momentum || {},
-          volatilityPct: item.volatilityPct || 0, source: item.source,
-          capturedAt: now,
+          volatilityPct: item.volatilityPct ?? null, source: item.source,
+          marketTime, capturedAt: now,
           expiresAt: new Date(now.getTime() + (config.database.marketHistoryRetentionDays || 45) * 86400000)
-        });
+        };
+        // Re-polling the same completed candle refreshes its value instead of creating fake observations.
+        await marketHistory.updateOne(
+          { assetId: item.assetId, symbol: item.symbol, marketTime },
+          { $set: historyDoc },
+          { upsert: true }
+        );
         updated++;
-        if (Math.abs(Number(item.changePercent || 0)) >= config.urgentMovePercent) largeMoves.push(doc);
+        if (Number.isFinite(Number(item.changePercent)) && Math.abs(Number(item.changePercent)) >= config.urgentMovePercent) largeMoves.push(doc);
       }
       await trim(markets, config.database.maxMarketDocuments);
       await trim(marketHistory, config.database.maxMarketHistoryDocuments || 12000);
@@ -109,7 +118,12 @@ async function createStorage(config) {
       return news.find({ assetId, expiresAt: { $gt: new Date() } }).sort({ publishedAt: -1 }).limit(limit).toArray();
     },
     async getLatestMarkets() {
-      return markets.find({ expiresAt: { $gt: new Date() } }).sort({ capturedAt: -1 }).limit(100).toArray();
+      const now = new Date();
+      const maxAgeMs = Math.max(1, Number(config.marketMaxAgeHours || 96)) * 3600000;
+      return markets.find({
+        expiresAt: { $gt: now },
+        marketTime: { $gte: new Date(now.getTime() - maxAgeMs), $lte: new Date(now.getTime() + 5 * 60000) }
+      }).sort({ capturedAt: -1 }).limit(100).toArray();
     },
     async createAlerts(analysisItems, importantNews, largeMoves) {
       const candidates = [];
@@ -178,7 +192,7 @@ async function createStorage(config) {
               method: forecast.method || item.analysisMethod || "deterministic-quantitative",
               modelScore: forecast.score || 0, evidenceCount: forecast.evidenceCount || 0,
               referenceSymbol: reference.symbol, referencePrice: reference.price,
-              referenceAt: reference.capturedAt || new Date(), dueAt, status: "pending",
+              referenceAt: reference.marketTime || reference.capturedAt || new Date(), dueAt, status: "pending",
               expiresAt: new Date(Date.now() + config.database.analysisRetentionDays * 86400000)
             } },
             { upsert: true }
@@ -191,8 +205,8 @@ async function createStorage(config) {
       let evaluated = 0;
       for (const forecast of due) {
         const observed = await marketHistory.findOne(
-          { assetId: forecast.assetId, symbol: forecast.referenceSymbol, capturedAt: { $gte: forecast.dueAt }, price: { $gt: 0 } },
-          { sort: { capturedAt: 1 } }
+          { assetId: forecast.assetId, symbol: forecast.referenceSymbol, marketTime: { $gte: forecast.dueAt }, price: { $gt: 0 } },
+          { sort: { marketTime: 1 } }
         );
         if (!observed || !Number(forecast.referencePrice)) continue;
         const changePct = ((Number(observed.price) - Number(forecast.referencePrice)) / Number(forecast.referencePrice)) * 100;
@@ -200,7 +214,7 @@ async function createStorage(config) {
         const actual = changePct > neutralBand ? "BULLISH" : changePct < -neutralBand ? "BEARISH" : "NEUTRAL";
         const correct = forecast.direction === actual;
         await forecasts.updateOne({ _id: forecast._id, status: "pending" }, {
-          $set: { status: "evaluated", actualDirection: actual, changePct: Number(changePct.toFixed(4)), correct, evaluatedAt: observed.capturedAt }
+          $set: { status: "evaluated", actualDirection: actual, changePct: Number(changePct.toFixed(4)), correct, evaluatedAt: observed.marketTime }
         });
         evaluated++;
       }
