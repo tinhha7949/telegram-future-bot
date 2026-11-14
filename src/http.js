@@ -76,4 +76,27 @@ async function requestJson(url, timeoutMs = 12000, headers = {}, options = {}) {
   throw lastError || new Error("Request failed");
 }
 
-module.exports = { requestJson, sleep, retryAfterMs, isRetryable };
+async function requestText(url, timeoutMs = 12000, headers = {}, options = {}) {
+  const retries = Math.max(0, Number(options.retries ?? 1));
+  const retryBaseMs = Math.max(250, Number(options.retryBaseMs ?? 1500));
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    try {
+      const response = await fetch(url, { signal: controller.signal, headers: { Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*", "User-Agent": "MarketIntelligenceBot/3.0 (+RSS reader)", ...headers } });
+      if (!response.ok) { const error = new Error("HTTP " + response.status + " from " + new URL(url).hostname); error.status = response.status; error.retryAfterMs = retryAfterMs(response.headers.get("retry-after")); throw error; }
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+      if (timedOut) { lastError = new Error("Request timeout after " + timeoutMs + "ms (" + new URL(url).hostname + ")"); lastError.name = "TimeoutError"; }
+      else if (error && error.name === "TypeError" && error.message === "fetch failed") { const cause = error.cause; const detail = cause && (cause.code || cause.message); lastError = new TypeError(detail ? "Network fetch failed (" + new URL(url).hostname + "): " + detail : "Network fetch failed (" + new URL(url).hostname + ")", cause ? { cause } : undefined); }
+      if (attempt >= retries || !isRetryable(lastError) || (Number(lastError.status) === 429 && options.retryOnRateLimit === false)) throw lastError;
+      const serverDelay = Math.min(15 * 60 * 1000, Number(lastError.retryAfterMs || 0));
+      await sleep(serverDelay || Math.min(15000, retryBaseMs * (2 ** attempt)));
+    } finally { clearTimeout(timer); }
+  }
+  throw lastError || new Error("Request failed");
+}
+module.exports = { requestJson, requestText, sleep, retryAfterMs, isRetryable };
