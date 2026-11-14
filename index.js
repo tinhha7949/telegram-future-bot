@@ -6,6 +6,7 @@ const { collectNews, collectMarkets } = require("./src/collectors");
 const { analyzeAll } = require("./src/analyzer");
 const { Telegram } = require("./src/telegram");
 const { startScheduler } = require("./src/scheduler");
+const { horizonVi } = require("./src/i18n");
 
 loadEnv();
 const config = loadConfig();
@@ -14,7 +15,7 @@ const LOG_KEYS = {
   forecastsEvaluated:"soDuBaoDaDanhGia", providersConfigured:"soNguonDaCauHinh",
   providersSucceeded:"soNguonHoatDong", providersFailed:"soNguonGapLoi", providersCoolingDown:"soNguonDangTamNghi",
   articlesFetched:"soBaiDaLay", uniqueEvents:"soSuKienSauKhiLocTrung", timezone:"muiGio", dailyReportTime:"gioBaoCaoHangNgay",
-  analyzer:"moHinhPhanTich", externalAI:"suDungTriTueNhanTao", signal:"tinHieuDung", key:"maCanhBao", error:"loi"
+  analyzer:"moHinhPhanTich", externalAI:"suDungTriTueNhanTao", signal:"tinHieuDung", key:"maCanhBao", error:"loi", hostname:"mayChu", status:"maTrangThai"
 };
 const log = (level, message, extra = {}) => {
   const localized = Object.fromEntries(Object.entries(extra).map(([key, value]) => [LOG_KEYS[key] || key, value]));
@@ -37,7 +38,7 @@ async function main() {
     const newsResult = { found:0, inserted:0, importantNews:[] };
     const marketResult = { updated:0, largeMoves:[] };
     try {
-      // A failed upstream provider must not prevent the other provider from updating.
+      // Lỗi ở một nguồn dữ liệu không được làm gián đoạn các nguồn còn lại.
       if (options.news) {
         try {
           Object.assign(newsResult, await collectNews(config, storage));
@@ -98,7 +99,7 @@ async function main() {
     await storage.saveDailyReport(analyses);
     const stats = await storage.getForecastStats();
     if (stats.length) {
-      const summary = stats.map(item => item.horizon + ": " + item.accuracy + "% (" + item.total + " mẫu)").join(" | ");
+      const summary = stats.map(item => horizonVi(item.horizon) + ": " + item.accuracy + "% (" + item.total + " dự báo)").join(" | ");
       await telegram.send("📊 ĐÁNH GIÁ KẾT QUẢ DỰ BÁO ĐẾN HẠN\n" + summary + "\nChỉ tính những dự báo đã đủ thời gian và có dữ liệu giá để đối chiếu.");
     }
     log("INFO", "Đã gửi báo cáo dự báo định lượng hằng ngày");
