@@ -93,12 +93,16 @@ async function fetchYahoo(symbol, config) {
   const percentAt = hours => {
     const targetTime = latest.marketTime.getTime() - hours * 3600000;
     let base = null;
+    let baseTime = null;
     for (let i = bars.length - 2; i >= 0; i--) {
       if (bars[i].marketTime.getTime() <= targetTime) {
         base = bars[i].close;
+        baseTime = bars[i].marketTime.getTime();
         break;
       }
     }
+    // Do not label a multi-day market closure as a precise 24h/3d/7d return.
+    if (baseTime === null || targetTime - baseTime > 24 * 3600000) return null;
     return Number.isFinite(base) && base > 0 ? ((latest.close - base) / base) * 100 : null;
   };
   const momentum24h = percentAt(24);
