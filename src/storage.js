@@ -157,7 +157,7 @@ async function createStorage(config) {
         const direction = item.changePercent >= 0 ? "TĂNG" : "GIẢM";
         candidates.push({
           key: prefix + new Date().toISOString(),
-          message: "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\\n" + (item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol) + " (" + item.symbol + "): " + direction + " " + Number(item.changePercent).toFixed(2) + "%\\nGiá tham chiếu: " + item.price + "\\nNguồn: " + (item.source || "Yahoo Finance")
+          message: "⚡ BIẾN ĐỘNG THỊ TRƯỜNG\n" + (item.instrumentName || (config.symbolLabels || {})[item.symbol] || item.symbol) + " (" + item.symbol + "): " + direction + " " + Number(item.changePercent).toFixed(2) + "%\nGiá tham chiếu: " + item.price + "\nNguồn: " + (item.source || "Yahoo Finance")
         });
       }
       for (const candidate of candidates) {
