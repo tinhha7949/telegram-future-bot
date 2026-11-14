@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { fetchYahoo, safeDate, sourceWeight, parseRss, headlineRelevant } = require("../src/collectors");
+const { fetchYahoo, safeDate, sourceWeight, parseRss, headlineRelevant, collectNews } = require("../src/collectors");
 const { forecastDueAt } = require("../src/storage");
 
 test("fetchYahoo uses completed hourly candles and reports their observation time", async t => {
@@ -73,4 +73,32 @@ test("RSS parser reads RSS and Atom entries including Google News publisher attr
 test("generic RSS feeds are filtered to relevant asset classes", () => {
   assert.equal(headlineRelevant("EIA reports crude oil inventory draw", "energy"), true);
   assert.equal(headlineRelevant("EIA reports crude oil inventory draw", "stocks"), false);
+});
+
+test("news collection continues with healthy feeds when an earlier provider fails", async t => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  const xml = '<rss><channel><item><title>Gold demand rises as central banks buy bullion</title><link>https://news.example/gold</link><pubDate>Sat, 14 Nov 2026 10:00:00 GMT</pubDate></item></channel></rss>';
+  const requested = [];
+  global.fetch = async url => {
+    const host = new URL(String(url)).hostname;
+    requested.push(host);
+    if (host === "bad-provider.example") return { ok:false, status:503, headers:{ get:() => null } };
+    return { ok:true, text:async () => xml };
+  };
+  let savedItems = [];
+  const config = {
+    requestTimeoutMs:1000, newsRequestTimeoutMs:1000, newsHttpRetries:0,
+    newsSourceConcurrency:1, maxNewsPerCategory:10, importantNewsScore:3,
+    httpRetryBaseMs:250, assets:[{ id:"gold", name:"VÀNG" }],
+    newsSources:[
+      { id:"test-bad-provider", url:"https://bad-provider.example/feed", assets:["gold"] },
+      { id:"test-good-provider", url:"https://good-provider.example/feed", assets:["gold"] }
+    ]
+  };
+  const storage = { saveNews:async items => { savedItems = items; return { inserted:items.length, importantNews:[] }; } };
+  const result = await collectNews(config, storage);
+  assert.deepEqual(requested, ["bad-provider.example", "good-provider.example"]);
+  assert.equal(result.found, 1);
+  assert.equal(savedItems[0].title, "Gold demand rises as central banks buy bullion");
 });
