@@ -4,15 +4,17 @@ const { requestJson } = require("./http");
 
 const cache = new Map();
 const MAX_CACHE = 3000;
+let translationCooldownUntil = 0;
 
 function isVietnamese(text) {
-  return /[À-ỹĐđ]/u.test(String(text || ""));
+  return (String(text || "").match(/[À-ỹĐđ]/gu) || []).length >= 2;
 }
 
 async function translateToVietnamese(value, config = {}) {
   const original = String(value || "").trim();
   if (!original || isVietnamese(original)) return original;
   if (cache.has(original)) return cache.get(original);
+  if (Date.now() < translationCooldownUntil) return "Không thể dịch tự động tiêu đề tin này";
 
   const url = new URL("https://translate.googleapis.com/translate_a/single");
   url.searchParams.set("client", "gtx");
@@ -33,10 +35,9 @@ async function translateToVietnamese(value, config = {}) {
     cache.set(original, translated);
     return translated;
   } catch (error) {
-    process.stderr.write("[CẢNH BÁO] Không dịch được tiêu đề tin: " + error.message + "\n");
-    const fallback = "Không thể dịch tự động tiêu đề tin này";
-    cache.set(original, fallback);
-    return fallback;
+    translationCooldownUntil = Date.now() + (Number(error.status) === 429 ? 15 * 60 * 1000 : 60 * 1000);
+    process.stderr.write("[CẢNH BÁO] Dịch vụ dịch tiêu đề tạm thời không khả dụng; bot vẫn tiếp tục thu thập tin và sẽ thử dịch lại sau.\n");
+    return "Không thể dịch tự động tiêu đề tin này";
   }
 }
 
