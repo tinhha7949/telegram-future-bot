@@ -1,5 +1,7 @@
 "use strict";
 
+const { sleep } = require("./http");
+
 class Telegram {
   constructor(config) {
     this.config = config;
@@ -8,20 +10,46 @@ class Telegram {
   }
 
   async send(text) {
-    const chunks = String(text).match(/[\s\S]{1,3900}/g) || [];
+    const chunks = String(text).match(/[\\s\\S]{1,3900}/g) || [];
     for (const chunk of chunks) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
-      try {
-        const response = await fetch("https://api.telegram.org/bot" + this.token + "/sendMessage", {
-          method:"POST", signal:controller.signal,
-          headers:{ "Content-Type":"application/json" },
-          body:JSON.stringify({ chat_id:this.chatId, text:chunk, disable_web_page_preview:true })
-        });
-        if (!response.ok) throw new Error("Telegram HTTP " + response.status);
-        const result = await response.json();
-        if (!result.ok) throw new Error(result.description || "Telegram send failed");
-      } finally { clearTimeout(timer); }
+      let delivered = false;
+      let lastError = null;
+      for (let attempt = 0; attempt <= 2; attempt++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+        try {
+          const response = await fetch("https://api.telegram.org/bot" + this.token + "/sendMessage", {
+            method:"POST", signal:controller.signal,
+            headers:{ "Content-Type":"application/json" },
+            body:JSON.stringify({ chat_id:this.chatId, text:chunk, disable_web_page_preview:true })
+          });
+          const raw = await response.text();
+          let result;
+          try { result = raw ? JSON.parse(raw) : {}; }
+          catch { throw new Error("Telegram returned invalid JSON (HTTP " + response.status + ")"); }
+
+          if (response.ok && result.ok) {
+            delivered = true;
+            lastError = null;
+            break;
+          }
+          const error = new Error(result.description || "Telegram HTTP " + response.status);
+          error.status = response.status;
+          error.retryAfterMs = Number(result.parameters && result.parameters.retry_after || 0) * 1000;
+          throw error;
+        } catch (error) {
+          lastError = error;
+          const retryable = Number(error.status) === 429 || Number(error.status) >= 500 ||
+            error.name === "AbortError" || error.name === "TimeoutError" || error instanceof TypeError;
+          if (!retryable || attempt >= 2) throw error;
+        } finally {
+          clearTimeout(timer);
+        }
+        const serverDelay = Math.min(60000, Number(lastError.retryAfterMs || 0));
+        const backoff = Math.min(10000, 500 * (2 ** attempt));
+        await sleep(serverDelay || backoff);
+      }
+      if (!delivered) throw lastError || new Error("Telegram message was not delivered");
     }
   }
 
