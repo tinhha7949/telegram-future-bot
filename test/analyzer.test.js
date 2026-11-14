@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { marketMomentumScore, buildAnalysis } = require("../src/analyzer");
+const { marketMomentumScore, buildAnalysis, analyzeAll } = require("../src/analyzer");
 
 test("missing momentum stays unavailable instead of becoming a false zero", () => {
   assert.equal(marketMomentumScore({
@@ -40,4 +40,27 @@ test("configured analysis weights control the relative contribution of news and 
 
   assert.equal(newsWeighted.direction, "BULLISH");
   assert.equal(momentumWeighted.direction, "BEARISH");
+});
+
+test("analyzeAll excludes stale market snapshots", async () => {
+  const now = Date.now();
+  const config = {
+    marketMaxAgeHours:96,
+    assets:[{ id:"energy", name:"DẦU" }],
+    analysis:{ directionThreshold:0.55 }
+  };
+  const storage = {
+    getLatestMarkets:async () => [{
+      assetId:"energy",
+      symbol:"CL=F",
+      marketTime:new Date(now - 200 * 3600000),
+      momentum:{ "24h":4 },
+      changePercent:4,
+      volatilityPct:1
+    }],
+    getRecentNews:async () => []
+  };
+  const result = await analyzeAll(config, storage);
+  assert.equal(result[0].direction, "NEUTRAL");
+  assert.equal(result[0].evidenceCount, 0);
 });
