@@ -186,7 +186,7 @@
     "SI=F": "Bạc COMEX (hợp đồng tương lai)",
     "PL=F": "Bạch kim NYMEX (hợp đồng tương lai)"
   },
-  "newsSourceConcurrency": 3,
+  "newsSourceConcurrency": 4,
   "newsHttpRetries": 1,
   "newsSources": [
     {
@@ -324,5 +324,6 @@
         "metals"
       ]
     }
-  ]
+  ],
+  "newsRequestTimeoutMs": 10000
 }
