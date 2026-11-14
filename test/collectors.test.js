@@ -82,6 +82,9 @@ test("news collection continues with healthy feeds when an earlier provider fail
   const requested = [];
   global.fetch = async url => {
     const host = new URL(String(url)).hostname;
+    if (host === "translate.googleapis.com") {
+      return { ok:true, json:async () => [[["Nhu cầu vàng tăng khi các ngân hàng trung ương mua vàng", "Gold demand rises as central banks buy bullion"]]] };
+    }
     requested.push(host);
     if (host === "bad-provider.example") return { ok:false, status:503, headers:{ get:() => null } };
     return { ok:true, text:async () => xml };
@@ -100,5 +103,6 @@ test("news collection continues with healthy feeds when an earlier provider fail
   const result = await collectNews(config, storage);
   assert.deepEqual(requested, ["bad-provider.example", "good-provider.example"]);
   assert.equal(result.found, 1);
-  assert.equal(savedItems[0].title, "Gold demand rises as central banks buy bullion");
+  assert.equal(savedItems[0].title, "Nhu cầu vàng tăng khi các ngân hàng trung ương mua vàng");
+  assert.equal(savedItems[0].originalTitle, "Gold demand rises as central banks buy bullion");
 });
