@@ -77,10 +77,14 @@ async function createStorage(config) {
         const days = importance >= 6 ? config.database.criticalNewsRetentionDays :
           importance >= config.importantNewsScore ? config.database.importantNewsRetentionDays :
           config.database.newsRetentionDays;
+        const originalTitle = String(item.originalTitle || item.title || "").trim();
+        const candidateTitle = String(item.title || "").trim();
+        const safeTitle = !candidateTitle || candidateTitle === "Không thể dịch tự động tiêu đề tin này"
+          ? originalTitle : candidateTitle;
         const doc = {
           key, assetId: item.assetId, assetName: item.assetName,
-          title: String(item.title || "").slice(0, 280),
-          originalTitle: String(item.originalTitle || item.title || "").slice(0, 280),
+          title: String(safeTitle || originalTitle).slice(0, 280),
+          originalTitle: originalTitle.slice(0, 280),
           source: String(item.source || "Unknown").slice(0, 80),
           url: String(item.url || "").slice(0, 500),
           publishedAt: item.publishedAt || now, fetchedAt: now, importance,
