@@ -244,7 +244,15 @@ async function collectNews(config, storage) {
   }
 
   const uniqueEvents = dedupeNewsEvents(all);
-  await translateBatch(uniqueEvents, config);
+  // Chỉ dịch nhóm tin đủ quan trọng để có thể phát cảnh báo Telegram.
+  // Giới hạn số tiêu đề mỗi chu kỳ để không bắn hàng loạt request vào dịch vụ miễn phí.
+  const translationLimit = Math.max(1, Number(config.translationMaxPerCycle || 10));
+  const translationCandidates = uniqueEvents
+    .filter(item => Number(item.importance || 0) >= Number(config.importantNewsScore || 3))
+    .sort((a, b) => Number(b.importance || 0) - Number(a.importance || 0) ||
+      new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime())
+    .slice(0, translationLimit);
+  await translateBatch(translationCandidates, { ...config, translationConcurrency:1 });
   const saved = await storage.saveNews(uniqueEvents);
   process.stdout.write("[THÔNG TIN] Hoàn tất thu thập tin tức " + JSON.stringify({
     "sốNguồnĐãCấuHình":sources.length, "sốNguồnHoạtĐộng":succeeded, "sốNguồnGặpLỗi":failed,
