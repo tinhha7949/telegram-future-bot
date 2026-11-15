@@ -105,11 +105,11 @@ async function translateToVietnamese(value, config = {}) {
   // Telegram vẫn có nội dung hiển thị và lần quét/gửi sau có thể thử dịch lại.
   // Một chu kỳ có thể chứa hàng chục tiêu đề. Không in cùng một cảnh báo cho từng tiêu đề.
   // Chỉ ghi log khi trạng thái thay đổi hoặc đã qua 10 phút.
-  const signature = failures.join(" | ");
+  const signature = failures.map(value => value.replace(/ cooldown còn \d+ giây/g, " đang cooldown")).join(" | ");
   const now = Date.now();
   if (signature !== lastFailureSignature || now - lastFailureLogAt >= 10 * 60 * 1000) {
     process.stderr.write("[CẢNH BÁO] Dịch tiêu đề tạm thời không khả dụng; giữ nguyên tiêu đề gốc. " +
-      signature + "\n");
+      failures.join(" | ") + "\n");
     lastFailureSignature = signature;
     lastFailureLogAt = now;
   }
