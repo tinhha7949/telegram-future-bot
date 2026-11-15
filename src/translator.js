@@ -5,6 +5,8 @@ const { requestJson } = require("./http");
 const cache = new Map();
 const MAX_CACHE = 3000;
 const providerCooldowns = new Map();
+let lastFailureLogAt = 0;
+let lastFailureSignature = "";
 const FAILURE_TEXT = "Không thể dịch tự động tiêu đề tin này";
 
 function isVietnamese(text) {
@@ -80,8 +82,9 @@ async function translateToVietnamese(value, config = {}) {
 
   const failures = [];
   for (const provider of providers) {
-    if (Date.now() < (providerCooldowns.get(provider.host) || 0)) {
-      failures.push(provider.name + ": đang trong thời gian giới hạn request");
+    const cooldownUntil = providerCooldowns.get(provider.host) || 0;
+    if (Date.now() < cooldownUntil) {
+      failures.push(provider.name + ": đang cooldown còn " + Math.ceil((cooldownUntil - Date.now()) / 1000) + " giây");
       continue;
     }
     try {
@@ -100,13 +103,21 @@ async function translateToVietnamese(value, config = {}) {
 
   // Không bao giờ thay tiêu đề bằng thông báo lỗi. Giữ nguyên dữ liệu gốc để
   // Telegram vẫn có nội dung hiển thị và lần quét/gửi sau có thể thử dịch lại.
-  process.stderr.write("[CẢNH BÁO] Dịch tiêu đề thất bại; giữ nguyên tiêu đề gốc. " +
-    failures.join(" | ") + "\n");
+  // Một chu kỳ có thể chứa hàng chục tiêu đề. Không in cùng một cảnh báo cho từng tiêu đề.
+  // Chỉ ghi log khi trạng thái thay đổi hoặc đã qua 10 phút.
+  const signature = failures.join(" | ");
+  const now = Date.now();
+  if (signature !== lastFailureSignature || now - lastFailureLogAt >= 10 * 60 * 1000) {
+    process.stderr.write("[CẢNH BÁO] Dịch tiêu đề tạm thời không khả dụng; giữ nguyên tiêu đề gốc. " +
+      signature + "\n");
+    lastFailureSignature = signature;
+    lastFailureLogAt = now;
+  }
   return original;
 }
 
 async function translateBatch(items, config = {}) {
-  const concurrency = Math.max(1, Math.min(5, Number(config.translationConcurrency || 3)));
+  const concurrency = Math.max(1, Math.min(2, Number(config.translationConcurrency || 1)));
   for (let i = 0; i < items.length; i += concurrency) {
     await Promise.all(items.slice(i, i + concurrency).map(async item => {
       const existingOriginal = String(item.originalTitle || "").trim();
