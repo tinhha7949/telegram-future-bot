@@ -186,3 +186,15 @@ test("queued news alerts remove source and link while preserving the analysis", 
   assert.ok(output.includes("Mức độ quan trọng: 10/10"));
   assert.doesNotMatch(output, /EnergyNow|Nguồn:|http/);
 });
+
+test("legacy failed-translation placeholders are replaced by the preserved original headline", () => {
+  const { formatNewsAlert } = require("../src/i18n");
+  const alert = formatNewsAlert({
+    assetName:"USD / DXY",
+    title:"Không thể dịch tự động tiêu đề tin này",
+    originalTitle:"US dollar strengthens against major currencies",
+    eventType:"usd_up", impactScore:0, importance:8
+  }, { direction:"BULLISH", confidence:76 });
+  assert.match(alert, /US dollar strengthens against major currencies/);
+  assert.doesNotMatch(alert, /Không thể dịch tự động tiêu đề tin này/);
+});
