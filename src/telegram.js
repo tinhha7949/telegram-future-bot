@@ -2,7 +2,7 @@
 
 const { sleep } = require("./http");
 const { directionVi, eventVi, horizonVi } = require("./i18n");
-const { translateToVietnamese } = require("./translator");
+const { translateToVietnamese, isTranslationFailure } = require("./translator");
 
 class Telegram {
   constructor(config) {
@@ -130,7 +130,10 @@ class Telegram {
         lines.push("Tin tức mới:");
         for (const news of headlines) {
           const impact = Number(news.impactScore || 0);
-          const vietnameseTitle = await translateToVietnamese(news.title, this.config);
+          const storedTitle = String(news.title || "").trim();
+          const originalTitle = String(news.originalTitle || "").trim();
+          const sourceTitle = isTranslationFailure(storedTitle) ? originalTitle : storedTitle;
+          const vietnameseTitle = await translateToVietnamese(sourceTitle || originalTitle, this.config);
           lines.push("- [" + news.importance + "/10 | " + (impact > 0 ? "+" : "") + impact.toFixed(1) + "] " + vietnameseTitle);
 
         }
