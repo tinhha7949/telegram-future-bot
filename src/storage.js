@@ -3,6 +3,7 @@
 const { MongoClient } = require("mongodb");
 const crypto = require("node:crypto");
 const { formatNewsAlert, formatMarketAlert } = require("./i18n");
+const { isTranslationFailure } = require("./translator");
 
 function hash(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex");
@@ -181,7 +182,27 @@ async function createStorage(config) {
           { upsert: true }
         );
       }
-      return alerts.find({ sentAt: { $exists: false }, expiresAt: { $gt: new Date() } }).sort({ createdAt: 1 }).limit(config.maxAlertsPerRun).toArray();
+      const pending = await alerts.find({ sentAt: { $exists: false }, expiresAt: { $gt: new Date() } })
+        .sort({ createdAt: 1 }).limit(config.maxAlertsPerRun).toArray();
+
+      // Khôi phục các cảnh báo cũ từng lưu nhầm thông báo lỗi dịch làm tiêu đề.
+      for (const alert of pending) {
+        if (!String(alert.key || "").startsWith("news:")) continue;
+        const lines = String(alert.message || "").split("\n");
+        if (!isTranslationFailure(lines[1])) continue;
+        const item = await news.findOne({ key: String(alert.key).slice(5) });
+        const originalTitle = String(item && item.originalTitle || "").trim();
+        if (!item || !originalTitle) continue;
+        const latest = analysisItems.find(value => value.assetId === item.assetId);
+        const forecast = latest && (latest.forecasts || []).find(value => value.horizon === "24h");
+        const repairedMessage = formatNewsAlert({ ...item, title:originalTitle }, forecast);
+        await alerts.updateOne(
+          { key:alert.key, sentAt:{ $exists:false } },
+          { $set:{ message:repairedMessage } }
+        );
+        alert.message = repairedMessage;
+      }
+      return pending;
     },
     async markAlertSent(key) { await alerts.updateOne({ key }, { $set: { sentAt: new Date() } }); },
     async saveLiveAnalyses(items) {
