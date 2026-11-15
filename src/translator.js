@@ -10,7 +10,7 @@ const FAILURE_TEXT = "Không thể dịch tự động tiêu đề tin này";
 function isVietnamese(text) {
   // Chỉ nhận diện các ký tự đặc trưng của tiếng Việt, tránh coi mọi chữ có dấu
   // trong tiếng Pháp/Đức/Tây Ban Nha là tiêu đề tiếng Việt.
-  return /[ăâđêôơưĂÂĐÊÔƠƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/u.test(String(text || ""));
+  return /[ăâđêôơưĂÂĐÊÔƠƯảãạấầẩẫậắằẳẵặẻẽẹểễệỉĩịỏõọốồổỗộớờởỡợủũụứừửữựỷỹỵẢÃẠẤẦẨẪẬẮẰẲẴẶẺẼẸỂỄỆỈĨỊỎÕỌỐỒỔỖỘỚỜỞỠỢỦŨỤỨỪỮỰỶỸỴ]/u.test(String(text || ""));
 }
 
 function cleanTranslation(value) {
@@ -31,6 +31,8 @@ function setProviderCooldown(provider, error) {
   if (Number(error && error.status) === 429) {
     const retryAfter = Math.max(0, Number(error.retryAfterMs || 0));
     providerCooldowns.set(provider, Date.now() + Math.min(Math.max(retryAfter, 5 * 60 * 1000), 60 * 60 * 1000));
+  } else if (Number(error && error.status) >= 500 || error && (error.name === "TimeoutError" || error.name === "AbortError" || error instanceof TypeError)) {
+    providerCooldowns.set(provider, Date.now() + 15000);
   }
 }
 
