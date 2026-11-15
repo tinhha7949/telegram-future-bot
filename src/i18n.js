@@ -60,7 +60,10 @@ function formatNewsAlert(item, forecast) {
   const impact = Number(item.impactScore || 0);
   const impactLabel = impact > 0 ? "TÍCH CỰC" : impact < 0 ? "TIÊU CỰC" : "CHƯA RÕ";
   const outlook = forecast ? directionVi(forecast.direction) + " | điểm chất lượng " + forecast.confidence + "/82" : "Chưa đủ dữ liệu";
-  return "🚨 TIN TỨC QUAN TRỌNG | " + item.assetName + "\n" + item.title +
+  const title = String(item.title || "").trim();
+  const originalTitle = String(item.originalTitle || "").trim();
+  const safeTitle = !title || title === "Không thể dịch tự động tiêu đề tin này" ? originalTitle || title : title;
+  return "🚨 TIN TỨC QUAN TRỌNG | " + item.assetName + "\n" + safeTitle +
     "\nSự kiện: " + eventVi(item.eventType) +
     "\nTác động theo mô hình: " + impactLabel + " (" + impact.toFixed(1) + ")" +
     "\nDự báo 24 giờ sau khi cập nhật: " + outlook +
