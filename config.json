@@ -327,5 +327,6 @@
   ],
   "newsRequestTimeoutMs": 10000,
   "translationTimeoutMs": 6000,
-  "translationConcurrency": 3
+  "translationConcurrency": 1,
+  "translationMaxPerCycle": 10
 }
