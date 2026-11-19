@@ -143,6 +143,13 @@ class TradingEngine {
       } catch (e) {
         this.log("[manage-loop-error]", e.message);
       }
+      // Reconcile Binance positions periodically, not only at startup. This catches
+      // late fills and positions left untracked after an ambiguous network response.
+      try {
+        await this.reconcile();
+      } catch (e) {
+        this.log("[reconcile-loop-error]", e.message);
+      }
     }
 
     try {
