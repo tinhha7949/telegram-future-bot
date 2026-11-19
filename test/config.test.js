@@ -15,3 +15,24 @@ test("zero cooldown is not a config field and does not affect validation", () =>
   c.risk.walletPercentPerTrade = 10;
   assert.equal(validateConfig(c), true);
 });
+
+test("scanner batch size and delay are editable", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  c.scanner.batchSize = 5;
+  c.scanner.batchDelayMs = 2500;
+  assert.equal(validateConfig(c), true);
+});
+test("scanner batch settings reject unsafe ranges", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  c.scanner.batchSize = 0;
+  assert.throws(() => validateConfig(c), /scanner.batchSize/);
+  c.scanner.batchSize = 10;
+  c.scanner.batchDelayMs = 60001;
+  assert.throws(() => validateConfig(c), /scanner.batchDelayMs/);
+});
+test("maximum open positions defaults to 20 and remains editable", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  assert.equal(c.risk.maxActivePositions, 20);
+  c.risk.maxActivePositions = 12;
+  assert.equal(validateConfig(c), true);
+});
