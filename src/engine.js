@@ -197,7 +197,10 @@ class TradingEngine {
         } else {
           this.lastCandle.set(symbol, latest.closeTime);
         }
-        } catch (e) { this.log("[signal-error]", symbol, "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "stack", e.stack || "-"); }
+        } catch (e) {
+          if (e.retrySignalCandle) this.lastCandle.delete(symbol);
+          this.log("[signal-error]", symbol, "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "stack", e.stack || "-");
+        }
       }
       if (this.running && offset + batchSize < this.universe.length && batchDelayMs > 0) {
         await sleep(batchDelayMs);
@@ -209,7 +212,10 @@ class TradingEngine {
       this.x.positions(),
       this.db.getOpenPositions(),
       this.db.getPosition(symbol)
-    ]);
+    ]).catch(error => {
+      if (!error.status || error.status === 418 || error.status === 429 || error.status >= 500) error.retrySignalCandle = true;
+      throw error;
+    });
     if (existing || exchangePositions.some(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0)) return false;
 
     // Count the union of exchange and database positions so stale/missing DB records
@@ -223,7 +229,10 @@ class TradingEngine {
       return false;
     }
 
-    const account = await this.x.account();
+    const account = await this.x.account().catch(error => {
+      if (!error.status || error.status === 418 || error.status === 429 || error.status >= 500) error.retrySignalCandle = true;
+      throw error;
+    });
     const wallet = num(account.totalWalletBalance);
     if (!(wallet > 0)) throw new Error("Invalid totalWalletBalance");
     const margin = calculateMargin(wallet, this.c.risk);
@@ -244,8 +253,14 @@ class TradingEngine {
       throw new Error("TP1 partial quantity is below Binance minNotional; entry skipped before MARKET order");
     }
 
-    await this.x.setMarginType(symbol, this.c.binance.marginType);
-    await this.x.setLeverage(symbol, leverage);
+    try {
+      await this.x.setMarginType(symbol, this.c.binance.marginType);
+      await this.x.setLeverage(symbol, leverage);
+    } catch (error) {
+      // These requests happen before MARKET submission, so transient failures are safe to retry.
+      if (!error.status || error.status === 418 || error.status === 429 || error.status >= 500) error.retrySignalCandle = true;
+      throw error;
+    }
     const side = signal.side === "LONG" ? "BUY" : "SELL";
     const exitSide = side === "BUY" ? "SELL" : "BUY";
     const entryClientOrderId = "E" + require("node:crypto").randomBytes(11).toString("hex");
