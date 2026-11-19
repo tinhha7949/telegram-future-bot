@@ -18,8 +18,8 @@ function evaluateClosedCandle({ trendCandles, entryCandles, setup, config, now =
     if (age > s.confirmationCandles) return { action: "CANCEL", reason: "SETUP_EXPIRED" };
     if (trend !== setup.side) return { action: "CANCEL", reason: "TREND_CHANGED" };
     const momentumTurn = setup.side === "SHORT"
-      ? previousRsi != null && previousRsi >= s.rsiShortTrigger && currentRsi < s.rsiShortTrigger
-      : previousRsi != null && previousRsi <= s.rsiLongTrigger && currentRsi > s.rsiLongTrigger;
+      ? previousRsi != null && previousRsi >= s.rsiShortMin && currentRsi < s.rsiShortMin
+      : previousRsi != null && previousRsi <= s.rsiLongMax && currentRsi > s.rsiLongMax;
     const momentumTurnSeen = Boolean(setup.momentumTurnSeen || momentumTurn);
     const momentumOk = !s.requireRsiMomentumTurn || momentumTurnSeen;
     const broken = setup.side === "SHORT" ? candle.close < setup.triggerLow : candle.close > setup.triggerHigh;
@@ -42,10 +42,10 @@ function evaluateClosedCandle({ trendCandles, entryCandles, setup, config, now =
     return { action: "KEEP", setup: { ...setup, momentumTurnSeen, lastCheckedCloseTime: candle.closeTime, confirmationCount: age }, rsi: currentRsi };
   }
   if (!trend) return { action: "WAIT", reason: "NO_TREND" };
-  if (trend === "SHORT" && currentRsi >= s.rsiShortTrigger) {
+  if (trend === "SHORT" && currentRsi >= s.rsiShortMin && currentRsi <= s.rsiShortMax) {
     return { action: "ARM", setup: { side: "SHORT", status: "ARMED", triggerLow: candle.low, triggerHigh: candle.high, triggerCloseTime: candle.closeTime, createdAt: now, confirmationCount: 0 }, rsi: currentRsi };
   }
-  if (trend === "LONG" && currentRsi <= s.rsiLongTrigger) {
+  if (trend === "LONG" && currentRsi >= s.rsiLongMin && currentRsi <= s.rsiLongMax) {
     return { action: "ARM", setup: { side: "LONG", status: "ARMED", triggerLow: candle.low, triggerHigh: candle.high, triggerCloseTime: candle.closeTime, createdAt: now, confirmationCount: 0 }, rsi: currentRsi };
   }
   return { action: "WAIT", reason: "NO_TRIGGER", rsi: currentRsi, previousRsi };
