@@ -45,3 +45,30 @@ test("entry cap counts unique positions across Binance and MongoDB", async () =>
   await engine.openTrade("NEWUSDT", { side: "LONG", entry: 100, stop: 99 });
   assert.equal(accountRequested, false);
 });
+
+test("signal scanning processes coins sequentially in configurable batches", async () => {
+  const symbols = Array.from({ length: 12 }, (_, i) => "TEST" + i + "USDT");
+  const calls = [];
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    scanner: { batchSize: 10, batchDelayMs: 0 },
+    strategy: { entryTimeframe: "5m", trendTimeframe: "15m", historyCandles: 160 }
+  }, { positions: async () => [] }, { getPosition: async () => null }, {});
+  engine.running = true;
+  engine.universe = symbols;
+  for (const symbol of symbols) engine.lastCandle.set(symbol, 123);
+  engine.candles = async (symbol, interval) => {
+    calls.push(symbol + ":" + interval);
+    return [{ closeTime: 123 }];
+  };
+
+  await engine.checkSignals();
+
+  assert.equal(calls.length, 24);
+  for (let i = 0; i < symbols.length; i++) {
+    assert.deepEqual(calls.slice(i * 2, i * 2 + 2), [
+      symbols[i] + ":15m",
+      symbols[i] + ":5m"
+    ]);
+  }
+});
