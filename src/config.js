@@ -1,30 +1,39 @@
 "use strict";
-
 const fs = require("node:fs");
 const path = require("node:path");
+const YAML = require("yaml");
 
-function loadEnv(file = path.resolve(process.cwd(), ".env")) {
-  if (!fs.existsSync(file)) return;
-  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const index = trimmed.indexOf("=");
-    if (index < 1) continue;
-    const key = trimmed.slice(0, index).trim();
-    let value = trimmed.slice(index + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    if (key && process.env[key] === undefined) process.env[key] = value;
+function loadConfig(file = path.join(process.cwd(), "config.yml")) {
+  const parsed = YAML.parse(fs.readFileSync(file, "utf8"));
+  validateConfig(parsed);
+  return parsed;
+}
+function validateConfig(c) {
+  const required = [
+    ["scanner.maxCoins", c.scanner?.maxCoins, 1, 200],
+    ["strategy.emaPeriod", c.strategy?.emaPeriod, 2, 500],
+    ["strategy.rsiPeriod", c.strategy?.rsiPeriod, 2, 100],
+    ["strategy.confirmationCandles", c.strategy?.confirmationCandles, 1, 20],
+    ["risk.walletPercentPerTrade", c.risk?.walletPercentPerTrade, 0.01, 100],
+    ["risk.maxActivePositions", c.risk?.maxActivePositions, 1, 200],
+    ["binance.leverage", c.binance?.leverage, 1, 125],
+    ["strategy.tp1ClosePct", c.strategy?.tp1ClosePct, 1, 99]
+  ];
+  for (const [name, value, min, max] of required) {
+    if (!Number.isFinite(Number(value)) || Number(value) < min || Number(value) > max) {
+      throw new Error("Invalid config value " + name + ": expected " + min + ".." + max);
+    }
   }
+  for (const key of ["trendTimeframe", "entryTimeframe"]) {
+    if (typeof c.strategy[key] !== "string" || !/^\d+[mhdw]$/.test(c.strategy[key])) {
+      throw new Error("Invalid timeframe: strategy." + key);
+    }
+  }
+  if (c.strategy.rsiLongTrigger >= c.strategy.rsiShortTrigger) throw new Error("RSI long trigger must be below short trigger");
+  if (c.strategy.rewardRiskTp1 <= 0 || c.strategy.rewardRiskTp2 <= c.strategy.rewardRiskTp1) {
+    throw new Error("TP2 RR must be greater than TP1 RR and both must be positive");
+  }
+  if (c.strategy.slBufferPct < 0 || c.strategy.breakevenOffsetPct < 0) throw new Error("SL/BE percentages cannot be negative");
+  return true;
 }
-
-function loadConfig() {
-  const configPath = path.resolve(process.env.CONFIG_PATH || "config.json");
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  config.database.name = process.env.MONGO_DB_NAME || config.database.name;
-  config.maxNewsPerCategory = Math.max(1, Number(config.maxNewsPerCategory) || 25);
-  config.newsPollMinutes = Math.max(2, Number(config.newsPollMinutes) || 10);
-  config.marketPollMinutes = Math.max(5, Number(config.marketPollMinutes) || 15);
-  return config;
-}
-
-module.exports = { loadConfig, loadEnv };
+module.exports = { loadConfig, validateConfig };

@@ -1,19 +1,19 @@
 {
-  "name": "market-intelligence-bot",
-  "version": "2.0.0",
+  "name": "binance-futures-rsi-ema-bot",
+  "version": "1.0.0",
   "private": true,
-  "description": "Bot Telegram thu thập tin tức đa nguồn, phân tích thị trường và lập dự báo định lượng",
+  "description": "Binance USD-M Futures bot using 15m EMA50 trend and 5m RSI candle confirmation",
   "main": "index.js",
-  "type": "commonjs",
+  "engines": { "node": ">=22.0.0" },
   "scripts": {
     "start": "node index.js",
     "test": "node --test",
-    "check": "node --check index.js && node --check future.js && node --check src/config.js && node --check src/i18n.js && node --check src/translator.js && node --check src/http.js && node --check src/storage.js && node --check src/collectors.js && node --check src/analyzer.js && node --check src/telegram.js && node --check src/scheduler.js && node --check test/http.test.js && node --check test/config.test.js && node --check test/analyzer.test.js && node --check test/collectors.test.js && node --check test/telegram.test.js && node --check test/scheduler.test.js && node --check test/i18n.test.js && node --check test/translator.test.js"
+    "check": "node --check index.js && node --check src/engine.js && node --check src/exchange.js && node --check src/strategy.js && node --check src/store.js && node --check src/indicators.js && node --check src/telegram.js && node --check src/config.js && node --check src/risk.js && npm test"
   },
   "dependencies": {
-    "mongodb": "^6.3.0"
-  },
-  "engines": {
-    "node": ">=22"
+    "dotenv": "^16.4.7",
+    "mongodb": "^6.12.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "yaml": "^2.7.0"
   }
 }

@@ -1,0 +1,67 @@
+app:
+  logLevel: info
+  loopIntervalMs: 12000
+  startupReconcile: true
+
+binance:
+  baseUrl: https://fapi.binance.com
+  testnetBaseUrl: https://testnet.binancefuture.com
+  recvWindow: 10000
+  requestTimeoutMs: 12000
+  maxRetries: 3
+  leverage: 20
+  marginType: ISOLATED
+  workingType: MARK_PRICE
+
+scanner:
+  intervalMinutes: 15
+  maxCoins: 50
+  quoteAsset: USDT
+  minQuoteVolume: 5000000
+  minAbsPriceChangePct: 1.0
+  excludeSymbols: [USDCUSDT, FDUSDUSDT, BUSDUSDT, TUSDUSDT, USDPUSDT, DAIUSDT]
+
+strategy:
+  trendTimeframe: 15m
+  entryTimeframe: 5m
+  emaPeriod: 50
+  rsiPeriod: 14
+  rsiShortTrigger: 70
+  rsiLongTrigger: 30
+  confirmationCandles: 3
+  requireRsiMomentumTurn: false
+  historyCandles: 160
+  swingLeft: 2
+  swingRight: 2
+  swingLookback: 50
+  atrPeriod: 14
+  fallbackAtrMultiple: 1.5
+  slBufferPct: 0.12
+  minStopDistancePct: 0.10
+  maxStopDistancePct: 5.0
+  rewardRiskTp1: 1.2
+  rewardRiskTp2: 1.5
+  tp1ClosePct: 60
+  breakevenOffsetPct: 0.08
+
+risk:
+  walletPercentPerTrade: 10
+  maxActivePositions: 20
+  maxMarginPerTradeUsdt: 0
+  minMarginPerTradeUsdt: 0
+
+execution:
+  orderPollIntervalMs: 15000
+  priceProtect: true
+
+storage:
+  databaseName: trades
+  collections:
+    positions: futures_positions
+    setups: futures_setups
+    events: futures_events
+    scanner: futures_scanner
+  eventRetentionDays: 90
+
+telegram:
+  sendStartupMessage: true
