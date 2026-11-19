@@ -332,12 +332,11 @@ class TradingEngine {
               ? entryPrice - atrValue * this.c.strategy.fallbackAtrMultiple
               : entryPrice + atrValue * this.c.strategy.fallbackAtrMultiple;
             const triggerPrice = this.x.price(p.symbol, fallback, p.side === "LONG" ? "DOWN" : "UP");
-            const replacement = await this.x.newAlgoOrder({
-              symbol: p.symbol, side: p.side === "LONG" ? "SELL" : "BUY", type: "STOP_MARKET",
-              triggerPrice, closePosition: "true", workingType: this.c.binance.workingType, priceProtect: "false"
-            });
-            await this.db.updatePosition(p.symbol, { slOrderId: replacement.algoId, stop: triggerPrice });
-            this.log("[unmanaged-sl-recovered]", p.symbol, triggerPrice);
+            const recovered = await this.replaceStopLoss(p.symbol, p.side, triggerPrice, p.stop, p.slOrderId);
+            const replacement = recovered.order;
+            const confirmedStop = num(replacement.triggerPrice) || (recovered.restored ? num(p.stop) : triggerPrice);
+            await this.db.updatePosition(p.symbol, { slOrderId: replacement.algoId, stop: confirmedStop });
+            this.log(recovered.restored ? "[unmanaged-sl-old-restored]" : "[unmanaged-sl-recovered]", p.symbol, confirmedStop);
           } else {
             this.log("[unmanaged-unprotected]", p.symbol, "no ATR available; emergency close");
             await this.x.newOrder({
