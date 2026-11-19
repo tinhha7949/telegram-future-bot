@@ -13,6 +13,7 @@ function validateConfig(c) {
     ["scanner.maxCoins", c.scanner?.maxCoins, 1, 200],
     ["scanner.batchSize", c.scanner?.batchSize, 1, 50],
     ["scanner.batchDelayMs", c.scanner?.batchDelayMs, 0, 60000],
+    ["scanner.errorRetrySeconds", c.scanner?.errorRetrySeconds, 10, 600],
     ["strategy.emaPeriod", c.strategy?.emaPeriod, 2, 500],
     ["strategy.rsiPeriod", c.strategy?.rsiPeriod, 2, 100],
     ["strategy.signalCheckIntervalSeconds", c.strategy?.signalCheckIntervalSeconds, 10, 300],
