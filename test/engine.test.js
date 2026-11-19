@@ -156,3 +156,67 @@ test("confirmed ENTRY signals are passed to openTrade and their setup is cleared
   assert.equal(opened?.signal.side, "SHORT");
   assert.equal(deleted, "TESTUSDT");
 });
+
+test("a transient setup-store read error does not mark the current candle as processed", async () => {
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    scanner: { batchSize: 10, batchDelayMs: 0 },
+    strategy: { signalCheckIntervalSeconds: 60, trendTimeframe: "15m", entryTimeframe: "5m", historyCandles: 160 }
+  }, {
+    positions: async () => []
+  }, {
+    getPosition: async () => null,
+    getSetup: async () => { throw new Error("temporary MongoDB read failure"); }
+  }, {});
+  engine.running = true;
+  engine.universe = ["TESTUSDT"];
+  engine.candles = async () => [{ closeTime: 123, open: 1, high: 2, low: 0.5, close: 1.5 }];
+
+  await engine.checkSignals();
+
+  assert.equal(engine.lastCandle.has("TESTUSDT"), false);
+});
+
+test("TP1 minimum-notional failure is detected before submitting a live MARKET entry", async () => {
+  let marketOrderSubmitted = false;
+  const filters = {
+    marketStepSize: 0.001, marketMinQty: 0.001,
+    lotStepSize: 0.01, lotMinQty: 0.01,
+    tickSize: 0.1, minNotional: 5
+  };
+  const exchange = {
+    filters: new Map([["TESTUSDT", filters]]),
+    positions: async () => [],
+    account: async () => ({ totalWalletBalance: 3 }),
+    quantity: (_symbol, raw, marketOrder = false) => {
+      const step = marketOrder ? filters.marketStepSize : filters.lotStepSize;
+      const min = marketOrder ? filters.marketMinQty : filters.lotMinQty;
+      const value = Math.floor((raw + step * 1e-10) / step) * step;
+      if (!(value > 0) || value < min) throw new Error("Quantity below Binance minQty/stepSize");
+      return Number(value.toFixed(3));
+    },
+    price: (_symbol, raw, rounding) => {
+      const units = raw / filters.tickSize;
+      const value = (rounding === "UP" ? Math.ceil(units - 1e-10) : Math.floor(units + 1e-10)) * filters.tickSize;
+      return Number(value.toFixed(1));
+    },
+    setMarginType: async () => {},
+    setLeverage: async () => {},
+    newOrder: async () => { marketOrderSubmitted = true; return { status: "FILLED" }; }
+  };
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
+    binance: { leverage: 20, marginType: "ISOLATED" },
+    strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5 }
+  }, exchange, {
+    getPosition: async () => null,
+    getOpenPositions: async () => []
+  }, {});
+
+  await assert.rejects(
+    engine.openTrade("TESTUSDT", { side: "LONG", entry: 100, stop: 99 }),
+    /TP1 partial quantity is below Binance minNotional/
+  );
+  assert.equal(marketOrderSubmitted, false);
+});
