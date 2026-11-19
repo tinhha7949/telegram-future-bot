@@ -91,3 +91,22 @@ test("algo order query and cancellation use algoId without unsupported symbol pa
     global.fetch = previousFetch;
   }
 });
+
+
+test("symbol leverage bracket uses Binance USD-M leverageBracket endpoint", async () => {
+  const x = createExchange();
+  const previousFetch = global.fetch;
+  let captured;
+  global.fetch = async (url, options) => {
+    captured = { url: new URL(url), options };
+    return { ok: true, json: async () => [{ symbol: "BTCUSDT", brackets: [{ initialLeverage: 50, notionalFloor: 0, notionalCap: 100000 }] }] };
+  };
+  try {
+    const result = await x.leverageBracket("BTCUSDT");
+    assert.equal(captured.url.pathname, "/fapi/v1/leverageBracket");
+    assert.equal(captured.url.searchParams.get("symbol"), "BTCUSDT");
+    assert.equal(result[0].brackets[0].initialLeverage, 50);
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
