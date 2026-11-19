@@ -75,6 +75,7 @@ class Exchange {
   klines(symbol, interval, limit = 150) { return this.request("GET", "/fapi/v1/klines", { symbol, interval, limit }); }
   account() { return this.request("GET", "/fapi/v2/account", {}, true); }
   positions() { return this.request("GET", "/fapi/v2/positionRisk", {}, true); }
+  leverageBracket(symbol) { return this.request("GET", "/fapi/v1/leverageBracket", { symbol }, true); }
   openOrders(symbol) { return this.request("GET", "/fapi/v1/openOrders", { symbol }, true); }
   openAlgoOrders(symbol) { return this.request("GET", "/fapi/v1/openAlgoOrders", { symbol, algoType: "CONDITIONAL" }, true); }
   order(symbol, orderId, origClientOrderId) { return this.request("GET", "/fapi/v1/order", { symbol, orderId, origClientOrderId }, true); }
