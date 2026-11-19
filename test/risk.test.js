@@ -22,7 +22,7 @@ test("invalid wallet balance is rejected", () => {
 test("TP split preserves the total quantity after exchange step rounding", () => {
   const round = n => Math.floor((n + 1e-10) / 0.001) * 0.001;
   const split = calculateTpSplit(0.237, 60, round);
-  assert.equal(split.tp1Quantity, 0.142);
-  assert.equal(split.tp2Quantity, 0.095);
-  assert.equal(Number((split.tp1Quantity + split.tp2Quantity).toFixed(3)), 0.237);
+  assert.ok(Math.abs(split.tp1Quantity - 0.142) < 1e-9);
+  assert.ok(Math.abs(split.tp2Quantity - 0.095) < 1e-9);
+  assert.ok(Math.abs(split.tp1Quantity + split.tp2Quantity - 0.237) < 1e-9);
 });
