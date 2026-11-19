@@ -1,7 +1,7 @@
 "use strict";
 const { evaluateClosedCandle } = require("./strategy");
 const { atr } = require("./indicators");
-const { calculateMargin, calculateRawQuantity } = require("./risk");
+const { calculateMargin, calculateRawQuantity, calculateTpSplit } = require("./risk");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const num = v => Number(v || 0);
 function timeframeMs(value) {
@@ -106,9 +106,8 @@ class TradingEngine {
       const tp1 = entry + direction * risk * this.c.strategy.rewardRiskTp1;
       const tp2 = entry + direction * risk * this.c.strategy.rewardRiskTp2;
       const stop = this.x.price(symbol, signal.stop), qty = this.x.quantity(symbol, actualQty);
-      const tp1Qty = this.x.quantity(symbol, qty * this.c.strategy.tp1ClosePct / 100);
-      const tp2Qty = this.x.quantity(symbol, Math.max(0, qty - tp1Qty));
-      if (tp1Qty <= 0 || tp2Qty <= 0) throw new Error("Position too small to split into TP1 and TP2; adjust margin or leverage");
+      const split = calculateTpSplit(qty, this.c.strategy.tp1ClosePct, value => this.x.quantity(symbol, value));
+      const tp1Qty = split.tp1Quantity, tp2Qty = split.tp2Quantity;
       if (tp1Qty * tp1 < filters.minNotional || tp2Qty * tp2 < filters.minNotional) throw new Error("TP split is below Binance minNotional");
       let slOrder, tp1Order, tp2Order;
       try {

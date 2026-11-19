@@ -20,7 +20,8 @@ function evaluateClosedCandle({ trendCandles, entryCandles, setup, config, now =
     const momentumTurn = setup.side === "SHORT"
       ? previousRsi != null && previousRsi >= s.rsiShortTrigger && currentRsi < s.rsiShortTrigger
       : previousRsi != null && previousRsi <= s.rsiLongTrigger && currentRsi > s.rsiLongTrigger;
-    const momentumOk = !s.requireRsiMomentumTurn || momentumTurn;
+    const momentumTurnSeen = Boolean(setup.momentumTurnSeen || momentumTurn);
+    const momentumOk = !s.requireRsiMomentumTurn || momentumTurnSeen;
     const broken = setup.side === "SHORT" ? candle.close < setup.triggerLow : candle.close > setup.triggerHigh;
     if (broken && momentumOk) {
       const a = atr(entryCandles, s.atrPeriod);
@@ -38,7 +39,7 @@ function evaluateClosedCandle({ trendCandles, entryCandles, setup, config, now =
         tp2: candle.close + direction * risk * s.rewardRiskTp2,
         rsi: currentRsi, triggerTime: setup.triggerCloseTime, confirmationTime: candle.closeTime };
     }
-    return { action: "KEEP", setup: { ...setup, lastCheckedCloseTime: candle.closeTime, confirmationCount: age }, rsi: currentRsi };
+    return { action: "KEEP", setup: { ...setup, momentumTurnSeen, lastCheckedCloseTime: candle.closeTime, confirmationCount: age }, rsi: currentRsi };
   }
   if (!trend) return { action: "WAIT", reason: "NO_TREND" };
   if (trend === "SHORT" && currentRsi >= s.rsiShortTrigger) {

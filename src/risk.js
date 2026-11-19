@@ -11,4 +11,11 @@ function calculateRawQuantity(margin, leverage, entryPrice) {
   if (!(margin > 0) || !(leverage > 0) || !(entryPrice > 0)) throw new Error("Margin, leverage and entry price must be positive");
   return margin * leverage / entryPrice;
 }
-module.exports = { calculateMargin, calculateRawQuantity };
+function calculateTpSplit(quantity, percent, roundQuantity) {
+  if (!(quantity > 0) || !(percent > 0 && percent < 100)) throw new Error("Invalid TP split input");
+  const tp1Quantity = roundQuantity(quantity * percent / 100);
+  const tp2Quantity = roundQuantity(quantity - tp1Quantity);
+  if (!(tp1Quantity > 0) || !(tp2Quantity > 0)) throw new Error("Position is too small for TP1/TP2 quantity split");
+  return { tp1Quantity, tp2Quantity };
+}
+module.exports = { calculateMargin, calculateRawQuantity, calculateTpSplit };
