@@ -436,3 +436,5 @@ test("Telegram startup notification failure does not stop the trading loop", asy
   assert.equal(startupAttempted, true);
   assert.equal(engine.running, false);
 });
+
+// CI diagnostic trigger: no behavior change.
