@@ -15,6 +15,7 @@ function validateConfig(c) {
     ["scanner.batchDelayMs", c.scanner?.batchDelayMs, 0, 60000],
     ["strategy.emaPeriod", c.strategy?.emaPeriod, 2, 500],
     ["strategy.rsiPeriod", c.strategy?.rsiPeriod, 2, 100],
+    ["strategy.signalCheckIntervalSeconds", c.strategy?.signalCheckIntervalSeconds, 10, 300],
     ["strategy.confirmationCandles", c.strategy?.confirmationCandles, 1, 20],
     ["risk.walletPercentPerTrade", c.risk?.walletPercentPerTrade, 0.01, 100],
     ["risk.maxActivePositions", c.risk?.maxActivePositions, 1, 200],
