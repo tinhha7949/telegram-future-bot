@@ -36,3 +36,18 @@ test("maximum open positions defaults to 20 and remains editable", () => {
   c.risk.maxActivePositions = 12;
   assert.equal(validateConfig(c), true);
 });
+
+test("signal polling defaults to one minute and remains configurable", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  assert.equal(c.strategy.signalCheckIntervalSeconds, 60);
+  c.strategy.signalCheckIntervalSeconds = 30;
+  assert.equal(validateConfig(c), true);
+});
+
+test("signal polling interval rejects values outside safe range", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  c.strategy.signalCheckIntervalSeconds = 5;
+  assert.throws(() => validateConfig(c), /strategy.signalCheckIntervalSeconds/);
+  c.strategy.signalCheckIntervalSeconds = 301;
+  assert.throws(() => validateConfig(c), /strategy.signalCheckIntervalSeconds/);
+});
