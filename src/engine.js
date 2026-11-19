@@ -175,18 +175,27 @@ class TradingEngine {
         if (!entryCandles.length) continue;
         const latest = entryCandles[entryCandles.length - 1];
         if (this.lastCandle.get(symbol) === latest.closeTime) continue;
-        this.lastCandle.set(symbol, latest.closeTime);
         const setup = await this.db.getSetup(symbol);
         const result = evaluateClosedCandle({ trendCandles, entryCandles, setup, config: this.c });
-        if (result.action === "ARM") await this.db.saveSetup(symbol, result.setup);
-        else if (result.action === "CANCEL") await this.db.deleteSetup(symbol);
-        else if (result.action === "KEEP") await this.db.saveSetup(symbol, result.setup);
-        else if (result.action === "ENTRY") {
+        if (result.action === "ARM") {
+          await this.db.saveSetup(symbol, result.setup);
+          this.lastCandle.set(symbol, latest.closeTime);
+        } else if (result.action === "CANCEL") {
+          await this.db.deleteSetup(symbol);
+          this.lastCandle.set(symbol, latest.closeTime);
+        } else if (result.action === "KEEP") {
+          await this.db.saveSetup(symbol, result.setup);
+          this.lastCandle.set(symbol, latest.closeTime);
+        } else if (result.action === "ENTRY") {
+          // Mark before order submission to prevent duplicate MARKET orders after an uncertain response.
+          this.lastCandle.set(symbol, latest.closeTime);
           const opened = await this.openTrade(symbol, result);
           if (opened) {
             await this.db.deleteSetup(symbol);
             active.add(symbol);
           }
+        } else {
+          this.lastCandle.set(symbol, latest.closeTime);
         }
         } catch (e) { this.log("[signal-error]", symbol, "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "stack", e.stack || "-"); }
       }
@@ -223,6 +232,17 @@ class TradingEngine {
     const filters = this.x.filters.get(symbol);
     if (marketQty * signal.entry < filters.minNotional) throw new Error("Order below Binance minNotional");
     if (!(signal.side === "LONG" ? signal.stop < signal.entry : signal.stop > signal.entry)) throw new Error("Stop is on the wrong side of entry");
+
+    // Validate the planned TP1 split before sending a live MARKET order. The same checks
+    // are repeated against the actual fill below because fill price/quantity can differ.
+    const plannedDirection = signal.side === "LONG" ? 1 : -1;
+    const plannedRisk = Math.abs(signal.entry - signal.stop);
+    const plannedTp1 = signal.entry + plannedDirection * plannedRisk * this.c.strategy.rewardRiskTp1;
+    const plannedTp1Price = this.x.price(symbol, plannedTp1, signal.side === "LONG" ? "UP" : "DOWN");
+    const plannedTp1Qty = this.x.quantity(symbol, marketQty * this.c.strategy.tp1ClosePct / 100, false);
+    if (plannedTp1Qty * plannedTp1Price < filters.minNotional) {
+      throw new Error("TP1 partial quantity is below Binance minNotional; entry skipped before MARKET order");
+    }
 
     await this.x.setMarginType(symbol, this.c.binance.marginType);
     await this.x.setLeverage(symbol, leverage);
