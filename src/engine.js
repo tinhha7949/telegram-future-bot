@@ -155,6 +155,7 @@ class TradingEngine {
     this.lastSignalCheckAt = now;
     const exchangePositions = await this.x.positions();
     const active = new Set(exchangePositions.filter(p => Math.abs(num(p.positionAmt)) > 0).map(p => p.symbol));
+    this.log("[signal-check-start]", "universe", this.universe.length, "exchangePositions", active.size, "intervalSeconds", this.c.strategy.signalCheckIntervalSeconds);
     const batchSize = Math.max(1, Math.floor(num(this.c.scanner.batchSize) || 10));
     const batchDelayMs = Math.max(0, num(this.c.scanner.batchDelayMs));
     const batchCount = Math.ceil(this.universe.length / batchSize);
@@ -166,22 +167,24 @@ class TradingEngine {
       for (const symbol of batch) {
         if (!this.running) break;
       try {
-        if (active.has(symbol) || await this.db.getPosition(symbol)) continue;
+        if (active.has(symbol)) { this.log("[signal-skip]", symbol, "reason=EXCHANGE_POSITION_EXISTS"); continue; }
+        if (await this.db.getPosition(symbol)) { this.log("[signal-skip]", symbol, "reason=DATABASE_POSITION_EXISTS"); continue; }
         const [trendCandles, entryCandles] = await Promise.all([
           this.candles(symbol, this.c.strategy.trendTimeframe, this.c.strategy.historyCandles),
           this.candles(symbol, this.c.strategy.entryTimeframe, this.c.strategy.historyCandles)
         ]);
-        if (!entryCandles.length) continue;
+        if (!entryCandles.length) { this.log("[signal-data]", symbol, "reason=NO_CLOSED_ENTRY_CANDLES"); continue; }
         const latest = entryCandles[entryCandles.length - 1];
         if (this.lastCandle.get(symbol) === latest.closeTime) continue;
         this.lastCandle.set(symbol, latest.closeTime);
         const setup = await this.db.getSetup(symbol);
         const result = evaluateClosedCandle({ trendCandles, entryCandles, setup, config: this.c });
+        this.log("[signal-result]", symbol, "action", result.action, "reason", result.reason || "-", "side", result.side || result.setup?.side || "-", "rsi", Number.isFinite(result.rsi) ? result.rsi.toFixed(2) : "-", "trendCandles", trendCandles.length, "entryCandles", entryCandles.length, "setup", setup?.status || "NONE");
         if (result.action === "ARM") await this.db.saveSetup(symbol, result.setup);
         else if (result.action === "CANCEL") await this.db.deleteSetup(symbol);
         else if (result.action === "KEEP") await this.db.saveSetup(symbol, result.setup);
-        else if (result.action === "ENTRY") { await this.db.deleteSetup(symbol); await this.openTrade(symbol, result); }
-        } catch (e) { this.log("[signal]", symbol, e.message); }
+        else if (result.action === "ENTRY") { this.log("[entry-signal]", symbol, result.side, "entry", result.entry, "stop", result.stop, "rsi", result.rsi); await this.db.deleteSetup(symbol); await this.openTrade(symbol, result); }
+        } catch (e) { this.log("[signal-error]", symbol, "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "stack", e.stack || "-"); }
       }
       if (this.running && offset + batchSize < this.universe.length && batchDelayMs > 0) {
         await sleep(batchDelayMs);
@@ -189,12 +192,12 @@ class TradingEngine {
     }
   }
   async openTrade(symbol, signal) {
-    if (await this.db.getPosition(symbol)) return;
+    if (await this.db.getPosition(symbol)) { this.log("[entry-skip]", symbol, "reason=DATABASE_POSITION_EXISTS"); return; }
     const [exchangePositions, open] = await Promise.all([
       this.x.positions(),
       this.db.getOpenPositions()
     ]);
-    if (exchangePositions.some(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0)) return;
+    if (exchangePositions.some(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0)) { this.log("[entry-skip]", symbol, "reason=EXCHANGE_POSITION_EXISTS"); return; }
 
     // Count the union of exchange and database positions so stale/missing DB records
     // cannot allow the bot to exceed the configured account-wide position cap.
@@ -208,9 +211,11 @@ class TradingEngine {
       return;
     }
 
+    this.log("[entry-check]", symbol, signal.side, "signalEntry", signal.entry, "signalStop", signal.stop, "openPositions", openSymbols.size, "maxPositions", maxActivePositions);
     const account = await this.x.account();
     const wallet = num(account.totalWalletBalance);
     if (!(wallet > 0)) throw new Error("Invalid totalWalletBalance");
+    this.log("[entry-sizing]", symbol, "wallet", wallet, "margin", margin, "leverage", this.c.binance.leverage, "rawQty", calculateRawQuantity(margin, this.c.binance.leverage, signal.entry));
     const margin = calculateMargin(wallet, this.c.risk);
     const leverage = this.c.binance.leverage;
     const marketQty = this.x.quantity(symbol, calculateRawQuantity(margin, leverage, signal.entry), true);
@@ -263,14 +268,21 @@ class TradingEngine {
       let slOrder, tp1Order, tp2Order;
       try {
         // SL protects the entire live position. closePosition cannot be combined with quantity/reduceOnly.
+        this.log("[entry-protection-submit]", symbol, "type=STOP_MARKET", "trigger", stop);
         slOrder = await this.x.newAlgoOrder({ symbol, side: exitSide, type: "STOP_MARKET", triggerPrice: stop, closePosition: "true", workingType: this.c.binance.workingType, priceProtect });
+        this.log("[entry-protection-accepted]", symbol, "type=STOP_MARKET", "algoId", slOrder.algoId);
         protectionIds.push(slOrder.algoId);
+        this.log("[entry-protection-submit]", symbol, "type=TAKE_PROFIT_MARKET", "TP1", tp1Price, "qty", tp1Qty);
         tp1Order = await this.x.newAlgoOrder({ symbol, side: exitSide, type: "TAKE_PROFIT_MARKET", triggerPrice: tp1Price, quantity: tp1Qty, reduceOnly: "true", workingType: this.c.binance.workingType, priceProtect });
+        this.log("[entry-protection-accepted]", symbol, "type=TAKE_PROFIT_MARKET", "TP1", "algoId", tp1Order.algoId);
         protectionIds.push(tp1Order.algoId);
         // TP2 closes whatever remains after TP1; do not hard-code a stale remainder quantity.
+        this.log("[entry-protection-submit]", symbol, "type=TAKE_PROFIT_MARKET", "TP2", tp2Price, "closePosition=true");
         tp2Order = await this.x.newAlgoOrder({ symbol, side: exitSide, type: "TAKE_PROFIT_MARKET", triggerPrice: tp2Price, closePosition: "true", workingType: this.c.binance.workingType, priceProtect });
+        this.log("[entry-protection-accepted]", symbol, "type=TAKE_PROFIT_MARKET", "TP2", "algoId", tp2Order.algoId);
         protectionIds.push(tp2Order.algoId);
       } catch (e) {
+        this.log("[entry-protection-error]", symbol, "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "acceptedAlgoIds", protectionIds.join(","));
         await this.x.cancelProtection(symbol, protectionIds).catch(() => {});
         await this.x.cancelAll(symbol).catch(() => {});
         const liveQty = Math.abs(num((await this.x.positions()).find(p => p.symbol === symbol)?.positionAmt));
@@ -297,7 +309,7 @@ class TradingEngine {
       }
       await this.alerts.opened(doc);
       await this.db.saveEvent({ type: "OPEN", symbol, side: signal.side, entry, quantity: storedQty, margin });
-      this.log("[opened]", symbol, signal.side, "qty", storedQty, "margin", margin, "SL/TP algo ids", protectionIds.join(","));
+      this.log("[opened]", symbol, signal.side, "entry", entry, "qty", storedQty, "margin", margin, "SL", stop, "TP1", tp1Price, "TP2", tp2Price, "SL/TP algo ids", protectionIds.join(","));
     } catch (e) {
       const stillOpen = (await this.x.positions()).find(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0);
       if (stillOpen) {
