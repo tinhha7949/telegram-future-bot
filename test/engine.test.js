@@ -414,3 +414,25 @@ test("uncertain MARKET response is reconciled and post-open logging failures nev
   assert.equal(protectionOrders, 3);
   assert.equal(cleanupCalls, 0);
 });
+
+
+test("Telegram startup notification failure does not stop the trading loop", async () => {
+  let startupAttempted = false;
+  const engine = new TradingEngine({
+    app: { logLevel: "silent", startupReconcile: false, loopIntervalMs: 0 },
+    telegram: { sendStartupMessage: true }
+  }, {
+    exchangeInfo: async () => {},
+    assertOneWayMode: async () => {}
+  }, {
+    getScanner: async () => null
+  }, {
+    startup: async () => { startupAttempted = true; throw new Error("Telegram unavailable"); }
+  });
+  engine.runCycle = async () => { engine.running = false; };
+
+  await engine.start();
+
+  assert.equal(startupAttempted, true);
+  assert.equal(engine.running, false);
+});
