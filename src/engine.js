@@ -222,7 +222,9 @@ class TradingEngine {
         }
         } catch (e) {
           if (e.retrySignalCandle) this.lastCandle.delete(symbol);
-          this.log("[signal-error]", symbol, "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "stack", e.stack || "-");
+          const rejected = String(e.message || "").startsWith("ENTRY_REJECTED_");
+          this.log(rejected ? "[entry-rejected]" : "[signal-error]", symbol,
+            "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "stack", e.stack || "-");
         }
       }
       if (this.running && offset + batchSize < this.universe.length && batchDelayMs > 0) {
