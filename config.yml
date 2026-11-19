@@ -52,7 +52,7 @@ risk:
 
 execution:
   orderPollIntervalMs: 15000
-  priceProtect: true
+  priceProtect: false
 
 storage:
   databaseName: trades
