@@ -12,7 +12,7 @@ function timeframeMs(value) {
 class TradingEngine {
   constructor(config, exchange, store, alerts) {
     this.c = config; this.x = exchange; this.db = store; this.alerts = alerts;
-    this.running = false; this.universe = []; this.lastScan = 0;
+    this.running = false; this.universe = []; this.lastScan = 0; this.lastScanFailedAt = 0;
     this.lastCandle = new Map(); this.lastSignalCheckAt = 0; this.lastManageAt = 0;
   }
   log(...args) { if (this.c.app.logLevel !== "silent") console.log(new Date().toISOString(), ...args); }
@@ -117,14 +117,37 @@ class TradingEngine {
     this.running = true;
     if (this.c.telegram.sendStartupMessage) await this.alerts.startup("🤖 Futures bot started\nUniverse: " + this.universe.length + " coins\nMode: LIVE");
     while (this.running) {
-      try {
-        if (!this.lastScan || Date.now() - this.lastScan >= this.c.scanner.intervalMinutes * 60000) await this.scan();
-        if (Date.now() - this.lastManageAt >= this.c.execution.orderPollIntervalMs) {
-          await this.managePositions(); this.lastManageAt = Date.now();
-        }
-        await this.checkSignals();
-      } catch (e) { this.log("[loop-error]", e.message); }
+      await this.runCycle();
       await sleep(this.c.app.loopIntervalMs);
+    }
+  }
+  async runCycle() {
+    const now = Date.now();
+    const scanDue = !this.lastScan || now - this.lastScan >= this.c.scanner.intervalMinutes * 60000;
+    const scanRetryReady = !this.lastScanFailedAt || now - this.lastScanFailedAt >= 60000;
+    if (scanDue && scanRetryReady) {
+      try {
+        await this.scan();
+        this.lastScanFailedAt = 0;
+      } catch (e) {
+        this.lastScanFailedAt = Date.now();
+        this.log("[scanner-error]", e.message);
+      }
+    }
+
+    if (Date.now() - this.lastManageAt >= this.c.execution.orderPollIntervalMs) {
+      try {
+        await this.managePositions();
+        this.lastManageAt = Date.now();
+      } catch (e) {
+        this.log("[manage-loop-error]", e.message);
+      }
+    }
+
+    try {
+      await this.checkSignals();
+    } catch (e) {
+      this.log("[signal-loop-error]", e.message);
     }
   }
   async stop() { this.running = false; }
@@ -216,7 +239,14 @@ class TradingEngine {
       if (!error.status || error.status === 418 || error.status === 429 || error.status >= 500) error.retrySignalCandle = true;
       throw error;
     });
-    if (existing || exchangePositions.some(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0)) return false;
+    if (existing) {
+      this.log("[entry-skip]", symbol, "reason", "DATABASE_POSITION_EXISTS");
+      return false;
+    }
+    if (exchangePositions.some(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0)) {
+      this.log("[entry-skip]", symbol, "reason", "BINANCE_POSITION_EXISTS");
+      return false;
+    }
 
     // Count the union of exchange and database positions so stale/missing DB records
     // cannot allow the bot to exceed the configured account-wide position cap.
@@ -226,6 +256,7 @@ class TradingEngine {
     }
     const maxActivePositions = Math.max(1, Math.floor(num(this.c.risk.maxActivePositions) || 20));
     if (openSymbols.size >= maxActivePositions) {
+      this.log("[entry-skip]", symbol, "reason", "MAX_ACTIVE_POSITIONS", openSymbols.size + "/" + maxActivePositions);
       return false;
     }
 
@@ -234,12 +265,23 @@ class TradingEngine {
       throw error;
     });
     const wallet = num(account.totalWalletBalance);
-    if (!(wallet > 0)) throw new Error("Invalid totalWalletBalance");
+    if (!(wallet > 0)) throw new Error("ENTRY_REJECTED_INVALID_WALLET_BALANCE");
+    const availableBalance = Number(account.availableBalance);
+    if (!Number.isFinite(availableBalance) || availableBalance < 0) {
+      throw new Error("ENTRY_REJECTED_INVALID_AVAILABLE_BALANCE");
+    }
     const margin = calculateMargin(wallet, this.c.risk);
-    const leverage = this.c.binance.leverage;
+    const leverage = Number(this.c.binance.leverage);
     const marketQty = this.x.quantity(symbol, calculateRawQuantity(margin, leverage, signal.entry), true);
     const filters = this.x.filters.get(symbol);
-    if (marketQty * signal.entry < filters.minNotional) throw new Error("Order below Binance minNotional");
+    if (!filters) throw new Error("ENTRY_REJECTED_MISSING_EXCHANGE_FILTERS");
+    const notional = marketQty * signal.entry;
+    if (notional < filters.minNotional) throw new Error("ENTRY_REJECTED_MIN_NOTIONAL");
+    const requiredMargin = notional / leverage;
+    if (requiredMargin > availableBalance) {
+      throw new Error("ENTRY_REJECTED_INSUFFICIENT_AVAILABLE_BALANCE: required " +
+        requiredMargin.toFixed(8) + " USDT, available " + availableBalance.toFixed(8) + " USDT");
+    }
     if (!(signal.side === "LONG" ? signal.stop < signal.entry : signal.stop > signal.entry)) throw new Error("Stop is on the wrong side of entry");
 
     // Validate the planned TP1 split before sending a live MARKET order. The same checks
@@ -254,6 +296,22 @@ class TradingEngine {
     }
 
     try {
+      const bracketResponse = await this.x.leverageBracket(symbol);
+      const symbolBracket = Array.isArray(bracketResponse)
+        ? bracketResponse.find(item => item.symbol === symbol) || bracketResponse[0]
+        : bracketResponse;
+      const brackets = Array.isArray(symbolBracket?.brackets) ? symbolBracket.brackets : [];
+      if (brackets.length) {
+        const selected = brackets.find(item => notional <= num(item.notionalCap)
+          && notional > num(item.notionalFloor)) || brackets[brackets.length - 1];
+        const maxLeverage = num(selected.initialLeverage);
+        if (maxLeverage > 0 && leverage > maxLeverage) {
+          throw new Error("ENTRY_REJECTED_LEVERAGE_LIMIT: configured " + leverage +
+            "x, Binance allows " + maxLeverage + "x for " + notional.toFixed(4) + " USDT notional");
+        }
+      } else {
+        throw new Error("ENTRY_REJECTED_LEVERAGE_BRACKET_UNAVAILABLE");
+      }
       await this.x.setMarginType(symbol, this.c.binance.marginType);
       await this.x.setLeverage(symbol, leverage);
     } catch (error) {
@@ -266,6 +324,7 @@ class TradingEngine {
     const entryClientOrderId = "E" + require("node:crypto").randomBytes(11).toString("hex");
     let entryOrder;
     let protectionIds = [];
+    let positionPersisted = false;
     try {
       try {
         entryOrder = await this.x.newOrder({ symbol, side, type: "MARKET", quantity: marketQty, newClientOrderId: entryClientOrderId, newOrderRespType: "RESULT" });
@@ -330,6 +389,7 @@ class TradingEngine {
       };
       try {
         await this.db.openPosition(doc);
+        positionPersisted = true;
       } catch (e) {
         await this.x.cancelProtection(symbol, protectionIds).catch(() => {});
         await this.x.cancelAll(symbol).catch(() => {});
@@ -337,10 +397,24 @@ class TradingEngine {
         if (liveQty > 0) await this.x.newOrder({ symbol, side: exitSide, type: "MARKET", quantity: this.x.quantity(symbol, liveQty, true), reduceOnly: "true" }).catch(() => {});
         throw e;
       }
-      await this.alerts.opened(doc);
-      await this.db.saveEvent({ type: "OPEN", symbol, side: signal.side, entry, quantity: storedQty, margin });
+      try {
+        await this.alerts.opened(doc);
+      } catch (alertError) {
+        this.log("[entry-alert-error]", symbol, alertError.message);
+      }
+      try {
+        await this.db.saveEvent({ type: "OPEN", symbol, side: signal.side, entry, quantity: storedQty, margin });
+      } catch (eventError) {
+        this.log("[entry-event-error]", symbol, eventError.message);
+      }
       return true;
     } catch (e) {
+      // Once MongoDB has the live position, failures in notifications/event logging
+      // must never remove exchange protection or close a valid trade.
+      if (positionPersisted) {
+        this.log("[entry-post-open-error]", symbol, e.message);
+        return true;
+      }
       const stillOpen = (await this.x.positions()).find(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0);
       if (stillOpen) {
         await this.x.cancelProtection(symbol, protectionIds).catch(() => {});
