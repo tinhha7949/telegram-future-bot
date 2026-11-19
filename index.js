@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config({ override: true });
 const { loadConfig } = require("./src/config");
 const { connectStore } = require("./src/store");
 const { Exchange } = require("./src/exchange");
