@@ -321,7 +321,10 @@ class TradingEngine {
       await this.x.setLeverage(symbol, leverage);
     } catch (error) {
       // These requests happen before MARKET submission, so transient failures are safe to retry.
-      if (!error.status || error.status === 418 || error.status === 429 || error.status >= 500) error.retrySignalCandle = true;
+      const rejected = String(error.message || "").startsWith("ENTRY_REJECTED_");
+      if (!rejected && (!error.status || error.status === 418 || error.status === 429 || error.status >= 500)) {
+        error.retrySignalCandle = true;
+      }
       throw error;
     }
     const side = signal.side === "LONG" ? "BUY" : "SELL";
