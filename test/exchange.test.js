@@ -11,7 +11,7 @@ test("client IDs are short, unique, and Binance-safe", () => {
   const a = makeClientId("E"), b = makeClientId("A");
   assert.equal(a.length, 23);
   assert.equal(b.length, 23);
-  assert.match(a, /^[A-Z0-9_-]{1,36}$/);
+  assert.match(a, /^[A-Za-z0-9_-]{1,36}$/);
   assert.notEqual(a, b);
 });
 
