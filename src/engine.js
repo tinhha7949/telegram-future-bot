@@ -95,10 +95,23 @@ class TradingEngine {
   }
   async openTrade(symbol, signal) {
     if (await this.db.getPosition(symbol)) return;
-    const exchangePositions = await this.x.positions();
+    const [exchangePositions, open] = await Promise.all([
+      this.x.positions(),
+      this.db.getOpenPositions()
+    ]);
     if (exchangePositions.some(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0)) return;
-    const open = await this.db.getOpenPositions();
-    if (open.length >= this.c.risk.maxActivePositions) return;
+
+    // Count the union of exchange and database positions so stale/missing DB records
+    // cannot allow the bot to exceed the configured account-wide position cap.
+    const openSymbols = new Set(open.map(p => p.symbol));
+    for (const p of exchangePositions) {
+      if (Math.abs(num(p.positionAmt)) > 0) openSymbols.add(p.symbol);
+    }
+    const maxActivePositions = Math.max(1, Math.floor(num(this.c.risk.maxActivePositions) || 20));
+    if (openSymbols.size >= maxActivePositions) {
+      this.log("[entry-skip-max-positions]", symbol, openSymbols.size + "/" + maxActivePositions);
+      return;
+    }
 
     const account = await this.x.account();
     const wallet = num(account.totalWalletBalance);
