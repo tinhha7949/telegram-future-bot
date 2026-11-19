@@ -124,7 +124,8 @@ class TradingEngine {
   async runCycle() {
     const now = Date.now();
     const scanDue = !this.lastScan || now - this.lastScan >= this.c.scanner.intervalMinutes * 60000;
-    const scanRetryReady = !this.lastScanFailedAt || now - this.lastScanFailedAt >= 60000;
+    const scanRetryMs = Math.max(10, num(this.c.scanner.errorRetrySeconds) || 60) * 1000;
+    const scanRetryReady = !this.lastScanFailedAt || now - this.lastScanFailedAt >= scanRetryMs;
     if (scanDue && scanRetryReady) {
       try {
         await this.scan();
