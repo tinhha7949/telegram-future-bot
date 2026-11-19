@@ -15,6 +15,7 @@ class TradingEngine {
     this.running = false; this.universe = []; this.lastScan = 0;
     this.lastCandle = new Map(); this.lastSignalCheckAt = 0; this.lastManageAt = 0;
   }
+  log(...args) { if (this.c.app.logLevel !== "silent") console.log(new Date().toISOString(), ...args); }
   async replaceStopLoss(symbol, side, triggerPrice, fallbackPrice, currentSlId) {
     const exitSide = side === "LONG" ? "SELL" : "BUY";
     const priceProtect = String(Boolean(this.c.execution.priceProtect)).toLowerCase();
@@ -92,6 +93,7 @@ class TradingEngine {
           const restoredOrder = fallbackExists || await placeAndConfirm(fallback);
           return { order: restoredOrder, restored: true, error: moveError };
         } catch (restoreError) {
+          this.log("[sl-restore-failed]", symbol, restoreError.message);
         }
       }
 
@@ -102,6 +104,7 @@ class TradingEngine {
         await this.x.newOrder({
           symbol, side: exitSide, type: "MARKET",
           quantity: this.x.quantity(symbol, liveQty, true), reduceOnly: "true"
+        }).catch(closeError => this.log("[sl-emergency-close-failed]", symbol, closeError.message));
       }
       throw new Error("Could not install replacement or restore previous SL; emergency close attempted: " + moveError.message);
     }
@@ -120,6 +123,7 @@ class TradingEngine {
           await this.managePositions(); this.lastManageAt = Date.now();
         }
         await this.checkSignals();
+      } catch (e) { this.log("[loop-error]", e.message); }
       await sleep(this.c.app.loopIntervalMs);
     }
   }
@@ -324,6 +328,7 @@ class TradingEngine {
             const confirmedStop = num(replacement.triggerPrice) || (recovered.restored ? num(p.stop) : triggerPrice);
             await this.db.updatePosition(p.symbol, { slOrderId: replacement.algoId, stop: confirmedStop });
           } else {
+            this.log("[unmanaged-unprotected]", p.symbol, "no ATR available; emergency close");
             await this.x.newOrder({
               symbol: p.symbol, side: p.side === "LONG" ? "SELL" : "BUY", type: "MARKET",
               quantity: this.x.quantity(p.symbol, amount, true), reduceOnly: "true"
@@ -399,6 +404,7 @@ class TradingEngine {
           });
         }
       } catch (e) {
+        this.log("[manage]", p.symbol, e.message);
       }
     }
   }
@@ -426,9 +432,11 @@ class TradingEngine {
               priceProtect: "false"
             });
           } catch (e) {
+            this.log("[reconcile-stop-error]", p.symbol, e.message, "attempting emergency close");
             await this.x.newOrder({
               symbol: p.symbol, side: side === "LONG" ? "SELL" : "BUY", type: "MARKET",
               quantity: this.x.quantity(p.symbol, Math.abs(num(p.positionAmt)), true), reduceOnly: "true"
+            }).catch(closeError => this.log("[reconcile-close-error]", p.symbol, closeError.message));
           }
         }
       }
@@ -436,9 +444,11 @@ class TradingEngine {
         const current = (await this.x.positions()).find(x => x.symbol === p.symbol);
         const remaining = Math.abs(num(current?.positionAmt));
         if (remaining > 0) {
+          this.log("[reconcile-unprotected]", p.symbol, "no valid SL could be installed; emergency close");
           await this.x.newOrder({
             symbol: p.symbol, side: side === "LONG" ? "SELL" : "BUY", type: "MARKET",
             quantity: this.x.quantity(p.symbol, remaining, true), reduceOnly: "true"
+          }).catch(e => this.log("[reconcile-emergency-close-error]", p.symbol, e.message));
         }
       }
       await this.db.openPosition({
