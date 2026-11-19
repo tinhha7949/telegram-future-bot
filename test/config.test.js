@@ -75,3 +75,13 @@ test("RSI zone boundaries reject reversed or overlapping ranges", () => {
   c.strategy.rsiLongMax = 70;
   assert.throws(() => validateConfig(c), /RSI long zone/);
 });
+
+
+test("scanner retry delay is configurable and rejects unsafe values", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  assert.equal(c.scanner.errorRetrySeconds, 60);
+  c.scanner.errorRetrySeconds = 30;
+  assert.equal(validateConfig(c), true);
+  c.scanner.errorRetrySeconds = 5;
+  assert.throws(() => validateConfig(c), /scanner.errorRetrySeconds/);
+});
