@@ -15,7 +15,6 @@ class TradingEngine {
     this.running = false; this.universe = []; this.lastScan = 0;
     this.lastCandle = new Map(); this.lastSignalCheckAt = 0; this.lastManageAt = 0;
   }
-  log(...args) { if (this.c.app.logLevel !== "silent") console.log(new Date().toISOString(), ...args); }
   async replaceStopLoss(symbol, side, triggerPrice, fallbackPrice, currentSlId) {
     const exitSide = side === "LONG" ? "SELL" : "BUY";
     const priceProtect = String(Boolean(this.c.execution.priceProtect)).toLowerCase();
@@ -91,10 +90,8 @@ class TradingEngine {
         try {
           const fallbackExists = afterMoveError.find(order => samePrice(order.triggerPrice, fallback));
           const restoredOrder = fallbackExists || await placeAndConfirm(fallback);
-          this.log("[sl-move-restored]", symbol, "fallback", fallback, "reason", moveError.message);
           return { order: restoredOrder, restored: true, error: moveError };
         } catch (restoreError) {
-          this.log("[sl-restore-failed]", symbol, restoreError.message);
         }
       }
 
@@ -105,7 +102,6 @@ class TradingEngine {
         await this.x.newOrder({
           symbol, side: exitSide, type: "MARKET",
           quantity: this.x.quantity(symbol, liveQty, true), reduceOnly: "true"
-        }).catch(closeError => this.log("[sl-emergency-close-failed]", symbol, closeError.message));
       }
       throw new Error("Could not install replacement or restore previous SL; emergency close attempted: " + moveError.message);
     }
@@ -124,7 +120,6 @@ class TradingEngine {
           await this.managePositions(); this.lastManageAt = Date.now();
         }
         await this.checkSignals();
-      } catch (e) { this.log("[loop-error]", e.message); }
       await sleep(this.c.app.loopIntervalMs);
     }
   }
@@ -139,7 +134,6 @@ class TradingEngine {
     }).sort((a, b) => Math.abs(num(b.priceChangePercent)) - Math.abs(num(a.priceChangePercent)))
       .slice(0, this.c.scanner.maxCoins).map(t => t.symbol);
     this.universe = ranked; await this.db.saveScanner(ranked); this.lastScan = Date.now();
-    this.log("[scanner]", ranked.length, "symbols selected");
   }
   async candles(symbol, interval, limit) {
     const rows = await this.x.klines(symbol, interval, limit), now = Date.now();
@@ -155,7 +149,6 @@ class TradingEngine {
     this.lastSignalCheckAt = now;
     const exchangePositions = await this.x.positions();
     const active = new Set(exchangePositions.filter(p => Math.abs(num(p.positionAmt)) > 0).map(p => p.symbol));
-    this.log("[signal-check-start]", "universe", this.universe.length, "exchangePositions", active.size, "intervalSeconds", this.c.strategy.signalCheckIntervalSeconds);
     const batchSize = Math.max(1, Math.floor(num(this.c.scanner.batchSize) || 10));
     const batchDelayMs = Math.max(0, num(this.c.scanner.batchDelayMs));
     const batchCount = Math.ceil(this.universe.length / batchSize);
@@ -163,27 +156,21 @@ class TradingEngine {
       if (!this.running) break;
       const batch = this.universe.slice(offset, offset + batchSize);
       const batchNumber = Math.floor(offset / batchSize) + 1;
-      this.log("[signals] batch", batchNumber + "/" + batchCount, "processing", batch.length, "coins");
       for (const symbol of batch) {
         if (!this.running) break;
       try {
-        if (active.has(symbol)) { this.log("[signal-skip]", symbol, "reason=EXCHANGE_POSITION_EXISTS"); continue; }
-        if (await this.db.getPosition(symbol)) { this.log("[signal-skip]", symbol, "reason=DATABASE_POSITION_EXISTS"); continue; }
         const [trendCandles, entryCandles] = await Promise.all([
           this.candles(symbol, this.c.strategy.trendTimeframe, this.c.strategy.historyCandles),
           this.candles(symbol, this.c.strategy.entryTimeframe, this.c.strategy.historyCandles)
         ]);
-        if (!entryCandles.length) { this.log("[signal-data]", symbol, "reason=NO_CLOSED_ENTRY_CANDLES"); continue; }
         const latest = entryCandles[entryCandles.length - 1];
         if (this.lastCandle.get(symbol) === latest.closeTime) continue;
         this.lastCandle.set(symbol, latest.closeTime);
         const setup = await this.db.getSetup(symbol);
         const result = evaluateClosedCandle({ trendCandles, entryCandles, setup, config: this.c });
-        this.log("[signal-result]", symbol, "action", result.action, "reason", result.reason || "-", "side", result.side || result.setup?.side || "-", "rsi", Number.isFinite(result.rsi) ? result.rsi.toFixed(2) : "-", "trendCandles", trendCandles.length, "entryCandles", entryCandles.length, "setup", setup?.status || "NONE");
         if (result.action === "ARM") await this.db.saveSetup(symbol, result.setup);
         else if (result.action === "CANCEL") await this.db.deleteSetup(symbol);
         else if (result.action === "KEEP") await this.db.saveSetup(symbol, result.setup);
-        else if (result.action === "ENTRY") { this.log("[entry-signal]", symbol, result.side, "entry", result.entry, "stop", result.stop, "rsi", result.rsi); await this.db.deleteSetup(symbol); await this.openTrade(symbol, result); }
         } catch (e) { this.log("[signal-error]", symbol, "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "stack", e.stack || "-"); }
       }
       if (this.running && offset + batchSize < this.universe.length && batchDelayMs > 0) {
@@ -192,12 +179,10 @@ class TradingEngine {
     }
   }
   async openTrade(symbol, signal) {
-    if (await this.db.getPosition(symbol)) { this.log("[entry-skip]", symbol, "reason=DATABASE_POSITION_EXISTS"); return; }
     const [exchangePositions, open] = await Promise.all([
       this.x.positions(),
       this.db.getOpenPositions()
     ]);
-    if (exchangePositions.some(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0)) { this.log("[entry-skip]", symbol, "reason=EXCHANGE_POSITION_EXISTS"); return; }
 
     // Count the union of exchange and database positions so stale/missing DB records
     // cannot allow the bot to exceed the configured account-wide position cap.
@@ -207,15 +192,12 @@ class TradingEngine {
     }
     const maxActivePositions = Math.max(1, Math.floor(num(this.c.risk.maxActivePositions) || 20));
     if (openSymbols.size >= maxActivePositions) {
-      this.log("[entry-skip-max-positions]", symbol, openSymbols.size + "/" + maxActivePositions);
       return;
     }
 
-    this.log("[entry-check]", symbol, signal.side, "signalEntry", signal.entry, "signalStop", signal.stop, "openPositions", openSymbols.size, "maxPositions", maxActivePositions);
     const account = await this.x.account();
     const wallet = num(account.totalWalletBalance);
     if (!(wallet > 0)) throw new Error("Invalid totalWalletBalance");
-    this.log("[entry-sizing]", symbol, "wallet", wallet, "margin", margin, "leverage", this.c.binance.leverage, "rawQty", calculateRawQuantity(margin, this.c.binance.leverage, signal.entry));
     const margin = calculateMargin(wallet, this.c.risk);
     const leverage = this.c.binance.leverage;
     const marketQty = this.x.quantity(symbol, calculateRawQuantity(margin, leverage, signal.entry), true);
@@ -268,18 +250,12 @@ class TradingEngine {
       let slOrder, tp1Order, tp2Order;
       try {
         // SL protects the entire live position. closePosition cannot be combined with quantity/reduceOnly.
-        this.log("[entry-protection-submit]", symbol, "type=STOP_MARKET", "trigger", stop);
         slOrder = await this.x.newAlgoOrder({ symbol, side: exitSide, type: "STOP_MARKET", triggerPrice: stop, closePosition: "true", workingType: this.c.binance.workingType, priceProtect });
-        this.log("[entry-protection-accepted]", symbol, "type=STOP_MARKET", "algoId", slOrder.algoId);
         protectionIds.push(slOrder.algoId);
-        this.log("[entry-protection-submit]", symbol, "type=TAKE_PROFIT_MARKET", "TP1", tp1Price, "qty", tp1Qty);
         tp1Order = await this.x.newAlgoOrder({ symbol, side: exitSide, type: "TAKE_PROFIT_MARKET", triggerPrice: tp1Price, quantity: tp1Qty, reduceOnly: "true", workingType: this.c.binance.workingType, priceProtect });
-        this.log("[entry-protection-accepted]", symbol, "type=TAKE_PROFIT_MARKET", "TP1", "algoId", tp1Order.algoId);
         protectionIds.push(tp1Order.algoId);
         // TP2 closes whatever remains after TP1; do not hard-code a stale remainder quantity.
-        this.log("[entry-protection-submit]", symbol, "type=TAKE_PROFIT_MARKET", "TP2", tp2Price, "closePosition=true");
         tp2Order = await this.x.newAlgoOrder({ symbol, side: exitSide, type: "TAKE_PROFIT_MARKET", triggerPrice: tp2Price, closePosition: "true", workingType: this.c.binance.workingType, priceProtect });
-        this.log("[entry-protection-accepted]", symbol, "type=TAKE_PROFIT_MARKET", "TP2", "algoId", tp2Order.algoId);
         protectionIds.push(tp2Order.algoId);
       } catch (e) {
         this.log("[entry-protection-error]", symbol, "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "acceptedAlgoIds", protectionIds.join(","));
@@ -309,7 +285,6 @@ class TradingEngine {
       }
       await this.alerts.opened(doc);
       await this.db.saveEvent({ type: "OPEN", symbol, side: signal.side, entry, quantity: storedQty, margin });
-      this.log("[opened]", symbol, signal.side, "entry", entry, "qty", storedQty, "margin", margin, "SL", stop, "TP1", tp1Price, "TP2", tp2Price, "SL/TP algo ids", protectionIds.join(","));
     } catch (e) {
       const stillOpen = (await this.x.positions()).find(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0);
       if (stillOpen) {
@@ -348,9 +323,7 @@ class TradingEngine {
             const replacement = recovered.order;
             const confirmedStop = num(replacement.triggerPrice) || (recovered.restored ? num(p.stop) : triggerPrice);
             await this.db.updatePosition(p.symbol, { slOrderId: replacement.algoId, stop: confirmedStop });
-            this.log(recovered.restored ? "[unmanaged-sl-old-restored]" : "[unmanaged-sl-recovered]", p.symbol, confirmedStop);
           } else {
-            this.log("[unmanaged-unprotected]", p.symbol, "no ATR available; emergency close");
             await this.x.newOrder({
               symbol: p.symbol, side: p.side === "LONG" ? "SELL" : "BUY", type: "MARKET",
               quantity: this.x.quantity(p.symbol, amount, true), reduceOnly: "true"
@@ -403,11 +376,9 @@ class TradingEngine {
             ? { slOrderId: newSl.algoId, stop: confirmedStop }
             : { tp1Done: true, slOrderId: newSl.algoId, tp1FilledAt: new Date(), remainingQuantity: amount, stop: confirmedStop });
           if (moved.restored) {
-            this.log("[tp1-sl-move-retry]", p.symbol, "old protection restored at", confirmedStop, "requested", stop);
             continue;
           }
           await this.db.saveEvent({ type: "TP1", symbol: p.symbol, stop: confirmedStop, remaining: amount });
-          this.log("[tp1]", p.symbol, "remaining", amount, "new SL", confirmedStop);
           continue;
         }
 
@@ -426,10 +397,8 @@ class TradingEngine {
             slOrderId: replacement.algoId,
             stop: num(replacement.triggerPrice) || (recovered.restored ? num(p.stop) : safeStop)
           });
-          this.log(recovered.restored ? "[sl-recovery-restored-old]" : "[sl-recovered]", p.symbol, replacement.triggerPrice || safeStop);
         }
       } catch (e) {
-        this.log("[manage]", p.symbol, e.message);
       }
     }
   }
@@ -438,7 +407,6 @@ class TradingEngine {
     const active = exchangePositions.filter(p => Math.abs(num(p.positionAmt)) > 0);
     for (const p of active) {
       if (stored.some(x => x.symbol === p.symbol)) continue;
-      this.log("[reconcile] unmanaged exchange position detected; locking symbol", p.symbol);
       const side = num(p.positionAmt) > 0 ? "LONG" : "SHORT";
       const openAlgo = await this.x.openAlgoOrders(p.symbol);
       let stopOrder = openAlgo.find(o => o.orderType === "STOP_MARKET" && o.algoStatus === "NEW"
@@ -458,11 +426,9 @@ class TradingEngine {
               priceProtect: "false"
             });
           } catch (e) {
-            this.log("[reconcile-stop-error]", p.symbol, e.message, "attempting emergency close");
             await this.x.newOrder({
               symbol: p.symbol, side: side === "LONG" ? "SELL" : "BUY", type: "MARKET",
               quantity: this.x.quantity(p.symbol, Math.abs(num(p.positionAmt)), true), reduceOnly: "true"
-            }).catch(closeError => this.log("[reconcile-close-error]", p.symbol, closeError.message));
           }
         }
       }
@@ -470,11 +436,9 @@ class TradingEngine {
         const current = (await this.x.positions()).find(x => x.symbol === p.symbol);
         const remaining = Math.abs(num(current?.positionAmt));
         if (remaining > 0) {
-          this.log("[reconcile-unprotected]", p.symbol, "no valid SL could be installed; emergency close");
           await this.x.newOrder({
             symbol: p.symbol, side: side === "LONG" ? "SELL" : "BUY", type: "MARKET",
             quantity: this.x.quantity(p.symbol, remaining, true), reduceOnly: "true"
-          }).catch(e => this.log("[reconcile-emergency-close-error]", p.symbol, e.message));
         }
       }
       await this.db.openPosition({
