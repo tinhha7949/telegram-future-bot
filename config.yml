@@ -26,6 +26,7 @@ scanner:
 strategy:
   trendTimeframe: 15m
   entryTimeframe: 5m
+  signalCheckIntervalSeconds: 60  # Recheck the selected coins every minute; signals still use closed 5m candles
   emaPeriod: 50
   rsiPeriod: 14
   rsiShortTrigger: 70
