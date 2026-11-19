@@ -274,14 +274,17 @@ test("scanner failure does not skip position management or signal checks", async
     execution: { orderPollIntervalMs: 15000 }
   }, {}, {}, {});
   let managed = false;
+  let reconciled = false;
   let signalsChecked = false;
   engine.scan = async () => { throw new Error("temporary ticker API failure"); };
   engine.managePositions = async () => { managed = true; };
+  engine.reconcile = async () => { reconciled = true; };
   engine.checkSignals = async () => { signalsChecked = true; };
 
   await engine.runCycle();
 
   assert.equal(managed, true);
+  assert.equal(reconciled, true);
   assert.equal(signalsChecked, true);
 });
 
