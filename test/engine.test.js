@@ -187,7 +187,7 @@ test("TP1 minimum-notional failure is detected before submitting a live MARKET e
   const exchange = {
     filters: new Map([["TESTUSDT", filters]]),
     positions: async () => [],
-    account: async () => ({ totalWalletBalance: 3 }),
+    account: async () => ({ totalWalletBalance: 3, availableBalance: 3 }),
     quantity: (_symbol, raw, marketOrder = false) => {
       const step = marketOrder ? filters.marketStepSize : filters.lotStepSize;
       const min = marketOrder ? filters.marketMinQty : filters.lotMinQty;
@@ -264,4 +264,149 @@ test("transient pre-entry failure leaves the same signal candle eligible for ret
   await engine.checkSignals();
 
   assert.equal(engine.lastCandle.has("TESTUSDT"), false);
+});
+
+
+test("scanner failure does not skip position management or signal checks", async () => {
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    scanner: { intervalMinutes: 15 },
+    execution: { orderPollIntervalMs: 15000 }
+  }, {}, {}, {});
+  let managed = false;
+  let signalsChecked = false;
+  engine.scan = async () => { throw new Error("temporary ticker API failure"); };
+  engine.managePositions = async () => { managed = true; };
+  engine.checkSignals = async () => { signalsChecked = true; };
+
+  await engine.runCycle();
+
+  assert.equal(managed, true);
+  assert.equal(signalsChecked, true);
+});
+
+test("insufficient available balance rejects entry before any MARKET order", async () => {
+  let marketOrderSubmitted = false;
+  const filters = {
+    marketStepSize: 0.001, marketMinQty: 0.001,
+    lotStepSize: 0.01, lotMinQty: 0.01,
+    tickSize: 0.1, minNotional: 5
+  };
+  const exchange = {
+    filters: new Map([["TESTUSDT", filters]]),
+    positions: async () => [],
+    account: async () => ({ totalWalletBalance: 100, availableBalance: 0.1 }),
+    quantity: (_symbol, raw, marketOrder = false) => {
+      const step = marketOrder ? filters.marketStepSize : filters.lotStepSize;
+      return Number((Math.floor(raw / step) * step).toFixed(3));
+    },
+    price: (_symbol, raw) => raw,
+    newOrder: async () => { marketOrderSubmitted = true; return { status: "FILLED" }; }
+  };
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
+    binance: { leverage: 20, marginType: "ISOLATED" },
+    strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5 }
+  }, exchange, {
+    getPosition: async () => null,
+    getOpenPositions: async () => []
+  }, {});
+
+  await assert.rejects(engine.openTrade("TESTUSDT", { side: "LONG", entry: 100, stop: 99 }), /ENTRY_REJECTED_INSUFFICIENT_AVAILABLE_BALANCE/);
+  assert.equal(marketOrderSubmitted, false);
+});
+
+test("symbol leverage bracket rejects unsupported leverage before MARKET entry", async () => {
+  let marketOrderSubmitted = false;
+  let leverageSet = false;
+  const filters = {
+    marketStepSize: 0.001, marketMinQty: 0.001,
+    lotStepSize: 0.01, lotMinQty: 0.01,
+    tickSize: 0.1, minNotional: 5
+  };
+  const exchange = {
+    filters: new Map([["TESTUSDT", filters]]),
+    positions: async () => [],
+    account: async () => ({ totalWalletBalance: 100, availableBalance: 100 }),
+    quantity: (_symbol, raw, marketOrder = false) => {
+      const step = marketOrder ? filters.marketStepSize : filters.lotStepSize;
+      return Number((Math.floor(raw / step) * step).toFixed(3));
+    },
+    price: (_symbol, raw) => raw,
+    leverageBracket: async () => [{ symbol: "TESTUSDT", brackets: [{ notionalFloor: 0, notionalCap: 100000, initialLeverage: 10 }] }],
+    setMarginType: async () => {},
+    setLeverage: async () => { leverageSet = true; },
+    newOrder: async () => { marketOrderSubmitted = true; return { status: "FILLED" }; }
+  };
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
+    binance: { leverage: 20, marginType: "ISOLATED" },
+    strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5 }
+  }, exchange, {
+    getPosition: async () => null,
+    getOpenPositions: async () => []
+  }, {});
+
+  await assert.rejects(engine.openTrade("TESTUSDT", { side: "LONG", entry: 100, stop: 99 }), /ENTRY_REJECTED_LEVERAGE_LIMIT/);
+  assert.equal(leverageSet, false);
+  assert.equal(marketOrderSubmitted, false);
+});
+
+test("event logging or Telegram failure after persisted entry never cancels protection or closes the position", async () => {
+  let live = false;
+  let marketOrderSubmitted = false;
+  let protectionOrders = 0;
+  let cleanupCalls = 0;
+  const filters = {
+    marketStepSize: 0.001, marketMinQty: 0.001,
+    lotStepSize: 0.01, lotMinQty: 0.01,
+    tickSize: 0.1, minNotional: 5
+  };
+  const exchange = {
+    filters: new Map([["TESTUSDT", filters]]),
+    positions: async () => live ? [{ symbol: "TESTUSDT", positionAmt: "2", entryPrice: "100" }] : [],
+    account: async () => ({ totalWalletBalance: 100, availableBalance: 100 }),
+    quantity: (_symbol, raw, marketOrder = false) => {
+      const step = marketOrder ? filters.marketStepSize : filters.lotStepSize;
+      return Number((Math.floor(raw / step) * step).toFixed(3));
+    },
+    price: (_symbol, raw) => raw,
+    leverageBracket: async () => [{ symbol: "TESTUSDT", brackets: [{ notionalFloor: 0, notionalCap: 100000, initialLeverage: 50 }] }],
+    setMarginType: async () => {},
+    setLeverage: async () => {},
+    newOrder: async params => {
+      if (params.type === "MARKET" && !params.reduceOnly) {
+        marketOrderSubmitted = true;
+        live = true;
+        return { status: "FILLED", avgPrice: "100", executedQty: "2", orderId: 123 };
+      }
+      cleanupCalls += 1;
+      return { status: "FILLED" };
+    },
+    newAlgoOrder: async () => ({ algoId: ++protectionOrders }),
+    cancelProtection: async () => { cleanupCalls += 1; },
+    cancelAll: async () => { cleanupCalls += 1; }
+  };
+  let persisted = false;
+  const store = {
+    getPosition: async () => null,
+    getOpenPositions: async () => [],
+    openPosition: async () => { persisted = true; },
+    saveEvent: async () => { throw new Error("Mongo event insert failed"); }
+  };
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
+    binance: { leverage: 20, marginType: "ISOLATED", workingType: "MARK_PRICE" },
+    strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5, rewardRiskTp2: 2 }
+  }, exchange, store, { opened: async () => { throw new Error("Telegram unavailable"); } });
+
+  const opened = await engine.openTrade("TESTUSDT", { side: "LONG", entry: 100, stop: 99 });
+  assert.equal(opened, true);
+  assert.equal(marketOrderSubmitted, true);
+  assert.equal(persisted, true);
+  assert.equal(protectionOrders, 3);
+  assert.equal(cleanupCalls, 0);
 });
