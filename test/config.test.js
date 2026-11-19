@@ -8,6 +8,8 @@ test("default config validates", () => validateConfig(YAML.parse(fs.readFileSync
 test("normal editable values are accepted", () => {
   const c = YAML.parse(fs.readFileSync("config.yml","utf8"));
   c.scanner.maxCoins = 75; c.risk.walletPercentPerTrade = 7.5; c.strategy.slBufferPct = .1;
+  c.strategy.rsiShortMin = 71; c.strategy.rsiShortMax = 76;
+  c.strategy.rsiLongMin = 24; c.strategy.rsiLongMax = 29;
   assert.equal(validateConfig(c), true);
 });
 test("zero cooldown is not a config field and does not affect validation", () => {
@@ -50,4 +52,26 @@ test("signal polling interval rejects values outside safe range", () => {
   assert.throws(() => validateConfig(c), /strategy.signalCheckIntervalSeconds/);
   c.strategy.signalCheckIntervalSeconds = 301;
   assert.throws(() => validateConfig(c), /strategy.signalCheckIntervalSeconds/);
+});
+
+test("RSI zones use inclusive lower and upper bounds and remain editable", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  assert.equal(c.strategy.rsiShortMin, 70);
+  assert.equal(c.strategy.rsiShortMax, 75);
+  assert.equal(c.strategy.rsiLongMin, 25);
+  assert.equal(c.strategy.rsiLongMax, 30);
+  c.strategy.rsiShortMin = 72;
+  c.strategy.rsiShortMax = 78;
+  c.strategy.rsiLongMin = 22;
+  c.strategy.rsiLongMax = 28;
+  assert.equal(validateConfig(c), true);
+});
+
+test("RSI zone boundaries reject reversed or overlapping ranges", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  c.strategy.rsiShortMin = 76;
+  assert.throws(() => validateConfig(c), /RSI short minimum/);
+  c.strategy.rsiShortMin = 70;
+  c.strategy.rsiLongMax = 70;
+  assert.throws(() => validateConfig(c), /RSI long zone/);
 });
