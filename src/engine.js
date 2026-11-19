@@ -16,6 +16,90 @@ class TradingEngine {
     this.lastCandle = new Map(); this.lastSignalCheckAt = 0; this.lastManageAt = 0;
   }
   log(...args) { if (this.c.app.logLevel !== "silent") console.log(new Date().toISOString(), ...args); }
+  async replaceStopLoss(symbol, side, triggerPrice, fallbackPrice, currentSlId) {
+    const exitSide = side === "LONG" ? "SELL" : "BUY";
+    const priceProtect = String(Boolean(this.c.execution.priceProtect)).toLowerCase();
+    const isOurStop = order => order && order.orderType === "STOP_MARKET"
+      && order.algoStatus === "NEW" && order.side === exitSide && order.closePosition === true;
+    const listActiveStops = async () => (await this.x.openAlgoOrders(symbol)).filter(isOurStop);
+    const samePrice = (a, b) => Math.abs(num(a) - num(b)) <= this.x.filters.get(symbol).tickSize / 2;
+
+    let activeStops = await listActiveStops();
+    if (!activeStops.length && currentSlId) {
+      const known = await this.x.algoOrder(currentSlId).catch(() => null);
+      if (isOurStop(known)) activeStops = [known];
+    }
+
+    const alreadyAtTarget = activeStops.find(order => samePrice(order.triggerPrice, triggerPrice));
+    const toCancel = activeStops.filter(order => !alreadyAtTarget || String(order.algoId) !== String(alreadyAtTarget.algoId));
+    for (const old of toCancel) {
+      await this.x.cancelAlgoOrder(old.algoId);
+    }
+
+    // A cancel acknowledgement is not enough: confirm Binance no longer lists the old SL.
+    if (toCancel.length) {
+      let remaining = [];
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const current = await listActiveStops();
+        const canceledIds = new Set(toCancel.map(order => String(order.algoId)));
+        remaining = current.filter(order => canceledIds.has(String(order.algoId)));
+        if (!remaining.length) break;
+        await sleep(250);
+      }
+      if (remaining.length) throw new Error("Old SL cancellation was not confirmed; keeping existing protection");
+    }
+
+    if (alreadyAtTarget) return { order: alreadyAtTarget, restored: false };
+
+    const placeAndConfirm = async price => {
+      const placed = await this.x.newAlgoOrder({
+        symbol, side: exitSide, type: "STOP_MARKET", triggerPrice: price,
+        closePosition: "true", workingType: this.c.binance.workingType, priceProtect
+      });
+      if (!placed?.algoId) throw new Error("Binance did not return algoId for replacement SL");
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const active = await listActiveStops();
+        const found = active.find(order => String(order.algoId) === String(placed.algoId));
+        if (found) return found;
+        const queried = await this.x.algoOrder(placed.algoId).catch(() => null);
+        if (isOurStop(queried)) return queried;
+        if (queried && queried.algoStatus && queried.algoStatus !== "NEW") {
+          throw new Error("Replacement SL is not active: " + queried.algoStatus);
+        }
+        await sleep(250);
+      }
+      throw new Error("Replacement SL was submitted but could not be confirmed active");
+    };
+
+    try {
+      return { order: await placeAndConfirm(triggerPrice), restored: false };
+    } catch (moveError) {
+      // Restore the previous protective level if the requested move fails.
+      const fallback = num(fallbackPrice) || num(toCancel[0]?.triggerPrice);
+      if (fallback > 0) {
+        try {
+          const stillOpen = await listActiveStops();
+          const fallbackExists = stillOpen.find(order => samePrice(order.triggerPrice, fallback));
+          const restoredOrder = fallbackExists || await placeAndConfirm(fallback);
+          this.log("[sl-move-restored]", symbol, "fallback", fallback, "reason", moveError.message);
+          return { order: restoredOrder, restored: true, error: moveError };
+        } catch (restoreError) {
+          this.log("[sl-restore-failed]", symbol, restoreError.message);
+        }
+      }
+
+      // Never leave a live position deliberately unprotected if both replacement and restore fail.
+      const live = (await this.x.positions()).find(position => position.symbol === symbol);
+      const liveQty = Math.abs(num(live?.positionAmt));
+      if (liveQty > 0) {
+        await this.x.newOrder({
+          symbol, side: exitSide, type: "MARKET",
+          quantity: this.x.quantity(symbol, liveQty, true), reduceOnly: "true"
+        }).catch(closeError => this.log("[sl-emergency-close-failed]", symbol, closeError.message));
+      }
+      throw new Error("Could not install replacement or restore previous SL; emergency close attempted: " + moveError.message);
+    }
+  }
   async start() {
     await this.x.exchangeInfo(); await this.x.assertOneWayMode();
     if (this.c.app.startupReconcile) await this.reconcile();
@@ -289,24 +373,20 @@ class TradingEngine {
           const be = p.side === "LONG" ? p.entry * (1 + offset) : p.entry * (1 - offset);
           const stop = this.x.price(p.symbol, be, p.side === "LONG" ? "UP" : "DOWN");
           const exitSide = p.side === "LONG" ? "SELL" : "BUY";
-          // Place the replacement stop first; keep TP2 working, then retire the old stop.
-          const activeAlgos = await this.x.openAlgoOrders(p.symbol);
-          let newSl = activeAlgos.find(o => o.orderType === "STOP_MARKET" && o.algoStatus === "NEW"
-            && o.side === exitSide && o.closePosition === true
-            && Math.abs(num(o.triggerPrice) - stop) <= this.x.filters.get(p.symbol).tickSize / 2);
-          if (!newSl) {
-            newSl = await this.x.newAlgoOrder({
-              symbol: p.symbol, side: exitSide, type: "STOP_MARKET", triggerPrice: stop,
-              closePosition: "true", workingType: this.c.binance.workingType,
-              priceProtect: String(Boolean(this.c.execution.priceProtect)).toLowerCase()
-            });
+          // Binance can reject two closePosition STOP/TAKE_PROFIT orders in the same direction.
+          // Cancel only the old STOP_MARKET SL, confirm cancellation, then install and verify the new SL.
+          const moved = await this.replaceStopLoss(p.symbol, p.side, stop, p.stop, p.slOrderId);
+          const newSl = moved.order;
+          const confirmedStop = num(newSl.triggerPrice) || (moved.restored ? num(p.stop) : stop);
+          await this.db.updatePosition(p.symbol, moved.restored
+            ? { slOrderId: newSl.algoId, stop: confirmedStop }
+            : { tp1Done: true, slOrderId: newSl.algoId, tp1FilledAt: new Date(), remainingQuantity: amount, stop: confirmedStop });
+          if (moved.restored) {
+            this.log("[tp1-sl-move-retry]", p.symbol, "old protection restored at", confirmedStop, "requested", stop);
+            continue;
           }
-          if (p.slOrderId && String(p.slOrderId) !== String(newSl.algoId)) {
-            await this.x.cancelAlgoOrder(p.slOrderId).catch(e => this.log("[old-sl-cancel]", p.symbol, e.message));
-          }
-          await this.db.updatePosition(p.symbol, { tp1Done: true, slOrderId: newSl.algoId, tp1FilledAt: new Date(), remainingQuantity: amount, stop });
-          await this.db.saveEvent({ type: "TP1", symbol: p.symbol, stop, remaining: amount });
-          this.log("[tp1]", p.symbol, "remaining", amount, "new SL", stop);
+          await this.db.saveEvent({ type: "TP1", symbol: p.symbol, stop: confirmedStop, remaining: amount });
+          this.log("[tp1]", p.symbol, "remaining", amount, "new SL", confirmedStop);
           continue;
         }
 
@@ -319,17 +399,13 @@ class TradingEngine {
             ? (p.side === "LONG" ? p.entry * (1 + this.c.strategy.breakevenOffsetPct / 100) : p.entry * (1 - this.c.strategy.breakevenOffsetPct / 100))
             : p.stop;
           const safeStop = this.x.price(p.symbol, baseStop, p.tp1Done ? (p.side === "LONG" ? "UP" : "DOWN") : (p.side === "LONG" ? "DOWN" : "UP"));
-          const activeAlgos = await this.x.openAlgoOrders(p.symbol);
-          let replacement = activeAlgos.find(o => o.orderType === "STOP_MARKET" && o.algoStatus === "NEW"
-            && o.side === exitSide && o.closePosition === true);
-          if (!replacement) {
-            replacement = await this.x.newAlgoOrder({
-              symbol: p.symbol, side: exitSide, type: "STOP_MARKET", triggerPrice: safeStop,
-              closePosition: "true", workingType: this.c.binance.workingType, priceProtect: "false"
-            });
-          }
-          await this.db.updatePosition(p.symbol, { slOrderId: replacement.algoId, stop: num(replacement.triggerPrice) || safeStop });
-          this.log("[sl-recovered]", p.symbol, replacement.triggerPrice || safeStop);
+          const recovered = await this.replaceStopLoss(p.symbol, p.side, safeStop, p.stop, p.slOrderId);
+          const replacement = recovered.order;
+          await this.db.updatePosition(p.symbol, {
+            slOrderId: replacement.algoId,
+            stop: num(replacement.triggerPrice) || (recovered.restored ? num(p.stop) : safeStop)
+          });
+          this.log(recovered.restored ? "[sl-recovery-restored-old]" : "[sl-recovered]", p.symbol, replacement.triggerPrice || safeStop);
         }
       } catch (e) {
         this.log("[manage]", p.symbol, e.message);
