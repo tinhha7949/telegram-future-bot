@@ -16,6 +16,8 @@ binance:
 scanner:
   intervalMinutes: 15
   maxCoins: 50
+  batchSize: 10
+  batchDelayMs: 1000
   quoteAsset: USDT
   minQuoteVolume: 5000000
   minAbsPriceChangePct: 1.0
