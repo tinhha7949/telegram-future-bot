@@ -404,6 +404,7 @@ test("uncertain MARKET response is reconciled and post-open logging failures nev
     app: { logLevel: "silent" },
     risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
     binance: { leverage: 20, marginType: "ISOLATED", workingType: "MARK_PRICE" },
+    execution: { priceProtect: false },
     strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5, rewardRiskTp2: 2 }
   }, exchange, store, { opened: async () => { throw new Error("Telegram unavailable"); } });
 
@@ -436,5 +437,3 @@ test("Telegram startup notification failure does not stop the trading loop", asy
   assert.equal(startupAttempted, true);
   assert.equal(engine.running, false);
 });
-
-// CI diagnostic trigger: no behavior change.
