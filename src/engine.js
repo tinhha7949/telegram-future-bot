@@ -33,7 +33,12 @@ class TradingEngine {
     const alreadyAtTarget = activeStops.find(order => samePrice(order.triggerPrice, triggerPrice));
     const toCancel = activeStops.filter(order => !alreadyAtTarget || String(order.algoId) !== String(alreadyAtTarget.algoId));
     for (const old of toCancel) {
-      await this.x.cancelAlgoOrder(old.algoId);
+      try {
+        await this.x.cancelAlgoOrder(old.algoId);
+      } catch (cancelError) {
+        const stillActive = (await listActiveStops()).some(order => String(order.algoId) === String(old.algoId));
+        if (stillActive) throw new Error("Could not cancel old SL " + old.algoId + ": " + cancelError.message);
+      }
     }
 
     // A cancel acknowledgement is not enough: confirm Binance no longer lists the old SL.
@@ -74,12 +79,17 @@ class TradingEngine {
     try {
       return { order: await placeAndConfirm(triggerPrice), restored: false };
     } catch (moveError) {
-      // Restore the previous protective level if the requested move fails.
+      // The POST may have succeeded even if its confirmation request timed out.
+      // Check for the requested stop before attempting to restore the old level.
+      const afterMoveError = await listActiveStops().catch(() => []);
+      const targetNowActive = afterMoveError.find(order => samePrice(order.triggerPrice, triggerPrice));
+      if (targetNowActive) return { order: targetNowActive, restored: false };
+
+      // Restore the previous protective level if the requested move failed.
       const fallback = num(fallbackPrice) || num(toCancel[0]?.triggerPrice);
       if (fallback > 0) {
         try {
-          const stillOpen = await listActiveStops();
-          const fallbackExists = stillOpen.find(order => samePrice(order.triggerPrice, fallback));
+          const fallbackExists = afterMoveError.find(order => samePrice(order.triggerPrice, fallback));
           const restoredOrder = fallbackExists || await placeAndConfirm(fallback);
           this.log("[sl-move-restored]", symbol, "fallback", fallback, "reason", moveError.message);
           return { order: restoredOrder, restored: true, error: moveError };
