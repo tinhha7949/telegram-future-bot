@@ -115,7 +115,13 @@ class TradingEngine {
     const cached = await this.db.getScanner();
     if (cached?.symbols?.length) this.universe = cached.symbols;
     this.running = true;
-    if (this.c.telegram.sendStartupMessage) await this.alerts.startup("🤖 Futures bot started\nUniverse: " + this.universe.length + " coins\nMode: LIVE");
+    if (this.c.telegram.sendStartupMessage) {
+      try {
+        await this.alerts.startup("🤖 Futures bot started\nUniverse: " + this.universe.length + " coins\nMode: LIVE");
+      } catch (e) {
+        this.log("[startup-alert-error]", e.message);
+      }
+    }
     while (this.running) {
       await this.runCycle();
       await sleep(this.c.app.loopIntervalMs);
