@@ -354,7 +354,7 @@ test("symbol leverage bracket rejects unsupported leverage before MARKET entry",
   assert.equal(marketOrderSubmitted, false);
 });
 
-test("event logging or Telegram failure after persisted entry never cancels protection or closes the position", async () => {
+test("uncertain MARKET response is reconciled and post-open logging failures never close the position", async () => {
   let live = false;
   let marketOrderSubmitted = false;
   let protectionOrders = 0;
@@ -367,6 +367,7 @@ test("event logging or Telegram failure after persisted entry never cancels prot
   const exchange = {
     filters: new Map([["TESTUSDT", filters]]),
     positions: async () => live ? [{ symbol: "TESTUSDT", positionAmt: "2", entryPrice: "100" }] : [],
+    order: async () => { throw new Error("simulated order lookup timeout"); },
     account: async () => ({ totalWalletBalance: 100, availableBalance: 100 }),
     quantity: (_symbol, raw, marketOrder = false) => {
       const step = marketOrder ? filters.marketStepSize : filters.lotStepSize;
@@ -380,7 +381,7 @@ test("event logging or Telegram failure after persisted entry never cancels prot
       if (params.type === "MARKET" && !params.reduceOnly) {
         marketOrderSubmitted = true;
         live = true;
-        return { status: "FILLED", avgPrice: "100", executedQty: "2", orderId: 123 };
+        throw new Error("simulated MARKET response timeout");
       }
       cleanupCalls += 1;
       return { status: "FILLED" };
