@@ -16,8 +16,8 @@ binance:
 scanner:
   intervalMinutes: 15
   maxCoins: 50
-  batchSize: 10
-  batchDelayMs: 1000
+  batchSize: 10       # Coins processed sequentially in each batch
+  batchDelayMs: 1000  # Pause between batches (milliseconds)
   quoteAsset: USDT
   minQuoteVolume: 5000000
   minAbsPriceChangePct: 1.0
@@ -48,7 +48,7 @@ strategy:
 
 risk:
   walletPercentPerTrade: 10
-  maxActivePositions: 20
+  maxActivePositions: 20  # Maximum total open positions across the account
   maxMarginPerTradeUsdt: 0
   minMarginPerTradeUsdt: 0
 
