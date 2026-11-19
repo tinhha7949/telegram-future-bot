@@ -29,8 +29,10 @@ strategy:
   signalCheckIntervalSeconds: 60  # Recheck the selected coins every minute; signals still use closed 5m candles
   emaPeriod: 50
   rsiPeriod: 14
-  rsiShortTrigger: 70
-  rsiLongTrigger: 30
+  rsiShortMin: 70
+  rsiShortMax: 75
+  rsiLongMin: 25
+  rsiLongMax: 30
   confirmationCandles: 3
   requireRsiMomentumTurn: false
   historyCandles: 160
