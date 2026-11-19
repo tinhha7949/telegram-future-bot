@@ -15,7 +15,7 @@ binance:
 
 scanner:
   intervalMinutes: 15
-  maxCoins: 50
+  maxCoins: 100
   batchSize: 10       # Coins processed sequentially in each batch
   batchDelayMs: 1000  # Pause between batches (milliseconds)
   quoteAsset: USDT
