@@ -18,6 +18,7 @@ scanner:
   maxCoins: 100
   batchSize: 10       # Coins processed sequentially in each batch
   batchDelayMs: 1000  # Pause between batches (milliseconds)
+  errorRetrySeconds: 60  # Retry failed scanner requests after this delay
   quoteAsset: USDT
   minQuoteVolume: 5000000
   minAbsPriceChangePct: 1.0
