@@ -28,6 +28,8 @@ class Exchange {
         return body;
       } catch (e) {
         last = e;
+        // Never blindly retry POST: an order may have been accepted while its response was lost.
+        if (method === "POST") throw e;
         if (e.status && e.status !== 429 && e.status !== 418 && e.status < 500) throw e;
         if (attempt < this.cfg.maxRetries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
       } finally { clearTimeout(timer); }
@@ -56,7 +58,7 @@ class Exchange {
   account() { return this.request("GET", "/fapi/v2/account", {}, true); }
   positions() { return this.request("GET", "/fapi/v2/positionRisk", {}, true); }
   openOrders(symbol) { return this.request("GET", "/fapi/v1/openOrders", { symbol }, true); }
-  order(symbol, orderId) { return this.request("GET", "/fapi/v1/order", { symbol, orderId }, true); }
+  order(symbol, orderId, origClientOrderId) { return this.request("GET", "/fapi/v1/order", { symbol, orderId, origClientOrderId }, true); }
   trades(symbol, startTime) { return this.request("GET", "/fapi/v1/userTrades", { symbol, startTime, limit: 1000 }, true); }
   setLeverage(symbol, leverage) { return this.request("POST", "/fapi/v1/leverage", { symbol, leverage }, true); }
   setMarginType(symbol, marginType) { return this.request("POST", "/fapi/v1/marginType", { symbol, marginType }, true).catch(e => { if (e.code !== -4046) throw e; }); }
@@ -71,9 +73,10 @@ class Exchange {
     if (value < f.minQty) throw new Error("Quantity below minQty for " + symbol);
     return value;
   }
-  price(symbol, raw) {
+  price(symbol, raw, rounding = "NEAREST") {
     const f = this.filters.get(symbol); if (!f) throw new Error("Missing exchange filters for " + symbol);
-    const n = Math.round(raw / f.tickSize) * f.tickSize;
+    const units = raw / f.tickSize;
+    const n = (rounding === "UP" ? Math.ceil(units - 1e-10) : rounding === "DOWN" ? Math.floor(units + 1e-10) : Math.round(units)) * f.tickSize;
     const precision = Math.max(0, (String(f.tickSize).split(".")[1] || "").replace(/0+$/, "").length);
     return Number(n.toFixed(precision));
   }

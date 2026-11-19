@@ -17,10 +17,12 @@ class TelegramAlerts {
     if (!response.ok || !result.ok) throw new Error(result.description || "Telegram send failed");
   }
   async opened(p) {
+    const tp1Pct = p.initialQuantity ? p.tp1Quantity / p.initialQuantity * 100 : 60;
+    const tp2Pct = 100 - tp1Pct;
     const message = [
       "🟢 FUTURES ORDER OPENED", p.symbol + " · " + p.side,
-      "Entry: " + p.entry, "SL: " + p.stop, "TP1: " + p.tp1 + " (60%)",
-      "TP2: " + p.tp2 + " (40%)", "Margin: " + p.margin.toFixed(4) + " USDT",
+      "Entry: " + p.entry, "SL: " + p.stop, "TP1: " + p.tp1 + " (" + tp1Pct.toFixed(1) + "%)",
+      "TP2: " + p.tp2 + " (" + tp2Pct.toFixed(1) + "%)", "Margin: " + p.margin.toFixed(4) + " USDT",
       "Leverage: " + p.leverage + "x", "Quantity: " + p.quantity
     ].join("\n");
     try { await this.send(this.openToken, this.openChat, message); }

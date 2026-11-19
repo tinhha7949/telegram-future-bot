@@ -97,7 +97,23 @@ class TradingEngine {
     if (!(signal.side === "LONG" ? signal.stop < signal.entry : signal.stop > signal.entry)) throw new Error("Stop is on the wrong side of entry");
     await this.x.setMarginType(symbol, this.c.binance.marginType); await this.x.setLeverage(symbol, leverage);
     const side = signal.side === "LONG" ? "BUY" : "SELL", exitSide = side === "BUY" ? "SELL" : "BUY";
-    const entryOrder = await this.x.newOrder({ symbol, side, type: "MARKET", quantity, newOrderRespType: "RESULT" });
+    const entryClientOrderId = "e_" + symbol + "_" + Date.now();
+    let entryOrder;
+    try {
+      entryOrder = await this.x.newOrder({ symbol, side, type: "MARKET", quantity, newClientOrderId: entryClientOrderId, newOrderRespType: "RESULT" });
+    } catch (error) {
+      try {
+        entryOrder = await this.x.order(symbol, undefined, entryClientOrderId);
+      } catch {
+        const uncertain = (await this.x.positions()).find(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0);
+        if (uncertain) {
+          await this.x.cancelAll(symbol).catch(() => {});
+          await this.x.newOrder({ symbol, side: exitSide, type: "MARKET", quantity: Math.abs(num(uncertain.positionAmt)), reduceOnly: "true" }).catch(() => {});
+        }
+        throw new Error("Entry response uncertain; duplicate retry prevented and position reconciliation attempted: " + error.message);
+      }
+    }
+    if (!["FILLED", "PARTIALLY_FILLED"].includes(entryOrder.status)) throw new Error("Entry market order was not filled: " + entryOrder.status);
     try {
       const position = (await this.x.positions()).find(p => p.symbol === symbol);
       const entry = num(position?.entryPrice) || num(entryOrder.avgPrice) || signal.entry;
@@ -105,21 +121,22 @@ class TradingEngine {
       const direction = signal.side === "LONG" ? 1 : -1, risk = Math.abs(entry - signal.stop);
       const tp1 = entry + direction * risk * this.c.strategy.rewardRiskTp1;
       const tp2 = entry + direction * risk * this.c.strategy.rewardRiskTp2;
-      const stop = this.x.price(symbol, signal.stop), qty = this.x.quantity(symbol, actualQty);
+      if (!(signal.side === "LONG" ? signal.stop < entry : signal.stop > entry)) throw new Error("Actual fill moved beyond the planned stop; closing position");
+      const stop = this.x.price(symbol, signal.stop, signal.side === "LONG" ? "DOWN" : "UP"), qty = this.x.quantity(symbol, actualQty);
       const split = calculateTpSplit(qty, this.c.strategy.tp1ClosePct, value => this.x.quantity(symbol, value));
       const tp1Qty = split.tp1Quantity, tp2Qty = split.tp2Quantity;
       if (tp1Qty * tp1 < filters.minNotional || tp2Qty * tp2 < filters.minNotional) throw new Error("TP split is below Binance minNotional");
       let slOrder, tp1Order, tp2Order;
       try {
-        slOrder = await this.x.newOrder({ symbol, side: exitSide, type: "STOP_MARKET", stopPrice: stop, quantity: qty, reduceOnly: "true", workingType: this.c.binance.workingType, priceProtect: this.c.execution.priceProtect });
-        tp1Order = await this.x.newOrder({ symbol, side: exitSide, type: "TAKE_PROFIT_MARKET", stopPrice: this.x.price(symbol, tp1), quantity: tp1Qty, reduceOnly: "true", workingType: this.c.binance.workingType, priceProtect: this.c.execution.priceProtect });
-        tp2Order = await this.x.newOrder({ symbol, side: exitSide, type: "TAKE_PROFIT_MARKET", stopPrice: this.x.price(symbol, tp2), quantity: tp2Qty, reduceOnly: "true", workingType: this.c.binance.workingType, priceProtect: this.c.execution.priceProtect });
+        slOrder = await this.x.newOrder({ symbol, side: exitSide, type: "STOP_MARKET", stopPrice: stop, quantity: qty, reduceOnly: "true", workingType: this.c.binance.workingType, priceProtect: String(this.c.execution.priceProtect).toUpperCase() });
+        tp1Order = await this.x.newOrder({ symbol, side: exitSide, type: "TAKE_PROFIT_MARKET", stopPrice: this.x.price(symbol, tp1, signal.side === "LONG" ? "UP" : "DOWN"), quantity: tp1Qty, reduceOnly: "true", workingType: this.c.binance.workingType, priceProtect: String(this.c.execution.priceProtect).toUpperCase() });
+        tp2Order = await this.x.newOrder({ symbol, side: exitSide, type: "TAKE_PROFIT_MARKET", stopPrice: this.x.price(symbol, tp2, signal.side === "LONG" ? "UP" : "DOWN"), quantity: tp2Qty, reduceOnly: "true", workingType: this.c.binance.workingType, priceProtect: String(this.c.execution.priceProtect).toUpperCase() });
       } catch (e) {
         await this.x.cancelAll(symbol).catch(() => {});
         await this.x.newOrder({ symbol, side: exitSide, type: "MARKET", quantity: qty, reduceOnly: "true" }).catch(() => {});
         throw new Error("Exit protection placement failed; emergency close attempted: " + e.message);
       }
-      const doc = { symbol, side: signal.side, entry, stop, tp1: this.x.price(symbol, tp1), tp2: this.x.price(symbol, tp2), risk,
+      const doc = { symbol, side: signal.side, entry, stop, tp1: this.x.price(symbol, tp1, signal.side === "LONG" ? "UP" : "DOWN"), tp2: this.x.price(symbol, tp2, signal.side === "LONG" ? "UP" : "DOWN"), risk,
         quantity: qty, initialQuantity: qty, tp1Quantity: tp1Qty, tp2Quantity: tp2Qty, margin, leverage,
         entryOrderId: entryOrder.orderId, slOrderId: slOrder.orderId, tp1OrderId: tp1Order.orderId, tp2OrderId: tp2Order.orderId,
         tp1Done: false, openedAt: new Date(), walletAtEntry: wallet, realizedPnl: 0 };
@@ -173,7 +190,7 @@ class TradingEngine {
           await this.x.cancelAll(p.symbol);
           const offset = this.c.strategy.breakevenOffsetPct / 100;
           const be = p.side === "LONG" ? p.entry * (1 + offset) : p.entry * (1 - offset);
-          const stop = this.x.price(p.symbol, be), exitSide = p.side === "LONG" ? "SELL" : "BUY";
+          const stop = this.x.price(p.symbol, be, p.side === "LONG" ? "UP" : "DOWN"), exitSide = p.side === "LONG" ? "SELL" : "BUY";
           const remaining = this.x.quantity(p.symbol, amount);
           const newSl = await this.x.newOrder({ symbol: p.symbol, side: exitSide, type: "STOP_MARKET", stopPrice: stop, quantity: remaining, reduceOnly: "true", workingType: this.c.binance.workingType });
           const newTp2 = await this.x.newOrder({ symbol: p.symbol, side: exitSide, type: "TAKE_PROFIT_MARKET", stopPrice: p.tp2, quantity: remaining, reduceOnly: "true", workingType: this.c.binance.workingType });
@@ -196,7 +213,7 @@ class TradingEngine {
         const bars = await this.candles(p.symbol, this.c.strategy.entryTimeframe, this.c.strategy.historyCandles).catch(() => []);
         const a = atr(bars, this.c.strategy.atrPeriod), entry = num(p.entryPrice), side = num(p.positionAmt) > 0 ? "LONG" : "SHORT";
         if (a && entry > 0) {
-          const stopPrice = this.x.price(p.symbol, side === "LONG" ? entry - a * this.c.strategy.fallbackAtrMultiple : entry + a * this.c.strategy.fallbackAtrMultiple);
+          const stopPrice = this.x.price(p.symbol, side === "LONG" ? entry - a * this.c.strategy.fallbackAtrMultiple : entry + a * this.c.strategy.fallbackAtrMultiple, side === "LONG" ? "DOWN" : "UP");
           stopOrder = await this.x.newOrder({ symbol: p.symbol, side: side === "LONG" ? "SELL" : "BUY", type: "STOP_MARKET", stopPrice, closePosition: "true", workingType: this.c.binance.workingType }).catch(e => { this.log("[reconcile-stop-error]", p.symbol, e.message); return null; });
         }
       }
