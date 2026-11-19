@@ -60,8 +60,16 @@ class TradingEngine {
     this.lastSignalBucket = bucket;
     const exchangePositions = await this.x.positions();
     const active = new Set(exchangePositions.filter(p => Math.abs(num(p.positionAmt)) > 0).map(p => p.symbol));
-    for (const symbol of this.universe) {
+    const batchSize = Math.max(1, Math.floor(num(this.c.scanner.batchSize) || 10));
+    const batchDelayMs = Math.max(0, num(this.c.scanner.batchDelayMs));
+    const batchCount = Math.ceil(this.universe.length / batchSize);
+    for (let offset = 0; offset < this.universe.length; offset += batchSize) {
       if (!this.running) break;
+      const batch = this.universe.slice(offset, offset + batchSize);
+      const batchNumber = Math.floor(offset / batchSize) + 1;
+      this.log("[signals] batch", batchNumber + "/" + batchCount, "processing", batch.length, "coins");
+      for (const symbol of batch) {
+        if (!this.running) break;
       try {
         if (active.has(symbol) || await this.db.getPosition(symbol)) continue;
         const [trendCandles, entryCandles] = await Promise.all([
@@ -78,7 +86,11 @@ class TradingEngine {
         else if (result.action === "CANCEL") await this.db.deleteSetup(symbol);
         else if (result.action === "KEEP") await this.db.saveSetup(symbol, result.setup);
         else if (result.action === "ENTRY") { await this.db.deleteSetup(symbol); await this.openTrade(symbol, result); }
-      } catch (e) { this.log("[signal]", symbol, e.message); }
+        } catch (e) { this.log("[signal]", symbol, e.message); }
+      }
+      if (this.running && offset + batchSize < this.universe.length && batchDelayMs > 0) {
+        await sleep(batchDelayMs);
+      }
     }
   }
   async openTrade(symbol, signal) {
