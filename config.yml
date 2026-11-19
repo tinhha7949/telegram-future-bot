@@ -46,7 +46,7 @@ strategy:
   maxStopDistancePct: 5.0
   rewardRiskTp1: 1.2
   rewardRiskTp2: 1.5
-  tp1ClosePct: 60
+  tp1ClosePct: 70
   breakevenOffsetPct: 0.08
 
 risk:
