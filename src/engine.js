@@ -138,6 +138,7 @@ class TradingEngine {
     }).sort((a, b) => Math.abs(num(b.priceChangePercent)) - Math.abs(num(a.priceChangePercent)))
       .slice(0, this.c.scanner.maxCoins).map(t => t.symbol);
     this.universe = ranked; await this.db.saveScanner(ranked); this.lastScan = Date.now();
+    this.log("[scanner]", ranked.length, "symbols selected");
   }
   async candles(symbol, interval, limit) {
     const rows = await this.x.klines(symbol, interval, limit), now = Date.now();
@@ -153,6 +154,7 @@ class TradingEngine {
     this.lastSignalCheckAt = now;
     const exchangePositions = await this.x.positions();
     const active = new Set(exchangePositions.filter(p => Math.abs(num(p.positionAmt)) > 0).map(p => p.symbol));
+    this.log("[signal-check-start]", "universe", this.universe.length, "exchangePositions", active.size, "intervalSeconds", this.c.strategy.signalCheckIntervalSeconds);
     const batchSize = Math.max(1, Math.floor(num(this.c.scanner.batchSize) || 10));
     const batchDelayMs = Math.max(0, num(this.c.scanner.batchDelayMs));
     const batchCount = Math.ceil(this.universe.length / batchSize);
@@ -160,13 +162,17 @@ class TradingEngine {
       if (!this.running) break;
       const batch = this.universe.slice(offset, offset + batchSize);
       const batchNumber = Math.floor(offset / batchSize) + 1;
+      this.log("[signals] batch", batchNumber + "/" + batchCount, "processing", batch.length, "coins");
       for (const symbol of batch) {
         if (!this.running) break;
       try {
+        if (active.has(symbol)) continue;
+        if (await this.db.getPosition(symbol)) continue;
         const [trendCandles, entryCandles] = await Promise.all([
           this.candles(symbol, this.c.strategy.trendTimeframe, this.c.strategy.historyCandles),
           this.candles(symbol, this.c.strategy.entryTimeframe, this.c.strategy.historyCandles)
         ]);
+        if (!entryCandles.length) continue;
         const latest = entryCandles[entryCandles.length - 1];
         if (this.lastCandle.get(symbol) === latest.closeTime) continue;
         this.lastCandle.set(symbol, latest.closeTime);
@@ -175,6 +181,13 @@ class TradingEngine {
         if (result.action === "ARM") await this.db.saveSetup(symbol, result.setup);
         else if (result.action === "CANCEL") await this.db.deleteSetup(symbol);
         else if (result.action === "KEEP") await this.db.saveSetup(symbol, result.setup);
+        else if (result.action === "ENTRY") {
+          const opened = await this.openTrade(symbol, result);
+          if (opened) {
+            await this.db.deleteSetup(symbol);
+            active.add(symbol);
+          }
+        }
         } catch (e) { this.log("[signal-error]", symbol, "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "stack", e.stack || "-"); }
       }
       if (this.running && offset + batchSize < this.universe.length && batchDelayMs > 0) {
@@ -183,10 +196,12 @@ class TradingEngine {
     }
   }
   async openTrade(symbol, signal) {
-    const [exchangePositions, open] = await Promise.all([
+    const [exchangePositions, open, existing] = await Promise.all([
       this.x.positions(),
-      this.db.getOpenPositions()
+      this.db.getOpenPositions(),
+      this.db.getPosition(symbol)
     ]);
+    if (existing || exchangePositions.some(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0)) return false;
 
     // Count the union of exchange and database positions so stale/missing DB records
     // cannot allow the bot to exceed the configured account-wide position cap.
@@ -196,7 +211,7 @@ class TradingEngine {
     }
     const maxActivePositions = Math.max(1, Math.floor(num(this.c.risk.maxActivePositions) || 20));
     if (openSymbols.size >= maxActivePositions) {
-      return;
+      return false;
     }
 
     const account = await this.x.account();
@@ -289,6 +304,7 @@ class TradingEngine {
       }
       await this.alerts.opened(doc);
       await this.db.saveEvent({ type: "OPEN", symbol, side: signal.side, entry, quantity: storedQty, margin });
+      return true;
     } catch (e) {
       const stillOpen = (await this.x.positions()).find(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0);
       if (stillOpen) {
