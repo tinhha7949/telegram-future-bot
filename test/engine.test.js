@@ -72,3 +72,39 @@ test("signal scanning processes coins sequentially in configurable batches", asy
     ]);
   }
 });
+
+test("signal checks run on the configured interval instead of waiting for a new 5m bucket", async () => {
+  let now = 1_000_000;
+  let positionsCalls = 0;
+  const originalNow = Date.now;
+  Date.now = () => now;
+  try {
+    const engine = new TradingEngine({
+      app: { logLevel: "silent" },
+      scanner: { batchSize: 10, batchDelayMs: 0 },
+      strategy: {
+        signalCheckIntervalSeconds: 60,
+        entryTimeframe: "5m",
+        trendTimeframe: "15m",
+        historyCandles: 160
+      }
+    }, {
+      positions: async () => { positionsCalls += 1; return []; }
+    }, {}, {});
+    engine.running = true;
+    engine.universe = [];
+
+    await engine.checkSignals();
+    assert.equal(positionsCalls, 1);
+
+    now += 30_000;
+    await engine.checkSignals();
+    assert.equal(positionsCalls, 1);
+
+    now += 30_000;
+    await engine.checkSignals();
+    assert.equal(positionsCalls, 2);
+  } finally {
+    Date.now = originalNow;
+  }
+});
