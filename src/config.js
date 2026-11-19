@@ -16,6 +16,10 @@ function validateConfig(c) {
     ["strategy.emaPeriod", c.strategy?.emaPeriod, 2, 500],
     ["strategy.rsiPeriod", c.strategy?.rsiPeriod, 2, 100],
     ["strategy.signalCheckIntervalSeconds", c.strategy?.signalCheckIntervalSeconds, 10, 300],
+    ["strategy.rsiShortMin", c.strategy?.rsiShortMin, 0, 100],
+    ["strategy.rsiShortMax", c.strategy?.rsiShortMax, 0, 100],
+    ["strategy.rsiLongMin", c.strategy?.rsiLongMin, 0, 100],
+    ["strategy.rsiLongMax", c.strategy?.rsiLongMax, 0, 100],
     ["strategy.confirmationCandles", c.strategy?.confirmationCandles, 1, 20],
     ["risk.walletPercentPerTrade", c.risk?.walletPercentPerTrade, 0.01, 100],
     ["risk.maxActivePositions", c.risk?.maxActivePositions, 1, 200],
@@ -27,12 +31,14 @@ function validateConfig(c) {
       throw new Error("Invalid config value " + name + ": expected " + min + ".." + max);
     }
   }
+  if (c.strategy.rsiShortMin > c.strategy.rsiShortMax) throw new Error("RSI short minimum must not exceed maximum");
+  if (c.strategy.rsiLongMin > c.strategy.rsiLongMax) throw new Error("RSI long minimum must not exceed maximum");
   for (const key of ["trendTimeframe", "entryTimeframe"]) {
     if (typeof c.strategy[key] !== "string" || !/^\d+[mhdw]$/.test(c.strategy[key])) {
       throw new Error("Invalid timeframe: strategy." + key);
     }
   }
-  if (c.strategy.rsiLongTrigger >= c.strategy.rsiShortTrigger) throw new Error("RSI long trigger must be below short trigger");
+  if (c.strategy.rsiLongMax >= c.strategy.rsiShortMin) throw new Error("RSI long zone must be below short zone");
   if (c.strategy.rewardRiskTp1 <= 0 || c.strategy.rewardRiskTp2 <= c.strategy.rewardRiskTp1) {
     throw new Error("TP2 RR must be greater than TP1 RR and both must be positive");
   }
