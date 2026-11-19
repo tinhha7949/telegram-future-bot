@@ -11,6 +11,8 @@ function loadConfig(file = path.join(process.cwd(), "config.yml")) {
 function validateConfig(c) {
   const required = [
     ["scanner.maxCoins", c.scanner?.maxCoins, 1, 200],
+    ["scanner.batchSize", c.scanner?.batchSize, 1, 50],
+    ["scanner.batchDelayMs", c.scanner?.batchDelayMs, 0, 60000],
     ["strategy.emaPeriod", c.strategy?.emaPeriod, 2, 500],
     ["strategy.rsiPeriod", c.strategy?.rsiPeriod, 2, 100],
     ["strategy.confirmationCandles", c.strategy?.confirmationCandles, 1, 20],
