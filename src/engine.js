@@ -13,7 +13,7 @@ class TradingEngine {
   constructor(config, exchange, store, alerts) {
     this.c = config; this.x = exchange; this.db = store; this.alerts = alerts;
     this.running = false; this.universe = []; this.lastScan = 0;
-    this.lastCandle = new Map(); this.lastSignalBucket = 0; this.lastManageAt = 0;
+    this.lastCandle = new Map(); this.lastSignalCheckAt = 0; this.lastManageAt = 0;
   }
   log(...args) { if (this.c.app.logLevel !== "silent") console.log(new Date().toISOString(), ...args); }
   async start() {
@@ -55,9 +55,10 @@ class TradingEngine {
     }));
   }
   async checkSignals() {
-    const bucket = Math.floor(Date.now() / timeframeMs(this.c.strategy.entryTimeframe));
-    if (bucket === this.lastSignalBucket) return;
-    this.lastSignalBucket = bucket;
+    const signalCheckIntervalMs = this.c.strategy.signalCheckIntervalSeconds * 1000;
+    const now = Date.now();
+    if (now - this.lastSignalCheckAt < signalCheckIntervalMs) return;
+    this.lastSignalCheckAt = now;
     const exchangePositions = await this.x.positions();
     const active = new Set(exchangePositions.filter(p => Math.abs(num(p.positionAmt)) > 0).map(p => p.symbol));
     const batchSize = Math.max(1, Math.floor(num(this.c.scanner.batchSize) || 10));
