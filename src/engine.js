@@ -338,15 +338,43 @@ class TradingEngine {
       try {
         entryOrder = await this.x.newOrder({ symbol, side, type: "MARKET", quantity: marketQty, newClientOrderId: entryClientOrderId, newOrderRespType: "RESULT" });
       } catch (error) {
-        try {
-          entryOrder = await this.x.order(symbol, undefined, entryClientOrderId);
-        } catch {
-          const uncertain = (await this.x.positions()).find(p => p.symbol === symbol && Math.abs(num(p.positionAmt)) > 0);
-          if (uncertain) {
-            await this.x.cancelAll(symbol).catch(() => {});
-            await this.x.newOrder({ symbol, side: exitSide, type: "MARKET", quantity: this.x.quantity(symbol, Math.abs(num(uncertain.positionAmt)), true), reduceOnly: "true" }).catch(() => {});
+        // A timed-out POST may still have reached Binance. Reconcile by the unique
+        // client order ID and live position before deciding whether the entry exists.
+        let lookupError = null;
+        let livePosition = null;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          try {
+            entryOrder = await this.x.order(symbol, undefined, entryClientOrderId);
+            if (entryOrder) break;
+          } catch (queryError) {
+            lookupError = queryError;
           }
-          throw new Error("Entry response uncertain; duplicate retry prevented and position reconciliation attempted: " + error.message);
+          try {
+            livePosition = (await this.x.positions()).find(p => p.symbol === symbol
+              && Math.abs(num(p.positionAmt)) > 0);
+            if (livePosition) break;
+          } catch (positionError) {
+            lookupError = positionError;
+          }
+          if (attempt < 3) await sleep(500);
+        }
+        if (!entryOrder && livePosition) {
+          const expectedSign = signal.side === "LONG" ? 1 : -1;
+          if (Math.sign(num(livePosition.positionAmt)) === expectedSign) {
+            entryOrder = {
+              status: "FILLED",
+              avgPrice: livePosition.entryPrice,
+              executedQty: Math.abs(num(livePosition.positionAmt)),
+              clientOrderId: entryClientOrderId
+            };
+          }
+        }
+        if (!entryOrder) {
+          const uncertain = new Error("Entry response uncertain; no automatic MARKET retry was sent to prevent duplicates. Check Binance order history for " +
+            entryClientOrderId + ". Original error: " + error.message +
+            (lookupError ? "; reconciliation error: " + lookupError.message : ""));
+          uncertain.uncertainOrder = true;
+          throw uncertain;
         }
       }
       if (!["FILLED", "PARTIALLY_FILLED"].includes(entryOrder.status)) throw new Error("Entry market order was not filled: " + entryOrder.status);
