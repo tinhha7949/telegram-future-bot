@@ -305,7 +305,10 @@ class TradingEngine {
       const brackets = Array.isArray(symbolBracket?.brackets) ? symbolBracket.brackets : [];
       if (brackets.length) {
         const selected = brackets.find(item => notional <= num(item.notionalCap)
-          && notional > num(item.notionalFloor)) || brackets[brackets.length - 1];
+          && notional > num(item.notionalFloor));
+        if (!selected) {
+          throw new Error("ENTRY_REJECTED_NOTIONAL_BRACKET: " + notional.toFixed(4) + " USDT exceeds Binance symbol limits");
+        }
         const maxLeverage = num(selected.initialLeverage);
         if (maxLeverage > 0 && leverage > maxLeverage) {
           throw new Error("ENTRY_REJECTED_LEVERAGE_LIMIT: configured " + leverage +
