@@ -445,7 +445,7 @@ test("bias uses the configured timeframe and EMA period, then caches until the n
   engine.candles = async (_symbol, interval, limit) => {
     calls += 1;
     assert.equal(interval, "4h");
-    assert.equal(limit, 20);
+    assert.equal(limit, 23);
     return [100, 101, 102, 103].map((close, i) => ({
       close, closeTime: Date.now() - 1000 + i
     }));
