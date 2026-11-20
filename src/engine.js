@@ -7,7 +7,7 @@ const num = v => Number(v || 0);
 function timeframeMs(value) {
   const m = /^(\d+)([mhdw])$/.exec(value);
   if (!m) throw new Error("Unsupported timeframe " + value);
-  return Number(m[1]) * ({m:60000,h:3600000,d:86400000,w:604800000}[m[2]]);
+  return Number(m[1]) * ({m:60000,h:3600000,d:86400000,w:604800000,M:2592000000}[m[2]]);
 }
 class TradingEngine {
   constructor(config, exchange, store, alerts) {
@@ -205,15 +205,12 @@ class TradingEngine {
       try {
         if (active.has(symbol)) continue;
         if (await this.db.getPosition(symbol)) continue;
-        const [trendCandles, entryCandles] = await Promise.all([
-          this.candles(symbol, this.c.strategy.trendTimeframe, this.c.strategy.historyCandles),
-          this.candles(symbol, this.c.strategy.entryTimeframe, this.c.strategy.historyCandles)
-        ]);
-        if (!entryCandles.length) continue;
-        const latest = entryCandles[entryCandles.length - 1];
+        const candles = await this.candles(symbol, this.c.strategy.timeframe, this.c.strategy.historyCandles);
+        if (!candles.length) continue;
+        const latest = candles[candles.length - 1];
         if (this.lastCandle.get(symbol) === latest.closeTime) continue;
         const setup = await this.db.getSetup(symbol);
-        const result = evaluateClosedCandle({ trendCandles, entryCandles, setup, config: this.c });
+        const result = evaluateClosedCandle({ candles, setup, config: this.c });
         if (result.action === "ARM") {
           await this.db.saveSetup(symbol, result.setup);
           this.lastCandle.set(symbol, latest.closeTime);
@@ -490,7 +487,7 @@ class TradingEngine {
           }
           const existingStop = p.slOrderId ? await this.x.algoOrder(p.slOrderId) : null;
           if (existingStop?.algoStatus === "NEW") continue;
-          const bars = await this.candles(p.symbol, this.c.strategy.entryTimeframe, this.c.strategy.historyCandles);
+          const bars = await this.candles(p.symbol, this.c.strategy.timeframe, this.c.strategy.historyCandles);
           const atrValue = atr(bars, this.c.strategy.atrPeriod);
           const entryPrice = num(live?.entryPrice) || num(p.entry);
           if (atrValue > 0 && entryPrice > 0) {
@@ -593,7 +590,7 @@ class TradingEngine {
       let stopOrder = openAlgo.find(o => o.orderType === "STOP_MARKET" && o.algoStatus === "NEW"
         && o.side === (side === "LONG" ? "SELL" : "BUY") && o.closePosition === true);
       if (!stopOrder) {
-        const bars = await this.candles(p.symbol, this.c.strategy.entryTimeframe, this.c.strategy.historyCandles).catch(() => []);
+        const bars = await this.candles(p.symbol, this.c.strategy.timeframe, this.c.strategy.historyCandles).catch(() => []);
         const a = atr(bars, this.c.strategy.atrPeriod);
         const entry = num(p.entryPrice);
         if (a && entry > 0) {
