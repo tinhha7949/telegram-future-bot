@@ -3,7 +3,7 @@ const { rsi, atr, findSwing } = require("./indicators");
 
 function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
   const s = config.strategy;
-  const minimumHistory = Math.max(s.rsiPeriod + 2, s.atrPeriod + 2, s.swingLeft + s.swingRight + 3);
+  const minimumHistory = Math.max(s.rsiPeriod + 1, s.atrPeriod + 1, s.swingLeft + s.swingRight + 1);
   if (!Array.isArray(candles) || candles.length < minimumHistory) {
     return { action: "WAIT", reason: "INSUFFICIENT_CANDLES" };
   }
