@@ -44,7 +44,7 @@ test("both candidate RSI zones include their exact configured boundaries", () =>
     assert.equal(evaluate(candles(closes)).setup.side, "LONG");
   }
 });
-test("SHORT enters on the immediately following candle only when RSI is below 65 and close is below signal high", () => {
+test("SHORT enters when RSI is below 65 and close is below the signal-candle midpoint", () => {
   const signalBars = candles([100, 102, 101]);
   const armed = evaluate(signalBars);
   const confirmation = candles([98], 4)[0];
@@ -56,7 +56,7 @@ test("SHORT enters on the immediately following candle only when RSI is below 65
   assert.ok(result.tp1 < result.entry);
   assert.ok(result.tp2 < result.tp1);
 });
-test("LONG enters on the immediately following candle only when RSI is above 35 and close is above signal low", () => {
+test("LONG enters when RSI is above 35 and close is above the signal-candle midpoint", () => {
   const signalBars = candles([100, 98, 99]);
   const armed = evaluate(signalBars);
   const confirmation = candles([102], 4)[0];
@@ -68,6 +68,24 @@ test("LONG enters on the immediately following candle only when RSI is above 35 
   assert.ok(result.tp1 > result.entry);
   assert.ok(result.tp2 > result.tp1);
 });
+test("SHORT does not confirm above the signal-candle midpoint even if close is below signal high", () => {
+  const signalBars = candles([100, 102, 101]);
+  const armed = evaluate(signalBars);
+  const confirmation = candles([101.1], 4)[0]; // signal midpoint is 101; signal high is 101.2
+  const result = evaluate([...signalBars, confirmation], armed.setup);
+  assert.equal(result.action, "KEEP");
+  assert.equal(result.setup.confirmationCount, 1);
+});
+
+test("LONG does not confirm below the signal-candle midpoint even if close is above signal low", () => {
+  const signalBars = candles([100, 98, 99]);
+  const armed = evaluate(signalBars);
+  const confirmation = candles([98.9], 4)[0]; // signal midpoint is 99; signal low is 98.8
+  const result = evaluate([...signalBars, confirmation], armed.setup);
+  assert.equal(result.action, "KEEP");
+  assert.equal(result.setup.confirmationCount, 1);
+});
+
 test("SHORT candidate is canceled when confirmation RSI remains above 70", () => {
   const signalBars = candles([100, 102, 101]);
   const armed = evaluate(signalBars);
