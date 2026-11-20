@@ -2,56 +2,90 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { evaluateClosedCandle } = require("../src/strategy");
-const cfg = { strategy: { emaPeriod: 3, rsiPeriod: 2, atrPeriod: 2,
-  rsiShortMin: 70, rsiShortMax: 75, rsiLongMin: 25, rsiLongMax: 30,
-  confirmationCandles: 3, requireRsiMomentumTurn: false, swingLeft: 1, swingRight: 1, swingLookback: 10,
+
+const cfg = { strategy: {
+  timeframe: "15m", rsiPeriod: 2, atrPeriod: 2,
+  rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
+  swingLeft: 1, swingRight: 1, swingLookback: 10,
   fallbackAtrMultiple: 1.5, slBufferPct: .12, minStopDistancePct: .1, maxStopDistancePct: 5,
-  rewardRiskTp1: 1.2, rewardRiskTp2: 1.5 } };
+  rewardRiskTp1: 1.5, rewardRiskTp2: 2
+} };
 const candles = (closes, start = 1) => closes.map((close, i) => ({
   open: close - .1, high: close + .2, low: close - .2, close, closeTime: start + i
 }));
-test("strategy waits safely when candle history is insufficient", () => {
-  assert.equal(evaluateClosedCandle({trendCandles:[],entryCandles:[],setup:null,config:cfg}).action, "WAIT");
-});
-test("setup expiry is bounded to confirmation candle count", () => {
-  const bars = candles([1,2,3,4,5,6,7,8]);
-  const result = evaluateClosedCandle({trendCandles:bars,entryCandles:bars,setup:{status:"ARMED",side:"LONG",triggerCloseTime:1,triggerHigh:100},config:cfg});
-  assert.ok(["CANCEL","KEEP","ENTRY"].includes(result.action));
-});
+const evaluate = (bars, setup = null) => evaluateClosedCandle({ candles: bars, setup, config: cfg });
 
-test("short trigger arms only inside RSI 70-75 when 15m trend is below EMA", () => {
-  const trend = candles([100,99,98,97,96]);
-  const entry = candles([100,98,96,97,99]);
-  const result = evaluateClosedCandle({trendCandles:trend,entryCandles:entry,setup:null,config:cfg});
+test("waits safely when same-timeframe candle history is insufficient", () => {
+  assert.equal(evaluate([]).action, "WAIT");
+});
+test("SHORT candidate arms only when closed-candle RSI is inside 65-70 inclusive", () => {
+  const bars = candles([100, 102, 101]);
+  const result = evaluate(bars);
   assert.equal(result.action, "ARM");
   assert.equal(result.setup.side, "SHORT");
-  assert.equal(result.rsi, 71.42857142857143);
-  assert.equal(result.setup.triggerLow, 98.8);
+  assert.equal(result.setup.triggerHigh, 101.2);
 });
-test("long trigger arms only inside RSI 25-30 when 15m trend is above EMA", () => {
-  const trend = candles([96,97,98,99,100]);
-  const entry = candles([100,102,104,103,101]);
-  const result = evaluateClosedCandle({trendCandles:trend,entryCandles:entry,setup:null,config:cfg});
+test("LONG candidate arms only when closed-candle RSI is inside 30-35 inclusive", () => {
+  const bars = candles([100, 98, 99]);
+  const result = evaluate(bars);
   assert.equal(result.action, "ARM");
   assert.equal(result.setup.side, "LONG");
-  assert.equal(result.rsi, 28.57142857142857);
 });
-test("RSI outside the configured trigger zones does not arm a setup", () => {
-  const trend = candles([100,99,98,97,96]);
-  const entry = candles([100,101,102,103,104]);
-  const result = evaluateClosedCandle({trendCandles:trend,entryCandles:entry,setup:null,config:cfg});
+test("RSI outside both exact candidate zones does not arm a setup", () => {
+  const result = evaluate(candles([100, 101, 102]));
   assert.equal(result.action, "WAIT");
   assert.equal(result.reason, "NO_TRIGGER");
 });
-test("short enters only after a later 5m candle closes below trigger low", () => {
-  const trend = candles([100,99,98,97,96]);
-  const entry = candles([100,98,96,97,99]);
-  const setup = {side:"SHORT",status:"ARMED",triggerLow:98.8,triggerHigh:99.2,triggerCloseTime:5};
-  const confirmation = candles([98], 6)[0];
-  const result = evaluateClosedCandle({trendCandles:trend,entryCandles:[...entry,confirmation],setup,config:cfg});
+test("SHORT enters on the immediately following candle only when RSI is below 65 and close is below signal high", () => {
+  const signalBars = candles([100, 102, 101]);
+  const armed = evaluate(signalBars);
+  const confirmation = candles([98], 4)[0];
+  const result = evaluate([...signalBars, confirmation], armed.setup);
   assert.equal(result.action, "ENTRY");
   assert.equal(result.side, "SHORT");
+  assert.equal(result.entry, confirmation.close);
   assert.ok(result.stop > result.entry);
   assert.ok(result.tp1 < result.entry);
   assert.ok(result.tp2 < result.tp1);
+});
+test("LONG enters on the immediately following candle only when RSI is above 35 and close is above signal low", () => {
+  const signalBars = candles([100, 98, 99]);
+  const armed = evaluate(signalBars);
+  const confirmation = candles([102], 4)[0];
+  const result = evaluate([...signalBars, confirmation], armed.setup);
+  assert.equal(result.action, "ENTRY");
+  assert.equal(result.side, "LONG");
+  assert.equal(result.entry, confirmation.close);
+  assert.ok(result.stop < result.entry);
+  assert.ok(result.tp1 > result.entry);
+  assert.ok(result.tp2 > result.tp1);
+});
+test("SHORT candidate is canceled when confirmation RSI remains above 70", () => {
+  const signalBars = candles([100, 102, 101]);
+  const armed = evaluate(signalBars);
+  const result = evaluate([...signalBars, ...candles([104], 4)], armed.setup);
+  assert.equal(result.action, "CANCEL");
+  assert.equal(result.reason, "SHORT_RSI_INVALIDATED");
+});
+test("LONG candidate is canceled when confirmation RSI remains below 30", () => {
+  const signalBars = candles([100, 98, 99]);
+  const armed = evaluate(signalBars);
+  const result = evaluate([...signalBars, ...candles([96], 4)], armed.setup);
+  assert.equal(result.action, "CANCEL");
+  assert.equal(result.reason, "LONG_RSI_INVALIDATED");
+});
+test("candidate is canceled after the next candle and cannot confirm late", () => {
+  const signalBars = candles([100, 102, 101]);
+  const armed = evaluate(signalBars);
+  const later = [...signalBars, ...candles([100, 98], 4)];
+  const result = evaluate(later, armed.setup);
+  assert.equal(result.action, "CANCEL");
+  assert.equal(result.reason, "NOT_NEXT_CANDLE");
+});
+test("legacy persisted multi-timeframe setups are discarded", () => {
+  const signalBars = candles([100, 102, 101]);
+  const oldSetup = { status: "ARMED", side: "SHORT", triggerCloseTime: 3, triggerHigh: 101.2, triggerLow: 100.8 };
+  const result = evaluate([...signalBars, ...candles([98], 4)], oldSetup);
+  assert.equal(result.action, "CANCEL");
+  assert.equal(result.reason, "STALE_SETUP_VERSION_OR_TIMEFRAME");
 });
