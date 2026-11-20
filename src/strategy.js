@@ -15,7 +15,7 @@ function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
 
   if (setup && setup.status === "ARMED") {
     // Discard setups created by the previous multi-timeframe strategy or another timeframe.
-    if (setup.strategyVersion !== 2 || setup.timeframe !== s.timeframe) {
+    if (setup.strategyVersion !== 3 || setup.timeframe !== s.timeframe) {
       return { action: "CANCEL", reason: "STALE_SETUP_VERSION_OR_TIMEFRAME" };
     }
 
@@ -23,7 +23,7 @@ function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
     if (age === 0) {
       return { action: "KEEP", setup, rsi: currentRsi };
     }
-    if (age !== 1) return { action: "CANCEL", reason: "NOT_NEXT_CANDLE" };
+    if (age > s.maxConfirmationCandles) return { action: "CANCEL", reason: "CONFIRMATION_TIMEOUT" };
 
     const shortConfirmed = setup.side === "SHORT"
       && currentRsi < s.rsiShortMin
@@ -32,15 +32,19 @@ function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
       && currentRsi > s.rsiLongMax
       && candle.close > setup.triggerLow;
 
-    // The candidate is valid for exactly one following closed candle. Any other
-    // outcome is discarded; it must never linger and confirm several candles later.
+    // Keep the candidate alive across the configured number of following closed candles.
+    // RSI invalidation cancels immediately; otherwise wait for confirmation or timeout.
     if (!shortConfirmed && !longConfirmed) {
-      const reason = setup.side === "SHORT" && currentRsi > s.rsiShortMax
-        ? "SHORT_RSI_INVALIDATED"
-        : setup.side === "LONG" && currentRsi < s.rsiLongMin
-          ? "LONG_RSI_INVALIDATED"
-          : "CONFIRMATION_NOT_MET";
-      return { action: "CANCEL", reason, rsi: currentRsi };
+      if (setup.side === "SHORT" && currentRsi > s.rsiShortMax) {
+        return { action: "CANCEL", reason: "SHORT_RSI_INVALIDATED", rsi: currentRsi };
+      }
+      if (setup.side === "LONG" && currentRsi < s.rsiLongMin) {
+        return { action: "CANCEL", reason: "LONG_RSI_INVALIDATED", rsi: currentRsi };
+      }
+      if (age >= s.maxConfirmationCandles) {
+        return { action: "CANCEL", reason: "CONFIRMATION_TIMEOUT", rsi: currentRsi };
+      }
+      return { action: "KEEP", setup: { ...setup, confirmationCount: age }, rsi: currentRsi };
     }
 
     const a = atr(candles, s.atrPeriod);
@@ -84,7 +88,7 @@ function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
     return {
       action: "ARM",
       setup: {
-        side: "SHORT", status: "ARMED", strategyVersion: 2, timeframe: s.timeframe,
+        side: "SHORT", status: "ARMED", strategyVersion: 3, timeframe: s.timeframe,
         triggerLow: candle.low, triggerHigh: candle.high, triggerCloseTime: candle.closeTime,
         createdAt: now, confirmationCount: 0
       },
