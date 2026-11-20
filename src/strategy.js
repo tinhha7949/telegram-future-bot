@@ -99,7 +99,7 @@ function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
     return {
       action: "ARM",
       setup: {
-        side: "LONG", status: "ARMED", strategyVersion: 2, timeframe: s.timeframe,
+        side: "LONG", status: "ARMED", strategyVersion: 3, timeframe: s.timeframe,
         triggerLow: candle.low, triggerHigh: candle.high, triggerCloseTime: candle.closeTime,
         createdAt: now, confirmationCount: 0
       },
