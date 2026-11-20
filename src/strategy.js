@@ -25,12 +25,14 @@ function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
     }
     if (age > s.maxConfirmationCandles) return { action: "CANCEL", reason: "CONFIRMATION_TIMEOUT" };
 
+    // Require price to close beyond the midpoint of the signal candle.
+    const triggerMid = (setup.triggerHigh + setup.triggerLow) / 2;
     const shortConfirmed = setup.side === "SHORT"
       && currentRsi < s.rsiShortMin
-      && candle.close < setup.triggerHigh;
+      && candle.close < triggerMid;
     const longConfirmed = setup.side === "LONG"
       && currentRsi > s.rsiLongMax
-      && candle.close > setup.triggerLow;
+      && candle.close > triggerMid;
 
     // Keep the candidate alive across the configured number of following closed candles.
     // RSI invalidation cancels immediately; otherwise wait for confirmation or timeout.
