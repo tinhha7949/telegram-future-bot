@@ -68,3 +68,16 @@ test("RSI signal zones accept configured boundaries and remain non-overlapping",
   c.strategy.rsiLongMax = 70;
   assert.throws(() => validateConfig(c), /RSI long zone/);
 });
+
+test("maximum confirmation candles is editable from 1 to 20", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  assert.equal(c.strategy.maxConfirmationCandles, 3);
+  for (const n of [1, 2, 3, 5, 10, 20]) {
+    c.strategy.maxConfirmationCandles = n;
+    assert.equal(validateConfig(c), true, String(n));
+  }
+  c.strategy.maxConfirmationCandles = 0;
+  assert.throws(() => validateConfig(c), /strategy.maxConfirmationCandles/);
+  c.strategy.maxConfirmationCandles = 21;
+  assert.throws(() => validateConfig(c), /strategy.maxConfirmationCandles/);
+});
