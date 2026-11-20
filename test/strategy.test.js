@@ -85,7 +85,8 @@ test("LONG candidate is canceled when confirmation RSI remains below 30", () => 
 test("candidate stays armed after first candle and can confirm on second candle", () => {
   const signalBars = candles([100, 102, 101]);
   const armed = evaluate(signalBars);
-  const firstWait = candles([102.5], 4)[0];
+  signalBars[2].high = 101.01;
+  const firstWait = candles([101.02], 4)[0];
   const waiting = evaluate([...signalBars, firstWait], armed.setup);
   assert.equal(waiting.action, "KEEP");
   assert.equal(waiting.setup.confirmationCount, 1);
@@ -106,7 +107,8 @@ test("legacy persisted multi-timeframe setups are discarded", () => {
 test("candidate expires after configured maximum confirmation candles", () => {
   const signalBars = candles([100, 102, 101]);
   const armed = evaluate(signalBars);
-  const waits = candles([102.5, 102.5, 102.5], 4);
+  signalBars[2].high = 101.01;
+  const waits = candles([101.02, 101.02, 101.02], 4);
   const result = evaluate([...signalBars, ...waits], armed.setup);
   assert.equal(result.action, "CANCEL");
   assert.equal(result.reason, "CONFIRMATION_TIMEOUT");
@@ -115,7 +117,8 @@ test("candidate can wait for a user-configured fifth confirmation candle", () =>
   cfg.strategy.maxConfirmationCandles = 5;
   const signalBars = candles([100, 102, 101]);
   const armed = evaluate(signalBars);
-  const waits = candles([102.5, 102.5, 102.5, 102.5], 4);
+  signalBars[2].high = 101.01;
+  const waits = candles([101.02, 101.02, 101.02, 101.02], 4);
   const waiting = evaluate([...signalBars, ...waits], armed.setup);
   assert.equal(waiting.action, "KEEP");
   const confirm = candles([99], 8)[0];
