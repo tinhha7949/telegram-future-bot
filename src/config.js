@@ -3,6 +3,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const YAML = require("yaml");
 
+const BINANCE_TIMEFRAMES = new Set([
+  "1m", "3m", "5m", "15m", "30m",
+  "1h", "2h", "4h", "6h", "8h", "12h",
+  "1d", "3d", "1w", "1M"
+]);
+
 function loadConfig(file = path.join(process.cwd(), "config.yml")) {
   const parsed = YAML.parse(fs.readFileSync(file, "utf8"));
   validateConfig(parsed);
@@ -14,14 +20,12 @@ function validateConfig(c) {
     ["scanner.batchSize", c.scanner?.batchSize, 1, 50],
     ["scanner.batchDelayMs", c.scanner?.batchDelayMs, 0, 60000],
     ["scanner.errorRetrySeconds", c.scanner?.errorRetrySeconds, 10, 600],
-    ["strategy.emaPeriod", c.strategy?.emaPeriod, 2, 500],
     ["strategy.rsiPeriod", c.strategy?.rsiPeriod, 2, 100],
     ["strategy.signalCheckIntervalSeconds", c.strategy?.signalCheckIntervalSeconds, 10, 300],
     ["strategy.rsiShortMin", c.strategy?.rsiShortMin, 0, 100],
     ["strategy.rsiShortMax", c.strategy?.rsiShortMax, 0, 100],
     ["strategy.rsiLongMin", c.strategy?.rsiLongMin, 0, 100],
     ["strategy.rsiLongMax", c.strategy?.rsiLongMax, 0, 100],
-    ["strategy.confirmationCandles", c.strategy?.confirmationCandles, 1, 20],
     ["risk.walletPercentPerTrade", c.risk?.walletPercentPerTrade, 0.01, 100],
     ["risk.maxActivePositions", c.risk?.maxActivePositions, 1, 200],
     ["binance.leverage", c.binance?.leverage, 1, 125],
@@ -32,13 +36,11 @@ function validateConfig(c) {
       throw new Error("Invalid config value " + name + ": expected " + min + ".." + max);
     }
   }
+  if (!BINANCE_TIMEFRAMES.has(c.strategy?.timeframe)) {
+    throw new Error("Invalid timeframe: strategy.timeframe must be a Binance kline interval");
+  }
   if (c.strategy.rsiShortMin > c.strategy.rsiShortMax) throw new Error("RSI short minimum must not exceed maximum");
   if (c.strategy.rsiLongMin > c.strategy.rsiLongMax) throw new Error("RSI long minimum must not exceed maximum");
-  for (const key of ["trendTimeframe", "entryTimeframe"]) {
-    if (typeof c.strategy[key] !== "string" || !/^\d+[mhdw]$/.test(c.strategy[key])) {
-      throw new Error("Invalid timeframe: strategy." + key);
-    }
-  }
   if (c.strategy.rsiLongMax >= c.strategy.rsiShortMin) throw new Error("RSI long zone must be below short zone");
   if (c.strategy.rewardRiskTp1 <= 0 || c.strategy.rewardRiskTp2 <= c.strategy.rewardRiskTp1) {
     throw new Error("TP2 RR must be greater than TP1 RR and both must be positive");
@@ -46,4 +48,4 @@ function validateConfig(c) {
   if (c.strategy.slBufferPct < 0 || c.strategy.breakevenOffsetPct < 0) throw new Error("SL/BE percentages cannot be negative");
   return true;
 }
-module.exports = { loadConfig, validateConfig };
+module.exports = { loadConfig, validateConfig, BINANCE_TIMEFRAMES };
