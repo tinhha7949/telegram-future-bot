@@ -22,6 +22,7 @@ function validateConfig(c) {
     ["scanner.errorRetrySeconds", c.scanner?.errorRetrySeconds, 10, 600],
     ["strategy.rsiPeriod", c.strategy?.rsiPeriod, 2, 100],
     ["strategy.signalCheckIntervalSeconds", c.strategy?.signalCheckIntervalSeconds, 10, 300],
+    ["strategy.maxConfirmationCandles", c.strategy?.maxConfirmationCandles, 1, 20],
     ["strategy.rsiShortMin", c.strategy?.rsiShortMin, 0, 100],
     ["strategy.rsiShortMax", c.strategy?.rsiShortMax, 0, 100],
     ["strategy.rsiLongMin", c.strategy?.rsiLongMin, 0, 100],
