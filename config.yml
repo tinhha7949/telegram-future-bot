@@ -16,26 +16,22 @@ binance:
 scanner:
   intervalMinutes: 15
   maxCoins: 100
-  batchSize: 10       # Coins processed sequentially in each batch
-  batchDelayMs: 1000  # Pause between batches (milliseconds)
-  errorRetrySeconds: 60  # Retry failed scanner requests after this delay
+  batchSize: 10
+  batchDelayMs: 1000
+  errorRetrySeconds: 60
   quoteAsset: USDT
   minQuoteVolume: 5000000
   minAbsPriceChangePct: 1.0
   excludeSymbols: [USDCUSDT, FDUSDUSDT, BUSDUSDT, TUSDUSDT, USDPUSDT, DAIUSDT]
 
 strategy:
-  trendTimeframe: 15m
-  entryTimeframe: 5m
-  signalCheckIntervalSeconds: 60  # Recheck the selected coins every minute; signals still use closed 5m candles
-  emaPeriod: 50
+  timeframe: 15m
+  signalCheckIntervalSeconds: 10
   rsiPeriod: 14
-  rsiShortMin: 70
-  rsiShortMax: 75
-  rsiLongMin: 25
-  rsiLongMax: 30
-  confirmationCandles: 5
-  requireRsiMomentumTurn: false
+  rsiShortMin: 65
+  rsiShortMax: 70
+  rsiLongMin: 30
+  rsiLongMax: 35
   historyCandles: 160
   swingLeft: 2
   swingRight: 2
@@ -52,7 +48,7 @@ strategy:
 
 risk:
   walletPercentPerTrade: 20
-  maxActivePositions: 20  # Maximum total open positions across the account
+  maxActivePositions: 20
   maxMarginPerTradeUsdt: 0
   minMarginPerTradeUsdt: 0
 
