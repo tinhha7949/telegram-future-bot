@@ -1,6 +1,6 @@
 "use strict";
 const { evaluateClosedCandle } = require("./strategy");
-const { atr } = require("./indicators");
+const { atr, ema } = require("./indicators");
 const { calculateMargin, calculateRawQuantity } = require("./risk");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const num = v => Number(v || 0);
@@ -14,6 +14,7 @@ class TradingEngine {
     this.c = config; this.x = exchange; this.db = store; this.alerts = alerts;
     this.running = false; this.universe = []; this.lastScan = 0; this.lastScanFailedAt = 0;
     this.lastCandle = new Map(); this.lastSignalCheckAt = 0; this.lastManageAt = 0;
+    this.biasCache = new Map();
   }
   log(...args) { if (this.c.app.logLevel !== "silent") console.log(new Date().toISOString(), ...args); }
   async replaceStopLoss(symbol, side, triggerPrice, fallbackPrice, currentSlId) {
@@ -184,6 +185,35 @@ class TradingEngine {
       close: num(k[4]), volume: num(k[5]), closeTime: Number(k[6])
     }));
   }
+  async getBiasDirection(symbol) {
+    const bias = this.c.strategy.bias;
+    if (!bias?.enabled) return undefined;
+
+    const now = Date.now();
+    const cached = this.biasCache.get(symbol);
+    if (cached && now < cached.expiresAt) return cached.direction;
+
+    const period = Number(bias.emaPeriod);
+    const interval = bias.timeframe;
+    const history = Math.max(period * 3, period + 20);
+    const bars = await this.candles(symbol, interval, history);
+    if (!bars.length || bars.length < period) {
+      this.biasCache.set(symbol, { direction: null, expiresAt: now + 30000 });
+      return null;
+    }
+
+    const emaValue = ema(bars.map(bar => bar.close), period);
+    const latestClose = bars[bars.length - 1].close;
+    const direction = !Number.isFinite(emaValue) ? null
+      : latestClose > emaValue ? "LONG"
+      : latestClose < emaValue ? "SHORT" : null;
+    const last = bars[bars.length - 1];
+    this.biasCache.set(symbol, {
+      direction,
+      expiresAt: Math.max(now + 1000, last.closeTime + timeframeMs(interval) + 1)
+    });
+    return direction;
+  }
   async checkSignals() {
     const signalCheckIntervalMs = this.c.strategy.signalCheckIntervalSeconds * 1000;
     const now = Date.now();
@@ -210,7 +240,10 @@ class TradingEngine {
         const latest = candles[candles.length - 1];
         if (this.lastCandle.get(symbol) === latest.closeTime) continue;
         const setup = await this.db.getSetup(symbol);
-        const result = evaluateClosedCandle({ candles, setup, config: this.c });
+        const allowedSide = this.c.strategy.bias?.enabled
+          ? await this.getBiasDirection(symbol)
+          : undefined;
+        const result = evaluateClosedCandle({ candles, setup, config: this.c, allowedSide });
         if (result.action === "ARM") {
           await this.db.saveSetup(symbol, result.setup);
           this.lastCandle.set(symbol, latest.closeTime);

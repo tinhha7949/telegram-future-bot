@@ -40,6 +40,18 @@ function validateConfig(c) {
   if (!BINANCE_TIMEFRAMES.has(c.strategy?.timeframe)) {
     throw new Error("Invalid timeframe: strategy.timeframe must be a Binance kline interval");
   }
+  if (c.strategy?.bias) {
+    if (typeof c.strategy.bias.enabled !== "boolean") {
+      throw new Error("Invalid config value strategy.bias.enabled: expected true or false");
+    }
+    if (!BINANCE_TIMEFRAMES.has(c.strategy.bias.timeframe)) {
+      throw new Error("Invalid timeframe: strategy.bias.timeframe must be a Binance kline interval");
+    }
+    if (!Number.isInteger(Number(c.strategy.bias.emaPeriod))
+      || Number(c.strategy.bias.emaPeriod) < 2 || Number(c.strategy.bias.emaPeriod) > 500) {
+      throw new Error("Invalid config value strategy.bias.emaPeriod: expected 2..500");
+    }
+  }
   if (c.strategy.rsiShortMin > c.strategy.rsiShortMax) throw new Error("RSI short minimum must not exceed maximum");
   if (c.strategy.rsiLongMin > c.strategy.rsiLongMax) throw new Error("RSI long minimum must not exceed maximum");
   if (c.strategy.rsiLongMax >= c.strategy.rsiShortMin) throw new Error("RSI long zone must be below short zone");

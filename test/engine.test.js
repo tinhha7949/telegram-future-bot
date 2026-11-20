@@ -435,3 +435,31 @@ test("Telegram startup notification failure does not stop the trading loop", asy
   assert.equal(startupAttempted, true);
   assert.equal(engine.running, false);
 });
+
+test("bias uses the configured timeframe and EMA period, then caches until the next closed candle", async () => {
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    strategy: { bias: { enabled: true, timeframe: "4h", emaPeriod: 3 } }
+  }, {}, {}, {});
+  let calls = 0;
+  engine.candles = async (_symbol, interval, limit) => {
+    calls += 1;
+    assert.equal(interval, "4h");
+    assert.equal(limit, 20);
+    return [100, 101, 102, 103].map((close, i) => ({
+      close, closeTime: Date.now() - 1000 + i
+    }));
+  };
+  assert.equal(await engine.getBiasDirection("TESTUSDT"), "LONG");
+  assert.equal(await engine.getBiasDirection("TESTUSDT"), "LONG");
+  assert.equal(calls, 1);
+});
+
+test("enabled bias returns no trade direction when 1h history is insufficient", async () => {
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    strategy: { bias: { enabled: true, timeframe: "1h", emaPeriod: 100 } }
+  }, {}, {}, {});
+  engine.candles = async () => [{ close: 100, closeTime: Date.now() - 1000 }];
+  assert.equal(await engine.getBiasDirection("TESTUSDT"), null);
+});

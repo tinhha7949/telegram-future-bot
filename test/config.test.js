@@ -81,3 +81,20 @@ test("maximum confirmation candles is editable from 1 to 20", () => {
   c.strategy.maxConfirmationCandles = 21;
   assert.throws(() => validateConfig(c), /strategy.maxConfirmationCandles/);
 });
+
+test("bias is enabled by default and its timeframe and EMA period are editable", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  assert.deepEqual(c.strategy.bias, { enabled: true, timeframe: "1h", emaPeriod: 100 });
+  c.strategy.bias.enabled = false;
+  c.strategy.bias.timeframe = "4h";
+  c.strategy.bias.emaPeriod = 200;
+  assert.equal(validateConfig(c), true);
+});
+test("invalid bias timeframe and EMA period are rejected", () => {
+  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
+  c.strategy.bias.timeframe = "5minutes";
+  assert.throws(() => validateConfig(c), /strategy.bias.timeframe/);
+  c.strategy.bias.timeframe = "1h";
+  c.strategy.bias.emaPeriod = 1;
+  assert.throws(() => validateConfig(c), /strategy.bias.emaPeriod/);
+});

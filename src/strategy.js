@@ -1,7 +1,7 @@
 "use strict";
 const { rsi, atr, findSwing } = require("./indicators");
 
-function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
+function evaluateClosedCandle({ candles, setup, config, allowedSide, now = Date.now() }) {
   const s = config.strategy;
   const minimumHistory = Math.max(s.rsiPeriod + 1, s.atrPeriod + 1, s.swingLeft + s.swingRight + 1);
   if (!Array.isArray(candles) || candles.length < minimumHistory) {
@@ -13,10 +13,15 @@ function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
   const candle = candles[candles.length - 1];
   if (!Number.isFinite(currentRsi)) return { action: "WAIT", reason: "RSI_UNAVAILABLE" };
 
+  const biasEnabled = s.bias?.enabled === true;
+
   if (setup && setup.status === "ARMED") {
     // Discard setups created by the previous multi-timeframe strategy or another timeframe.
     if (setup.strategyVersion !== 3 || setup.timeframe !== s.timeframe) {
       return { action: "CANCEL", reason: "STALE_SETUP_VERSION_OR_TIMEFRAME" };
+    }
+    if (biasEnabled && allowedSide !== setup.side) {
+      return { action: "CANCEL", reason: "BIAS_DIRECTION_CHANGED" };
     }
 
     const age = candles.filter(c => c.closeTime > setup.triggerCloseTime).length;
@@ -87,6 +92,9 @@ function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
   }
 
   if (currentRsi >= s.rsiShortMin && currentRsi <= s.rsiShortMax) {
+    if (biasEnabled && allowedSide !== "SHORT") {
+      return { action: "WAIT", reason: "BIAS_FILTERED", rsi: currentRsi };
+    }
     return {
       action: "ARM",
       setup: {
@@ -98,6 +106,9 @@ function evaluateClosedCandle({ candles, setup, config, now = Date.now() }) {
     };
   }
   if (currentRsi >= s.rsiLongMin && currentRsi <= s.rsiLongMax) {
+    if (biasEnabled && allowedSide !== "LONG") {
+      return { action: "WAIT", reason: "BIAS_FILTERED", rsi: currentRsi };
+    }
     return {
       action: "ARM",
       setup: {

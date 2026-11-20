@@ -26,6 +26,10 @@ scanner:
 
 strategy:
   timeframe: 15m
+  bias:
+    enabled: true
+    timeframe: 1h
+    emaPeriod: 100
   signalCheckIntervalSeconds: 10
   maxConfirmationCandles: 3
   rsiPeriod: 14

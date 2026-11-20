@@ -144,3 +144,49 @@ test("candidate can wait for a user-configured fifth confirmation candle", () =>
   assert.equal(result.action, "ENTRY");
   cfg.strategy.maxConfirmationCandles = 3;
 });
+
+test("1h bias allows only SHORT setups in a bearish direction", () => {
+  const bars = candles([100, 102, 101]);
+  const result = evaluateClosedCandle({
+    candles: bars, setup: null,
+    config: { strategy: { ...cfg.strategy, bias: { enabled: true } } },
+    allowedSide: "SHORT"
+  });
+  assert.equal(result.action, "ARM");
+  assert.equal(result.setup.side, "SHORT");
+});
+
+test("1h bullish bias blocks a SHORT RSI trigger", () => {
+  const bars = candles([100, 102, 101]);
+  const result = evaluateClosedCandle({
+    candles: bars, setup: null,
+    config: { strategy: { ...cfg.strategy, bias: { enabled: true } } },
+    allowedSide: "LONG"
+  });
+  assert.equal(result.action, "WAIT");
+  assert.equal(result.reason, "BIAS_FILTERED");
+});
+
+test("1h bearish bias blocks a LONG RSI trigger", () => {
+  const bars = candles([100, 98, 99]);
+  const result = evaluateClosedCandle({
+    candles: bars, setup: null,
+    config: { strategy: { ...cfg.strategy, bias: { enabled: true } } },
+    allowedSide: "SHORT"
+  });
+  assert.equal(result.action, "WAIT");
+  assert.equal(result.reason, "BIAS_FILTERED");
+});
+
+test("an armed setup is canceled when the 1h bias changes against it", () => {
+  const signalBars = candles([100, 102, 101]);
+  const armed = evaluate(signalBars);
+  const result = evaluateClosedCandle({
+    candles: [...signalBars, ...candles([98], 4)],
+    setup: armed.setup,
+    config: { strategy: { ...cfg.strategy, bias: { enabled: true } } },
+    allowedSide: "LONG"
+  });
+  assert.equal(result.action, "CANCEL");
+  assert.equal(result.reason, "BIAS_DIRECTION_CHANGED");
+});
