@@ -5,7 +5,7 @@ const { calculateMargin, calculateRawQuantity } = require("./risk");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const num = v => Number(v || 0);
 function timeframeMs(value) {
-  const m = /^(\d+)([mhdw])$/.exec(value);
+  const m = /^(\d+)([mhdwM])$/.exec(value);
   if (!m) throw new Error("Unsupported timeframe " + value);
   return Number(m[1]) * ({m:60000,h:3600000,d:86400000,w:604800000,M:2592000000}[m[2]]);
 }
