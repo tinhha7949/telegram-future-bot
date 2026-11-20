@@ -36,6 +36,14 @@ test("RSI outside both exact candidate zones does not arm a setup", () => {
   assert.equal(result.action, "WAIT");
   assert.equal(result.reason, "NO_TRIGGER");
 });
+test("both candidate RSI zones include their exact configured boundaries", () => {
+  for (const closes of [[100, 113, 106], [100, 107, 104]]) {
+    assert.equal(evaluate(candles(closes)).setup.side, "SHORT");
+  }
+  for (const closes of [[100, 93, 96], [100, 107, 94]]) {
+    assert.equal(evaluate(candles(closes)).setup.side, "LONG");
+  }
+});
 test("SHORT enters on the immediately following candle only when RSI is below 65 and close is below signal high", () => {
   const signalBars = candles([100, 102, 101]);
   const armed = evaluate(signalBars);
