@@ -52,7 +52,7 @@ strategy:
   breakevenOffsetPct: 0.08
 
 risk:
-  walletPercentPerTrade: 20
+  walletPercentPerTrade: 5
   maxActivePositions: 20
   maxMarginPerTradeUsdt: 0
   minMarginPerTradeUsdt: 0
