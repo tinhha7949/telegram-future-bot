@@ -80,4 +80,13 @@ function buildConfirmedEntry({ signal, candle, config }) {
   };
 }
 
-module.exports = { evaluateClosedCandle, buildConfirmedEntry };
+function checkBreakoutConfirmation({ signal, candle, elapsedCandles, maxWaitCandles }) {
+  if (elapsedCandles <= 0) return { status: "WAIT", reason: "NOT_AFTER_SIGNAL" };
+  if (elapsedCandles > maxWaitCandles) return { status: "EXPIRED", reason: "CONFIRMATION_TIMEOUT" };
+  const confirmed = signal.side === "LONG"
+    ? candle.close > Number(signal.signalHigh)
+    : candle.close < Number(signal.signalLow);
+  return confirmed ? { status: "CONFIRMED" } : { status: "WAIT", reason: "BREAKOUT_NOT_CLOSED" };
+}
+
+module.exports = { evaluateClosedCandle, buildConfirmedEntry, checkBreakoutConfirmation };
