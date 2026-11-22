@@ -126,3 +126,29 @@ test("SL is anchored beyond the previous candle extreme and TP RR settings remai
   assert.ok(Math.abs(result.tp1 - (result.entry - risk * cfg.strategy.rewardRiskTp1)) < 1e-9);
   assert.ok(Math.abs(result.tp2 - (result.entry - risk * cfg.strategy.rewardRiskTp2)) < 1e-9);
 });
+
+test("SHORT SL uses the higher high of T and T-1 plus the existing buffer", () => {
+  const bars = shortBars();
+  bars[3].high = 104; // T high is above T-1 high.
+  const result = evaluate(bars, 15);
+  assert.equal(result.action, "ENTRY");
+  const expectedStop = bars[3].high + result.entry * cfg.strategy.slBufferPct / 100;
+  assert.ok(Math.abs(result.stop - expectedStop) < 1e-9);
+});
+
+test("LONG SL uses the lower low of T and T-1 minus the existing buffer", () => {
+  const bars = longBars();
+  bars[3].low = 95; // T low is below T-1 low.
+  const result = evaluate(bars, 15);
+  assert.equal(result.action, "ENTRY");
+  const expectedStop = bars[3].low - result.entry * cfg.strategy.slBufferPct / 100;
+  assert.ok(Math.abs(result.stop - expectedStop) < 1e-9);
+});
+
+test("the maximum stop-distance filter is applied to the two-candle structure", () => {
+  const bars = shortBars();
+  bars[3].high = 110;
+  const result = evaluate(bars, 15);
+  assert.equal(result.action, "WAIT");
+  assert.equal(result.reason, "STOP_TOO_WIDE");
+});
