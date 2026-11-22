@@ -126,6 +126,7 @@ test("validation rejects malformed types, timeframes and inverted ADX thresholds
   assert.throws(() => validateConfig(config), /strategy.adx.mixedMax/);
 
   config.strategy.adx.mixedMax = 26;
+  config.strategy.adx.enabled = true;
   config.strategy.adx.historyCandles = 27;
   assert.throws(() => validateConfig(config), /strategy.adx.historyCandles/);
 
