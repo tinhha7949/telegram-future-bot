@@ -83,15 +83,11 @@ function validateConfig(config) {
   const s = config.strategy;
   timeframe("strategy.timeframe", s.timeframe);
   number("strategy.signalCheckIntervalSeconds", s.signalCheckIntervalSeconds, { min: 0 });
-  number("strategy.maxConfirmationCandles", s.maxConfirmationCandles, { min: 0, integer: true });
   number("strategy.rsiPeriod", s.rsiPeriod, { min: 1, minExclusive: true, integer: true });
   for (const key of ["rsiShortMin", "rsiShortMax", "rsiLongMin", "rsiLongMax"]) {
     number("strategy." + key, s[key], { min: 0, max: 100 });
   }
   number("strategy.historyCandles", s.historyCandles, { min: 0, minExclusive: true, integer: true });
-  number("strategy.swingLeft", s.swingLeft, { min: 0, integer: true });
-  number("strategy.swingRight", s.swingRight, { min: 0, integer: true });
-  number("strategy.swingLookback", s.swingLookback, { min: 0, minExclusive: true, integer: true });
   number("strategy.atrPeriod", s.atrPeriod, { min: 0, minExclusive: true, integer: true });
   number("strategy.fallbackAtrMultiple", s.fallbackAtrMultiple, { min: 0, minExclusive: true });
   number("strategy.slBufferPct", s.slBufferPct, { min: 0 });
@@ -102,12 +98,14 @@ function validateConfig(config) {
   number("strategy.tp1ClosePct", s.tp1ClosePct, { min: 0, minExclusive: true, max: 100, maxExclusive: true });
   number("strategy.breakevenOffsetPct", s.breakevenOffsetPct, { min: 0 });
 
-  if (s.bias !== undefined) {
-    object("strategy.bias", s.bias);
-    boolean("strategy.bias.enabled", s.bias.enabled);
-    timeframe("strategy.bias.timeframe", s.bias.timeframe);
-    number("strategy.bias.emaPeriod", s.bias.emaPeriod, { min: 0, minExclusive: true, integer: true });
-  }
+  object("strategy.adx", s.adx);
+  boolean("strategy.adx.enabled", s.adx.enabled);
+  timeframe("strategy.adx.timeframe", s.adx.timeframe);
+  number("strategy.adx.period", s.adx.period, { min: 0, minExclusive: true, integer: true });
+  number("strategy.adx.rangeMax", s.adx.rangeMax, { min: 0 });
+  number("strategy.adx.mixedMax", s.adx.mixedMax, { min: 0 });
+  if (s.adx.mixedMax < s.adx.rangeMax) fail("strategy.adx.mixedMax", "greater than or equal to strategy.adx.rangeMax");
+  boolean("strategy.adx.requireWeakCandleWhenDisabled", s.adx.requireWeakCandleWhenDisabled);
 
   number("risk.walletPercentPerTrade", config.risk.walletPercentPerTrade, { min: 0 });
   number("risk.maxActivePositions", config.risk.maxActivePositions, { min: 0, minExclusive: true, integer: true });

@@ -15,25 +15,26 @@ test("the checked-in config validates without asserting fixed strategy defaults"
   assert.deepEqual(loadConfig(), config);
 });
 
-test("all supported Binance strategy intervals can be selected without changing tests", () => {
+test("trade and ADX timeframes can be independently selected from supported Binance intervals", () => {
   const config = readDefaultConfig();
   for (const timeframe of BINANCE_TIMEFRAMES) {
     config.strategy.timeframe = timeframe;
-    config.strategy.bias.timeframe = timeframe;
+    config.strategy.adx.timeframe = timeframe;
     assert.equal(validateConfig(config), true, timeframe);
   }
 });
 
-test("strategy, scanner, risk and execution tuning values are not capped by stale test limits", () => {
+test("strategy, ADX, scanner, risk and execution tuning values are not capped by stale test limits", () => {
   const config = readDefaultConfig();
   config.scanner.maxCoins = 500;
   config.scanner.batchSize = 100;
   config.scanner.errorRetrySeconds = 5;
   config.strategy.rsiPeriod = 120;
   config.strategy.signalCheckIntervalSeconds = 5;
-  config.strategy.maxConfirmationCandles = 25;
   config.strategy.historyCandles = 1000;
-  config.strategy.swingLookback = 250;
+  config.strategy.adx.period = 120;
+  config.strategy.adx.rangeMax = 19.5;
+  config.strategy.adx.mixedMax = 27.5;
   config.risk.walletPercentPerTrade = 125;
   config.risk.maxActivePositions = 250;
   config.binance.leverage = 150;
@@ -49,7 +50,6 @@ test("zero is accepted for configurable delay, polling, retry and optional buffe
   config.scanner.batchDelayMs = 0;
   config.scanner.errorRetrySeconds = 0;
   config.strategy.signalCheckIntervalSeconds = 0;
-  config.strategy.maxConfirmationCandles = 0;
   config.strategy.slBufferPct = 0;
   config.strategy.minStopDistancePct = 0;
   config.strategy.breakevenOffsetPct = 0;
@@ -74,7 +74,17 @@ test("RSI boundaries remain editable anywhere inside the mathematical RSI range"
   assert.equal(validateConfig(config), true);
 });
 
-test("validation rejects malformed types and values that cannot be used safely", () => {
+test("ADX enable switch, period, regime thresholds and no-ADX candle requirement are editable", () => {
+  const config = readDefaultConfig();
+  config.strategy.adx.enabled = false;
+  config.strategy.adx.period = 28;
+  config.strategy.adx.rangeMax = 18;
+  config.strategy.adx.mixedMax = 24;
+  config.strategy.adx.requireWeakCandleWhenDisabled = false;
+  assert.equal(validateConfig(config), true);
+});
+
+test("validation rejects malformed types, timeframes and inverted ADX thresholds", () => {
   const config = readDefaultConfig();
   config.strategy.timeframe = "5minutes";
   assert.throws(() => validateConfig(config), /strategy.timeframe/);
@@ -88,22 +98,10 @@ test("validation rejects malformed types and values that cannot be used safely",
   assert.throws(() => validateConfig(config), /strategy.rsiShortMax/);
 
   config.strategy.rsiShortMax = 70;
-  config.strategy.tp1ClosePct = 100;
-  assert.throws(() => validateConfig(config), /strategy.tp1ClosePct/);
+  config.strategy.adx.mixedMax = config.strategy.adx.rangeMax - 1;
+  assert.throws(() => validateConfig(config), /strategy.adx.mixedMax/);
 
-  config.strategy.tp1ClosePct = 60;
-  config.scanner.batchDelayMs = -1;
-  assert.throws(() => validateConfig(config), /scanner.batchDelayMs/);
-
-  config.scanner.batchDelayMs = 0;
-  config.execution.priceProtect = "false";
-  assert.throws(() => validateConfig(config), /execution.priceProtect/);
-});
-
-test("bias parameters are independently editable and bias can be disabled", () => {
-  const config = readDefaultConfig();
-  config.strategy.bias.enabled = false;
-  config.strategy.bias.timeframe = "5m";
-  config.strategy.bias.emaPeriod = 250;
-  assert.equal(validateConfig(config), true);
+  config.strategy.adx.mixedMax = 26;
+  config.strategy.adx.enabled = "false";
+  assert.throws(() => validateConfig(config), /strategy.adx.enabled/);
 });

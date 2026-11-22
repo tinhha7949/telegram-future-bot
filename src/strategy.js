@@ -1,124 +1,88 @@
 "use strict";
-const { rsi, atr, findSwing } = require("./indicators");
+const { rsi } = require("./indicators");
 
-function evaluateClosedCandle({ candles, setup, config, allowedSide, now = Date.now() }) {
+function evaluateClosedCandle({ candles, config, adx }) {
   const s = config.strategy;
-  const minimumHistory = Math.max(s.rsiPeriod + 1, s.atrPeriod + 1, s.swingLeft + s.swingRight + 1);
+  const minimumHistory = s.rsiPeriod + 2;
   if (!Array.isArray(candles) || candles.length < minimumHistory) {
     return { action: "WAIT", reason: "INSUFFICIENT_CANDLES" };
   }
 
   const closes = candles.map(c => c.close);
   const currentRsi = rsi(closes, s.rsiPeriod);
+  const previousRsi = rsi(closes.slice(0, -1), s.rsiPeriod);
   const candle = candles[candles.length - 1];
-  if (!Number.isFinite(currentRsi)) return { action: "WAIT", reason: "RSI_UNAVAILABLE" };
-
-  const biasEnabled = s.bias?.enabled === true;
-
-  if (setup && setup.status === "ARMED") {
-    // Discard setups created by the previous multi-timeframe strategy or another timeframe.
-    if (setup.strategyVersion !== 3 || setup.timeframe !== s.timeframe) {
-      return { action: "CANCEL", reason: "STALE_SETUP_VERSION_OR_TIMEFRAME" };
-    }
-    if (biasEnabled && allowedSide !== setup.side) {
-      return { action: "CANCEL", reason: "BIAS_DIRECTION_CHANGED" };
-    }
-
-    const age = candles.filter(c => c.closeTime > setup.triggerCloseTime).length;
-    if (age === 0) {
-      return { action: "KEEP", setup, rsi: currentRsi };
-    }
-    if (age > s.maxConfirmationCandles) return { action: "CANCEL", reason: "CONFIRMATION_TIMEOUT" };
-
-    // Require price to close beyond the midpoint of the signal candle.
-    const triggerMid = (setup.triggerHigh + setup.triggerLow) / 2;
-    const shortConfirmed = setup.side === "SHORT"
-      && currentRsi < s.rsiShortMin
-      && candle.close < triggerMid;
-    const longConfirmed = setup.side === "LONG"
-      && currentRsi > s.rsiLongMax
-      && candle.close > triggerMid;
-
-    // Keep the candidate alive across the configured number of following closed candles.
-    // RSI invalidation cancels immediately; otherwise wait for confirmation or timeout.
-    if (!shortConfirmed && !longConfirmed) {
-      if (setup.side === "SHORT" && currentRsi > s.rsiShortMax) {
-        return { action: "CANCEL", reason: "SHORT_RSI_INVALIDATED", rsi: currentRsi };
-      }
-      if (setup.side === "LONG" && currentRsi < s.rsiLongMin) {
-        return { action: "CANCEL", reason: "LONG_RSI_INVALIDATED", rsi: currentRsi };
-      }
-      if (age >= s.maxConfirmationCandles) {
-        return { action: "CANCEL", reason: "CONFIRMATION_TIMEOUT", rsi: currentRsi };
-      }
-      return { action: "KEEP", setup: { ...setup, confirmationCount: age }, rsi: currentRsi };
-    }
-
-    const a = atr(candles, s.atrPeriod);
-    const swing = findSwing(candles.slice(0, -1), setup.side, s.swingLeft, s.swingRight, s.swingLookback);
-    const buffer = candle.close * s.slBufferPct / 100;
-    let stop = setup.side === "SHORT"
-      ? (swing != null && swing > candle.close
-        ? swing + buffer
-        : candle.close + (a || candle.close * .01) * s.fallbackAtrMultiple)
-      : (swing != null && swing < candle.close
-        ? swing - buffer
-        : candle.close - (a || candle.close * .01) * s.fallbackAtrMultiple);
-
-    const distancePct = Math.abs(stop - candle.close) / candle.close * 100;
-    if (distancePct < s.minStopDistancePct) {
-      stop = setup.side === "SHORT"
-        ? candle.close * (1 + s.minStopDistancePct / 100)
-        : candle.close * (1 - s.minStopDistancePct / 100);
-    }
-    if (Math.abs(stop - candle.close) / candle.close * 100 > s.maxStopDistancePct) {
-      return { action: "CANCEL", reason: "STOP_TOO_WIDE" };
-    }
-
-    const risk = Math.abs(stop - candle.close);
-    const direction = setup.side === "LONG" ? 1 : -1;
-    return {
-      action: "ENTRY",
-      side: setup.side,
-      entry: candle.close,
-      stop,
-      risk,
-      tp1: candle.close + direction * risk * s.rewardRiskTp1,
-      tp2: candle.close + direction * risk * s.rewardRiskTp2,
-      rsi: currentRsi,
-      triggerTime: setup.triggerCloseTime,
-      confirmationTime: candle.closeTime
-    };
+  const previous = candles[candles.length - 2];
+  if (!Number.isFinite(currentRsi) || !Number.isFinite(previousRsi)) {
+    return { action: "WAIT", reason: "RSI_UNAVAILABLE" };
   }
 
-  if (currentRsi >= s.rsiShortMin && currentRsi <= s.rsiShortMax) {
-    if (biasEnabled && allowedSide !== "SHORT") {
-      return { action: "WAIT", reason: "BIAS_FILTERED", rsi: currentRsi };
+  const adxConfig = s.adx;
+  let regime = "DISABLED";
+  let requireWeakCandle = adxConfig.requireWeakCandleWhenDisabled;
+
+  if (adxConfig.enabled) {
+    if (!Number.isFinite(adx)) return { action: "WAIT", reason: "ADX_UNAVAILABLE", rsi: currentRsi };
+    if (adx > adxConfig.mixedMax) {
+      return { action: "WAIT", reason: "ADX_MOMENTUM_BLOCK", rsi: currentRsi, adx, regime: "MOMENTUM" };
     }
-    return {
-      action: "ARM",
-      setup: {
-        side: "SHORT", status: "ARMED", strategyVersion: 3, timeframe: s.timeframe,
-        triggerLow: candle.low, triggerHigh: candle.high, triggerCloseTime: candle.closeTime,
-        createdAt: now, confirmationCount: 0
-      },
-      rsi: currentRsi
-    };
-  }
-  if (currentRsi >= s.rsiLongMin && currentRsi <= s.rsiLongMax) {
-    if (biasEnabled && allowedSide !== "LONG") {
-      return { action: "WAIT", reason: "BIAS_FILTERED", rsi: currentRsi };
+    if (adx < adxConfig.rangeMax) {
+      regime = "RANGE";
+      requireWeakCandle = false;
+    } else {
+      regime = "MIXED";
+      requireWeakCandle = true;
     }
-    return {
-      action: "ARM",
-      setup: {
-        side: "LONG", status: "ARMED", strategyVersion: 3, timeframe: s.timeframe,
-        triggerLow: candle.low, triggerHigh: candle.high, triggerCloseTime: candle.closeTime,
-        createdAt: now, confirmationCount: 0
-      },
-      rsi: currentRsi
-    };
   }
-  return { action: "WAIT", reason: "NO_TRIGGER", rsi: currentRsi };
+
+  const currentRange = candle.high - candle.low;
+  const previousRange = previous.high - previous.low;
+  const weakCandle = currentRange < previousRange;
+  if (requireWeakCandle && !weakCandle) {
+    return { action: "WAIT", reason: "WEAK_CANDLE_REQUIRED", rsi: currentRsi, adx, regime };
+  }
+
+  const isShort = currentRsi < s.rsiShortMax
+    && previousRsi >= s.rsiShortMin
+    && candle.close < candle.open;
+  const isLong = currentRsi > s.rsiLongMin
+    && previousRsi <= s.rsiLongMax
+    && candle.close > candle.open;
+
+  if (!isShort && !isLong) {
+    return { action: "WAIT", reason: "NO_TRIGGER", rsi: currentRsi, previousRsi, adx, regime };
+  }
+
+  const side = isShort ? "SHORT" : "LONG";
+  const entry = candle.close;
+  const buffer = entry * s.slBufferPct / 100;
+  let stop = side === "SHORT"
+    ? Math.max(previous.high + buffer, entry * (1 + s.minStopDistancePct / 100))
+    : Math.min(previous.low - buffer, entry * (1 - s.minStopDistancePct / 100));
+
+  const distancePct = Math.abs(stop - entry) / entry * 100;
+  if (distancePct > s.maxStopDistancePct) {
+    return { action: "WAIT", reason: "STOP_TOO_WIDE", rsi: currentRsi, adx, regime };
+  }
+
+  const risk = Math.abs(stop - entry);
+  const direction = side === "LONG" ? 1 : -1;
+  return {
+    action: "ENTRY",
+    side,
+    entry,
+    stop,
+    risk,
+    tp1: entry + direction * risk * s.rewardRiskTp1,
+    tp2: entry + direction * risk * s.rewardRiskTp2,
+    rsi: currentRsi,
+    previousRsi,
+    adx,
+    regime,
+    weakCandle,
+    triggerTime: candle.closeTime,
+    confirmationTime: candle.closeTime
+  };
 }
+
 module.exports = { evaluateClosedCandle };
