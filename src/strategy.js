@@ -20,19 +20,13 @@ function evaluateClosedCandle({ candles, config, adx }) {
   const adxConfig = s.adx;
   let regime = "DISABLED";
   let requireWeakCandle = adxConfig.requireWeakCandleWhenDisabled;
-
   if (adxConfig.enabled) {
     if (!Number.isFinite(adx)) return { action: "WAIT", reason: "ADX_UNAVAILABLE", rsi: currentRsi };
     if (adx > adxConfig.mixedMax) {
       return { action: "WAIT", reason: "ADX_MOMENTUM_BLOCK", rsi: currentRsi, adx, regime: "MOMENTUM" };
     }
-    if (adx < adxConfig.rangeMax) {
-      regime = "RANGE";
-      requireWeakCandle = false;
-    } else {
-      regime = "MIXED";
-      requireWeakCandle = true;
-    }
+    if (adx < adxConfig.rangeMax) { regime = "RANGE"; requireWeakCandle = false; }
+    else { regime = "MIXED"; requireWeakCandle = true; }
   }
 
   const currentRange = candle.high - candle.low;
@@ -42,49 +36,48 @@ function evaluateClosedCandle({ candles, config, adx }) {
     return { action: "WAIT", reason: "WEAK_CANDLE_REQUIRED", rsi: currentRsi, adx, regime };
   }
 
-  const isShort = currentRsi < s.rsiShortMax
-    && previousRsi >= s.rsiShortMin
-    && candle.close < candle.open;
-  const isLong = currentRsi > s.rsiLongMin
-    && previousRsi <= s.rsiLongMax
-    && candle.close > candle.open;
-
+  // A signal candle must satisfy both the RSI rule and its required candle color.
+  // Wrong-color candles are discarded immediately and never become pending setups.
+  const isShort = currentRsi < s.rsiShortMax && previousRsi >= s.rsiShortMin && candle.close < candle.open;
+  const isLong = currentRsi > s.rsiLongMin && previousRsi <= s.rsiLongMax && candle.close > candle.open;
   if (!isShort && !isLong) {
     return { action: "WAIT", reason: "NO_TRIGGER", rsi: currentRsi, previousRsi, adx, regime };
   }
 
   const side = isShort ? "SHORT" : "LONG";
-  const entry = candle.close;
-  const buffer = entry * s.slBufferPct / 100;
-  const structureHigh = Math.max(candle.high, previous.high);
-  const structureLow = Math.min(candle.low, previous.low);
-  let stop = side === "SHORT"
-    ? Math.max(structureHigh + buffer, entry * (1 + s.minStopDistancePct / 100))
-    : Math.min(structureLow - buffer, entry * (1 - s.minStopDistancePct / 100));
-
-  const distancePct = Math.abs(stop - entry) / entry * 100;
-  if (distancePct > s.maxStopDistancePct) {
-    return { action: "WAIT", reason: "STOP_TOO_WIDE", rsi: currentRsi, adx, regime };
-  }
-
-  const risk = Math.abs(stop - entry);
-  const direction = side === "LONG" ? 1 : -1;
   return {
-    action: "ENTRY",
-    side,
-    entry,
-    stop,
-    risk,
-    tp1: entry + direction * risk * s.rewardRiskTp1,
-    tp2: entry + direction * risk * s.rewardRiskTp2,
-    rsi: currentRsi,
-    previousRsi,
-    adx,
-    regime,
-    weakCandle,
-    triggerTime: candle.closeTime,
-    confirmationTime: candle.closeTime
+    action: "SIGNAL", side,
+    signalOpenTime: candle.openTime, signalTime: candle.closeTime,
+    signalHigh: candle.high, signalLow: candle.low,
+    structureHigh: Math.max(candle.high, previous.high),
+    structureLow: Math.min(candle.low, previous.low),
+    rsi: currentRsi, previousRsi, adx, regime, weakCandle,
+    triggerTime: candle.closeTime
   };
 }
 
-module.exports = { evaluateClosedCandle };
+function buildConfirmedEntry({ signal, candle, config }) {
+  const s = config.strategy;
+  const side = signal.side;
+  const entry = candle.close;
+  const buffer = entry * s.slBufferPct / 100;
+  const stop = side === "SHORT"
+    ? Math.max(signal.structureHigh + buffer, entry * (1 + s.minStopDistancePct / 100))
+    : Math.min(signal.structureLow - buffer, entry * (1 - s.minStopDistancePct / 100));
+  const distancePct = Math.abs(stop - entry) / entry * 100;
+  if (distancePct > s.maxStopDistancePct) {
+    return { action: "WAIT", reason: "STOP_TOO_WIDE", rsi: signal.rsi, adx: signal.adx, regime: signal.regime };
+  }
+  const risk = Math.abs(stop - entry);
+  const direction = side === "LONG" ? 1 : -1;
+  return {
+    action: "ENTRY", side, entry, stop, risk,
+    tp1: entry + direction * risk * s.rewardRiskTp1,
+    tp2: entry + direction * risk * s.rewardRiskTp2,
+    rsi: signal.rsi, previousRsi: signal.previousRsi, adx: signal.adx,
+    regime: signal.regime, weakCandle: signal.weakCandle,
+    triggerTime: signal.signalTime, confirmationTime: candle.closeTime
+  };
+}
+
+module.exports = { evaluateClosedCandle, buildConfirmedEntry };
