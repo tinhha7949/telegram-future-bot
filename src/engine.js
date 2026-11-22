@@ -1,5 +1,5 @@
 "use strict";
-const { evaluateClosedCandle } = require("./strategy");
+const { evaluateClosedCandle, buildConfirmedEntry } = require("./strategy");
 const { atr, adxWilder } = require("./indicators");
 const { calculateMargin, calculateRawQuantity } = require("./risk");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -217,6 +217,9 @@ class TradingEngine {
     const batchSize = Math.max(1, Math.floor(num(this.c.scanner.batchSize) || 10));
     const batchDelayMs = Math.max(0, num(this.c.scanner.batchDelayMs));
     const batchCount = Math.ceil(this.universe.length / batchSize);
+    const candleDurationMs = timeframeMs(this.c.strategy.timeframe);
+    const maxWaitCandles = this.c.strategy.confirmationCandles;
+
     for (let offset = 0; offset < this.universe.length; offset += batchSize) {
       if (!this.running) break;
       const batch = this.universe.slice(offset, offset + batchSize);
@@ -224,27 +227,66 @@ class TradingEngine {
       this.log("[signals] batch", batchNumber + "/" + batchCount, "processing", batch.length, "coins");
       for (const symbol of batch) {
         if (!this.running) break;
-      try {
-        if (active.has(symbol)) continue;
-        if (await this.db.getPosition(symbol)) continue;
-        const candles = await this.candles(symbol, this.c.strategy.timeframe, this.c.strategy.historyCandles);
-        if (!candles.length) continue;
-        const latest = candles[candles.length - 1];
-        if (this.lastCandle.get(symbol) === latest.closeTime) continue;
-        const adxValue = this.c.strategy.adx.enabled ? await this.getAdx(symbol) : null;
-        const result = evaluateClosedCandle({ candles, config: this.c, adx: adxValue });
-        // Remove any persisted ARM setup from the previous RSI confirmation strategy.
-        await this.db.deleteSetup(symbol);
-        if (result.action === "ENTRY") {
-          // Mark before order submission to prevent duplicate MARKET orders after an uncertain response.
+        let processingConfirmation = false;
+        try {
+          if (active.has(symbol)) { await this.db.deleteSetup(symbol); continue; }
+          if (await this.db.getPosition(symbol)) { await this.db.deleteSetup(symbol); continue; }
+          const candles = await this.candles(symbol, this.c.strategy.timeframe, this.c.strategy.historyCandles);
+          if (!candles.length) continue;
+          const latest = candles[candles.length - 1];
+          if (this.lastCandle.get(symbol) === latest.closeTime) continue;
+
+          let setup = await this.db.getSetup(symbol);
+          if (setup) {
+            const elapsedCandles = Math.round((latest.closeTime - Number(setup.signalTime)) / candleDurationMs);
+            if (elapsedCandles <= 0) {
+              // On restart, do not let the original signal candle confirm itself.
+              this.lastCandle.set(symbol, latest.closeTime);
+              continue;
+            }
+            if (elapsedCandles > maxWaitCandles) {
+              await this.db.deleteSetup(symbol);
+              setup = null;
+            } else {
+              const confirmed = setup.side === "LONG"
+                ? latest.close > Number(setup.signalHigh)
+                : latest.close < Number(setup.signalLow);
+              if (!confirmed) {
+                this.lastCandle.set(symbol, latest.closeTime);
+                continue;
+              }
+              const result = buildConfirmedEntry({ signal: setup, candle: latest, config: this.c });
+              if (result.action !== "ENTRY") {
+                await this.db.deleteSetup(symbol);
+                this.lastCandle.set(symbol, latest.closeTime);
+                continue;
+              }
+              processingConfirmation = true;
+              // Mark before MARKET submission. A transient failure retains the setup
+              // and retries this same closed confirmation candle.
+              this.lastCandle.set(symbol, latest.closeTime);
+              const opened = await this.openTrade(symbol, result);
+              await this.db.deleteSetup(symbol);
+              processingConfirmation = false;
+              if (opened) active.add(symbol);
+              continue;
+            }
+          }
+
+          const adxValue = this.c.strategy.adx.enabled ? await this.getAdx(symbol) : null;
+          const signal = evaluateClosedCandle({ candles, config: this.c, adx: adxValue });
+          if (signal.action === "SIGNAL") {
+            // Persist only candles that pass BOTH RSI and signal-candle color checks.
+            await this.db.saveSetup(symbol, signal);
+            this.log("[signal-armed]", symbol, signal.side, "signalClose", signal.signalTime,
+              "breakout", signal.side === "LONG" ? signal.signalHigh : signal.signalLow,
+              "waitCandles", maxWaitCandles);
+          }
+          // RSI-valid but wrong-color candles return WAIT and are discarded here.
           this.lastCandle.set(symbol, latest.closeTime);
-          const opened = await this.openTrade(symbol, result);
-          if (opened) active.add(symbol);
-        } else {
-          this.lastCandle.set(symbol, latest.closeTime);
-        }
         } catch (e) {
           if (e.retrySignalCandle) this.lastCandle.delete(symbol);
+          else if (processingConfirmation) await this.db.deleteSetup(symbol).catch(() => {});
           const rejected = String(e.message || "").startsWith("ENTRY_REJECTED_");
           this.log(rejected ? "[entry-rejected]" : "[signal-error]", symbol,
             "message", e.message, "code", e.code ?? "-", "status", e.status ?? "-", "stack", e.stack || "-");
