@@ -14,51 +14,118 @@ function loadConfig(file = path.join(process.cwd(), "config.yml")) {
   validateConfig(parsed);
   return parsed;
 }
-function validateConfig(c) {
-  const required = [
-    ["scanner.maxCoins", c.scanner?.maxCoins, 1, 200],
-    ["scanner.batchSize", c.scanner?.batchSize, 1, 50],
-    ["scanner.batchDelayMs", c.scanner?.batchDelayMs, 0, 60000],
-    ["scanner.errorRetrySeconds", c.scanner?.errorRetrySeconds, 10, 600],
-    ["strategy.rsiPeriod", c.strategy?.rsiPeriod, 2, 100],
-    ["strategy.signalCheckIntervalSeconds", c.strategy?.signalCheckIntervalSeconds, 10, 300],
-    ["strategy.maxConfirmationCandles", c.strategy?.maxConfirmationCandles, 1, 20],
-    ["strategy.rsiShortMin", c.strategy?.rsiShortMin, 0, 100],
-    ["strategy.rsiShortMax", c.strategy?.rsiShortMax, 0, 100],
-    ["strategy.rsiLongMin", c.strategy?.rsiLongMin, 0, 100],
-    ["strategy.rsiLongMax", c.strategy?.rsiLongMax, 0, 100],
-    ["risk.walletPercentPerTrade", c.risk?.walletPercentPerTrade, 0.01, 100],
-    ["risk.maxActivePositions", c.risk?.maxActivePositions, 1, 200],
-    ["binance.leverage", c.binance?.leverage, 1, 125],
-    ["strategy.tp1ClosePct", c.strategy?.tp1ClosePct, 1, 99]
-  ];
-  for (const [name, value, min, max] of required) {
-    if (!Number.isFinite(Number(value)) || Number(value) < min || Number(value) > max) {
-      throw new Error("Invalid config value " + name + ": expected " + min + ".." + max);
+
+function validateConfig(config) {
+  const fail = (name, expected) => {
+    throw new Error("Invalid config value " + name + ": expected " + expected);
+  };
+  const object = (name, value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) fail(name, "an object");
+  };
+  const number = (name, value, options = {}) => {
+    const { min = -Infinity, minExclusive = false, max = Infinity, maxExclusive = false, integer = false } = options;
+    if (typeof value !== "number" || !Number.isFinite(value)
+      || (integer && !Number.isInteger(value))
+      || (minExclusive ? value <= min : value < min)
+      || (maxExclusive ? value >= max : value > max)) {
+      const lower = minExclusive ? ">" : ">=";
+      const upper = maxExclusive ? "<" : "<=";
+      fail(name, (integer ? "an integer " : "a finite number ") + lower + " " + min + " and " + upper + " " + max);
     }
+  };
+  const string = (name, value) => {
+    if (typeof value !== "string" || value.trim() === "") fail(name, "a non-empty string");
+  };
+  const boolean = (name, value) => {
+    if (typeof value !== "boolean") fail(name, "true or false");
+  };
+  const timeframe = (name, value) => {
+    if (!BINANCE_TIMEFRAMES.has(value)) fail(name, "a supported Binance kline interval");
+  };
+  const url = (name, value) => {
+    string(name, value);
+    let parsed;
+    try { parsed = new URL(value); } catch { fail(name, "a valid HTTP(S) URL"); }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") fail(name, "a valid HTTP(S) URL");
+  };
+
+  object("root", config);
+  for (const name of ["app", "binance", "scanner", "strategy", "risk", "execution", "storage", "telegram"]) {
+    object(name, config[name]);
   }
-  if (!BINANCE_TIMEFRAMES.has(c.strategy?.timeframe)) {
-    throw new Error("Invalid timeframe: strategy.timeframe must be a Binance kline interval");
+
+  string("app.logLevel", config.app.logLevel);
+  number("app.loopIntervalMs", config.app.loopIntervalMs, { min: 0, integer: true });
+  boolean("app.startupReconcile", config.app.startupReconcile);
+
+  url("binance.baseUrl", config.binance.baseUrl);
+  url("binance.testnetBaseUrl", config.binance.testnetBaseUrl);
+  number("binance.recvWindow", config.binance.recvWindow, { min: 0, minExclusive: true, integer: true });
+  number("binance.requestTimeoutMs", config.binance.requestTimeoutMs, { min: 0, minExclusive: true, integer: true });
+  number("binance.maxRetries", config.binance.maxRetries, { min: 0, integer: true });
+  number("binance.leverage", config.binance.leverage, { min: 0, minExclusive: true, integer: true });
+  if (!["ISOLATED", "CROSSED"].includes(config.binance.marginType)) fail("binance.marginType", "ISOLATED or CROSSED");
+  if (!["MARK_PRICE", "CONTRACT_PRICE"].includes(config.binance.workingType)) fail("binance.workingType", "MARK_PRICE or CONTRACT_PRICE");
+
+  number("scanner.intervalMinutes", config.scanner.intervalMinutes, { min: 0, integer: true });
+  number("scanner.maxCoins", config.scanner.maxCoins, { min: 0, integer: true });
+  number("scanner.batchSize", config.scanner.batchSize, { min: 0, minExclusive: true, integer: true });
+  number("scanner.batchDelayMs", config.scanner.batchDelayMs, { min: 0, integer: true });
+  number("scanner.errorRetrySeconds", config.scanner.errorRetrySeconds, { min: 0, integer: true });
+  string("scanner.quoteAsset", config.scanner.quoteAsset);
+  number("scanner.minQuoteVolume", config.scanner.minQuoteVolume, { min: 0 });
+  number("scanner.minAbsPriceChangePct", config.scanner.minAbsPriceChangePct, { min: 0 });
+  if (!Array.isArray(config.scanner.excludeSymbols)
+    || config.scanner.excludeSymbols.some(symbol => typeof symbol !== "string" || !symbol.trim())) {
+    fail("scanner.excludeSymbols", "an array of non-empty symbol strings");
   }
-  if (c.strategy?.bias) {
-    if (typeof c.strategy.bias.enabled !== "boolean") {
-      throw new Error("Invalid config value strategy.bias.enabled: expected true or false");
-    }
-    if (!BINANCE_TIMEFRAMES.has(c.strategy.bias.timeframe)) {
-      throw new Error("Invalid timeframe: strategy.bias.timeframe must be a Binance kline interval");
-    }
-    if (!Number.isInteger(Number(c.strategy.bias.emaPeriod))
-      || Number(c.strategy.bias.emaPeriod) < 2 || Number(c.strategy.bias.emaPeriod) > 500) {
-      throw new Error("Invalid config value strategy.bias.emaPeriod: expected 2..500");
-    }
+
+  const s = config.strategy;
+  timeframe("strategy.timeframe", s.timeframe);
+  number("strategy.signalCheckIntervalSeconds", s.signalCheckIntervalSeconds, { min: 0 });
+  number("strategy.maxConfirmationCandles", s.maxConfirmationCandles, { min: 0, integer: true });
+  number("strategy.rsiPeriod", s.rsiPeriod, { min: 1, minExclusive: true, integer: true });
+  for (const key of ["rsiShortMin", "rsiShortMax", "rsiLongMin", "rsiLongMax"]) {
+    number("strategy." + key, s[key], { min: 0, max: 100 });
   }
-  if (c.strategy.rsiShortMin > c.strategy.rsiShortMax) throw new Error("RSI short minimum must not exceed maximum");
-  if (c.strategy.rsiLongMin > c.strategy.rsiLongMax) throw new Error("RSI long minimum must not exceed maximum");
-  if (c.strategy.rsiLongMax >= c.strategy.rsiShortMin) throw new Error("RSI long zone must be below short zone");
-  if (c.strategy.rewardRiskTp1 <= 0 || c.strategy.rewardRiskTp2 <= c.strategy.rewardRiskTp1) {
-    throw new Error("TP2 RR must be greater than TP1 RR and both must be positive");
+  number("strategy.historyCandles", s.historyCandles, { min: 0, minExclusive: true, integer: true });
+  number("strategy.swingLeft", s.swingLeft, { min: 0, integer: true });
+  number("strategy.swingRight", s.swingRight, { min: 0, integer: true });
+  number("strategy.swingLookback", s.swingLookback, { min: 0, minExclusive: true, integer: true });
+  number("strategy.atrPeriod", s.atrPeriod, { min: 0, minExclusive: true, integer: true });
+  number("strategy.fallbackAtrMultiple", s.fallbackAtrMultiple, { min: 0, minExclusive: true });
+  number("strategy.slBufferPct", s.slBufferPct, { min: 0 });
+  number("strategy.minStopDistancePct", s.minStopDistancePct, { min: 0 });
+  number("strategy.maxStopDistancePct", s.maxStopDistancePct, { min: 0 });
+  number("strategy.rewardRiskTp1", s.rewardRiskTp1, { min: 0, minExclusive: true });
+  number("strategy.rewardRiskTp2", s.rewardRiskTp2, { min: 0, minExclusive: true });
+  number("strategy.tp1ClosePct", s.tp1ClosePct, { min: 0, minExclusive: true, max: 100, maxExclusive: true });
+  number("strategy.breakevenOffsetPct", s.breakevenOffsetPct, { min: 0 });
+
+  if (s.bias !== undefined) {
+    object("strategy.bias", s.bias);
+    boolean("strategy.bias.enabled", s.bias.enabled);
+    timeframe("strategy.bias.timeframe", s.bias.timeframe);
+    number("strategy.bias.emaPeriod", s.bias.emaPeriod, { min: 0, minExclusive: true, integer: true });
   }
-  if (c.strategy.slBufferPct < 0 || c.strategy.breakevenOffsetPct < 0) throw new Error("SL/BE percentages cannot be negative");
+
+  number("risk.walletPercentPerTrade", config.risk.walletPercentPerTrade, { min: 0 });
+  number("risk.maxActivePositions", config.risk.maxActivePositions, { min: 0, minExclusive: true, integer: true });
+  number("risk.maxMarginPerTradeUsdt", config.risk.maxMarginPerTradeUsdt, { min: 0 });
+  number("risk.minMarginPerTradeUsdt", config.risk.minMarginPerTradeUsdt, { min: 0 });
+
+  number("execution.orderPollIntervalMs", config.execution.orderPollIntervalMs, { min: 0 });
+  boolean("execution.priceProtect", config.execution.priceProtect);
+
+  string("storage.databaseName", config.storage.databaseName);
+  object("storage.collections", config.storage.collections);
+  for (const key of ["positions", "setups", "events", "scanner"]) {
+    string("storage.collections." + key, config.storage.collections[key]);
+  }
+  number("storage.eventRetentionDays", config.storage.eventRetentionDays, { min: 0, minExclusive: true, integer: true });
+
+  boolean("telegram.sendStartupMessage", config.telegram.sendStartupMessage);
   return true;
 }
+
 module.exports = { loadConfig, validateConfig, BINANCE_TIMEFRAMES };

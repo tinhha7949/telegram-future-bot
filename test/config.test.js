@@ -1,100 +1,109 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { validateConfig, BINANCE_TIMEFRAMES } = require("../src/config");
+const { validateConfig, loadConfig, BINANCE_TIMEFRAMES } = require("../src/config");
 const fs = require("node:fs");
 const YAML = require("yaml");
 
-test("default config validates with one 15m strategy timeframe", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  assert.equal(c.strategy.timeframe, "15m");
-  assert.equal(validateConfig(c), true);
-});
-test("one timeframe is freely editable to supported Binance intervals", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  for (const timeframe of ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"]) {
-    c.strategy.timeframe = timeframe;
-    assert.equal(validateConfig(c), true, timeframe);
-  }
-  assert.ok(BINANCE_TIMEFRAMES.has("5m"));
-});
-test("invalid Binance timeframe is rejected clearly", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  c.strategy.timeframe = "5minutes";
-  assert.throws(() => validateConfig(c), /strategy.timeframe/);
-});
-test("normal editable risk and scanner values remain accepted", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  c.scanner.maxCoins = 75;
-  c.risk.walletPercentPerTrade = 7.5;
-  c.strategy.slBufferPct = .1;
-  assert.equal(validateConfig(c), true);
-});
-test("scanner batch size and delay are editable and bounded", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  c.scanner.batchSize = 5;
-  c.scanner.batchDelayMs = 2500;
-  assert.equal(validateConfig(c), true);
-  c.scanner.batchSize = 0;
-  assert.throws(() => validateConfig(c), /scanner.batchSize/);
-  c.scanner.batchSize = 10;
-  c.scanner.batchDelayMs = 60001;
-  assert.throws(() => validateConfig(c), /scanner.batchDelayMs/);
-});
-test("maximum open positions and signal polling remain editable", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  c.risk.maxActivePositions = 12;
-  c.strategy.signalCheckIntervalSeconds = 30;
-  assert.equal(validateConfig(c), true);
-  c.strategy.signalCheckIntervalSeconds = 5;
-  assert.throws(() => validateConfig(c), /strategy.signalCheckIntervalSeconds/);
-});
-test("RSI signal zones accept configured boundaries and remain non-overlapping", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  assert.deepEqual(
-    [c.strategy.rsiShortMin, c.strategy.rsiShortMax, c.strategy.rsiLongMin, c.strategy.rsiLongMax],
-    [65, 70, 30, 35]
-  );
-  c.strategy.rsiShortMin = 66;
-  c.strategy.rsiShortMax = 72;
-  c.strategy.rsiLongMin = 28;
-  c.strategy.rsiLongMax = 34;
-  assert.equal(validateConfig(c), true);
-  c.strategy.rsiShortMin = 72;
-  c.strategy.rsiShortMax = 66;
-  assert.throws(() => validateConfig(c), /RSI short minimum/);
-  c.strategy.rsiShortMin = 65;
-  c.strategy.rsiShortMax = 70;
-  c.strategy.rsiLongMax = 70;
-  assert.throws(() => validateConfig(c), /RSI long zone/);
+function readDefaultConfig() {
+  return YAML.parse(fs.readFileSync("config.yml", "utf8"));
+}
+
+test("the checked-in config validates without asserting fixed strategy defaults", () => {
+  const config = readDefaultConfig();
+  assert.equal(validateConfig(config), true);
+  assert.deepEqual(loadConfig(), config);
 });
 
-test("maximum confirmation candles is editable from 1 to 20", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  assert.equal(c.strategy.maxConfirmationCandles, 3);
-  for (const n of [1, 2, 3, 5, 10, 20]) {
-    c.strategy.maxConfirmationCandles = n;
-    assert.equal(validateConfig(c), true, String(n));
+test("all supported Binance strategy intervals can be selected without changing tests", () => {
+  const config = readDefaultConfig();
+  for (const timeframe of BINANCE_TIMEFRAMES) {
+    config.strategy.timeframe = timeframe;
+    config.strategy.bias.timeframe = timeframe;
+    assert.equal(validateConfig(config), true, timeframe);
   }
-  c.strategy.maxConfirmationCandles = 0;
-  assert.throws(() => validateConfig(c), /strategy.maxConfirmationCandles/);
-  c.strategy.maxConfirmationCandles = 21;
-  assert.throws(() => validateConfig(c), /strategy.maxConfirmationCandles/);
 });
 
-test("bias is enabled by default and its timeframe and EMA period are editable", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  assert.deepEqual(c.strategy.bias, { enabled: true, timeframe: "1h", emaPeriod: 100 });
-  c.strategy.bias.enabled = false;
-  c.strategy.bias.timeframe = "4h";
-  c.strategy.bias.emaPeriod = 200;
-  assert.equal(validateConfig(c), true);
+test("strategy, scanner, risk and execution tuning values are not capped by stale test limits", () => {
+  const config = readDefaultConfig();
+  config.scanner.maxCoins = 500;
+  config.scanner.batchSize = 100;
+  config.scanner.errorRetrySeconds = 5;
+  config.strategy.rsiPeriod = 120;
+  config.strategy.signalCheckIntervalSeconds = 5;
+  config.strategy.maxConfirmationCandles = 25;
+  config.strategy.historyCandles = 1000;
+  config.strategy.swingLookback = 250;
+  config.risk.walletPercentPerTrade = 125;
+  config.risk.maxActivePositions = 250;
+  config.binance.leverage = 150;
+  config.strategy.rewardRiskTp1 = 2.5;
+  config.strategy.rewardRiskTp2 = 4;
+  assert.equal(validateConfig(config), true);
 });
-test("invalid bias timeframe and EMA period are rejected", () => {
-  const c = YAML.parse(fs.readFileSync("config.yml", "utf8"));
-  c.strategy.bias.timeframe = "5minutes";
-  assert.throws(() => validateConfig(c), /strategy.bias.timeframe/);
-  c.strategy.bias.timeframe = "1h";
-  c.strategy.bias.emaPeriod = 1;
-  assert.throws(() => validateConfig(c), /strategy.bias.emaPeriod/);
+
+test("zero is accepted for configurable delay, polling, retry and optional buffer values", () => {
+  const config = readDefaultConfig();
+  config.app.loopIntervalMs = 0;
+  config.scanner.intervalMinutes = 0;
+  config.scanner.batchDelayMs = 0;
+  config.scanner.errorRetrySeconds = 0;
+  config.strategy.signalCheckIntervalSeconds = 0;
+  config.strategy.maxConfirmationCandles = 0;
+  config.strategy.slBufferPct = 0;
+  config.strategy.minStopDistancePct = 0;
+  config.strategy.breakevenOffsetPct = 0;
+  config.risk.walletPercentPerTrade = 0;
+  config.risk.maxMarginPerTradeUsdt = 0;
+  config.risk.minMarginPerTradeUsdt = 0;
+  config.execution.orderPollIntervalMs = 0;
+  assert.equal(validateConfig(config), true);
+});
+
+test("RSI boundaries remain editable anywhere inside the mathematical RSI range", () => {
+  const config = readDefaultConfig();
+  config.strategy.rsiShortMin = 72;
+  config.strategy.rsiShortMax = 80;
+  config.strategy.rsiLongMin = 20;
+  config.strategy.rsiLongMax = 28;
+  assert.equal(validateConfig(config), true);
+  config.strategy.rsiShortMin = 95;
+  config.strategy.rsiShortMax = 100;
+  config.strategy.rsiLongMin = 0;
+  config.strategy.rsiLongMax = 5;
+  assert.equal(validateConfig(config), true);
+});
+
+test("validation rejects malformed types and values that cannot be used safely", () => {
+  const config = readDefaultConfig();
+  config.strategy.timeframe = "5minutes";
+  assert.throws(() => validateConfig(config), /strategy.timeframe/);
+
+  config.strategy.timeframe = "5m";
+  config.strategy.rsiPeriod = 0;
+  assert.throws(() => validateConfig(config), /strategy.rsiPeriod/);
+
+  config.strategy.rsiPeriod = 14;
+  config.strategy.rsiShortMax = 101;
+  assert.throws(() => validateConfig(config), /strategy.rsiShortMax/);
+
+  config.strategy.rsiShortMax = 70;
+  config.strategy.tp1ClosePct = 100;
+  assert.throws(() => validateConfig(config), /strategy.tp1ClosePct/);
+
+  config.strategy.tp1ClosePct = 60;
+  config.scanner.batchDelayMs = -1;
+  assert.throws(() => validateConfig(config), /scanner.batchDelayMs/);
+
+  config.scanner.batchDelayMs = 0;
+  config.execution.priceProtect = "false";
+  assert.throws(() => validateConfig(config), /execution.priceProtect/);
+});
+
+test("bias parameters are independently editable and bias can be disabled", () => {
+  const config = readDefaultConfig();
+  config.strategy.bias.enabled = false;
+  config.strategy.bias.timeframe = "5m";
+  config.strategy.bias.emaPeriod = 250;
+  assert.equal(validateConfig(config), true);
 });
