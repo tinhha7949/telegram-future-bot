@@ -105,9 +105,10 @@ test("signal checks run on the configured interval instead of waiting for a new 
   }
 });
 
-test("closed-candle RSI exit ENTRY is passed to openTrade and legacy setup is cleared", async () => {
+test("confirmed breakout ENTRY is passed to openTrade and pending setup is cleared", async () => {
   const bars = [100, 102, 101, 100].map((close, i) => ({
-    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
+    open: close - 0.1, high: close + 0.2, low: close - 0.2, close,
+    closeTime: (i + 1) * 900000
   }));
   bars[3].open = 100.1;
   let opened = null;
@@ -116,6 +117,7 @@ test("closed-candle RSI exit ENTRY is passed to openTrade and legacy setup is cl
     app: { logLevel: "silent" },
     scanner: { batchSize: 10, batchDelayMs: 0 },
     strategy: {
+      rsiEnabled: true, confirmationEnabled: true, confirmationCandles: 3,
       signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
       rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
       adx: { enabled: false, rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: false },
@@ -126,6 +128,11 @@ test("closed-candle RSI exit ENTRY is passed to openTrade and legacy setup is cl
     positions: async () => []
   }, {
     getPosition: async () => null,
+    getSetup: async () => ({
+      side: "SHORT", timeframe: "15m", signalLogic: "RSI_RANGE_V1",
+      signalTime: 3 * 900000, signalHigh: 101.2, signalLow: 100.1,
+      structureHigh: 101.2, structureLow: 99.8
+    }),
     deleteSetup: async symbol => { deleted = symbol; }
   }, {});
   engine.running = true;
@@ -143,6 +150,7 @@ test("closed-candle RSI exit ENTRY is passed to openTrade and legacy setup is cl
 
   assert.equal(opened?.symbol, "TESTUSDT");
   assert.equal(opened?.signal.side, "SHORT");
+  assert.equal(opened?.signal.entry, 100);
   assert.equal(deleted, "TESTUSDT");
 });
 
