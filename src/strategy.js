@@ -9,11 +9,11 @@ function evaluateClosedCandle({ candles, config, adx }) {
   }
 
   const closes = candles.map(c => c.close);
+  if (s.rsiEnabled === false) return { action: "WAIT", reason: "RSI_DISABLED" };
   const currentRsi = rsi(closes, s.rsiPeriod);
-  const previousRsi = rsi(closes.slice(0, -1), s.rsiPeriod);
   const candle = candles[candles.length - 1];
   const previous = candles[candles.length - 2];
-  if (!Number.isFinite(currentRsi) || !Number.isFinite(previousRsi)) {
+  if (!Number.isFinite(currentRsi)) {
     return { action: "WAIT", reason: "RSI_UNAVAILABLE" };
   }
 
@@ -38,10 +38,10 @@ function evaluateClosedCandle({ candles, config, adx }) {
 
   // A signal candle must satisfy both the RSI rule and its required candle color.
   // Wrong-color candles are discarded immediately and never become pending setups.
-  const isShort = currentRsi < s.rsiShortMax && previousRsi >= s.rsiShortMin && candle.close < candle.open;
-  const isLong = currentRsi > s.rsiLongMin && previousRsi <= s.rsiLongMax && candle.close > candle.open;
+  const isShort = currentRsi >= s.rsiShortMin && currentRsi <= s.rsiShortMax && candle.close < candle.open;
+  const isLong = currentRsi >= s.rsiLongMin && currentRsi <= s.rsiLongMax && candle.close > candle.open;
   if (!isShort && !isLong) {
-    return { action: "WAIT", reason: "NO_TRIGGER", rsi: currentRsi, previousRsi, adx, regime };
+    return { action: "WAIT", reason: "NO_TRIGGER", rsi: currentRsi, previousRsi: null, adx, regime };
   }
 
   const side = isShort ? "SHORT" : "LONG";
@@ -51,7 +51,7 @@ function evaluateClosedCandle({ candles, config, adx }) {
     signalHigh: candle.high, signalLow: candle.low,
     structureHigh: Math.max(candle.high, previous.high),
     structureLow: Math.min(candle.low, previous.low),
-    rsi: currentRsi, previousRsi, adx, regime, weakCandle,
+    rsi: currentRsi, previousRsi: null, adx, regime, weakCandle,
     triggerTime: candle.closeTime
   };
 }
