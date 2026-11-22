@@ -244,6 +244,7 @@ class TradingEngine {
           let setup = await this.db.getSetup(symbol);
           if (setup && (
             this.c.strategy.confirmationEnabled === false
+            || setup.signalLogic !== "RSI_RANGE_V1"
             || !["LONG", "SHORT"].includes(setup.side)
             || setup.timeframe !== this.c.strategy.timeframe
             || !Number.isFinite(Number(setup.signalTime))
@@ -303,7 +304,9 @@ class TradingEngine {
               }
             } else {
               // Persist only candles that pass BOTH RSI range and signal-candle color checks.
-              await this.db.saveSetup(symbol, { ...signal, timeframe: this.c.strategy.timeframe });
+              await this.db.saveSetup(symbol, {
+                ...signal, timeframe: this.c.strategy.timeframe, signalLogic: "RSI_RANGE_V1"
+              });
               this.log("[signal-armed]", symbol, signal.side, "signalClose", signal.signalTime,
                 "breakout", signal.side === "LONG" ? signal.signalHigh : signal.signalLow,
                 "waitCandles", maxWaitCandles);
