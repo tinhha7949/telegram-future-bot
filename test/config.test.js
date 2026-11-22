@@ -86,6 +86,17 @@ test("RSI and breakout switches plus confirmation candle count are editable", ()
   config.strategy.rsiShortMax = 79;
   assert.equal(validateConfig(config), true);
 });
+test("disabled RSI and ADX do not reject unused history settings", () => {
+  const config = readDefaultConfig();
+  config.strategy.rsiEnabled = false;
+  config.strategy.rsiPeriod = 120;
+  config.strategy.historyCandles = 10;
+  config.strategy.adx.enabled = false;
+  config.strategy.adx.period = 120;
+  config.strategy.adx.historyCandles = 10;
+  assert.equal(validateConfig(config), true);
+});
+
 test("ADX enable switch, period, regime thresholds and no-ADX candle requirement are editable", () => {
   const config = readDefaultConfig();
   config.strategy.adx.enabled = false;
