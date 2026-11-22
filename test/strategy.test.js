@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { evaluateClosedCandle, buildConfirmedEntry, checkBreakoutConfirmation } = require("../src/strategy");
 
 const cfg = { strategy: {
-  timeframe: "1h", rsiPeriod: 2,
+  timeframe: "1h", rsiEnabled: true, confirmationEnabled: true, rsiPeriod: 2,
   rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
   adx: { enabled: true, timeframe: "4h", period: 14, rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: true },
   slBufferPct: .12, minStopDistancePct: .1, maxStopDistancePct: 5,
@@ -12,15 +12,15 @@ const cfg = { strategy: {
 } };
 
 function shortBars() {
-  const closes = [100, 101, 103, 101];
+  const closes = [100, 102, 104, 103];
   const bars = closes.map((close, i) => ({ open: close - .1, high: close + .2, low: close - .2, close, closeTime: i + 1, openTime: i }));
-  bars[3].open = 101.1;
+  bars[3].open = 103.05;
   return bars;
 }
 function longBars() {
-  const closes = [100, 99, 97, 99];
+  const closes = [100, 98, 96, 97];
   const bars = closes.map((close, i) => ({ open: close + .1, high: close + .2, low: close - .2, close, closeTime: i + 1, openTime: i }));
-  bars[3].open = 98.9;
+  bars[3].open = 96.95;
   return bars;
 }
 const evaluate = (bars, adx = 15, strategy = cfg.strategy) => evaluateClosedCandle({ candles: bars, config: { strategy }, adx });
@@ -32,14 +32,37 @@ function makeSignal(side) {
 test("SHORT signal requires RSI condition and a red signal candle", () => {
   const bars = shortBars(); const result = evaluate(bars);
   assert.equal(result.action, "SIGNAL"); assert.equal(result.side, "SHORT");
-  assert.ok(result.rsi < 70); assert.ok(result.previousRsi >= 65);
+  assert.ok(result.rsi >= cfg.strategy.rsiShortMin && result.rsi <= cfg.strategy.rsiShortMax);
+  assert.equal(result.previousRsi, null);
   assert.equal(result.signalHigh, bars[3].high);
 });
 test("LONG signal requires RSI condition and a green signal candle", () => {
   const bars = longBars(); const result = evaluate(bars);
   assert.equal(result.action, "SIGNAL"); assert.equal(result.side, "LONG");
-  assert.ok(result.rsi > 30); assert.ok(result.previousRsi <= 35);
+  assert.ok(result.rsi >= cfg.strategy.rsiLongMin && result.rsi <= cfg.strategy.rsiLongMax);
+  assert.equal(result.previousRsi, null);
   assert.equal(result.signalLow, bars[3].low);
+});
+test("RSI thresholds are inclusive, configurable, and use the signal candle RSI only", () => {
+  const short = shortBars();
+  const shortRsi = evaluate(short, 15).rsi;
+  const exactShort = { ...cfg.strategy, rsiShortMin: shortRsi, rsiShortMax: shortRsi };
+  assert.equal(evaluate(short, 15, exactShort).action, "SIGNAL");
+  exactShort.rsiShortMin = shortRsi + 0.001;
+  assert.equal(evaluate(short, 15, exactShort).action, "WAIT");
+
+  const long = longBars();
+  const longRsi = evaluate(long, 15).rsi;
+  const exactLong = { ...cfg.strategy, rsiLongMin: longRsi, rsiLongMax: longRsi };
+  assert.equal(evaluate(long, 15, exactLong).action, "SIGNAL");
+  exactLong.rsiLongMax = longRsi - 0.001;
+  assert.equal(evaluate(long, 15, exactLong).action, "WAIT");
+});
+test("RSI strategy can be disabled without creating a signal", () => {
+  const disabled = { ...cfg.strategy, rsiEnabled: false };
+  const result = evaluate(shortBars(), 15, disabled);
+  assert.equal(result.action, "WAIT");
+  assert.equal(result.reason, "RSI_DISABLED");
 });
 test("RSI-valid SHORT candle with wrong color is discarded, not armed", () => {
   const bars = shortBars(); bars[3].open = 100.9;
@@ -103,7 +126,7 @@ test("confirmed entry keeps two-candle structural SL and configured TP ratios", 
   assert.ok(long.tp1 > long.entry && long.tp2 > long.tp1);
 });
 test("MIXED still requires a weaker signal candle", () => {
-  const bars = shortBars(); bars[3].high = 101.15; bars[3].low = 100.95;
+  const bars = shortBars(); bars[3].high = 103.15; bars[3].low = 102.95;
   const result = evaluate(bars, 20);
   assert.equal(result.action, "SIGNAL"); assert.equal(result.regime, "MIXED"); assert.equal(result.weakCandle, true);
 });
@@ -113,17 +136,17 @@ test("ADX above mixedMax blocks signal creation", () => {
 });
 
 test("RANGE does not require a weak signal candle", () => {
-  const bars = shortBars(); bars[3].high = 104; bars[3].low = 100;
+  const bars = shortBars(); bars[3].high = 103.4; bars[3].low = 102.6;
   const result = evaluate(bars, 15);
   assert.equal(result.action, "SIGNAL"); assert.equal(result.weakCandle, false);
 });
 test("MIXED blocks a signal when the signal candle is not weaker than T-1", () => {
-  const bars = shortBars(); bars[3].high = 103; bars[3].low = 99;
+  const bars = shortBars(); bars[3].high = 103.4; bars[3].low = 102.6;
   const result = evaluate(bars, 23);
   assert.equal(result.action, "WAIT"); assert.equal(result.reason, "WEAK_CANDLE_REQUIRED");
 });
 test("ADX exactly at mixedMax is MIXED while values above it block signals", () => {
-  const bars = shortBars(); bars[3].high = 101.15; bars[3].low = 100.95;
+  const bars = shortBars(); bars[3].high = 103.15; bars[3].low = 102.95;
   assert.equal(evaluate(bars, 26).regime, "MIXED");
   const blocked = evaluate(bars, 26.0001);
   assert.equal(blocked.action, "WAIT"); assert.equal(blocked.reason, "ADX_MOMENTUM_BLOCK");

@@ -82,13 +82,20 @@ function validateConfig(config) {
 
   const s = config.strategy;
   timeframe("strategy.timeframe", s.timeframe);
+  boolean("strategy.rsiEnabled", s.rsiEnabled);
+  boolean("strategy.confirmationEnabled", s.confirmationEnabled);
   number("strategy.signalCheckIntervalSeconds", s.signalCheckIntervalSeconds, { min: 0 });
   number("strategy.confirmationCandles", s.confirmationCandles, { min: 1, max: 100, integer: true });
   number("strategy.rsiPeriod", s.rsiPeriod, { min: 1, minExclusive: true, integer: true });
   for (const key of ["rsiShortMin", "rsiShortMax", "rsiLongMin", "rsiLongMax"]) {
     number("strategy." + key, s[key], { min: 0, max: 100 });
   }
+  if (s.rsiLongMin > s.rsiLongMax) fail("strategy.rsiLongMin", "less than or equal to strategy.rsiLongMax");
+  if (s.rsiShortMin > s.rsiShortMax) fail("strategy.rsiShortMin", "less than or equal to strategy.rsiShortMax");
   number("strategy.historyCandles", s.historyCandles, { min: 0, minExclusive: true, integer: true });
+  if (s.rsiEnabled && s.historyCandles < s.rsiPeriod + 2) {
+    fail("strategy.historyCandles", "at least strategy.rsiPeriod + 2 candles when RSI is enabled");
+  }
   number("strategy.atrPeriod", s.atrPeriod, { min: 0, minExclusive: true, integer: true });
   number("strategy.fallbackAtrMultiple", s.fallbackAtrMultiple, { min: 0, minExclusive: true });
   number("strategy.slBufferPct", s.slBufferPct, { min: 0 });
@@ -103,7 +110,10 @@ function validateConfig(config) {
   boolean("strategy.adx.enabled", s.adx.enabled);
   timeframe("strategy.adx.timeframe", s.adx.timeframe);
   number("strategy.adx.period", s.adx.period, { min: 0, minExclusive: true, integer: true });
-  number("strategy.adx.historyCandles", s.adx.historyCandles, { min: s.adx.period * 2, integer: true });
+  number("strategy.adx.historyCandles", s.adx.historyCandles, { min: 1, integer: true });
+  if (s.adx.enabled && s.adx.historyCandles < s.adx.period * 2) {
+    fail("strategy.adx.historyCandles", "at least strategy.adx.period * 2 candles when ADX is enabled");
+  }
   number("strategy.adx.rangeMax", s.adx.rangeMax, { min: 0 });
   number("strategy.adx.mixedMax", s.adx.mixedMax, { min: 0 });
   if (s.adx.mixedMax < s.adx.rangeMax) fail("strategy.adx.mixedMax", "greater than or equal to strategy.adx.rangeMax");

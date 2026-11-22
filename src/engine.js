@@ -234,11 +234,18 @@ class TradingEngine {
           const candles = await this.candles(symbol, this.c.strategy.timeframe, this.c.strategy.historyCandles);
           if (!candles.length) continue;
           const latest = candles[candles.length - 1];
+          if (this.c.strategy.rsiEnabled === false) {
+            await this.db.deleteSetup(symbol);
+            this.lastCandle.set(symbol, latest.closeTime);
+            continue;
+          }
           if (this.lastCandle.get(symbol) === latest.closeTime) continue;
 
           let setup = await this.db.getSetup(symbol);
           if (setup && (
-            !["LONG", "SHORT"].includes(setup.side)
+            this.c.strategy.confirmationEnabled === false
+            || setup.signalLogic !== "RSI_RANGE_V1"
+            || !["LONG", "SHORT"].includes(setup.side)
             || setup.timeframe !== this.c.strategy.timeframe
             || !Number.isFinite(Number(setup.signalTime))
             || !Number.isFinite(Number(setup.signalHigh))
@@ -284,11 +291,26 @@ class TradingEngine {
           const adxValue = this.c.strategy.adx.enabled ? await this.getAdx(symbol) : null;
           const signal = evaluateClosedCandle({ candles, config: this.c, adx: adxValue });
           if (signal.action === "SIGNAL") {
-            // Persist only candles that pass BOTH RSI and signal-candle color checks.
-            await this.db.saveSetup(symbol, { ...signal, timeframe: this.c.strategy.timeframe });
-            this.log("[signal-armed]", symbol, signal.side, "signalClose", signal.signalTime,
-              "breakout", signal.side === "LONG" ? signal.signalHigh : signal.signalLow,
-              "waitCandles", maxWaitCandles);
+            if (this.c.strategy.confirmationEnabled === false) {
+              const result = buildConfirmedEntry({ signal, candle: latest, config: this.c });
+              if (result.action === "ENTRY") {
+                this.lastCandle.set(symbol, latest.closeTime);
+                processingConfirmation = true;
+                const opened = await this.openTrade(symbol, result);
+                processingConfirmation = false;
+                if (opened) active.add(symbol);
+              } else {
+                this.log("[signal-skipped]", symbol, "reason", result.reason);
+              }
+            } else {
+              // Persist only candles that pass BOTH RSI range and signal-candle color checks.
+              await this.db.saveSetup(symbol, {
+                ...signal, timeframe: this.c.strategy.timeframe, signalLogic: "RSI_RANGE_V1"
+              });
+              this.log("[signal-armed]", symbol, signal.side, "signalClose", signal.signalTime,
+                "breakout", signal.side === "LONG" ? signal.signalHigh : signal.signalLow,
+                "waitCandles", maxWaitCandles);
+            }
           }
           // RSI-valid but wrong-color candles return WAIT and are discarded here.
           this.lastCandle.set(symbol, latest.closeTime);

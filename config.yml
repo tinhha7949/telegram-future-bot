@@ -26,6 +26,8 @@ scanner:
 
 strategy:
   timeframe: 1h
+  rsiEnabled: true
+  confirmationEnabled: true
   signalCheckIntervalSeconds: 10
   confirmationCandles: 3
   rsiPeriod: 14
@@ -34,13 +36,13 @@ strategy:
   rsiLongMin: 30
   rsiLongMax: 35
   adx:
-    enabled: true
+    enabled: false
     timeframe: 4h
     period: 14
     historyCandles: 100
     rangeMax: 20
     mixedMax: 26
-    requireWeakCandleWhenDisabled: true
+    requireWeakCandleWhenDisabled: false
   historyCandles: 160
   atrPeriod: 14
   fallbackAtrMultiple: 1.5
