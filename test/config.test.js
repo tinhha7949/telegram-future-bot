@@ -75,6 +75,17 @@ test("RSI boundaries remain editable anywhere inside the mathematical RSI range"
   assert.equal(validateConfig(config), true);
 });
 
+test("RSI and breakout switches plus confirmation candle count are editable", () => {
+  const config = readDefaultConfig();
+  config.strategy.rsiEnabled = false;
+  config.strategy.confirmationEnabled = false;
+  config.strategy.confirmationCandles = 7;
+  config.strategy.rsiLongMin = 22;
+  config.strategy.rsiLongMax = 29;
+  config.strategy.rsiShortMin = 71;
+  config.strategy.rsiShortMax = 79;
+  assert.equal(validateConfig(config), true);
+});
 test("ADX enable switch, period, regime thresholds and no-ADX candle requirement are editable", () => {
   const config = readDefaultConfig();
   config.strategy.adx.enabled = false;
@@ -110,4 +121,13 @@ test("validation rejects malformed types, timeframes and inverted ADX thresholds
   config.strategy.adx.historyCandles = 100;
   config.strategy.adx.enabled = "false";
   assert.throws(() => validateConfig(config), /strategy.adx.enabled/);
+
+  config.strategy.adx.enabled = false;
+  config.strategy.rsiLongMin = 40;
+  config.strategy.rsiLongMax = 30;
+  assert.throws(() => validateConfig(config), /strategy.rsiLongMin/);
+
+  config.strategy.rsiLongMin = 30;
+  config.strategy.confirmationEnabled = "false";
+  assert.throws(() => validateConfig(config), /strategy.confirmationEnabled/);
 });
