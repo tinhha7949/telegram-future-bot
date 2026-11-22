@@ -32,8 +32,8 @@ strategy:
   confirmationCandles: 3
   rsiPeriod: 14
   rsiShortMin: 65
-  rsiShortMax: 75
-  rsiLongMin: 25
+  rsiShortMax: 70
+  rsiLongMin: 30
   rsiLongMax: 35
   adx:
     enabled: false
