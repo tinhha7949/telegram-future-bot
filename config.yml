@@ -30,7 +30,7 @@ strategy:
     enabled: true
     timeframe: 4h
     emaPeriod: 100
-  signalCheckIntervalSeconds: 30
+  signalCheckIntervalSeconds: 10
   maxConfirmationCandles: 3
   rsiPeriod: 14
   rsiShortMin: 65
