@@ -237,6 +237,19 @@ class TradingEngine {
           if (this.lastCandle.get(symbol) === latest.closeTime) continue;
 
           let setup = await this.db.getSetup(symbol);
+          if (setup && (
+            !["LONG", "SHORT"].includes(setup.side)
+            || setup.timeframe !== this.c.strategy.timeframe
+            || !Number.isFinite(Number(setup.signalTime))
+            || !Number.isFinite(Number(setup.signalHigh))
+            || !Number.isFinite(Number(setup.signalLow))
+            || !Number.isFinite(Number(setup.structureHigh))
+            || !Number.isFinite(Number(setup.structureLow))
+          )) {
+            // Discard legacy ARM records or setups created under a different timeframe.
+            await this.db.deleteSetup(symbol);
+            setup = null;
+          }
           if (setup) {
             const elapsedCandles = Math.round((latest.closeTime - Number(setup.signalTime)) / candleDurationMs);
             const confirmation = checkBreakoutConfirmation({
@@ -272,7 +285,7 @@ class TradingEngine {
           const signal = evaluateClosedCandle({ candles, config: this.c, adx: adxValue });
           if (signal.action === "SIGNAL") {
             // Persist only candles that pass BOTH RSI and signal-candle color checks.
-            await this.db.saveSetup(symbol, signal);
+            await this.db.saveSetup(symbol, { ...signal, timeframe: this.c.strategy.timeframe });
             this.log("[signal-armed]", symbol, signal.side, "signalClose", signal.signalTime,
               "breakout", signal.side === "LONG" ? signal.signalHigh : signal.signalLow,
               "waitCandles", maxWaitCandles);
