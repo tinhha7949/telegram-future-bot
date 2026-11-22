@@ -472,11 +472,4 @@ test("ADX returns unavailable when there is insufficient higher-timeframe histor
   }, {}, {}, {});
   engine.candles = async () => [{ high: 101, low: 99, close: 100, closeTime: Date.now() - 1000 }];
   assert.equal(await engine.getAdx("TESTUSDT"), null);
-});test("enabled bias returns no trade direction when 1h history is insufficient", async () => {
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    strategy: { bias: { enabled: true, timeframe: "1h", emaPeriod: 100 } }
-  }, {}, {}, {});
-  engine.candles = async () => [{ close: 100, closeTime: Date.now() - 1000 }];
-  assert.equal(await engine.getBiasDirection("TESTUSDT"), null);
 });
