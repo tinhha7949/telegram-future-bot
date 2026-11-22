@@ -27,6 +27,7 @@ scanner:
 strategy:
   timeframe: 1h
   signalCheckIntervalSeconds: 10
+  confirmationCandles: 3
   rsiPeriod: 14
   rsiShortMin: 65
   rsiShortMax: 70
