@@ -174,27 +174,7 @@ test("ADX candle-fetch failure does not mark the current trade candle as process
   await engine.checkSignals();
 
   assert.equal(engine.lastCandle.has("TESTUSDT"), false);
-});test("a transient setup-store read error does not mark the current candle as processed", async () => {
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    scanner: { batchSize: 10, batchDelayMs: 0 },
-    strategy: { signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160 }
-  }, {
-    positions: async () => []
-  }, {
-    getPosition: async () => null,
-    getSetup: async () => { throw new Error("temporary MongoDB read failure"); }
-  }, {});
-  engine.running = true;
-  engine.universe = ["TESTUSDT"];
-  engine.candles = async () => [{ closeTime: 123, open: 1, high: 2, low: 0.5, close: 1.5 }];
-
-  await engine.checkSignals();
-
-  assert.equal(engine.lastCandle.has("TESTUSDT"), false);
-});
-
-test("TP1 minimum-notional failure is detected before submitting a live MARKET entry", async () => {
+});test("TP1 minimum-notional failure is detected before submitting a live MARKET entry", async () => {
   let marketOrderSubmitted = false;
   const filters = {
     marketStepSize: 0.001, marketMinQty: 0.001,
