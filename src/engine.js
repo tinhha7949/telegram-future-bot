@@ -1,5 +1,5 @@
 "use strict";
-const { evaluateClosedCandle, buildConfirmedEntry } = require("./strategy");
+const { evaluateClosedCandle, buildConfirmedEntry, checkBreakoutConfirmation } = require("./strategy");
 const { atr, adxWilder } = require("./indicators");
 const { calculateMargin, calculateRawQuantity } = require("./risk");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -239,22 +239,17 @@ class TradingEngine {
           let setup = await this.db.getSetup(symbol);
           if (setup) {
             const elapsedCandles = Math.round((latest.closeTime - Number(setup.signalTime)) / candleDurationMs);
-            if (elapsedCandles <= 0) {
-              // On restart, do not let the original signal candle confirm itself.
+            const confirmation = checkBreakoutConfirmation({
+              signal: setup, candle: latest, elapsedCandles, maxWaitCandles
+            });
+            if (confirmation.status === "WAIT") {
               this.lastCandle.set(symbol, latest.closeTime);
               continue;
             }
-            if (elapsedCandles > maxWaitCandles) {
+            if (confirmation.status === "EXPIRED") {
               await this.db.deleteSetup(symbol);
               setup = null;
             } else {
-              const confirmed = setup.side === "LONG"
-                ? latest.close > Number(setup.signalHigh)
-                : latest.close < Number(setup.signalLow);
-              if (!confirmed) {
-                this.lastCandle.set(symbol, latest.closeTime);
-                continue;
-              }
               const result = buildConfirmedEntry({ signal: setup, candle: latest, config: this.c });
               if (result.action !== "ENTRY") {
                 await this.db.deleteSetup(symbol);
