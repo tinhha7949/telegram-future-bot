@@ -26,21 +26,20 @@ scanner:
 
 strategy:
   timeframe: 1h
-  bias:
-    enabled: true
-    timeframe: 4h
-    emaPeriod: 100
   signalCheckIntervalSeconds: 10
-  maxConfirmationCandles: 3
   rsiPeriod: 14
   rsiShortMin: 65
   rsiShortMax: 70
   rsiLongMin: 30
   rsiLongMax: 35
+  adx:
+    enabled: true
+    timeframe: 4h
+    period: 14
+    rangeMax: 20
+    mixedMax: 26
+    requireWeakCandleWhenDisabled: true
   historyCandles: 160
-  swingLeft: 2
-  swingRight: 2
-  swingLookback: 50
   atrPeriod: 14
   fallbackAtrMultiple: 1.5
   slBufferPct: 0.12
