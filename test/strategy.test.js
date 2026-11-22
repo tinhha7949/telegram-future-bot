@@ -111,3 +111,36 @@ test("ADX above mixedMax blocks signal creation", () => {
   const result = evaluate(shortBars(), 26.0001);
   assert.equal(result.action, "WAIT"); assert.equal(result.reason, "ADX_MOMENTUM_BLOCK");
 });
+
+test("RANGE does not require a weak signal candle", () => {
+  const bars = shortBars(); bars[3].high = 104; bars[3].low = 100;
+  const result = evaluate(bars, 15);
+  assert.equal(result.action, "SIGNAL"); assert.equal(result.weakCandle, false);
+});
+test("MIXED blocks a signal when the signal candle is not weaker than T-1", () => {
+  const bars = shortBars(); bars[3].high = 103; bars[3].low = 99;
+  const result = evaluate(bars, 23);
+  assert.equal(result.action, "WAIT"); assert.equal(result.reason, "WEAK_CANDLE_REQUIRED");
+});
+test("ADX exactly at mixedMax is MIXED while values above it block signals", () => {
+  const bars = shortBars(); bars[3].high = 101.15; bars[3].low = 100.95;
+  assert.equal(evaluate(bars, 26).regime, "MIXED");
+  const blocked = evaluate(bars, 26.0001);
+  assert.equal(blocked.action, "WAIT"); assert.equal(blocked.reason, "ADX_MOMENTUM_BLOCK");
+});
+test("ADX enabled but unavailable fails closed", () => {
+  const result = evaluate(shortBars(), null);
+  assert.equal(result.action, "WAIT"); assert.equal(result.reason, "ADX_UNAVAILABLE");
+});
+test("ADX disabled keeps the configured weak-candle requirement", () => {
+  const bars = shortBars(); bars[3].high = 104; bars[3].low = 100;
+  const disabled = { ...cfg.strategy, adx: { ...cfg.strategy.adx, enabled: false } };
+  assert.equal(evaluate(bars, null, disabled).reason, "WEAK_CANDLE_REQUIRED");
+  disabled.adx.requireWeakCandleWhenDisabled = false;
+  assert.equal(evaluate(bars, null, disabled).action, "SIGNAL");
+});
+test("maximum stop-distance filter is applied to the saved two-candle structure", () => {
+  const signal = { ...makeSignal("SHORT"), structureHigh: 110 };
+  const result = buildConfirmedEntry({ signal, candle: { close: 97.99, closeTime: 2000 }, config: { strategy: cfg.strategy } });
+  assert.equal(result.action, "WAIT"); assert.equal(result.reason, "STOP_TOO_WIDE");
+});
