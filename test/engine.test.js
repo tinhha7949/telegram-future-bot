@@ -105,36 +105,28 @@ test("signal checks run on the configured interval instead of waiting for a new 
   }
 });
 
-test("confirmed ENTRY signals are passed to openTrade and their setup is cleared only after success", async () => {
+test("closed-candle RSI exit ENTRY is passed to openTrade and legacy setup is cleared", async () => {
   const bars = [100, 102, 101, 100].map((close, i) => ({
     open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
   }));
-  const setup = {
-    side: "SHORT", status: "ARMED", strategyVersion: 3, timeframe: "15m",
-    triggerLow: 100.8, triggerHigh: 101.2, triggerCloseTime: 3,
-    createdAt: 1, confirmationCount: 0
-  };
+  bars[3].open = 100.1;
   let opened = null;
   let deleted = null;
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
     scanner: { batchSize: 10, batchDelayMs: 0 },
     strategy: {
-      signalCheckIntervalSeconds: 60, timeframe: "15m",
-      historyCandles: 160, rsiPeriod: 2, atrPeriod: 2, maxConfirmationCandles: 3,
-      rsiShortMin: 70, rsiShortMax: 75, rsiLongMin: 25, rsiLongMax: 30,
-      swingLeft: 1, swingRight: 1,
-      swingLookback: 10, fallbackAtrMultiple: 1.5, slBufferPct: 0.12,
-      minStopDistancePct: 0.1, maxStopDistancePct: 5,
+      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
+      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
+      adx: { enabled: false, rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: false },
+      slBufferPct: 0.12, minStopDistancePct: 0.1, maxStopDistancePct: 5,
       rewardRiskTp1: 1.2, rewardRiskTp2: 1.5
     }
   }, {
     positions: async () => []
   }, {
     getPosition: async () => null,
-    getSetup: async () => setup,
-    deleteSetup: async symbol => { deleted = symbol; },
-    saveSetup: async () => {}
+    deleteSetup: async symbol => { deleted = symbol; }
   }, {});
   engine.running = true;
   engine.universe = ["TESTUSDT"];
@@ -154,7 +146,35 @@ test("confirmed ENTRY signals are passed to openTrade and their setup is cleared
   assert.equal(deleted, "TESTUSDT");
 });
 
-test("a transient setup-store read error does not mark the current candle as processed", async () => {
+test("ADX candle-fetch failure does not mark the current trade candle as processed", async () => {
+  const bars = [100, 102, 101, 100].map((close, i) => ({
+    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
+  }));
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    scanner: { batchSize: 10, batchDelayMs: 0 },
+    strategy: {
+      signalCheckIntervalSeconds: 60, timeframe: "1h", historyCandles: 160,
+      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
+      adx: { enabled: true, timeframe: "4h", period: 14, rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: true }
+    }
+  }, {
+    positions: async () => []
+  }, {
+    getPosition: async () => null,
+    deleteSetup: async () => {}
+  }, {});
+  engine.running = true;
+  engine.universe = ["TESTUSDT"];
+  engine.candles = async (_symbol, interval) => {
+    if (interval === "1h") return bars;
+    throw new Error("temporary ADX kline API failure");
+  };
+
+  await engine.checkSignals();
+
+  assert.equal(engine.lastCandle.has("TESTUSDT"), false);
+});test("a transient setup-store read error does not mark the current candle as processed", async () => {
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
     scanner: { batchSize: 10, batchDelayMs: 0 },
@@ -218,33 +238,25 @@ test("TP1 minimum-notional failure is detected before submitting a live MARKET e
   assert.equal(marketOrderSubmitted, false);
 });
 
-test("transient pre-entry failure leaves the same signal candle eligible for retry", async () => {
+test("transient pre-entry failure leaves the same closed RSI signal candle eligible for retry", async () => {
   const bars = [100, 102, 101, 100].map((close, i) => ({
     open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
   }));
-  const setup = {
-    side: "SHORT", status: "ARMED", strategyVersion: 3, timeframe: "15m",
-    triggerLow: 100.8, triggerHigh: 101.2, triggerCloseTime: 3,
-    createdAt: 1, confirmationCount: 0
-  };
+  bars[3].open = 100.1;
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
     scanner: { batchSize: 10, batchDelayMs: 0 },
     strategy: {
-      signalCheckIntervalSeconds: 60, timeframe: "15m",
-      historyCandles: 160, rsiPeriod: 2, atrPeriod: 2, maxConfirmationCandles: 3,
-      rsiShortMin: 70, rsiShortMax: 75, rsiLongMin: 25, rsiLongMax: 30,
-      swingLeft: 1, swingRight: 1,
-      swingLookback: 10, fallbackAtrMultiple: 1.5, slBufferPct: 0.12,
-      minStopDistancePct: 0.1, maxStopDistancePct: 5,
+      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
+      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
+      adx: { enabled: false, rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: false },
+      slBufferPct: 0.12, minStopDistancePct: 0.1, maxStopDistancePct: 5,
       rewardRiskTp1: 1.2, rewardRiskTp2: 1.5
     }
   }, {
     positions: async () => []
   }, {
     getPosition: async () => null,
-    getSetup: async () => setup,
-    saveSetup: async () => {},
     deleteSetup: async () => {}
   }, {});
   engine.running = true;
@@ -262,10 +274,7 @@ test("transient pre-entry failure leaves the same signal candle eligible for ret
   await engine.checkSignals();
 
   assert.equal(engine.lastCandle.has("TESTUSDT"), false);
-});
-
-
-test("scanner failure does not skip position management or signal checks", async () => {
+});test("scanner failure does not skip position management or signal checks", async () => {
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
     scanner: { intervalMinutes: 15 },
@@ -436,26 +445,34 @@ test("Telegram startup notification failure does not stop the trading loop", asy
   assert.equal(engine.running, false);
 });
 
-test("bias uses the configured timeframe and EMA period, then caches until the next closed candle", async () => {
+test("ADX uses its configured timeframe and Wilder period, then caches until the next closed candle", async () => {
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
-    strategy: { bias: { enabled: true, timeframe: "4h", emaPeriod: 3 } }
+    strategy: { adx: { enabled: true, timeframe: "4h", period: 2 } }
   }, {}, {}, {});
   let calls = 0;
   engine.candles = async (_symbol, interval, limit) => {
     calls += 1;
     assert.equal(interval, "4h");
-    assert.equal(limit, 23);
-    return [100, 101, 102, 103].map((close, i) => ({
-      close, closeTime: Date.now() - 1000 + i
+    assert.equal(limit, 6);
+    return Array.from({ length: 6 }, (_, i) => ({
+      high: 102 + i, low: 100 + i, close: 101 + i,
+      closeTime: Date.now() - 1000 + i
     }));
   };
-  assert.equal(await engine.getBiasDirection("TESTUSDT"), "LONG");
-  assert.equal(await engine.getBiasDirection("TESTUSDT"), "LONG");
+  assert.equal(await engine.getAdx("TESTUSDT"), 100);
+  assert.equal(await engine.getAdx("TESTUSDT"), 100);
   assert.equal(calls, 1);
 });
 
-test("enabled bias returns no trade direction when 1h history is insufficient", async () => {
+test("ADX returns unavailable when there is insufficient higher-timeframe history", async () => {
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    strategy: { adx: { enabled: true, timeframe: "4h", period: 14 } }
+  }, {}, {}, {});
+  engine.candles = async () => [{ high: 101, low: 99, close: 100, closeTime: Date.now() - 1000 }];
+  assert.equal(await engine.getAdx("TESTUSDT"), null);
+});test("enabled bias returns no trade direction when 1h history is insufficient", async () => {
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
     strategy: { bias: { enabled: true, timeframe: "1h", emaPeriod: 100 } }
