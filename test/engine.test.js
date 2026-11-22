@@ -146,6 +146,81 @@ test("closed-candle RSI exit ENTRY is passed to openTrade and legacy setup is cl
   assert.equal(deleted, "TESTUSDT");
 });
 
+test("disabled breakout confirmation enters immediately from a valid same-candle RSI signal", async () => {
+  const closes = [100, 102, 104, 103];
+  const bars = closes.map((close, i) => ({
+    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
+  }));
+  bars[3].open = 103.05;
+  let opened = null;
+  let setupSaved = false;
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    scanner: { batchSize: 10, batchDelayMs: 0 },
+    strategy: {
+      rsiEnabled: true, confirmationEnabled: false, confirmationCandles: 3,
+      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
+      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
+      adx: { enabled: false, requireWeakCandleWhenDisabled: false },
+      slBufferPct: 0.12, minStopDistancePct: 0.1, maxStopDistancePct: 5,
+      rewardRiskTp1: 1.2, rewardRiskTp2: 1.8
+    }
+  }, {
+    positions: async () => []
+  }, {
+    getPosition: async () => null,
+    getSetup: async () => null,
+    saveSetup: async () => { setupSaved = true; },
+    deleteSetup: async () => {}
+  }, {});
+  engine.running = true;
+  engine.universe = ["TESTUSDT"];
+  engine.candles = async () => bars;
+  engine.openTrade = async (symbol, signal) => {
+    opened = { symbol, signal };
+    return true;
+  };
+
+  await engine.checkSignals();
+
+  assert.equal(opened?.symbol, "TESTUSDT");
+  assert.equal(opened?.signal.side, "SHORT");
+  assert.equal(opened?.signal.entry, 103);
+  assert.equal(setupSaved, false);
+});
+
+test("disabled RSI strategy clears pending setup and never evaluates an entry", async () => {
+  const bars = [100, 102, 104, 103].map((close, i) => ({
+    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
+  }));
+  let deleted = 0;
+  let opened = false;
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    scanner: { batchSize: 10, batchDelayMs: 0 },
+    strategy: {
+      rsiEnabled: false, confirmationEnabled: true,
+      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
+      rsiPeriod: 2, adx: { enabled: false, requireWeakCandleWhenDisabled: false }
+    }
+  }, {
+    positions: async () => []
+  }, {
+    getPosition: async () => null,
+    deleteSetup: async () => { deleted += 1; }
+  }, {});
+  engine.running = true;
+  engine.universe = ["TESTUSDT"];
+  engine.lastCandle.set("TESTUSDT", 4);
+  engine.candles = async () => bars;
+  engine.openTrade = async () => { opened = true; };
+
+  await engine.checkSignals();
+
+  assert.equal(deleted, 1);
+  assert.equal(opened, false);
+});
+
 test("ADX candle-fetch failure does not mark the current trade candle as processed", async () => {
   const bars = [100, 102, 101, 100].map((close, i) => ({
     open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
