@@ -33,6 +33,7 @@ test("strategy, ADX, scanner, risk and execution tuning values are not capped by
   config.strategy.signalCheckIntervalSeconds = 5;
   config.strategy.historyCandles = 1000;
   config.strategy.adx.period = 120;
+  config.strategy.adx.historyCandles = 300;
   config.strategy.adx.rangeMax = 19.5;
   config.strategy.adx.mixedMax = 27.5;
   config.risk.walletPercentPerTrade = 125;
@@ -78,6 +79,7 @@ test("ADX enable switch, period, regime thresholds and no-ADX candle requirement
   const config = readDefaultConfig();
   config.strategy.adx.enabled = false;
   config.strategy.adx.period = 28;
+  config.strategy.adx.historyCandles = 80;
   config.strategy.adx.rangeMax = 18;
   config.strategy.adx.mixedMax = 24;
   config.strategy.adx.requireWeakCandleWhenDisabled = false;
