@@ -36,6 +36,7 @@ strategy:
     enabled: true
     timeframe: 4h
     period: 14
+    historyCandles: 100
     rangeMax: 20
     mixedMax: 26
     requireWeakCandleWhenDisabled: true

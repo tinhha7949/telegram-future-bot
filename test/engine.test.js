@@ -428,7 +428,7 @@ test("Telegram startup notification failure does not stop the trading loop", asy
 test("ADX uses its configured timeframe and Wilder period, then caches until the next closed candle", async () => {
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
-    strategy: { adx: { enabled: true, timeframe: "4h", period: 2 } }
+    strategy: { adx: { enabled: true, timeframe: "4h", period: 2, historyCandles: 6 } }
   }, {}, {}, {});
   let calls = 0;
   engine.candles = async (_symbol, interval, limit) => {
@@ -448,7 +448,7 @@ test("ADX uses its configured timeframe and Wilder period, then caches until the
 test("ADX returns unavailable when there is insufficient higher-timeframe history", async () => {
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
-    strategy: { adx: { enabled: true, timeframe: "4h", period: 14 } }
+    strategy: { adx: { enabled: true, timeframe: "4h", period: 14, historyCandles: 42 } }
   }, {}, {}, {});
   engine.candles = async () => [{ high: 101, low: 99, close: 100, closeTime: Date.now() - 1000 }];
   assert.equal(await engine.getAdx("TESTUSDT"), null);

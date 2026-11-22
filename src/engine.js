@@ -195,7 +195,7 @@ class TradingEngine {
 
     const period = Number(settings.period);
     const interval = settings.timeframe;
-    const history = Math.max(period * 3, period * 2 + 2);
+    const history = Number(settings.historyCandles);
     const bars = await this.candles(symbol, interval, history);
     const value = bars.length >= period * 2 ? adxWilder(bars, period) : null;
     const last = bars[bars.length - 1];
