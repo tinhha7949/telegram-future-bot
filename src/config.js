@@ -102,6 +102,7 @@ function validateConfig(config) {
   boolean("strategy.adx.enabled", s.adx.enabled);
   timeframe("strategy.adx.timeframe", s.adx.timeframe);
   number("strategy.adx.period", s.adx.period, { min: 0, minExclusive: true, integer: true });
+  number("strategy.adx.historyCandles", s.adx.historyCandles, { min: s.adx.period * 2, integer: true });
   number("strategy.adx.rangeMax", s.adx.rangeMax, { min: 0 });
   number("strategy.adx.mixedMax", s.adx.mixedMax, { min: 0 });
   if (s.adx.mixedMax < s.adx.rangeMax) fail("strategy.adx.mixedMax", "greater than or equal to strategy.adx.rangeMax");
