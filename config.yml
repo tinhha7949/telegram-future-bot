@@ -25,10 +25,10 @@ scanner:
   excludeSymbols: [USDCUSDT, FDUSDUSDT, BUSDUSDT, TUSDUSDT, USDPUSDT, DAIUSDT]
 
 strategy:
-  timeframe: 15m
+  timeframe: 1h
   bias:
     enabled: true
-    timeframe: 1h
+    timeframe: 4h
     emaPeriod: 100
   signalCheckIntervalSeconds: 10
   maxConfirmationCandles: 3
