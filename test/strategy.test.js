@@ -103,7 +103,7 @@ test("confirmed entry keeps two-candle structural SL and configured TP ratios", 
   assert.ok(long.tp1 > long.entry && long.tp2 > long.tp1);
 });
 test("MIXED still requires a weaker signal candle", () => {
-  const bars = shortBars(); bars[3].high = 102.1; bars[3].low = 101.9;
+  const bars = shortBars(); bars[3].high = 101.15; bars[3].low = 100.95;
   const result = evaluate(bars, 20);
   assert.equal(result.action, "SIGNAL"); assert.equal(result.regime, "MIXED"); assert.equal(result.weakCandle, true);
 });
