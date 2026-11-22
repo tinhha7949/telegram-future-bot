@@ -83,6 +83,7 @@ function validateConfig(config) {
   const s = config.strategy;
   timeframe("strategy.timeframe", s.timeframe);
   number("strategy.signalCheckIntervalSeconds", s.signalCheckIntervalSeconds, { min: 0 });
+  number("strategy.confirmationCandles", s.confirmationCandles, { min: 1, max: 100, integer: true });
   number("strategy.rsiPeriod", s.rsiPeriod, { min: 1, minExclusive: true, integer: true });
   for (const key of ["rsiShortMin", "rsiShortMax", "rsiLongMin", "rsiLongMax"]) {
     number("strategy." + key, s[key], { min: 0, max: 100 });
