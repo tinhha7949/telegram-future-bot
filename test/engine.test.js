@@ -175,7 +175,10 @@ test("disabled breakout confirmation enters immediately from a valid same-candle
   }, {});
   engine.running = true;
   engine.universe = ["TESTUSDT"];
-  engine.candles = async () => bars;
+  engine.candles = async (_symbol, interval) => {
+    assert.equal(interval, "15m");
+    return bars;
+  };
   engine.openTrade = async (symbol, signal) => {
     opened = { symbol, signal };
     return true;
@@ -187,6 +190,44 @@ test("disabled breakout confirmation enters immediately from a valid same-candle
   assert.equal(opened?.signal.side, "SHORT");
   assert.equal(opened?.signal.entry, 103);
   assert.equal(setupSaved, false);
+});
+
+test("enabled breakout confirmation stores the valid RSI signal instead of entering immediately", async () => {
+  const closes = [100, 102, 104, 103];
+  const bars = closes.map((close, i) => ({
+    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
+  }));
+  bars[3].open = 103.05;
+  let saved = null;
+  let opened = false;
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    scanner: { batchSize: 10, batchDelayMs: 0 },
+    strategy: {
+      rsiEnabled: true, confirmationEnabled: true, confirmationCandles: 3,
+      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
+      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
+      adx: { enabled: false, requireWeakCandleWhenDisabled: false }
+    }
+  }, {
+    positions: async () => []
+  }, {
+    getPosition: async () => null,
+    getSetup: async () => null,
+    saveSetup: async (_symbol, setup) => { saved = setup; },
+    deleteSetup: async () => {}
+  }, {});
+  engine.running = true;
+  engine.universe = ["TESTUSDT"];
+  engine.candles = async () => bars;
+  engine.openTrade = async () => { opened = true; };
+
+  await engine.checkSignals();
+
+  assert.equal(saved?.side, "SHORT");
+  assert.equal(saved?.signalHigh, bars[3].high);
+  assert.equal(saved?.timeframe, "15m");
+  assert.equal(opened, false);
 });
 
 test("disabled RSI strategy clears pending setup and never evaluates an entry", async () => {
