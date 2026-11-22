@@ -56,9 +56,11 @@ function evaluateClosedCandle({ candles, config, adx }) {
   const side = isShort ? "SHORT" : "LONG";
   const entry = candle.close;
   const buffer = entry * s.slBufferPct / 100;
+  const structureHigh = Math.max(candle.high, previous.high);
+  const structureLow = Math.min(candle.low, previous.low);
   let stop = side === "SHORT"
-    ? Math.max(previous.high + buffer, entry * (1 + s.minStopDistancePct / 100))
-    : Math.min(previous.low - buffer, entry * (1 - s.minStopDistancePct / 100));
+    ? Math.max(structureHigh + buffer, entry * (1 + s.minStopDistancePct / 100))
+    : Math.min(structureLow - buffer, entry * (1 - s.minStopDistancePct / 100));
 
   const distancePct = Math.abs(stop - entry) / entry * 100;
   if (distancePct > s.maxStopDistancePct) {
