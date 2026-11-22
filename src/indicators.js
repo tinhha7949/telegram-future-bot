@@ -46,4 +46,55 @@ function findSwing(candles, side, left = 2, right = 2, lookback = 50) {
   }
   return null;
 }
-module.exports = { ema, rsi, atr, findSwing };
+function adxWilder(candles, period = 14) {
+  if (!Array.isArray(candles) || !Number.isInteger(period) || period <= 0
+    || candles.length < period * 2) return null;
+
+  let trSmooth = 0;
+  let plusDmSmooth = 0;
+  let minusDmSmooth = 0;
+  let adxValue = null;
+  let dxCount = 0;
+
+  for (let i = 1; i < candles.length; i++) {
+    const current = candles[i];
+    const previous = candles[i - 1];
+    const upMove = current.high - previous.high;
+    const downMove = previous.low - current.low;
+    const tr = Math.max(
+      current.high - current.low,
+      Math.abs(current.high - previous.close),
+      Math.abs(current.low - previous.close)
+    );
+    const plusDm = upMove > downMove && upMove > 0 ? upMove : 0;
+    const minusDm = downMove > upMove && downMove > 0 ? downMove : 0;
+
+    if (i <= period) {
+      trSmooth += tr;
+      plusDmSmooth += plusDm;
+      minusDmSmooth += minusDm;
+    } else {
+      trSmooth = trSmooth - trSmooth / period + tr;
+      plusDmSmooth = plusDmSmooth - plusDmSmooth / period + plusDm;
+      minusDmSmooth = minusDmSmooth - minusDmSmooth / period + minusDm;
+    }
+
+    if (i < period) continue;
+
+    const plusDi = trSmooth > 0 ? 100 * plusDmSmooth / trSmooth : 0;
+    const minusDi = trSmooth > 0 ? 100 * minusDmSmooth / trSmooth : 0;
+    const diSum = plusDi + minusDi;
+    const dx = diSum > 0 ? 100 * Math.abs(plusDi - minusDi) / diSum : 0;
+
+    dxCount++;
+    if (dxCount <= period) {
+      adxValue = ((adxValue || 0) * (dxCount - 1) + dx) / dxCount;
+    } else {
+      adxValue = (adxValue * (period - 1) + dx) / period;
+    }
+  }
+
+  return Number.isFinite(adxValue) ? adxValue : null;
+}
+
+module.exports = { ema, rsi, atr, findSwing, adxWilder };
