@@ -25,11 +25,11 @@ scanner:
   excludeSymbols: [USDCUSDT, FDUSDUSDT, BUSDUSDT, TUSDUSDT, USDPUSDT, DAIUSDT]
 
 strategy:
-  timeframe: 1h
+  timeframe: 15m
   rsiEnabled: true
   confirmationEnabled: true
   signalCheckIntervalSeconds: 10
-  confirmationCandles: 3
+  confirmationCandles: 2
   rsiPeriod: 14
   rsiShortMin: 65
   rsiShortMax: 70
