@@ -31,7 +31,7 @@ strategy:
   signalCheckIntervalSeconds: 10
   confirmationCandles: 1
   rsiPeriod: 14
-  rsiShortMin: 65
+  rsiShortMin: 61
   rsiShortMax: 80
   rsiLongMin: 20
   rsiLongMax: 35
