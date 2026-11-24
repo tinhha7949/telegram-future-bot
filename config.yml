@@ -38,7 +38,8 @@ strategy:
   emaBias:
     enabled: true
     timeframe: 4h
-    period: 100
+    fastPeriod: 20
+    slowPeriod: 50
     historyCandles: 300
   adx:
     enabled: false

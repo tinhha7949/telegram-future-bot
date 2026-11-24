@@ -208,25 +208,26 @@ class TradingEngine {
     return value;
   }
   async getEmaBias(symbol) {
-    const settings = this.c.strategy.emaBias;
+    const settings = this.c.strategy?.emaBias;
     if (!settings?.enabled) return null;
 
     const now = Date.now();
     const cached = this.emaBiasCache.get(symbol);
     if (cached && now < cached.expiresAt) return cached.value;
 
-    const period = Math.max(1, Math.floor(num(settings.period) || 100));
+    const fastPeriod = Math.max(1, Math.floor(num(settings.fastPeriod) || 20));
+    const slowPeriod = Math.max(1, Math.floor(num(settings.slowPeriod) || 50));
     const interval = settings.timeframe || "4h";
-    const history = Math.max(period + 1, Math.floor(num(settings.historyCandles) || period * 3));
+    const history = Math.max(slowPeriod + 1, Math.floor(num(settings.historyCandles) || slowPeriod * 6));
     const bars = await this.candles(symbol, interval, history);
+    const closes = bars.map(candle => candle.close);
+    const fastEma = closes.length >= fastPeriod ? ema(closes, fastPeriod) : null;
+    const slowEma = closes.length >= slowPeriod ? ema(closes, slowPeriod) : null;
+    const direction = Number.isFinite(fastEma) && Number.isFinite(slowEma)
+      ? (fastEma > slowEma ? "LONG" : fastEma < slowEma ? "SHORT" : null)
+      : null;
     const last = bars[bars.length - 1];
-    const value = bars.length >= period
-      ? ema(bars.map(candle => candle.close), period)
-      : null;
-    const direction = Number.isFinite(value) && last
-      ? (last.close > value ? "LONG" : last.close < value ? "SHORT" : null)
-      : null;
-    const result = { direction, ema: value, close: last?.close ?? null };
+    const result = { direction, fastEma, slowEma };
     const expiresAt = last
       ? Math.max(now + 1000, last.closeTime + timeframeMs(interval) + 1)
       : now + 30000;
@@ -361,13 +362,13 @@ class TradingEngine {
       const bias = await this.getEmaBias(symbol);
       if (!bias || !["LONG", "SHORT"].includes(bias.direction)) {
         this.log("[entry-skip]", symbol, "reason", "EMA_BIAS_UNAVAILABLE",
-          "timeframe", emaSettings.timeframe, "period", emaSettings.period);
+          "timeframe", emaSettings.timeframe, "fastPeriod", emaSettings.fastPeriod, "slowPeriod", emaSettings.slowPeriod);
         return false;
       }
       if (signal.side !== bias.direction) {
         this.log("[entry-skip]", symbol, "reason", "EMA_BIAS_MISMATCH",
           "signal", signal.side, "bias", bias.direction,
-          "timeframe", emaSettings.timeframe, "period", emaSettings.period);
+          "timeframe", emaSettings.timeframe, "fastPeriod", emaSettings.fastPeriod, "slowPeriod", emaSettings.slowPeriod);
         return false;
       }
     }

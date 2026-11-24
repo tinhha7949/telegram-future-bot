@@ -617,3 +617,40 @@ test("ADX returns unavailable when there is insufficient higher-timeframe histor
   engine.candles = async () => [{ high: 101, low: 99, close: 100, closeTime: Date.now() - 1000 }];
   assert.equal(await engine.getAdx("TESTUSDT"), null);
 });
+
+test("EMA bias is bullish when fast EMA is above slow EMA", async () => {
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    strategy: { emaBias: { enabled: true, timeframe: "4h", fastPeriod: 20, slowPeriod: 50, historyCandles: 100 } }
+  }, {}, {}, {});
+  let requested = null;
+  engine.candles = async (_symbol, interval, limit) => {
+    requested = { interval, limit };
+    return Array.from({ length: 100 }, (_, i) => ({ close: 100 + i, closeTime: Date.now() - 1000 }));
+  };
+  const bias = await engine.getEmaBias("TESTUSDT");
+  assert.deepEqual(requested, { interval: "4h", limit: 100 });
+  assert.equal(bias.direction, "LONG");
+  assert.ok(bias.fastEma > bias.slowEma);
+});
+
+test("EMA bias is bearish when fast EMA is below slow EMA", async () => {
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    strategy: { emaBias: { enabled: true, timeframe: "4h", fastPeriod: 20, slowPeriod: 50, historyCandles: 100 } }
+  }, {}, {}, {});
+  engine.candles = async () => Array.from({ length: 100 }, (_, i) => ({ close: 200 - i, closeTime: Date.now() - 1000 }));
+  const bias = await engine.getEmaBias("TESTUSDT");
+  assert.equal(bias.direction, "SHORT");
+  assert.ok(bias.fastEma < bias.slowEma);
+});
+
+test("EMA bias is neutral when fast and slow EMA are equal", async () => {
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    strategy: { emaBias: { enabled: true, timeframe: "4h", fastPeriod: 20, slowPeriod: 50, historyCandles: 100 } }
+  }, {}, {}, {});
+  engine.candles = async () => Array.from({ length: 100 }, () => ({ close: 100, closeTime: Date.now() - 1000 }));
+  const bias = await engine.getEmaBias("TESTUSDT");
+  assert.equal(bias.direction, null);
+});
