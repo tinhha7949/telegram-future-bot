@@ -1,6 +1,6 @@
 "use strict";
 const { evaluateClosedCandle, buildConfirmedEntry, checkBreakoutConfirmation } = require("./strategy");
-const { atr, adxWilder } = require("./indicators");
+const { atr, adxWilder, ema } = require("./indicators");
 const { calculateMargin, calculateRawQuantity } = require("./risk");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const num = v => Number(v || 0);
@@ -15,6 +15,7 @@ class TradingEngine {
     this.running = false; this.universe = []; this.lastScan = 0; this.lastScanFailedAt = 0;
     this.lastCandle = new Map(); this.lastSignalCheckAt = 0; this.lastManageAt = 0;
     this.adxCache = new Map();
+    this.emaBiasCache = new Map();
   }
   log(...args) { if (this.c.app.logLevel !== "silent") console.log(new Date().toISOString(), ...args); }
   async replaceStopLoss(symbol, side, triggerPrice, fallbackPrice, currentSlId) {
@@ -206,6 +207,33 @@ class TradingEngine {
     this.adxCache.set(symbol, { value, expiresAt });
     return value;
   }
+  async getEmaBias(symbol) {
+    const settings = this.c.strategy.emaBias;
+    if (!settings?.enabled) return null;
+
+    const now = Date.now();
+    const cached = this.emaBiasCache.get(symbol);
+    if (cached && now < cached.expiresAt) return cached.value;
+
+    const period = Math.max(1, Math.floor(num(settings.period) || 100));
+    const interval = settings.timeframe || "4h";
+    const history = Math.max(period + 1, Math.floor(num(settings.historyCandles) || period * 3));
+    const bars = await this.candles(symbol, interval, history);
+    const last = bars[bars.length - 1];
+    const value = bars.length >= period
+      ? ema(bars.map(candle => candle.close), period)
+      : null;
+    const direction = Number.isFinite(value) && last
+      ? (last.close > value ? "LONG" : last.close < value ? "SHORT" : null)
+      : null;
+    const result = { direction, ema: value, close: last?.close ?? null };
+    const expiresAt = last
+      ? Math.max(now + 1000, last.closeTime + timeframeMs(interval) + 1)
+      : now + 30000;
+
+    this.emaBiasCache.set(symbol, { value: result, expiresAt });
+    return result;
+  }
   async checkSignals() {
     const signalCheckIntervalMs = this.c.strategy.signalCheckIntervalSeconds * 1000;
     const now = Date.now();
@@ -328,6 +356,21 @@ class TradingEngine {
     }
   }
   async openTrade(symbol, signal) {
+    const emaSettings = this.c.strategy.emaBias;
+    if (emaSettings?.enabled) {
+      const bias = await this.getEmaBias(symbol);
+      if (!bias || !["LONG", "SHORT"].includes(bias.direction)) {
+        this.log("[entry-skip]", symbol, "reason", "EMA_BIAS_UNAVAILABLE",
+          "timeframe", emaSettings.timeframe, "period", emaSettings.period);
+        return false;
+      }
+      if (signal.side !== bias.direction) {
+        this.log("[entry-skip]", symbol, "reason", "EMA_BIAS_MISMATCH",
+          "signal", signal.side, "bias", bias.direction,
+          "timeframe", emaSettings.timeframe, "period", emaSettings.period);
+        return false;
+      }
+    }
     const [exchangePositions, open, existing] = await Promise.all([
       this.x.positions(),
       this.db.getOpenPositions(),
