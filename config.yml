@@ -35,6 +35,11 @@ strategy:
   rsiShortMax: 80
   rsiLongMin: 20
   rsiLongMax: 30
+  emaBias:
+    enabled: true
+    timeframe: 4h
+    period: 100
+    historyCandles: 300
   adx:
     enabled: false
     timeframe: 4h
