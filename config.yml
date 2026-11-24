@@ -27,7 +27,7 @@ scanner:
 strategy:
   timeframe: 15m
   rsiEnabled: true
-  confirmationEnabled: true
+  confirmationEnabled: false
   signalCheckIntervalSeconds: 10
   confirmationCandles: 1
   rsiPeriod: 14
@@ -49,8 +49,8 @@ strategy:
   slBufferPct: 0.12
   minStopDistancePct: 0.10
   maxStopDistancePct: 5.0
-  rewardRiskTp1: 1.1
-  rewardRiskTp2: 1.6
+  rewardRiskTp1: 1.6
+  rewardRiskTp2: 2.2
   tp1ClosePct: 60
   breakevenOffsetPct: 1.0
 
