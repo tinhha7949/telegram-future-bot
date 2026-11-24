@@ -31,10 +31,10 @@ strategy:
   signalCheckIntervalSeconds: 10
   confirmationCandles: 1
   rsiPeriod: 14
-  rsiShortMin: 65
+  rsiShortMin: 70
   rsiShortMax: 80
   rsiLongMin: 20
-  rsiLongMax: 35
+  rsiLongMax: 30
   adx:
     enabled: false
     timeframe: 4h
