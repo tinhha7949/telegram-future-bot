@@ -356,7 +356,7 @@ class TradingEngine {
     }
   }
   async openTrade(symbol, signal) {
-    const emaSettings = this.c.strategy.emaBias;
+    const emaSettings = this.c.strategy?.emaBias;
     if (emaSettings?.enabled) {
       const bias = await this.getEmaBias(symbol);
       if (!bias || !["LONG", "SHORT"].includes(bias.direction)) {
