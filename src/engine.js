@@ -1,7 +1,7 @@
 "use strict";
 const { evaluateClosedCandle, buildConfirmedEntry, checkBreakoutConfirmation } = require("./strategy");
 const { atr, adxWilder, ema } = require("./indicators");
-const { calculateMargin, calculateRawQuantity } = require("./risk");
+const { calculateTradeSizing, calculateRawQuantity } = require("./risk");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const num = v => Number(v || 0);
 function timeframeMs(value) {
@@ -411,29 +411,48 @@ class TradingEngine {
     if (!Number.isFinite(availableBalance) || availableBalance < 0) {
       throw new Error("ENTRY_REJECTED_INVALID_AVAILABLE_BALANCE");
     }
-    const margin = calculateMargin(wallet, this.c.risk);
     const leverage = Number(this.c.binance.leverage);
-    const marketQty = this.x.quantity(symbol, calculateRawQuantity(margin, leverage, signal.entry), true);
     const filters = this.x.filters.get(symbol);
     if (!filters) throw new Error("ENTRY_REJECTED_MISSING_EXCHANGE_FILTERS");
+    if (!(signal.side === "LONG" ? signal.stop < signal.entry : signal.stop > signal.entry)) {
+      throw new Error("Stop is on the wrong side of entry");
+    }
+
+    // Validate the planned TP1 split before MARKET submission. Keep the exact
+    // configured margin when valid; uplift only if rounded quantities fail Binance filters.
+    const plannedDirection = signal.side === "LONG" ? 1 : -1;
+    const plannedRisk = Math.abs(signal.entry - signal.stop);
+    const plannedTp1 = signal.entry + plannedDirection * plannedRisk * this.c.strategy.rewardRiskTp1;
+    const plannedTp1Price = this.x.price(symbol, plannedTp1, signal.side === "LONG" ? "UP" : "DOWN");
+    const sizing = calculateTradeSizing({
+      walletBalance: wallet,
+      availableBalance,
+      risk: this.c.risk,
+      leverage,
+      entryPrice: signal.entry,
+      tp1Price: plannedTp1Price,
+      tp1ClosePct: this.c.strategy.tp1ClosePct,
+      filters
+    });
+    const margin = sizing.margin;
+    const marketQty = this.x.quantity(symbol, calculateRawQuantity(margin, leverage, signal.entry), true);
     const notional = marketQty * signal.entry;
-    if (notional < filters.minNotional) throw new Error("ENTRY_REJECTED_MIN_NOTIONAL");
     const requiredMargin = notional / leverage;
     if (requiredMargin > availableBalance) {
       throw new Error("ENTRY_REJECTED_INSUFFICIENT_AVAILABLE_BALANCE: required " +
         requiredMargin.toFixed(8) + " USDT, available " + availableBalance.toFixed(8) + " USDT");
     }
-    if (!(signal.side === "LONG" ? signal.stop < signal.entry : signal.stop > signal.entry)) throw new Error("Stop is on the wrong side of entry");
-
-    // Validate the planned TP1 split before sending a live MARKET order. The same checks
-    // are repeated against the actual fill below because fill price/quantity can differ.
-    const plannedDirection = signal.side === "LONG" ? 1 : -1;
-    const plannedRisk = Math.abs(signal.entry - signal.stop);
-    const plannedTp1 = signal.entry + plannedDirection * plannedRisk * this.c.strategy.rewardRiskTp1;
-    const plannedTp1Price = this.x.price(symbol, plannedTp1, signal.side === "LONG" ? "UP" : "DOWN");
     const plannedTp1Qty = this.x.quantity(symbol, marketQty * this.c.strategy.tp1ClosePct / 100, false);
-    if (plannedTp1Qty * plannedTp1Price < filters.minNotional) {
-      throw new Error("TP1 partial quantity is below Binance minNotional; entry skipped before MARKET order");
+    if (notional < filters.minNotional || plannedTp1Qty * plannedTp1Price < filters.minNotional) {
+      throw new Error("ENTRY_REJECTED_TP1_MIN_NOTIONAL_AFTER_ROUNDING");
+    }
+    if (sizing.adjusted) {
+      this.log("[entry-margin-adjusted]", symbol,
+        "baseMargin", sizing.baseMargin.toFixed(8),
+        "adjustedMargin", margin.toFixed(8),
+        "marketNotional", notional.toFixed(8),
+        "tp1Notional", (plannedTp1Qty * plannedTp1Price).toFixed(8),
+        "minNotional", filters.minNotional);
     }
 
     try {
