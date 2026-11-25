@@ -37,6 +37,17 @@ test("quantity rounding uses MARKET_LOT_SIZE for entries and LOT_SIZE for algo e
   assert.equal(x.quantity("BTCUSDT", .1239, false), .123);
 });
 
+test("quantity and price precision support scientific-notation exchange steps", () => {
+  const x = createExchange();
+  x.filters.set("TINYUSDT", {
+    marketStepSize: 1e-8, marketMinQty: 1e-8,
+    lotStepSize: 1e-8, lotMinQty: 1e-8,
+    tickSize: 1e-8, minNotional: 5
+  });
+  assert.equal(x.quantity("TINYUSDT", 3.45678912e-7, true), 3.4e-7);
+  assert.equal(x.price("TINYUSDT", 1.23456789e-7, "DOWN"), 1.2e-7);
+});
+
 test("price rounding keeps stops and targets on the safe side of tick size", () => {
   const x = createExchange();
   x.filters.set("BTCUSDT", {tickSize:.1,marketStepSize:.001,marketMinQty:.001,lotStepSize:.001,lotMinQty:.001,minNotional:5});
