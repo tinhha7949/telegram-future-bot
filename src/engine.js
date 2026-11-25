@@ -411,49 +411,52 @@ class TradingEngine {
     if (!Number.isFinite(availableBalance) || availableBalance < 0) {
       throw new Error("ENTRY_REJECTED_INVALID_AVAILABLE_BALANCE");
     }
-    const leverage = Number(this.c.binance.leverage);
+    let leverage = Number(this.c.binance.leverage);
+    const configuredLeverage = leverage;
     const filters = this.x.filters.get(symbol);
     if (!filters) throw new Error("ENTRY_REJECTED_MISSING_EXCHANGE_FILTERS");
     if (!(signal.side === "LONG" ? signal.stop < signal.entry : signal.stop > signal.entry)) {
       throw new Error("Stop is on the wrong side of entry");
     }
 
-    // Validate the planned TP1 split before MARKET submission. Keep the exact
-    // configured margin when valid; uplift only if rounded quantities fail Binance filters.
+    // Recalculate the complete order plan whenever Binance requires lower leverage.
+    // This also rechecks TP1 minNotional at the effective leverage.
     const plannedDirection = signal.side === "LONG" ? 1 : -1;
     const plannedRisk = Math.abs(signal.entry - signal.stop);
     const plannedTp1 = signal.entry + plannedDirection * plannedRisk * this.c.strategy.rewardRiskTp1;
     const plannedTp1Price = this.x.price(symbol, plannedTp1, signal.side === "LONG" ? "UP" : "DOWN");
-    const sizing = calculateTradeSizing({
-      walletBalance: wallet,
-      availableBalance,
-      risk: this.c.risk,
-      leverage,
-      entryPrice: signal.entry,
-      tp1Price: plannedTp1Price,
-      tp1ClosePct: this.c.strategy.tp1ClosePct,
-      filters
-    });
-    const margin = sizing.margin;
-    const marketQty = this.x.quantity(symbol, calculateRawQuantity(margin, leverage, signal.entry), true);
-    const notional = marketQty * signal.entry;
-    const requiredMargin = notional / leverage;
-    if (requiredMargin > availableBalance) {
-      throw new Error("ENTRY_REJECTED_INSUFFICIENT_AVAILABLE_BALANCE: required " +
-        requiredMargin.toFixed(8) + " USDT, available " + availableBalance.toFixed(8) + " USDT");
-    }
-    const plannedTp1Qty = this.x.quantity(symbol, marketQty * this.c.strategy.tp1ClosePct / 100, false);
-    if (notional < filters.minNotional || plannedTp1Qty * plannedTp1Price < filters.minNotional) {
-      throw new Error("ENTRY_REJECTED_TP1_MIN_NOTIONAL_AFTER_ROUNDING");
-    }
-    if (sizing.adjusted) {
-      this.log("[entry-margin-adjusted]", symbol,
-        "baseMargin", sizing.baseMargin.toFixed(8),
-        "adjustedMargin", margin.toFixed(8),
-        "marketNotional", notional.toFixed(8),
-        "tp1Notional", (plannedTp1Qty * plannedTp1Price).toFixed(8),
-        "minNotional", filters.minNotional);
-    }
+    const buildEntryPlan = targetLeverage => {
+      const sizing = calculateTradeSizing({
+        walletBalance: wallet,
+        availableBalance,
+        risk: this.c.risk,
+        leverage: targetLeverage,
+        entryPrice: signal.entry,
+        tp1Price: plannedTp1Price,
+        tp1ClosePct: this.c.strategy.tp1ClosePct,
+        filters
+      });
+      const margin = sizing.margin;
+      const marketQty = this.x.quantity(symbol, calculateRawQuantity(margin, targetLeverage, signal.entry), true);
+      const notional = marketQty * signal.entry;
+      const requiredMargin = notional / targetLeverage;
+      if (requiredMargin > availableBalance) {
+        throw new Error("ENTRY_REJECTED_INSUFFICIENT_AVAILABLE_BALANCE: required " +
+          requiredMargin.toFixed(8) + " USDT, available " + availableBalance.toFixed(8) + " USDT");
+      }
+      const plannedTp1Qty = this.x.quantity(symbol, marketQty * this.c.strategy.tp1ClosePct / 100, false);
+      if (notional < filters.minNotional || plannedTp1Qty * plannedTp1Price < filters.minNotional) {
+        throw new Error("ENTRY_REJECTED_TP1_MIN_NOTIONAL_AFTER_ROUNDING");
+      }
+      return { sizing, margin, marketQty, notional, requiredMargin, plannedTp1Qty };
+    };
+
+    let entryPlan = buildEntryPlan(leverage);
+    let sizing = entryPlan.sizing;
+    let margin = entryPlan.margin;
+    let marketQty = entryPlan.marketQty;
+    let notional = entryPlan.notional;
+    let plannedTp1Qty = entryPlan.plannedTp1Qty;
 
     try {
       const bracketResponse = await this.x.leverageBracket(symbol);
@@ -461,19 +464,49 @@ class TradingEngine {
         ? bracketResponse.find(item => item.symbol === symbol) || bracketResponse[0]
         : bracketResponse;
       const brackets = Array.isArray(symbolBracket?.brackets) ? symbolBracket.brackets : [];
-      if (brackets.length) {
+      if (!brackets.length) throw new Error("ENTRY_REJECTED_LEVERAGE_BRACKET_UNAVAILABLE");
+
+      let bracketResolved = false;
+      for (let attempt = 0; attempt <= brackets.length; attempt++) {
         const selected = brackets.find(item => notional <= num(item.notionalCap)
           && notional > num(item.notionalFloor));
         if (!selected) {
           throw new Error("ENTRY_REJECTED_NOTIONAL_BRACKET: " + notional.toFixed(4) + " USDT exceeds Binance symbol limits");
         }
         const maxLeverage = num(selected.initialLeverage);
-        if (maxLeverage > 0 && leverage > maxLeverage) {
-          throw new Error("ENTRY_REJECTED_LEVERAGE_LIMIT: configured " + leverage +
+        if (!(maxLeverage > 0)) throw new Error("ENTRY_REJECTED_LEVERAGE_BRACKET_UNAVAILABLE");
+        if (leverage <= maxLeverage) {
+          bracketResolved = true;
+          break;
+        }
+        if (this.c.binance.autoAdjustLeverageToBinanceLimit === false) {
+          throw new Error("ENTRY_REJECTED_LEVERAGE_LIMIT: configured " + configuredLeverage +
             "x, Binance allows " + maxLeverage + "x for " + notional.toFixed(4) + " USDT notional");
         }
-      } else {
-        throw new Error("ENTRY_REJECTED_LEVERAGE_BRACKET_UNAVAILABLE");
+
+        const previousLeverage = leverage;
+        leverage = maxLeverage;
+        entryPlan = buildEntryPlan(leverage);
+        sizing = entryPlan.sizing;
+        margin = entryPlan.margin;
+        marketQty = entryPlan.marketQty;
+        notional = entryPlan.notional;
+        plannedTp1Qty = entryPlan.plannedTp1Qty;
+        this.log("[entry-leverage-adjusted]", symbol,
+          "configured", configuredLeverage + "x",
+          "effective", leverage + "x",
+          "previousNotional", (entryPlan.notional / leverage * previousLeverage).toFixed(8),
+          "newNotional", notional.toFixed(8));
+      }
+      if (!bracketResolved) throw new Error("ENTRY_REJECTED_LEVERAGE_BRACKET_UNSTABLE");
+
+      if (sizing.adjusted) {
+        this.log("[entry-margin-adjusted]", symbol,
+          "baseMargin", sizing.baseMargin.toFixed(8),
+          "adjustedMargin", margin.toFixed(8),
+          "marketNotional", notional.toFixed(8),
+          "tp1Notional", (plannedTp1Qty * plannedTp1Price).toFixed(8),
+          "minNotional", filters.minNotional);
       }
       await this.x.setMarginType(symbol, this.c.binance.marginType);
       await this.x.setLeverage(symbol, leverage);
