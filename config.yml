@@ -14,7 +14,7 @@ binance:
   workingType: MARK_PRICE
 
 scanner:
-  intervalMinutes: 30
+  intervalMinutes: 15
   maxCoins: 100
   batchSize: 10
   batchDelayMs: 1000
@@ -32,15 +32,15 @@ strategy:
   confirmationCandles: 1
   rsiPeriod: 14
   rsiShortMin: 65
-  rsiShortMax: 75
-  rsiLongMin: 25
+  rsiShortMax: 80
+  rsiLongMin: 20
   rsiLongMax: 35
   emaBias:
     enabled: true
     timeframe: 4h
     fastPeriod: 20
     slowPeriod: 50
-    historyCandles: 300
+    historyCandles: 200
   adx:
     enabled: false
     timeframe: 4h
