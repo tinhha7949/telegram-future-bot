@@ -11,13 +11,20 @@ function calculateRawQuantity(margin, leverage, entryPrice) {
   if (!(margin > 0) || !(leverage > 0) || !(entryPrice > 0)) throw new Error("Margin, leverage and entry price must be positive");
   return margin * leverage / entryPrice;
 }
+function decimalPlaces(step) {
+  const value = String(step).toLowerCase();
+  const [coefficient, exponentText] = value.split("e");
+  const fractionDigits = (coefficient.split(".")[1] || "").length;
+  const exponent = exponentText === undefined ? 0 : Number(exponentText);
+  return Math.max(0, fractionDigits - exponent);
+}
 function roundToStep(raw, step, roundUp = false) {
   if (!(raw >= 0) || !(step > 0)) throw new Error("Invalid quantity step input");
   const units = raw / step;
   const roundedUnits = roundUp
     ? Math.ceil(units - 1e-10)
     : Math.floor(units + 1e-10);
-  const precision = Math.max(0, (String(step).split(".")[1] || "").replace(/0+$/, "").length);
+  const precision = decimalPlaces(step);
   return Number((roundedUnits * step).toFixed(precision));
 }
 function buildTradeSizing(margin, leverage, entryPrice, tp1Price, tp1ClosePct, filters) {
