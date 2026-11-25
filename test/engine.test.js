@@ -338,9 +338,10 @@ test("ADX candle-fetch failure does not mark the current trade candle as process
   await engine.checkSignals();
 
   assert.equal(engine.lastCandle.has("TESTUSDT"), false);
-});test("small-wallet TP1 sizing uplifts margin and passes the TP1 preflight before leverage setup", async () => {
+});test("small-wallet sizing adapts to Binance leverage limits and keeps TP1 above minNotional", async () => {
   let marketOrderSubmitted = false;
   let leverageBracketChecked = false;
+  let appliedLeverage = null;
   let storedPosition = null;
   let algoId = 0;
   const filters = {
@@ -368,10 +369,10 @@ test("ADX candle-fetch failure does not mark the current trade candle as process
     },
     leverageBracket: async () => {
       leverageBracketChecked = true;
-      return [{ symbol: "TESTUSDT", brackets: [{ notionalFloor: 0, notionalCap: 100000, initialLeverage: 20 }] }];
+      return [{ symbol: "TESTUSDT", brackets: [{ notionalFloor: 0, notionalCap: 100000, initialLeverage: 10 }] }];
     },
     setMarginType: async () => {},
-    setLeverage: async () => {},
+    setLeverage: async (_symbol, value) => { appliedLeverage = value; },
     newOrder: async order => {
       if (order.type === "MARKET") marketOrderSubmitted = true;
       return { status: "FILLED", avgPrice: 100, executedQty: order.quantity, orderId: 123 };
@@ -381,7 +382,7 @@ test("ADX candle-fetch failure does not mark the current trade candle as process
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
     risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
-    binance: { leverage: 20, marginType: "ISOLATED", workingType: "MARK_PRICE" },
+    binance: { leverage: 20, autoAdjustLeverageToBinanceLimit: true, marginType: "ISOLATED", workingType: "MARK_PRICE" },
     strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5, rewardRiskTp2: 2 },
     execution: { priceProtect: false }
   }, exchange, {
@@ -395,9 +396,11 @@ test("ADX candle-fetch failure does not mark the current trade candle as process
   assert.equal(opened, true);
   assert.equal(leverageBracketChecked, true);
   assert.equal(marketOrderSubmitted, true);
+  assert.equal(appliedLeverage, 10);
   assert.ok(storedPosition);
-  assert.ok(storedPosition.margin > 0.3);
-  assert.ok(storedPosition.margin < 0.4);
+  assert.equal(storedPosition.leverage, 10);
+  assert.ok(storedPosition.margin > 0.7);
+  assert.ok(storedPosition.margin < 0.8);
   assert.ok(storedPosition.tp1Quantity * storedPosition.tp1 >= filters.minNotional);
 });
 
@@ -431,7 +434,7 @@ test("TP1 minimum-notional failure is detected before submitting a live MARKET e
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
     risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
-    binance: { leverage: 20, marginType: "ISOLATED" },
+    binance: { leverage: 20, autoAdjustLeverageToBinanceLimit: false, marginType: "ISOLATED" },
     strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5 }
   }, exchange, {
     getPosition: async () => null,
@@ -534,7 +537,7 @@ test("insufficient available balance rejects entry before any MARKET order", asy
   assert.equal(marketOrderSubmitted, false);
 });
 
-test("symbol leverage bracket rejects unsupported leverage before MARKET entry", async () => {
+test("symbol leverage bracket still rejects when automatic leverage adjustment is disabled", async () => {
   let marketOrderSubmitted = false;
   let leverageSet = false;
   const filters = {
