@@ -10,6 +10,7 @@ binance:
   requestTimeoutMs: 12000
   maxRetries: 3
   leverage: 20
+  autoAdjustLeverageToBinanceLimit: true
   marginType: ISOLATED
   workingType: MARK_PRICE
 
