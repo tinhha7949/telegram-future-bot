@@ -484,7 +484,7 @@ class TradingEngine {
             "x, Binance allows " + maxLeverage + "x for " + notional.toFixed(4) + " USDT notional");
         }
 
-        const previousLeverage = leverage;
+        const previousNotional = notional;
         leverage = maxLeverage;
         entryPlan = buildEntryPlan(leverage);
         sizing = entryPlan.sizing;
@@ -495,7 +495,7 @@ class TradingEngine {
         this.log("[entry-leverage-adjusted]", symbol,
           "configured", configuredLeverage + "x",
           "effective", leverage + "x",
-          "previousNotional", (entryPlan.notional / leverage * previousLeverage).toFixed(8),
+          "previousNotional", previousNotional.toFixed(8),
           "newNotional", notional.toFixed(8));
       }
       if (!bracketResolved) throw new Error("ENTRY_REJECTED_LEVERAGE_BRACKET_UNSTABLE");
