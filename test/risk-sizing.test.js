@@ -75,3 +75,23 @@ test("does not uplift beyond available balance", () => {
     /ENTRY_REJECTED_TP1_MIN_NOTIONAL_INSUFFICIENT_BALANCE/
   );
 });
+
+test("supports Binance quantity steps represented in scientific notation", () => {
+  const result = calculateTradeSizing({
+    walletBalance: 100,
+    availableBalance: 100,
+    risk,
+    leverage: 20,
+    entryPrice: 100000000,
+    tp1Price: 105000000,
+    tp1ClosePct: 60,
+    filters: {
+      marketStepSize: 1e-8, marketMinQty: 1e-8,
+      lotStepSize: 1e-8, lotMinQty: 1e-8,
+      minNotional: 5
+    }
+  });
+  assert.equal(result.adjusted, false);
+  assert.ok(result.marketQty > 0);
+  assert.ok(result.tp1Qty > 0);
+});
