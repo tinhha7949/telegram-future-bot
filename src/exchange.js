@@ -1,4 +1,11 @@
 "use strict";
+function decimalPlaces(step) {
+  const value = String(step).toLowerCase();
+  const [coefficient, exponentText] = value.split("e");
+  const fractionDigits = (coefficient.split(".")[1] || "").length;
+  const exponent = exponentText === undefined ? 0 : Number(exponentText);
+  return Math.max(0, fractionDigits - exponent);
+}
 const crypto = require("node:crypto");
 
 function makeClientId(prefix = "O") {
@@ -110,7 +117,7 @@ class Exchange {
     const step = marketOrder ? f.marketStepSize : f.lotStepSize;
     const min = marketOrder ? f.marketMinQty : f.lotMinQty;
     const q = Math.floor((raw + step * 1e-10) / step) * step;
-    const precision = Math.max(0, (String(step).split(".")[1] || "").replace(/0+$/, "").length);
+    const precision = decimalPlaces(step);
     const value = Number(q.toFixed(precision));
     if (!(value > 0) || value < min) throw new Error("Quantity below Binance minQty/stepSize for " + symbol);
     return value;
@@ -120,7 +127,7 @@ class Exchange {
     if (!f) throw new Error("Missing exchange filters for " + symbol);
     const units = raw / f.tickSize;
     const n = (rounding === "UP" ? Math.ceil(units - 1e-10) : rounding === "DOWN" ? Math.floor(units + 1e-10) : Math.round(units)) * f.tickSize;
-    const precision = Math.max(0, (String(f.tickSize).split(".")[1] || "").replace(/0+$/, "").length);
+    const precision = decimalPlaces(f.tickSize);
     return Number(n.toFixed(precision));
   }
 }
