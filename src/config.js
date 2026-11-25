@@ -64,6 +64,9 @@ function validateConfig(config) {
   number("binance.requestTimeoutMs", config.binance.requestTimeoutMs, { min: 0, minExclusive: true, integer: true });
   number("binance.maxRetries", config.binance.maxRetries, { min: 0, integer: true });
   number("binance.leverage", config.binance.leverage, { min: 0, minExclusive: true, integer: true });
+  if (config.binance.autoAdjustLeverageToBinanceLimit !== undefined) {
+    boolean("binance.autoAdjustLeverageToBinanceLimit", config.binance.autoAdjustLeverageToBinanceLimit);
+  }
   if (!["ISOLATED", "CROSSED"].includes(config.binance.marginType)) fail("binance.marginType", "ISOLATED or CROSSED");
   if (!["MARK_PRICE", "CONTRACT_PRICE"].includes(config.binance.workingType)) fail("binance.workingType", "MARK_PRICE or CONTRACT_PRICE");
 
