@@ -434,7 +434,7 @@ test("TP1 minimum-notional failure is detected before submitting a live MARKET e
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
     risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
-    binance: { leverage: 20, autoAdjustLeverageToBinanceLimit: false, marginType: "ISOLATED" },
+    binance: { leverage: 20, marginType: "ISOLATED" },
     strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5 }
   }, exchange, {
     getPosition: async () => null,
@@ -562,7 +562,7 @@ test("symbol leverage bracket still rejects when automatic leverage adjustment i
   const engine = new TradingEngine({
     app: { logLevel: "silent" },
     risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
-    binance: { leverage: 20, marginType: "ISOLATED" },
+    binance: { leverage: 20, autoAdjustLeverageToBinanceLimit: false, marginType: "ISOLATED" },
     strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5 }
   }, exchange, {
     getPosition: async () => null,
