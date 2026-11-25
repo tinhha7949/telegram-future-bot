@@ -59,7 +59,7 @@ strategy:
   rewardRiskTp1: 2.0
   rewardRiskTp2: 3.5
   tp1ClosePct: 60
-  breakevenOffsetPct: 1.0
+  breakevenOffsetPct: 1.5
 
 risk:
   walletPercentPerTrade: 5
