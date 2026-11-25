@@ -338,7 +338,70 @@ test("ADX candle-fetch failure does not mark the current trade candle as process
   await engine.checkSignals();
 
   assert.equal(engine.lastCandle.has("TESTUSDT"), false);
-});test("TP1 minimum-notional failure is detected before submitting a live MARKET entry", async () => {
+});test("small-wallet TP1 sizing uplifts margin and passes the TP1 preflight before leverage setup", async () => {
+  let marketOrderSubmitted = false;
+  let leverageBracketChecked = false;
+  let storedPosition = null;
+  let algoId = 0;
+  const filters = {
+    marketStepSize: 0.001, marketMinQty: 0.001,
+    lotStepSize: 0.01, lotMinQty: 0.01,
+    tickSize: 0.1, minNotional: 5
+  };
+  const exchange = {
+    filters: new Map([["TESTUSDT", filters]]),
+    positions: async () => marketOrderSubmitted
+      ? [{ symbol: "TESTUSDT", entryPrice: 100, positionAmt: "0.072" }]
+      : [],
+    account: async () => ({ totalWalletBalance: 3, availableBalance: 3 }),
+    quantity: (_symbol, raw, marketOrder = false) => {
+      const step = marketOrder ? filters.marketStepSize : filters.lotStepSize;
+      const min = marketOrder ? filters.marketMinQty : filters.lotMinQty;
+      const value = Math.floor((raw + step * 1e-10) / step) * step;
+      if (!(value > 0) || value < min) throw new Error("Quantity below Binance minQty/stepSize");
+      return Number(value.toFixed(3));
+    },
+    price: (_symbol, raw, rounding) => {
+      const units = raw / filters.tickSize;
+      const value = (rounding === "UP" ? Math.ceil(units - 1e-10) : Math.floor(units + 1e-10)) * filters.tickSize;
+      return Number(value.toFixed(1));
+    },
+    leverageBracket: async () => {
+      leverageBracketChecked = true;
+      return [{ symbol: "TESTUSDT", brackets: [{ notionalFloor: 0, notionalCap: 100000, initialLeverage: 20 }] }];
+    },
+    setMarginType: async () => {},
+    setLeverage: async () => {},
+    newOrder: async order => {
+      if (order.type === "MARKET") marketOrderSubmitted = true;
+      return { status: "FILLED", avgPrice: 100, executedQty: order.quantity, orderId: 123 };
+    },
+    newAlgoOrder: async () => ({ algoId: ++algoId })
+  };
+  const engine = new TradingEngine({
+    app: { logLevel: "silent" },
+    risk: { walletPercentPerTrade: 10, maxMarginPerTradeUsdt: 0, minMarginPerTradeUsdt: 0, maxActivePositions: 20 },
+    binance: { leverage: 20, marginType: "ISOLATED", workingType: "MARK_PRICE" },
+    strategy: { tp1ClosePct: 70, rewardRiskTp1: 1.5, rewardRiskTp2: 2 },
+    execution: { priceProtect: false }
+  }, exchange, {
+    getPosition: async () => null,
+    getOpenPositions: async () => [],
+    openPosition: async doc => { storedPosition = doc; },
+    saveEvent: async () => {}
+  }, { opened: async () => {} });
+
+  const opened = await engine.openTrade("TESTUSDT", { side: "LONG", entry: 100, stop: 99 });
+  assert.equal(opened, true);
+  assert.equal(leverageBracketChecked, true);
+  assert.equal(marketOrderSubmitted, true);
+  assert.ok(storedPosition);
+  assert.ok(storedPosition.margin > 0.3);
+  assert.ok(storedPosition.margin < 0.4);
+  assert.ok(storedPosition.tp1Quantity * storedPosition.tp1 >= filters.minNotional);
+});
+
+test("TP1 minimum-notional failure is detected before submitting a live MARKET entry", async () => {
   let marketOrderSubmitted = false;
   const filters = {
     marketStepSize: 0.001, marketMinQty: 0.001,
@@ -348,7 +411,7 @@ test("ADX candle-fetch failure does not mark the current trade candle as process
   const exchange = {
     filters: new Map([["TESTUSDT", filters]]),
     positions: async () => [],
-    account: async () => ({ totalWalletBalance: 3, availableBalance: 3 }),
+    account: async () => ({ totalWalletBalance: 3, availableBalance: 0.35 }),
     quantity: (_symbol, raw, marketOrder = false) => {
       const step = marketOrder ? filters.marketStepSize : filters.lotStepSize;
       const min = marketOrder ? filters.marketMinQty : filters.lotMinQty;
@@ -377,7 +440,7 @@ test("ADX candle-fetch failure does not mark the current trade candle as process
 
   await assert.rejects(
     engine.openTrade("TESTUSDT", { side: "LONG", entry: 100, stop: 99 }),
-    /TP1 partial quantity is below Binance minNotional/
+    /ENTRY_REJECTED_TP1_MIN_NOTIONAL_INSUFFICIENT_BALANCE/
   );
   assert.equal(marketOrderSubmitted, false);
 });
