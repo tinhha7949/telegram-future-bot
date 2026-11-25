@@ -33,8 +33,8 @@ strategy:
   confirmationCandles: 1
   rsiPeriod: 14
   rsiShortMin: 68
-  rsiShortMax: 80
-  rsiLongMin: 20
+  rsiShortMax: 90
+  rsiLongMin: 10
   rsiLongMax: 32
   emaBias:
     enabled: true
