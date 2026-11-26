@@ -26,7 +26,7 @@ scanner:
   excludeSymbols: [USDCUSDT, FDUSDUSDT, BUSDUSDT, TUSDUSDT, USDPUSDT, DAIUSDT]
 
 strategy:
-  timeframe: 15m
+  timeframe: 5m
   rsiEnabled: true
   confirmationEnabled: false
   signalCheckIntervalSeconds: 10
@@ -38,7 +38,7 @@ strategy:
   rsiLongMax: 32
   emaBias:
     enabled: true
-    timeframe: 1h
+    timeframe: 15m
     fastPeriod: 9
     slowPeriod: 20
     historyCandles: 200
