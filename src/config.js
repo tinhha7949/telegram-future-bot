@@ -113,8 +113,7 @@ function validateConfig(config) {
   if (s.emaBias !== undefined) object("strategy.emaBias", s.emaBias);
   boolean("strategy.emaBias.enabled", emaBias.enabled);
   timeframe("strategy.emaBias.timeframe", emaBias.timeframe);
-  number("strategy.emaBias.fastPeriod", emaBias.fastPeriod, { min: 0, minExclusive: true, integer: true });
-  number("strategy.emaBias.slowPeriod", emaBias.slowPeriod, { min: 0, minExclusive: true, integer: true });
+  number("strategy.emaBias.period", emaBias.period, { min: 0, minExclusive: true, integer: true });
   number("strategy.emaBias.historyCandles", emaBias.historyCandles, { min: 0, minExclusive: true, integer: true });
 
   object("strategy.adx", s.adx);
