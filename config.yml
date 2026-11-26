@@ -32,10 +32,10 @@ strategy:
   signalCheckIntervalSeconds: 10
   confirmationCandles: 1
   rsiPeriod: 14
-  rsiShortMin: 68
-  rsiShortMax: 75
-  rsiLongMin: 25
-  rsiLongMax: 32
+  rsiShortMin: 35
+  rsiShortMax: 45
+  rsiLongMin: 55
+  rsiLongMax: 65
   emaBias:
     enabled: true
     timeframe: 1h
