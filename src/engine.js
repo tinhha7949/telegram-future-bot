@@ -368,7 +368,7 @@ class TradingEngine {
       if (signal.side !== bias.direction) {
         this.log("[entry-skip]", symbol, "reason", "EMA_BIAS_MISMATCH",
           "signal", signal.side, "bias", bias.direction,
-          "timeframe", emaSettings.timeframe, "fastPeriod", emaSettings.fastPeriod, "slowPeriod", emaSettings.slowPeriod);
+          "timeframe", emaSettings.timeframe, "emaPeriod", emaSettings.period);
         return false;
       }
     }
