@@ -39,7 +39,7 @@ strategy:
   emaBias:
     enabled: true
     timeframe: 1h
-    period: 20
+    period: 9
     historyCandles: 200
   adx:
     enabled: false
