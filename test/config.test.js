@@ -144,14 +144,13 @@ test("validation rejects malformed types, timeframes and inverted ADX thresholds
   assert.throws(() => validateConfig(config), /strategy.confirmationEnabled/);
 });
 
-test("EMA bias fast and slow periods and timeframe are configurable", () => {
+test("single EMA bias period and timeframe are configurable", () => {
   const config = readDefaultConfig();
   for (const timeframe of BINANCE_TIMEFRAMES) {
     config.strategy.emaBias.timeframe = timeframe;
     assert.equal(validateConfig(config), true, timeframe);
   }
-  config.strategy.emaBias.fastPeriod = 9;
-  config.strategy.emaBias.slowPeriod = 200;
+  config.strategy.emaBias.period = 200;
   config.strategy.emaBias.historyCandles = 600;
   assert.equal(validateConfig(config), true);
   config.strategy.emaBias.enabled = false;
