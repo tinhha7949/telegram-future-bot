@@ -106,7 +106,7 @@ test("signal checks run on the configured interval instead of waiting for a new 
 });
 
 function pullbackBars(side) {
-  const closes = side === "LONG" ? [100,101,102,103,104,105,106,105,104,105.5] : [105,104,103,102,101,100,99,100,101,99.5];
+  const closes = side === "LONG" ? [99,100,101,102,103,104,105,106,105,104,105.5] : [106,105,104,103,102,101,100,99,100,101,99.5];
   return closes.map((close, i) => {
     const bar = { open: close + .1, high: close + .3, low: close - .3, close, openTime: i * 900000, closeTime: (i + 1) * 900000 };
     if (i === closes.length - 2 && side === "LONG") { bar.open = close + 1; bar.low = close - 2; }
