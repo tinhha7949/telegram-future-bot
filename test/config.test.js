@@ -10,6 +10,11 @@ test("checked-in config validates and loads unchanged", () => {
   const config = readDefaultConfig();
   assert.equal(validateConfig(config), true);
   assert.deepEqual(loadConfig(), config);
+  assert.equal(config.strategy.timeframe, "15m");
+  assert.equal(config.strategy.pullbackEmaPeriod, 9);
+  assert.equal(config.strategy.emaBias.enabled, true);
+  assert.equal(config.strategy.emaBias.timeframe, "1h");
+  assert.equal(config.strategy.emaBias.period, 9);
 });
 test("trade and EMA bias timeframes remain independently configurable", () => {
   const config = readDefaultConfig();
