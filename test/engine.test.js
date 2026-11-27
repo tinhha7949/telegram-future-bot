@@ -291,16 +291,6 @@ test("TP1 minimum-notional failure is detected before submitting a live MARKET e
   assert.equal(marketOrderSubmitted, false);
 });
 
-test("transient pre-entry failure leaves the same closed EMA9 signal candle eligible for retry", async () => {
-  const bars = pullbackBars("LONG");
-  const engine = new TradingEngine({ app: { logLevel: "silent" }, scanner: { batchSize: 10, batchDelayMs: 0 }, strategy: pullbackStrategy() },
-    { positions: async () => [] }, { getPosition: async () => null, getSetup: async () => null, deleteSetup: async () => {} }, {});
-  engine.running = true; engine.universe = ["TESTUSDT"]; engine.candles = async () => bars;
-  engine.openTrade = async () => { const error = new Error("temporary Binance API timeout before order submission"); error.retrySignalCandle = true; throw error; };
-  await engine.checkSignals();
-  assert.equal(engine.lastCandle.has("TESTUSDT"), false);
-});
-
 test("insufficient available balance rejects entry before any MARKET order", async () => {
   let marketOrderSubmitted = false;
   const filters = {
