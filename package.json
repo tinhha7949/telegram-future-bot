@@ -2,7 +2,7 @@
   "name": "binance-futures-rsi-ema-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "Binance USD-M Futures bot using one configurable timeframe and next-candle RSI confirmation",
+  "description": "Binance USD-M Futures bot using 1h EMA9 bias and 15m EMA9 pullback entries",
   "main": "index.js",
   "engines": { "node": ">=22.0.0" },
   "scripts": {
