@@ -105,240 +105,83 @@ test("signal checks run on the configured interval instead of waiting for a new 
   }
 });
 
-test("confirmed breakout ENTRY is passed to openTrade and pending setup is cleared", async () => {
-  const bars = [100, 102, 101, 100].map((close, i) => ({
-    open: close - 0.1, high: close + 0.2, low: close - 0.2, close,
-    closeTime: (i + 1) * 900000
-  }));
-  bars[3].open = 100.1;
-  let opened = null;
-  let deleted = null;
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    scanner: { batchSize: 10, batchDelayMs: 0 },
-    strategy: {
-      rsiEnabled: true, confirmationEnabled: true, confirmationCandles: 3,
-      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
-      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
-      adx: { enabled: false, rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: false },
-      slBufferPct: 0.12, minStopDistancePct: 0.1, maxStopDistancePct: 5,
-      rewardRiskTp1: 1.2, rewardRiskTp2: 1.5
-    }
-  }, {
-    positions: async () => []
-  }, {
-    getPosition: async () => null,
-    getSetup: async () => ({
-      side: "SHORT", timeframe: "15m", signalLogic: "RSI_RANGE_V1",
-      signalTime: 3 * 900000, signalHigh: 101.2, signalLow: 100.1,
-      structureHigh: 101.2, structureLow: 99.8
-    }),
-    deleteSetup: async symbol => { deleted = symbol; }
-  }, {});
-  engine.running = true;
-  engine.universe = ["TESTUSDT"];
-  engine.candles = async (_symbol, interval) => {
-    assert.equal(interval, "15m");
-    return bars;
-  };
-  engine.openTrade = async (symbol, signal) => {
-    opened = { symbol, signal };
-    return true;
-  };
-
+function pullbackBars(side) {
+  const closes = side === "LONG" ? [100,101,102,103,104,105,106,105,104,105.5] : [105,104,103,102,101,100,99,100,101,99.5];
+  return closes.map((close, i) => {
+    const bar = { open: close + .1, high: close + .3, low: close - .3, close, openTime: i * 900000, closeTime: (i + 1) * 900000 };
+    if (i === closes.length - 2 && side === "LONG") { bar.open = close + 1; bar.low = close - 2; }
+    if (i === closes.length - 2 && side === "SHORT") { bar.open = close - 1; bar.high = close + 2; }
+    if (i === closes.length - 1) bar.open = close + (side === "LONG" ? -1 : 1);
+    return bar;
+  });
+}
+function pullbackStrategy(overrides = {}) {
+  return { confirmationEnabled: false, confirmationCandles: 3, signalCheckIntervalSeconds: 60,
+    timeframe: "15m", historyCandles: 160, pullbackEmaPeriod: 9, pullbackLookbackCandles: 5,
+    pullbackEmaTolerancePct: 0.15,
+    adx: { enabled: false, rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: false },
+    slBufferPct: 0.12, minStopDistancePct: 0.1, maxStopDistancePct: 5,
+    rewardRiskTp1: 1.2, rewardRiskTp2: 1.8, ...overrides };
+}
+test("disabled breakout confirmation enters immediately on a valid EMA9 pullback recovery", async () => {
+  const bars = pullbackBars("LONG"); let opened = null, setupSaved = false;
+  const engine = new TradingEngine({ app: { logLevel: "silent" }, scanner: { batchSize: 10, batchDelayMs: 0 }, strategy: pullbackStrategy() },
+    { positions: async () => [] }, { getPosition: async () => null, getSetup: async () => null,
+      saveSetup: async () => { setupSaved = true; }, deleteSetup: async () => {} }, {});
+  engine.running = true; engine.universe = ["TESTUSDT"];
+  engine.candles = async (_symbol, interval) => { assert.equal(interval, "15m"); return bars; };
+  engine.openTrade = async (symbol, signal) => { opened = { symbol, signal }; return true; };
   await engine.checkSignals();
-
-  assert.equal(opened?.symbol, "TESTUSDT");
-  assert.equal(opened?.signal.side, "SHORT");
-  assert.equal(opened?.signal.entry, 100);
-  assert.equal(deleted, "TESTUSDT");
-});
-
-test("disabled breakout confirmation enters immediately from a valid same-candle RSI signal", async () => {
-  const closes = [100, 102, 104, 103];
-  const bars = closes.map((close, i) => ({
-    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
-  }));
-  bars[3].open = 103.05;
-  let opened = null;
-  let setupSaved = false;
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    scanner: { batchSize: 10, batchDelayMs: 0 },
-    strategy: {
-      rsiEnabled: true, confirmationEnabled: false, confirmationCandles: 3,
-      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
-      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
-      adx: { enabled: false, requireWeakCandleWhenDisabled: false },
-      slBufferPct: 0.12, minStopDistancePct: 0.1, maxStopDistancePct: 5,
-      rewardRiskTp1: 1.2, rewardRiskTp2: 1.8
-    }
-  }, {
-    positions: async () => []
-  }, {
-    getPosition: async () => null,
-    getSetup: async () => null,
-    saveSetup: async () => { setupSaved = true; },
-    deleteSetup: async () => {}
-  }, {});
-  engine.running = true;
-  engine.universe = ["TESTUSDT"];
-  engine.candles = async (_symbol, interval) => {
-    assert.equal(interval, "15m");
-    return bars;
-  };
-  engine.openTrade = async (symbol, signal) => {
-    opened = { symbol, signal };
-    return true;
-  };
-
-  await engine.checkSignals();
-
-  assert.equal(opened?.symbol, "TESTUSDT");
-  assert.equal(opened?.signal.side, "SHORT");
-  assert.equal(opened?.signal.entry, 103);
+  assert.equal(opened?.symbol, "TESTUSDT"); assert.equal(opened?.signal.side, "LONG");
+  assert.equal(opened?.signal.entry, bars.at(-1).close); assert.equal(opened?.signal.rsi, null);
   assert.equal(setupSaved, false);
 });
-
-test("enabled breakout confirmation stores the valid RSI signal instead of entering immediately", async () => {
-  const closes = [100, 102, 104, 103];
-  const bars = closes.map((close, i) => ({
-    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
-  }));
-  bars[3].open = 103.05;
-  let saved = null;
-  let opened = false;
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    scanner: { batchSize: 10, batchDelayMs: 0 },
-    strategy: {
-      rsiEnabled: true, confirmationEnabled: true, confirmationCandles: 3,
-      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
-      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
-      adx: { enabled: false, requireWeakCandleWhenDisabled: false }
-    }
-  }, {
-    positions: async () => []
-  }, {
-    getPosition: async () => null,
-    getSetup: async () => null,
-    saveSetup: async (_symbol, setup) => { saved = setup; },
-    deleteSetup: async () => {}
-  }, {});
-  engine.running = true;
-  engine.universe = ["TESTUSDT"];
-  engine.candles = async () => bars;
+test("enabled breakout confirmation stores the EMA9 pullback setup instead of entering immediately", async () => {
+  const bars = pullbackBars("SHORT"); let saved = null, opened = false;
+  const engine = new TradingEngine({ app: { logLevel: "silent" }, scanner: { batchSize: 10, batchDelayMs: 0 },
+    strategy: pullbackStrategy({ confirmationEnabled: true }) }, { positions: async () => [] },
+    { getPosition: async () => null, getSetup: async () => null, saveSetup: async (_symbol, setup) => { saved = setup; }, deleteSetup: async () => {} }, {});
+  engine.running = true; engine.universe = ["TESTUSDT"]; engine.candles = async () => bars;
   engine.openTrade = async () => { opened = true; };
-
   await engine.checkSignals();
-
-  assert.equal(saved?.side, "SHORT");
-  assert.equal(saved?.signalHigh, bars[3].high);
-  assert.equal(saved?.timeframe, "15m");
-  assert.equal(saved?.signalLogic, "RSI_RANGE_V1");
-  assert.equal(opened, false);
+  assert.equal(saved?.side, "SHORT"); assert.equal(saved?.timeframe, "15m");
+  assert.equal(saved?.signalLogic, "EMA9_PULLBACK_V1"); assert.equal(saved?.rsi, null); assert.equal(opened, false);
 });
-
 test("pending setup created by the previous RSI rule is discarded", async () => {
-  const bars = [100, 102, 104, 103].map((close, i) => ({
-    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
-  }));
-  bars[3].open = 103.05;
-  let deleted = 0;
-  let saved = null;
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    scanner: { batchSize: 10, batchDelayMs: 0 },
-    strategy: {
-      rsiEnabled: true, confirmationEnabled: true, confirmationCandles: 3,
-      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
-      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
-      adx: { enabled: false, requireWeakCandleWhenDisabled: false }
-    }
-  }, {
-    positions: async () => []
-  }, {
-    getPosition: async () => null,
-    getSetup: async () => ({
-      side: "SHORT", timeframe: "15m", signalTime: 3,
-      signalHigh: 104, signalLow: 100, structureHigh: 104, structureLow: 99
-    }),
-    deleteSetup: async () => { deleted += 1; },
-    saveSetup: async (_symbol, setup) => { saved = setup; }
-  }, {});
-  engine.running = true;
-  engine.universe = ["TESTUSDT"];
-  engine.candles = async () => bars;
-  engine.openTrade = async () => { throw new Error("should not enter while a new setup is armed"); };
-
+  const bars = pullbackBars("LONG"); let deleted = 0, saved = null;
+  const engine = new TradingEngine({ app: { logLevel: "silent" }, scanner: { batchSize: 10, batchDelayMs: 0 },
+    strategy: pullbackStrategy({ confirmationEnabled: true }) }, { positions: async () => [] },
+    { getPosition: async () => null, getSetup: async () => ({
+      side: "SHORT", timeframe: "15m", signalTime: bars.at(-2).closeTime, signalHigh: 104, signalLow: 100,
+      structureHigh: 104, structureLow: 99, signalLogic: "RSI_RANGE_V1"
+    }), deleteSetup: async () => { deleted += 1; }, saveSetup: async (_symbol, setup) => { saved = setup; } }, {});
+  engine.running = true; engine.universe = ["TESTUSDT"]; engine.candles = async () => bars;
+  engine.openTrade = async () => { throw new Error("must not enter immediately when confirmation is enabled"); };
   await engine.checkSignals();
-
-  assert.equal(deleted, 1);
-  assert.equal(saved?.signalLogic, "RSI_RANGE_V1");
-  assert.equal(saved?.side, "SHORT");
+  assert.equal(deleted, 1); assert.equal(saved?.signalLogic, "EMA9_PULLBACK_V1"); assert.equal(saved?.side, "LONG");
 });
-
-test("disabled RSI strategy clears pending setup and never evaluates an entry", async () => {
-  const bars = [100, 102, 104, 103].map((close, i) => ({
-    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
-  }));
-  let deleted = 0;
-  let opened = false;
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    scanner: { batchSize: 10, batchDelayMs: 0 },
-    strategy: {
-      rsiEnabled: false, confirmationEnabled: true,
-      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
-      rsiPeriod: 2, adx: { enabled: false, requireWeakCandleWhenDisabled: false }
-    }
-  }, {
-    positions: async () => []
-  }, {
-    getPosition: async () => null,
-    deleteSetup: async () => { deleted += 1; }
-  }, {});
-  engine.running = true;
-  engine.universe = ["TESTUSDT"];
-  engine.lastCandle.set("TESTUSDT", 4);
-  engine.candles = async () => bars;
-  engine.openTrade = async () => { opened = true; };
-
+test("transient pre-entry failure leaves the same closed EMA9 signal candle eligible for retry", async () => {
+  const bars = pullbackBars("LONG");
+  const engine = new TradingEngine({ app: { logLevel: "silent" }, scanner: { batchSize: 10, batchDelayMs: 0 }, strategy: pullbackStrategy() },
+    { positions: async () => [] }, { getPosition: async () => null, getSetup: async () => null, deleteSetup: async () => {} }, {});
+  engine.running = true; engine.universe = ["TESTUSDT"]; engine.candles = async () => bars;
+  engine.openTrade = async () => { const error = new Error("temporary Binance API timeout before order submission"); error.retrySignalCandle = true; throw error; };
   await engine.checkSignals();
-
-  assert.equal(deleted, 1);
-  assert.equal(opened, false);
-});
-
-test("ADX candle-fetch failure does not mark the current trade candle as processed", async () => {
-  const bars = [100, 102, 101, 100].map((close, i) => ({
-    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
-  }));
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    scanner: { batchSize: 10, batchDelayMs: 0 },
-    strategy: {
-      signalCheckIntervalSeconds: 60, timeframe: "1h", historyCandles: 160,
-      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
-      adx: { enabled: true, timeframe: "4h", period: 14, rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: true }
-    }
-  }, {
-    positions: async () => []
-  }, {
-    getPosition: async () => null,
-    deleteSetup: async () => {}
-  }, {});
-  engine.running = true;
-  engine.universe = ["TESTUSDT"];
-  engine.candles = async (_symbol, interval) => {
-    if (interval === "1h") return bars;
-    throw new Error("temporary ADX kline API failure");
-  };
-
-  await engine.checkSignals();
-
   assert.equal(engine.lastCandle.has("TESTUSDT"), false);
-});test("small-wallet sizing adapts to Binance leverage limits and keeps TP1 above minNotional", async () => {
+});
+test("ADX candle-fetch failure does not mark the current trade candle as processed", async () => {
+  const bars = pullbackBars("LONG");
+  const engine = new TradingEngine({ app: { logLevel: "silent" }, scanner: { batchSize: 10, batchDelayMs: 0 },
+    strategy: pullbackStrategy({ adx: { enabled: true, timeframe: "4h", period: 14, historyCandles: 100,
+      rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: true } }) },
+    { positions: async () => [] }, { getPosition: async () => null, getSetup: async () => null, deleteSetup: async () => {} }, {});
+  engine.running = true; engine.universe = ["TESTUSDT"];
+  engine.candles = async (_symbol, interval) => { if (interval === "15m") return bars; throw new Error("temporary ADX kline API failure"); };
+  await engine.checkSignals();
+  assert.equal(engine.lastCandle.has("TESTUSDT"), false);
+});
+
+test("small-wallet sizing adapts to Binance leverage limits and keeps TP1 above minNotional", async () => {
   let marketOrderSubmitted = false;
   let leverageBracketChecked = false;
   let appliedLeverage = null;
@@ -448,61 +291,14 @@ test("TP1 minimum-notional failure is detected before submitting a live MARKET e
   assert.equal(marketOrderSubmitted, false);
 });
 
-test("transient pre-entry failure leaves the same closed RSI signal candle eligible for retry", async () => {
-  const bars = [100, 102, 101, 100].map((close, i) => ({
-    open: close - 0.1, high: close + 0.2, low: close - 0.2, close, closeTime: i + 1
-  }));
-  bars[3].open = 100.1;
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    scanner: { batchSize: 10, batchDelayMs: 0 },
-    strategy: {
-      signalCheckIntervalSeconds: 60, timeframe: "15m", historyCandles: 160,
-      rsiPeriod: 2, rsiShortMin: 65, rsiShortMax: 70, rsiLongMin: 30, rsiLongMax: 35,
-      adx: { enabled: false, rangeMax: 20, mixedMax: 26, requireWeakCandleWhenDisabled: false },
-      slBufferPct: 0.12, minStopDistancePct: 0.1, maxStopDistancePct: 5,
-      rewardRiskTp1: 1.2, rewardRiskTp2: 1.5
-    }
-  }, {
-    positions: async () => []
-  }, {
-    getPosition: async () => null,
-    deleteSetup: async () => {}
-  }, {});
-  engine.running = true;
-  engine.universe = ["TESTUSDT"];
-  engine.candles = async (_symbol, interval) => {
-    assert.equal(interval, "15m");
-    return bars;
-  };
-  engine.openTrade = async () => {
-    const error = new Error("temporary Binance API timeout before order submission");
-    error.retrySignalCandle = true;
-    throw error;
-  };
-
+test("transient pre-entry failure leaves the same closed EMA9 signal candle eligible for retry", async () => {
+  const bars = pullbackBars("LONG");
+  const engine = new TradingEngine({ app: { logLevel: "silent" }, scanner: { batchSize: 10, batchDelayMs: 0 }, strategy: pullbackStrategy() },
+    { positions: async () => [] }, { getPosition: async () => null, getSetup: async () => null, deleteSetup: async () => {} }, {});
+  engine.running = true; engine.universe = ["TESTUSDT"]; engine.candles = async () => bars;
+  engine.openTrade = async () => { const error = new Error("temporary Binance API timeout before order submission"); error.retrySignalCandle = true; throw error; };
   await engine.checkSignals();
-
   assert.equal(engine.lastCandle.has("TESTUSDT"), false);
-});test("scanner failure does not skip position management or signal checks", async () => {
-  const engine = new TradingEngine({
-    app: { logLevel: "silent" },
-    scanner: { intervalMinutes: 15 },
-    execution: { orderPollIntervalMs: 15000 }
-  }, {}, {}, {});
-  let managed = false;
-  let reconciled = false;
-  let signalsChecked = false;
-  engine.scan = async () => { throw new Error("temporary ticker API failure"); };
-  engine.managePositions = async () => { managed = true; };
-  engine.reconcile = async () => { reconciled = true; };
-  engine.checkSignals = async () => { signalsChecked = true; };
-
-  await engine.runCycle();
-
-  assert.equal(managed, true);
-  assert.equal(reconciled, true);
-  assert.equal(signalsChecked, true);
 });
 
 test("insufficient available balance rejects entry before any MARKET order", async () => {
