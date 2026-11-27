@@ -29,7 +29,7 @@ strategy:
   timeframe: 15m
   confirmationEnabled: false
   signalCheckIntervalSeconds: 10
-  confirmationCandles: 1
+  confirmationCandles: 2
   pullbackEmaPeriod: 9
   pullbackLookbackCandles: 5
   pullbackEmaTolerancePct: 0.15
