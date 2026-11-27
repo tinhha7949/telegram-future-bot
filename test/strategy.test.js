@@ -20,8 +20,8 @@ function bars(closes, side) {
     return bar;
   });
 }
-const longBars = () => bars([100,101,102,103,104,105,106,105,104,105.5], "LONG");
-const shortBars = () => bars([105,104,103,102,101,100,99,100,101,99.5], "SHORT");
+const longBars = () => bars([99,100,101,102,103,104,105,106,105,104,105.5], "LONG");
+const shortBars = () => bars([106,105,104,103,102,101,100,99,100,101,99.5], "SHORT");
 
 test("LONG requires a bearish EMA9 pullback followed by a green close above EMA9", () => {
   const candles = longBars();
