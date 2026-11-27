@@ -263,17 +263,12 @@ class TradingEngine {
           const candles = await this.candles(symbol, this.c.strategy.timeframe, this.c.strategy.historyCandles);
           if (!candles.length) continue;
           const latest = candles[candles.length - 1];
-          if (this.c.strategy.rsiEnabled === false) {
-            await this.db.deleteSetup(symbol);
-            this.lastCandle.set(symbol, latest.closeTime);
-            continue;
-          }
           if (this.lastCandle.get(symbol) === latest.closeTime) continue;
 
           let setup = await this.db.getSetup(symbol);
           if (setup && (
             this.c.strategy.confirmationEnabled === false
-            || setup.signalLogic !== "RSI_RANGE_V1"
+            || setup.signalLogic !== "EMA9_PULLBACK_V1"
             || !["LONG", "SHORT"].includes(setup.side)
             || setup.timeframe !== this.c.strategy.timeframe
             || !Number.isFinite(Number(setup.signalTime))
@@ -282,7 +277,7 @@ class TradingEngine {
             || !Number.isFinite(Number(setup.structureHigh))
             || !Number.isFinite(Number(setup.structureLow))
           )) {
-            // Discard legacy ARM records or setups created under a different timeframe.
+            // Discard legacy RSI setups or records created under a different timeframe.
             await this.db.deleteSetup(symbol);
             setup = null;
           }
@@ -332,16 +327,16 @@ class TradingEngine {
                 this.log("[signal-skipped]", symbol, "reason", result.reason);
               }
             } else {
-              // Persist only candles that pass BOTH RSI range and signal-candle color checks.
+              // Persist only completed EMA9 pullbacks followed by a same-direction recovery candle.
               await this.db.saveSetup(symbol, {
-                ...signal, timeframe: this.c.strategy.timeframe, signalLogic: "RSI_RANGE_V1"
+                ...signal, timeframe: this.c.strategy.timeframe, signalLogic: "EMA9_PULLBACK_V1"
               });
               this.log("[signal-armed]", symbol, signal.side, "signalClose", signal.signalTime,
                 "breakout", signal.side === "LONG" ? signal.signalHigh : signal.signalLow,
                 "waitCandles", maxWaitCandles);
             }
           }
-          // RSI-valid but wrong-color candles return WAIT and are discarded here.
+          // Non-trigger candles are discarded; each closed candle is evaluated only once.
           this.lastCandle.set(symbol, latest.closeTime);
         } catch (e) {
           if (e.retrySignalCandle) this.lastCandle.delete(symbol);
