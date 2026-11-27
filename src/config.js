@@ -90,8 +90,8 @@ function validateConfig(config) {
   number("strategy.confirmationCandles", s.confirmationCandles, { min: 1, max: 100, integer: true });
   number("strategy.historyCandles", s.historyCandles, { min: 0, minExclusive: true, integer: true });
   number("strategy.pullbackEmaPeriod", s.pullbackEmaPeriod, { min: 0, minExclusive: true, integer: true });
-  number("strategy.pullbackLookbackCandles", s.pullbackLookbackCandles, { min: 1, max: 100, integer: true });
-  number("strategy.pullbackEmaTolerancePct", s.pullbackEmaTolerancePct, { min: 0, max: 5 });
+  number("strategy.pullbackLookbackCandles", s.pullbackLookbackCandles, { min: 1, integer: true });
+  number("strategy.pullbackEmaTolerancePct", s.pullbackEmaTolerancePct, { min: 0 });
   if (s.historyCandles < s.pullbackEmaPeriod + 2) fail("strategy.historyCandles", "at least strategy.pullbackEmaPeriod + 2 candles");
   number("strategy.atrPeriod", s.atrPeriod, { min: 0, minExclusive: true, integer: true });
   number("strategy.fallbackAtrMultiple", s.fallbackAtrMultiple, { min: 0, minExclusive: true });
