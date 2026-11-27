@@ -85,20 +85,14 @@ function validateConfig(config) {
 
   const s = config.strategy;
   timeframe("strategy.timeframe", s.timeframe);
-  boolean("strategy.rsiEnabled", s.rsiEnabled);
   boolean("strategy.confirmationEnabled", s.confirmationEnabled);
   number("strategy.signalCheckIntervalSeconds", s.signalCheckIntervalSeconds, { min: 0 });
   number("strategy.confirmationCandles", s.confirmationCandles, { min: 1, max: 100, integer: true });
-  number("strategy.rsiPeriod", s.rsiPeriod, { min: 1, minExclusive: true, integer: true });
-  for (const key of ["rsiShortMin", "rsiShortMax", "rsiLongMin", "rsiLongMax"]) {
-    number("strategy." + key, s[key], { min: 0, max: 100 });
-  }
-  if (s.rsiLongMin > s.rsiLongMax) fail("strategy.rsiLongMin", "less than or equal to strategy.rsiLongMax");
-  if (s.rsiShortMin > s.rsiShortMax) fail("strategy.rsiShortMin", "less than or equal to strategy.rsiShortMax");
   number("strategy.historyCandles", s.historyCandles, { min: 0, minExclusive: true, integer: true });
-  if (s.rsiEnabled && s.historyCandles < s.rsiPeriod + 2) {
-    fail("strategy.historyCandles", "at least strategy.rsiPeriod + 2 candles when RSI is enabled");
-  }
+  number("strategy.pullbackEmaPeriod", s.pullbackEmaPeriod, { min: 0, minExclusive: true, integer: true });
+  number("strategy.pullbackLookbackCandles", s.pullbackLookbackCandles, { min: 1, max: 100, integer: true });
+  number("strategy.pullbackEmaTolerancePct", s.pullbackEmaTolerancePct, { min: 0, max: 5 });
+  if (s.historyCandles < s.pullbackEmaPeriod + 2) fail("strategy.historyCandles", "at least strategy.pullbackEmaPeriod + 2 candles");
   number("strategy.atrPeriod", s.atrPeriod, { min: 0, minExclusive: true, integer: true });
   number("strategy.fallbackAtrMultiple", s.fallbackAtrMultiple, { min: 0, minExclusive: true });
   number("strategy.slBufferPct", s.slBufferPct, { min: 0 });
