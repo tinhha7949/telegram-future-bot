@@ -52,8 +52,8 @@ strategy:
   slBufferPct: 0.12
   minStopDistancePct: 0.10
   maxStopDistancePct: 5.0
-  rewardRiskTp1: 2.0
-  rewardRiskTp2: 3.5
+  rewardRiskTp1: 1.5
+  rewardRiskTp2: 2.0
   tp1ClosePct: 60
   breakevenOffsetPct: 1.5
   marketBehavior:
