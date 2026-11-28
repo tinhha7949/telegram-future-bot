@@ -353,7 +353,7 @@ class TradingEngine {
     }
   }
   async openTrade(symbol, signal) {
-    const behaviorConfig = this.c.strategy.marketBehavior;
+    const behaviorConfig = this.c.strategy?.marketBehavior;
     if (behaviorConfig?.enabled) {
       const behaviorCandles = await this.candles(
         symbol, behaviorConfig.timeframe, behaviorConfig.historyCandles
