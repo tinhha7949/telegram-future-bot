@@ -80,3 +80,14 @@ test("validation rejects invalid timeframes and malformed pullback settings", ()
   config.strategy.adx.mixedMax = config.strategy.adx.rangeMax - 1;
   assert.throws(() => validateConfig(config), /strategy.adx.mixedMax/);
 });
+
+test("market-behavior filter settings are fully configurable and validated", () => {
+  const config = readDefaultConfig();
+  config.strategy.marketBehavior.lookbackCandles = 30;
+  config.strategy.marketBehavior.historyCandles = 100;
+  config.strategy.marketBehavior.minScore = 60;
+  config.strategy.marketBehavior.enabled = false;
+  assert.equal(validateConfig(config), true);
+  config.strategy.marketBehavior.minScore = 101;
+  assert.throws(() => validateConfig(config), /strategy.marketBehavior.minScore/);
+});
