@@ -355,9 +355,17 @@ class TradingEngine {
   async openTrade(symbol, signal) {
     const behaviorConfig = this.c.strategy?.marketBehavior;
     if (behaviorConfig?.enabled) {
-      const behaviorCandles = await this.candles(
-        symbol, behaviorConfig.timeframe, behaviorConfig.historyCandles
-      );
+      let behaviorCandles;
+      try {
+        behaviorCandles = await this.candles(
+          symbol, behaviorConfig.timeframe, behaviorConfig.historyCandles
+        );
+      } catch (error) {
+        if (!error.status || error.status === 418 || error.status === 429 || error.status >= 500) {
+          error.retrySignalCandle = true;
+        }
+        throw error;
+      }
       const behavior = evaluateMarketBehavior({
         candles: behaviorCandles, side: signal.side, config: behaviorConfig
       });
