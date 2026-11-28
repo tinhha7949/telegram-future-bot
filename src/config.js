@@ -123,6 +123,28 @@ function validateConfig(config) {
   if (s.adx.mixedMax < s.adx.rangeMax) fail("strategy.adx.mixedMax", "greater than or equal to strategy.adx.rangeMax");
   boolean("strategy.adx.requireWeakCandleWhenDisabled", s.adx.requireWeakCandleWhenDisabled);
 
+  const behavior = s.marketBehavior;
+  object("strategy.marketBehavior", behavior);
+  boolean("strategy.marketBehavior.enabled", behavior.enabled);
+  timeframe("strategy.marketBehavior.timeframe", behavior.timeframe);
+  number("strategy.marketBehavior.historyCandles", behavior.historyCandles, { min: 1, integer: true });
+  number("strategy.marketBehavior.lookbackCandles", behavior.lookbackCandles, { min: 2, integer: true });
+  number("strategy.marketBehavior.atrPeriod", behavior.atrPeriod, { min: 2, integer: true });
+  number("strategy.marketBehavior.pressureCandles", behavior.pressureCandles, { min: 1, integer: true });
+  number("strategy.marketBehavior.pressureThreshold", behavior.pressureThreshold, { min: 0, max: 1 });
+  number("strategy.marketBehavior.minDisplacementAtr", behavior.minDisplacementAtr, { min: 0 });
+  number("strategy.marketBehavior.minCloseLocation", behavior.minCloseLocation, { min: 0.5, max: 1 });
+  number("strategy.marketBehavior.maxOpposingWickRatio", behavior.maxOpposingWickRatio, { min: 0, max: 1 });
+  number("strategy.marketBehavior.volumeLookback", behavior.volumeLookback, { min: 1, integer: true });
+  number("strategy.marketBehavior.volumeExpansionMultiplier", behavior.volumeExpansionMultiplier, { min: 0 });
+  number("strategy.marketBehavior.minScore", behavior.minScore, { min: 0, max: 100 });
+  const behaviorHistoryRequired = Math.max(
+    behavior.lookbackCandles, behavior.atrPeriod, behavior.volumeLookback
+  ) + 2;
+  if (behavior.historyCandles < behaviorHistoryRequired) {
+    fail("strategy.marketBehavior.historyCandles", "at least max(lookbackCandles, atrPeriod, volumeLookback) + 2 candles");
+  }
+
   number("risk.walletPercentPerTrade", config.risk.walletPercentPerTrade, { min: 0 });
   number("risk.maxActivePositions", config.risk.maxActivePositions, { min: 0, minExclusive: true, integer: true });
   number("risk.maxMarginPerTradeUsdt", config.risk.maxMarginPerTradeUsdt, { min: 0 });

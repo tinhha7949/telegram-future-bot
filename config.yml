@@ -56,6 +56,20 @@ strategy:
   rewardRiskTp2: 3.5
   tp1ClosePct: 60
   breakevenOffsetPct: 1.5
+  marketBehavior:
+    enabled: true
+    timeframe: 15m
+    historyCandles: 80
+    lookbackCandles: 20
+    atrPeriod: 14
+    pressureCandles: 5
+    pressureThreshold: 0.15
+    minDisplacementAtr: 0.55
+    minCloseLocation: 0.62
+    maxOpposingWickRatio: 0.55
+    volumeLookback: 20
+    volumeExpansionMultiplier: 1.1
+    minScore: 45
 
 risk:
   walletPercentPerTrade: 5
