@@ -31,7 +31,7 @@ strategy:
   signalCheckIntervalSeconds: 10
   confirmationCandles: 2
   pullbackEmaPeriod: 9
-  pullbackLookbackCandles: 5
+  pullbackLookbackCandles: 1
   pullbackEmaTolerancePct: 0.15
   emaBias:
     enabled: true
