@@ -1,6 +1,7 @@
 "use strict";
 const { evaluateClosedCandle, buildConfirmedEntry, checkBreakoutConfirmation } = require("./strategy");
 const { atr, adxWilder, ema } = require("./indicators");
+const { evaluateMarketBehavior } = require("./market-behavior");
 const { calculateTradeSizing, calculateRawQuantity } = require("./risk");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const num = v => Number(v || 0);
@@ -352,6 +353,25 @@ class TradingEngine {
     }
   }
   async openTrade(symbol, signal) {
+    const behaviorConfig = this.c.strategy.marketBehavior;
+    if (behaviorConfig?.enabled) {
+      const behaviorCandles = await this.candles(
+        symbol, behaviorConfig.timeframe, behaviorConfig.historyCandles
+      );
+      const behavior = evaluateMarketBehavior({
+        candles: behaviorCandles, side: signal.side, config: behaviorConfig
+      });
+      if (!behavior.allowed) {
+        this.log("[entry-skip]", symbol, "reason", "MARKET_BEHAVIOR_FILTER",
+          "score", behavior.score, "required", behavior.minScore ?? behaviorConfig.minScore,
+          "detail", behavior.reason, "sweep", behavior.sweep ?? "N/A",
+          "pressure", behavior.pressure ?? "N/A");
+        return false;
+      }
+      this.log("[market-behavior]", symbol, signal.side, "score", behavior.score,
+        "sweep", behavior.sweep, "pressure", behavior.pressure,
+        "bodyAtr", behavior.bodyAtr);
+    }
     const emaSettings = this.c.strategy?.emaBias;
     if (emaSettings?.enabled) {
       const bias = await this.getEmaBias(symbol);
